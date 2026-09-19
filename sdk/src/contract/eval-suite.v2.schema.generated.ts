@@ -1299,6 +1299,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                             {
                               type: "object",
                               properties: { kind: { not: {} } },
+                              additionalProperties: {},
                             },
                           ],
                         },

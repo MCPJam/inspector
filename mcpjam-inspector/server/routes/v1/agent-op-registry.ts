@@ -1905,7 +1905,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       confirmSeverity: "none",
     },
     promptNotes: [
-      "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again takes another slice of the daily generation quota.",
+      "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again runs another analysis against MCPJam's daily analysis budget.",
     ],
   },
   {
@@ -2243,6 +2243,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
     promptNotes: [
       "- `request_wave_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
+      "- Included operations (generation and insights) can be refused with `RATE_LIMITED`. `canTopUp` is false on those refusals: tell the user when it lifts (`retryAfterSeconds`, or 00:00 UTC for a daily budget), and do not retry sooner, suggest topping up credits, or switch identities to get around it.",
     ],
   },
 

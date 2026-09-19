@@ -152,7 +152,7 @@ function FlowBody({
   /**
    * Fire once, and only into an un-analyzed cohort.
    *
-   * `latestRun` is the analysis state for every scope (the benchmark scope's
+   * `analysis` is the analysis state for every scope (the benchmark scope's
    * `inferredExperience` is adapted to it in `useUsageInsights`). A non-null
    * one means a pass is already running or its result is already here, and
    * re-running it would be a second charge for something the visitor can
@@ -162,7 +162,7 @@ function FlowBody({
   useEffect(() => {
     if (!autoStart || started.current) return;
     if (breakdown === undefined) return;
-    if (breakdown?.latestRun) {
+    if (breakdown?.analysis) {
       // Already analyzed or in flight: nothing to buy. Do not arm again.
       started.current = true;
       return;

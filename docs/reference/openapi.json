@@ -5074,7 +5074,7 @@
         },
         "tags": ["Eval runs"],
         "summary": "Generate eval cases from the suite's tools",
-        "description": "Discovers the suite's server tools over a live MCP connection, generates cases against them, and persists them — the only edit route that connects to a server. Synchronous: connect, generate, persist, disconnect, respond.\n\nThe authoring model is on MCPJam: **no credits are consumed.** The call still counts against the project's daily generation quota, so it can be refused with `429 RATE_LIMITED` once that is used up.\n\nAn environment-based suite generates against that environment's closed server set, so the cases match the tools its runs will actually see.\n\nPass `x-mcpjam-idempotency-key` to make a retry safe: drafts are recorded backend-side BEFORE any case is persisted, so a replay reuses them instead of taking a second slice of the daily quota, and each case is persisted under a derived per-item key so the loop is resumable.",
+        "description": "Discovers the suite's server tools over a live MCP connection, generates cases against them, and persists them — the only edit route that connects to a server. Synchronous: connect, generate, persist, disconnect, respond.\n\nThe authoring model is on MCPJam: **no customer credits are consumed.** The call still counts against the organization's daily generation quota, and against MCPJam's own daily budget for generation, so it can be refused with `429 RATE_LIMITED` and a `Retry-After`. `details.canTopUp` is `false`: wait until `Retry-After` rather than topping up or retrying in a loop.\n\nAn environment-based suite generates against that environment's closed server set, so the cases match the tools its runs will actually see.\n\nPass `x-mcpjam-idempotency-key` to make a retry safe: drafts are recorded backend-side BEFORE any case is persisted, so a replay reuses them instead of taking a second slice of the daily quota, and each case is persisted under a derived per-item key so the loop is resumable.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -5092,7 +5092,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Makes a retry replay the recorded drafts instead of taking a second slice of the daily generation quota."
+            "description": "Makes a retry replay the recorded drafts instead of taking a second slice of the organization's daily generation quota."
           }
         ],
         "requestBody": {
@@ -16687,7 +16687,7 @@
       },
       "EvalCaseGenerateRequest": {
         "type": "object",
-        "description": "AI-generate cases from the suite's server tools and persist them. The authoring model is on MCPJam — no credits are consumed; it counts against the project's daily generation quota.",
+        "description": "AI-generate cases from the suite's server tools and persist them. The authoring model is on MCPJam — no customer credits are consumed; it counts against the organization's daily generation quota.",
         "properties": {
           "mode": {
             "type": "string",
@@ -26620,13 +26620,22 @@
             "description": "The persona AS PINNED AT LAUNCH, from the run's immutable snapshot — not the persona's current values, which may have been edited since.",
             "properties": {
               "personaId": {
-                "type": ["string", "null"]
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "name": {
-                "type": ["string", "null"]
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "role": {
-                "type": ["string", "null"]
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             }
           },
@@ -26686,6 +26695,12 @@
               }
             ],
             "description": "The common actionable-insights envelope. Present on the DETAIL response only — lists stay compact — and absent when the caller may not have it or the deployment cannot produce one. Treat absence exactly like `status: \"not_available\"`."
+          },
+          "verdictSummary": {
+            "$ref": "#/components/schemas/JourneyRunVerdictSummary"
+          },
+          "report": {
+            "$ref": "#/components/schemas/SwarmReport"
           }
         }
       },
@@ -26746,13 +26761,23 @@
             "type": "string"
           },
           "status": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "ARCHIVAL state. A run session stays `active` forever unless archived, so this says nothing about how the run went — read `outcome` for the verdict.",
-            "enum": ["active", "archived", null]
+            "enum": [
+              "active",
+              "archived",
+              null
+            ]
           },
           "outcome": {
-            "type": ["string", "null"],
-            "description": "How this session's attempt ended. `null` when the attempt cannot be matched (historical runs); absent on servers that predate the field.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Attempt execution lifecycle. Read verdict for the graded goal result.",
             "enum": [
               "succeeded",
               "failed",
@@ -26779,12 +26804,108 @@
             "type": "string"
           },
           "startedAt": {
-            "type": ["number", "null"],
+            "type": [
+              "number",
+              "null"
+            ],
             "description": "Epoch milliseconds."
           },
           "lastActivityAt": {
-            "type": ["number", "null"],
+            "type": [
+              "number",
+              "null"
+            ],
             "description": "Epoch milliseconds."
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/SwarmSessionVerdict"
+          },
+          "criteria": {
+            "type": "object",
+            "required": [
+              "status",
+              "generation"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "completed",
+                  "failed"
+                ]
+              },
+              "generation": {
+                "type": "number"
+              },
+              "criterionIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "criterionId",
+                    "passed"
+                  ],
+                  "properties": {
+                    "criterionId": {
+                      "type": "string"
+                    },
+                    "passed": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "scored",
+                        "error"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "observations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "evaluatorId",
+                "predicateType",
+                "role",
+                "status"
+              ],
+              "properties": {
+                "evaluatorId": {
+                  "type": "string"
+                },
+                "predicateType": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "required",
+                    "advisory"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "passed",
+                    "failed",
+                    "pending",
+                    "unavailable"
+                  ]
+                }
+              }
+            }
           }
         }
       },
@@ -28049,7 +28170,9 @@
         "properties": {
           "schemaVersion": {
             "type": "integer",
-            "enum": [1]
+            "enum": [
+              1
+            ]
           },
           "scope": {
             "$ref": "#/components/schemas/InsightScope"
@@ -28066,7 +28189,10 @@
             ]
           },
           "reasonCode": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "retryable": {
             "type": "boolean",
@@ -28076,7 +28202,10 @@
             "oneOf": [
               {
                 "type": "object",
-                "required": ["code", "message"],
+                "required": [
+                  "code",
+                  "message"
+                ],
                 "properties": {
                   "code": {
                     "type": "string"
@@ -28092,13 +28221,22 @@
             ]
           },
           "generatedAt": {
-            "type": ["integer", "null"]
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "updatedAt": {
-            "type": ["integer", "null"]
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "summary": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "coverage": {
             "type": "object",
@@ -28113,7 +28251,10 @@
             "properties": {
               "unit": {
                 "type": "string",
-                "enum": ["iterations", "sessions"]
+                "enum": [
+                  "iterations",
+                  "sessions"
+                ]
               },
               "analyzed": {
                 "type": "integer"
@@ -28153,16 +28294,28 @@
           "observationState": {
             "type": "string",
             "description": "How much of the population `currentFindings` describes — distinct from `status`, which describes a model GENERATION. `unavailable` means nothing could be measured, which is NOT the same as an empty `currentFindings`.",
-            "enum": ["ready", "partial", "unavailable"]
+            "enum": [
+              "ready",
+              "partial",
+              "unavailable"
+            ]
           },
           "observationCoverage": {
             "type": "object",
-            "required": ["unit", "analyzed", "total", "gradedCount", "exclusions"],
+            "required": [
+              "unit",
+              "analyzed",
+              "total",
+              "gradedCount",
+              "exclusions"
+            ],
             "description": "Coverage for `currentFindings`, describing ITS population. Deliberately separate from `coverage`, whose counters describe the generation's population.",
             "properties": {
               "unit": {
                 "type": "string",
-                "enum": ["iterations"]
+                "enum": [
+                  "iterations"
+                ]
               },
               "analyzed": {
                 "type": "integer"
@@ -28195,47 +28348,91 @@
             "properties": {
               "capability": {
                 "type": "string",
-                "enum": ["unified_findings_v1"]
+                "enum": [
+                  "unified_findings_v1"
+                ]
               },
               "analysis": {
                 "type": "object",
                 "description": "The trace analysis pipeline's progress while one exists for the run. Absent when none has been requested.",
-                "required": ["phase", "progress", "models", "completeness"],
+                "required": [
+                  "phase",
+                  "progress",
+                  "models",
+                  "completeness"
+                ],
                 "properties": {
                   "phase": {
                     "type": "string",
-                    "enum": ["reading", "grouping", "checking", "done", "failed"]
+                    "enum": [
+                      "reading",
+                      "grouping",
+                      "checking",
+                      "done",
+                      "failed"
+                    ]
                   },
                   "progress": {
                     "type": "object",
-                    "required": ["done", "total", "unit"],
+                    "required": [
+                      "done",
+                      "total",
+                      "unit"
+                    ],
                     "properties": {
-                      "done": { "type": "integer" },
-                      "total": { "type": "integer" },
-                      "unit": { "type": "string", "enum": ["iterations"] }
+                      "done": {
+                        "type": "integer"
+                      },
+                      "total": {
+                        "type": "integer"
+                      },
+                      "unit": {
+                        "type": "string",
+                        "enum": [
+                          "iterations"
+                        ]
+                      }
                     }
                   },
                   "models": {
                     "type": "array",
-                    "items": { "type": "string" }
+                    "items": {
+                      "type": "string"
+                    }
                   },
                   "completeness": {
                     "type": "object",
-                    "required": ["iterationReports", "total", "missingTraces"],
+                    "required": [
+                      "iterationReports",
+                      "total",
+                      "missingTraces"
+                    ],
                     "properties": {
-                      "iterationReports": { "type": "integer" },
-                      "total": { "type": "integer" },
-                      "missingTraces": { "type": "integer" }
+                      "iterationReports": {
+                        "type": "integer"
+                      },
+                      "total": {
+                        "type": "integer"
+                      },
+                      "missingTraces": {
+                        "type": "integer"
+                      }
                     }
                   }
                 }
               },
               "snapshot": {
-                "type": ["object", "null"],
+                "type": [
+                  "object",
+                  "null"
+                ],
                 "description": "The built findings snapshot: its deterministic findings, per-finding provenance, and any pipeline-verified mechanisms. `null` means none has been built for this run."
               },
               "job": {
-                "type": ["object", "null"],
+                "type": [
+                  "object",
+                  "null"
+                ],
                 "description": "The in-flight or last-failed operation, so a refusal never renders as a completed analysis."
               },
               "canBuild": {
@@ -28248,7 +28445,9 @@
           },
           "runHealth": {
             "type": "object",
-            "required": ["targets"],
+            "required": [
+              "targets"
+            ],
             "description": "Swarm only. Launch outcomes never appear as findings — a run that could not start is an operational fact, not something the server under test did.",
             "properties": {
               "targets": {
@@ -28267,7 +28466,10 @@
                   "properties": {
                     "subjectKind": {
                       "type": "string",
-                      "enum": ["environment", "host"]
+                      "enum": [
+                        "environment",
+                        "host"
+                      ]
                     },
                     "subjectId": {
                       "type": "string"
@@ -28315,6 +28517,22 @@
                 "type": "boolean"
               }
             }
+          },
+          "journeyFindings": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SwarmJourneyFindings"
+              }
+            ],
+            "nullable": true
+          },
+          "journeyFindingsJob": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SwarmJourneyFindingsJob"
+              }
+            ],
+            "nullable": true
           }
         }
       },
@@ -31204,6 +31422,2192 @@
             "const": "none"
           }
         }
+      },
+      "SwarmSessionVerdict": {
+        "type": "object",
+        "properties": {
+          "contractVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "lifecycle": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "ran",
+              "broke",
+              "limited",
+              "withdrawn"
+            ]
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "inconclusive",
+              "notEstablished"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "attemptPending",
+              "attemptRunning",
+              "withdrawn",
+              "spendCapReached",
+              "notRun",
+              "executionFailed",
+              "ungraded",
+              "gradingNotClaimed",
+              "criteriaPending",
+              "judgePending",
+              "gatingCriterionFailed",
+              "judgeFailed",
+              "criteriaGradingErrored",
+              "gatingCriterionUnmeasured",
+              "judgeErrored",
+              "gradingUnavailable",
+              "allGatingCriteriaPassed",
+              "judgePassed",
+              "allGradersPassed"
+            ]
+          },
+          "verdictSource": {
+            "type": "string",
+            "enum": [
+              "goalJudge",
+              "requiredAssertions",
+              "combined",
+              "none"
+            ]
+          },
+          "grading": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "notRequested",
+                  "queued",
+                  "running",
+                  "settled",
+                  "unavailable"
+                ]
+              },
+              "reasonCode": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          "graders": {
+            "type": "object",
+            "properties": {
+              "criteria": {
+                "type": "string",
+                "enum": [
+                  "notConfigured",
+                  "notClaimed",
+                  "pending",
+                  "scored",
+                  "errored"
+                ]
+              },
+              "judge": {
+                "type": "string",
+                "enum": [
+                  "notConfigured",
+                  "silent",
+                  "pending",
+                  "scored",
+                  "errored"
+                ]
+              }
+            },
+            "required": [
+              "criteria",
+              "judge"
+            ],
+            "additionalProperties": false
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "gating": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "gatingPassed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "gatingFailed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "gatingUnmeasured": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "advisoryFailed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "gating",
+              "gatingPassed",
+              "gatingFailed",
+              "gatingUnmeasured",
+              "advisoryFailed"
+            ],
+            "additionalProperties": false
+          },
+          "trial": {
+            "nullable": true,
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "running",
+                  "completed",
+                  "failed",
+                  "setup_failed",
+                  "cancelled"
+                ]
+              },
+              "taskVerdict": {
+                "type": "string",
+                "enum": [
+                  "passed",
+                  "failed"
+                ]
+              },
+              "evaluatorError": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "contractVersion",
+          "lifecycle",
+          "verdict",
+          "reason",
+          "verdictSource",
+          "grading",
+          "graders",
+          "counts",
+          "trial"
+        ],
+        "additionalProperties": false
+      },
+      "JourneyRunVerdictSummary": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending"
+                ]
+              },
+              "pendingSessions": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "updatedAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "status",
+              "pendingSessions",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "decided"
+                ]
+              },
+              "decision": {
+                "$ref": "#/components/schemas/EvalVerdictDecision"
+              },
+              "updatedAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "status",
+              "decision",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "notEstablished"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "gradingNotConfigured"
+                ]
+              },
+              "updatedAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "status",
+              "reason",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "integrityFailed"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "updatedAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "status",
+              "reason",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "SwarmReport": {
+        "type": "object",
+        "properties": {
+          "contractVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "runId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "inconclusive",
+              "notEstablished"
+            ]
+          },
+          "verdictSource": {
+            "type": "string",
+            "enum": [
+              "policyV2",
+              "none"
+            ]
+          },
+          "decision": {
+            "$ref": "#/components/schemas/EvalVerdictDecision"
+          },
+          "undecidedReason": {
+            "type": "string",
+            "enum": [
+              "executionPending",
+              "gradingPending",
+              "gradingNotConfigured",
+              "verdictSummaryUnavailable",
+              "integrityFailed"
+            ]
+          },
+          "execution": {
+            "type": "object",
+            "properties": {
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "sessions"
+                ]
+              },
+              "configured": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "reported": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "started": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "notStarted": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "unknown": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "completed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "interrupted": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "neverLaunched": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "unit",
+              "configured",
+              "reported",
+              "started",
+              "notStarted",
+              "unknown",
+              "completed",
+              "interrupted",
+              "neverLaunched"
+            ],
+            "additionalProperties": false
+          },
+          "goalGrading": {
+            "type": "object",
+            "properties": {
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "sessions"
+                ]
+              },
+              "reported": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "passed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "failed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "pending": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "unavailable": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "notRequested": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "waitingForDecisiveGrading": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "unit",
+              "reported",
+              "passed",
+              "failed",
+              "pending",
+              "unavailable",
+              "notRequested",
+              "waitingForDecisiveGrading"
+            ],
+            "additionalProperties": false
+          },
+          "observations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "evaluatorId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "predicateType": {
+                  "type": "string",
+                  "enum": [
+                    "toolDescriptionsPresent",
+                    "toolAnnotationsPresent",
+                    "toolNamesUnique",
+                    "noDeprecatedToolExposed",
+                    "toolInputSchemasWellFormed",
+                    "toolOutputSchemasPresent",
+                    "toolCalledWith",
+                    "toolCalledAtLeastOnce",
+                    "toolNeverCalled",
+                    "onlyToolsCalled",
+                    "firstToolWas",
+                    "toolCallCountUnder",
+                    "toolCalledBefore",
+                    "noDeprecatedToolCalled",
+                    "noDestructiveToolCalled",
+                    "argumentsMatchToolSchema",
+                    "noRepeatedIdenticalCall",
+                    "noToolErrors",
+                    "toolLatencyUnder",
+                    "toolResultContains",
+                    "toolResultMatchesSchema",
+                    "toolResultSizeUnder",
+                    "toolErrorNamesInput",
+                    "fullPageHasContinuation",
+                    "responseCloseTo",
+                    "responseContains",
+                    "responseMatches",
+                    "finalAssistantMessageNonEmpty",
+                    "tokenBudgetUnder",
+                    "turnCountUnder",
+                    "widgetRendered",
+                    "widgetRenderLatencyUnder",
+                    "widgetNoConsoleErrors",
+                    "noEndingQuestion"
+                  ]
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "advisory",
+                    "required"
+                  ]
+                },
+                "stage": {
+                  "type": "string",
+                  "enum": [
+                    "connection",
+                    "discovery",
+                    "selection",
+                    "call",
+                    "response",
+                    "userValue"
+                  ],
+                  "description": "The stage this observation was read from, and the only stage it is evidence ABOUT. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
+                },
+                "unit": {
+                  "type": "string",
+                  "enum": [
+                    "sessions"
+                  ]
+                },
+                "total": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "passed": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "failed": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "pending": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "unavailable": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "evaluatorId",
+                "predicateType",
+                "role",
+                "stage",
+                "unit",
+                "total",
+                "passed",
+                "failed",
+                "pending",
+                "unavailable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "contractVersion",
+          "runId",
+          "verdict",
+          "verdictSource",
+          "execution",
+          "goalGrading",
+          "observations"
+        ],
+        "additionalProperties": false
+      },
+      "EvalVerdictDecision": {
+        "type": "object",
+        "properties": {
+          "verdictPolicyVersion": {
+            "type": "number",
+            "enum": [
+              2
+            ]
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "inconclusive"
+            ]
+          },
+          "reasons": {
+            "minItems": 1,
+            "maxItems": 11,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "configuredTrialsNotAttempted",
+                "noGradeableTrials",
+                "eligibleTrialsBelowMinimum",
+                "completionRateBelowMinimum",
+                "completionRateNotMeasured",
+                "evaluatorErrorRateAboveMaximum",
+                "evaluatorErrorRateNotMeasured",
+                "caseHasNoEligibleTrials",
+                "casePassRateMetThreshold",
+                "casePassRateBelowThreshold",
+                "allMeasuredCasesMetThreshold"
+              ],
+              "description": "Why the verdict is what it is. The validity reasons are evaluated FIRST and make a run `inconclusive`; the task reasons decide `passed` / `failed` once validity holds. `configuredTrialsNotAttempted` — some configured trial never ran. `noGradeableTrials` — nothing in the suite was gradeable. `eligibleTrialsBelowMinimum` — the explicit `minEligibleTrials` was not reached. `completionRateBelowMinimum` — measured, and under the floor. `completionRateNotMeasured` — nothing was attempted, so the floor is unsatisfiable; a not-measured rate never passes one. `evaluatorErrorRateAboveMaximum` — the grader failed too often for the run to describe the server. `evaluatorErrorRateNotMeasured` — the same unsatisfiable case for the ceiling. `caseHasNoEligibleTrials` — a case graded nothing, which is inconclusive even at `passThreshold: 0`. `casePassRateMetThreshold` — a case's own passing reason. `casePassRateBelowThreshold` — a case failed its threshold, and so therefore did the suite. `allMeasuredCasesMetThreshold` — the suite's only passing reason."
+            }
+          },
+          "validity": {
+            "type": "object",
+            "properties": {
+              "policy": {
+                "type": "object",
+                "properties": {
+                  "coverage": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "allConfiguredTrialsAttempted"
+                            ]
+                          },
+                          "minGradeableTrials": {
+                            "type": "number",
+                            "enum": [
+                              1
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "minGradeableTrials"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "minEligibleTrials"
+                            ]
+                          },
+                          "minEligibleTrials": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "minEligibleTrials"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "minCompletionRate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "maxEvaluatorErrorRate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "required": [
+                  "coverage",
+                  "minCompletionRate",
+                  "maxEvaluatorErrorRate"
+                ],
+                "additionalProperties": false
+              },
+              "holds": {
+                "type": "boolean"
+              },
+              "configuredTrials": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "attemptedTrials": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "eligibleTrials": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "completionRate": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "measured"
+                        ]
+                      },
+                      "value": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "numerator": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "denominator": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "exclusions": {
+                        "type": "object",
+                        "properties": {
+                          "notTerminal": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "skipped": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "setupFailed": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "cancelled": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "timedOut": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "executionFailed": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "evaluatorError": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "value",
+                      "numerator",
+                      "denominator",
+                      "exclusions"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "notMeasured"
+                        ]
+                      },
+                      "value": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          null
+                        ]
+                      },
+                      "numerator": {
+                        "type": "number",
+                        "enum": [
+                          0
+                        ]
+                      },
+                      "denominator": {
+                        "type": "number",
+                        "enum": [
+                          0
+                        ]
+                      },
+                      "exclusions": {
+                        "type": "object",
+                        "properties": {
+                          "notTerminal": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "skipped": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "setupFailed": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "cancelled": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "timedOut": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "executionFailed": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "evaluatorError": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "value",
+                      "numerator",
+                      "denominator",
+                      "exclusions"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "evaluatorErrorRate": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "measured"
+                        ]
+                      },
+                      "value": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "numerator": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "denominator": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "exclusions": {
+                        "type": "object",
+                        "properties": {
+                          "notTerminal": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "skipped": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "setupFailed": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "cancelled": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "timedOut": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "executionFailed": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "evaluatorError": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "value",
+                      "numerator",
+                      "denominator",
+                      "exclusions"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "notMeasured"
+                        ]
+                      },
+                      "value": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          null
+                        ]
+                      },
+                      "numerator": {
+                        "type": "number",
+                        "enum": [
+                          0
+                        ]
+                      },
+                      "denominator": {
+                        "type": "number",
+                        "enum": [
+                          0
+                        ]
+                      },
+                      "exclusions": {
+                        "type": "object",
+                        "properties": {
+                          "notTerminal": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "skipped": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "setupFailed": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "cancelled": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "timedOut": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "executionFailed": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "evaluatorError": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "value",
+                      "numerator",
+                      "denominator",
+                      "exclusions"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "required": [
+              "policy",
+              "holds",
+              "configuredTrials",
+              "attemptedTrials",
+              "eligibleTrials",
+              "completionRate",
+              "evaluatorErrorRate"
+            ],
+            "additionalProperties": false
+          },
+          "cases": {
+            "minItems": 1,
+            "maxItems": 50000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "caseId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9_-]+$"
+                },
+                "executionVariant": {
+                  "type": "object",
+                  "properties": {
+                    "model": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "provider": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "required": [
+                    "model"
+                  ],
+                  "additionalProperties": false
+                },
+                "configuredTrials": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "attemptedTrials": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "eligibleTrials": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "passedTrials": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "failedTrials": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "effectivePassThreshold": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "passRate": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "measured"
+                          ]
+                        },
+                        "value": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1
+                        },
+                        "numerator": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "denominator": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "exclusions": {
+                          "type": "object",
+                          "properties": {
+                            "notTerminal": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "skipped": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "setupFailed": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "cancelled": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "timedOut": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "executionFailed": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "evaluatorError": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "value",
+                        "numerator",
+                        "denominator",
+                        "exclusions"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "notMeasured"
+                          ]
+                        },
+                        "value": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            null
+                          ]
+                        },
+                        "numerator": {
+                          "type": "number",
+                          "enum": [
+                            0
+                          ]
+                        },
+                        "denominator": {
+                          "type": "number",
+                          "enum": [
+                            0
+                          ]
+                        },
+                        "exclusions": {
+                          "type": "object",
+                          "properties": {
+                            "notTerminal": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "skipped": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "setupFailed": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "cancelled": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "timedOut": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "executionFailed": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "evaluatorError": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "value",
+                        "numerator",
+                        "denominator",
+                        "exclusions"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "completionRate": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "measured"
+                          ]
+                        },
+                        "value": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1
+                        },
+                        "numerator": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "denominator": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "exclusions": {
+                          "type": "object",
+                          "properties": {
+                            "notTerminal": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "skipped": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "setupFailed": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "cancelled": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "timedOut": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "executionFailed": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "evaluatorError": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "value",
+                        "numerator",
+                        "denominator",
+                        "exclusions"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "notMeasured"
+                          ]
+                        },
+                        "value": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            null
+                          ]
+                        },
+                        "numerator": {
+                          "type": "number",
+                          "enum": [
+                            0
+                          ]
+                        },
+                        "denominator": {
+                          "type": "number",
+                          "enum": [
+                            0
+                          ]
+                        },
+                        "exclusions": {
+                          "type": "object",
+                          "properties": {
+                            "notTerminal": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "skipped": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "setupFailed": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "cancelled": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "timedOut": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "executionFailed": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "evaluatorError": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "value",
+                        "numerator",
+                        "denominator",
+                        "exclusions"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "observedStability": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "measured"
+                          ]
+                        },
+                        "value": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1
+                        },
+                        "numerator": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "denominator": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "exclusions": {
+                          "type": "object",
+                          "properties": {
+                            "notTerminal": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "skipped": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "setupFailed": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "cancelled": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "timedOut": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "executionFailed": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "evaluatorError": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "value",
+                        "numerator",
+                        "denominator",
+                        "exclusions"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "notMeasured"
+                          ]
+                        },
+                        "value": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            null
+                          ]
+                        },
+                        "numerator": {
+                          "type": "number",
+                          "enum": [
+                            0
+                          ]
+                        },
+                        "denominator": {
+                          "type": "number",
+                          "enum": [
+                            0
+                          ]
+                        },
+                        "exclusions": {
+                          "type": "object",
+                          "properties": {
+                            "notTerminal": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "skipped": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "setupFailed": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "cancelled": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "timedOut": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "executionFailed": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "evaluatorError": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "value",
+                        "numerator",
+                        "denominator",
+                        "exclusions"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "mixedVerdict": {
+                  "type": "boolean"
+                },
+                "verdict": {
+                  "type": "string",
+                  "enum": [
+                    "passed",
+                    "failed",
+                    "inconclusive"
+                  ]
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "configuredTrialsNotAttempted",
+                    "noGradeableTrials",
+                    "eligibleTrialsBelowMinimum",
+                    "completionRateBelowMinimum",
+                    "completionRateNotMeasured",
+                    "evaluatorErrorRateAboveMaximum",
+                    "evaluatorErrorRateNotMeasured",
+                    "caseHasNoEligibleTrials",
+                    "casePassRateMetThreshold",
+                    "casePassRateBelowThreshold",
+                    "allMeasuredCasesMetThreshold"
+                  ],
+                  "description": "Why the verdict is what it is. The validity reasons are evaluated FIRST and make a run `inconclusive`; the task reasons decide `passed` / `failed` once validity holds. `configuredTrialsNotAttempted` — some configured trial never ran. `noGradeableTrials` — nothing in the suite was gradeable. `eligibleTrialsBelowMinimum` — the explicit `minEligibleTrials` was not reached. `completionRateBelowMinimum` — measured, and under the floor. `completionRateNotMeasured` — nothing was attempted, so the floor is unsatisfiable; a not-measured rate never passes one. `evaluatorErrorRateAboveMaximum` — the grader failed too often for the run to describe the server. `evaluatorErrorRateNotMeasured` — the same unsatisfiable case for the ceiling. `caseHasNoEligibleTrials` — a case graded nothing, which is inconclusive even at `passThreshold: 0`. `casePassRateMetThreshold` — a case's own passing reason. `casePassRateBelowThreshold` — a case failed its threshold, and so therefore did the suite. `allMeasuredCasesMetThreshold` — the suite's only passing reason."
+                }
+              },
+              "required": [
+                "caseId",
+                "configuredTrials",
+                "attemptedTrials",
+                "eligibleTrials",
+                "passedTrials",
+                "failedTrials",
+                "effectivePassThreshold",
+                "passRate",
+                "completionRate",
+                "observedStability",
+                "mixedVerdict",
+                "verdict",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "verdictPolicyVersion",
+          "verdict",
+          "reasons",
+          "validity",
+          "cases"
+        ],
+        "additionalProperties": false
+      },
+      "SwarmJourneyFinding": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "basis": {
+            "type": "string",
+            "enum": [
+              "verifiedMechanism",
+              "sessionReport",
+              "populationFact"
+            ],
+            "description": "`verifiedMechanism`, `sessionReport`, `populationFact`"
+          },
+          "scopeLevel": {
+            "type": "string",
+            "enum": [
+              "session",
+              "goal",
+              "persona",
+              "target",
+              "wave"
+            ],
+            "description": "`session`, `goal`, `persona`, `target`, `wave`"
+          },
+          "persona": {
+            "type": "object",
+            "properties": {
+              "personaRefId": {
+                "nullable": true,
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "personaRefId",
+              "name"
+            ],
+            "additionalProperties": false
+          },
+          "goal": {
+            "type": "object",
+            "properties": {
+              "runId": {
+                "type": "string"
+              },
+              "journeyRefId": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "runId",
+              "journeyRefId",
+              "title"
+            ],
+            "additionalProperties": false
+          },
+          "target": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "environment",
+                  "host"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "modelId": {
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "label",
+              "modelId"
+            ],
+            "additionalProperties": false
+          },
+          "population": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "sessions"
+                ]
+              }
+            },
+            "required": [
+              "count",
+              "total",
+              "unit"
+            ],
+            "additionalProperties": false
+          },
+          "sessionIds": {
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "citations": {
+            "maxItems": 30,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[^/]+\\/.+$"
+            }
+          },
+          "verdictSeen": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "inconclusive",
+              "notEstablished"
+            ]
+          },
+          "chainStage": {
+            "nullable": true,
+            "description": "`connection`, `discovery`, `selection`, `call`, `response`, `userValue`",
+            "type": "string",
+            "enum": [
+              "connection",
+              "discovery",
+              "selection",
+              "call",
+              "response",
+              "userValue"
+            ]
+          },
+          "chainStageState": {
+            "nullable": true,
+            "description": "`passed`: passed; `failed`: failed; `notReached`: never ran (an earlier stage failed); `notMeasured`: not measured; `notApplicable`: not applicable to this case",
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "notReached",
+              "notMeasured",
+              "notApplicable"
+            ]
+          },
+          "chainStageBasis": {
+            "type": "string",
+            "enum": [
+              "derived",
+              "reported",
+              "unmeasured"
+            ]
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "notRun",
+              "blockedConnecting",
+              "lostFindingTool",
+              "blockedCallingTool",
+              "blockedByResponse",
+              "goalMissed",
+              "goalMetWithFriction",
+              "goalMet",
+              "notMeasured"
+            ],
+            "description": "`notRun`, `blockedConnecting`, `lostFindingTool`, `blockedCallingTool`, `blockedByResponse`, `goalMissed`, `goalMetWithFriction`, `goalMet`, `notMeasured`"
+          },
+          "tone": {
+            "type": "string",
+            "enum": [
+              "fail",
+              "warn",
+              "ok",
+              "muted"
+            ]
+          },
+          "coverageNotes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "sessionScanCapped",
+                "budgetExhausted",
+                "transcriptMissing",
+                "contextTooLarge",
+                "extractionRejected",
+                "chainUnmeasured",
+                "judgeNotRun",
+                "sessionsWithdrawn",
+                "sessionsRateLimited",
+                "partialRead",
+                "toolCatalogMissing"
+              ],
+              "description": "`sessionScanCapped`, `budgetExhausted`, `transcriptMissing`, `contextTooLarge`, `extractionRejected`, `chainUnmeasured`, `judgeNotRun`, `sessionsWithdrawn`, `sessionsRateLimited`, `partialRead`, `toolCatalogMissing`"
+            }
+          },
+          "outcomePhrase": {
+            "nullable": true,
+            "type": "string",
+            "maxLength": 100,
+            "pattern": "^[^0-9]*$"
+          },
+          "mechanismPhrase": {
+            "nullable": true,
+            "type": "string"
+          },
+          "fixPhrase": {
+            "nullable": true,
+            "type": "string"
+          },
+          "reportExcerpt": {
+            "nullable": true,
+            "type": "object",
+            "properties": {
+              "actual": {
+                "type": "string",
+                "maxLength": 1800
+              },
+              "citations": {
+                "maxItems": 30,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[^/]+\\/.+$"
+                }
+              }
+            },
+            "required": [
+              "actual",
+              "citations"
+            ],
+            "additionalProperties": false
+          },
+          "mechanismId": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "basis",
+          "scopeLevel",
+          "persona",
+          "goal",
+          "target",
+          "population",
+          "sessionIds",
+          "citations",
+          "verdictSeen",
+          "chainStage",
+          "chainStageState",
+          "chainStageBasis",
+          "disposition",
+          "tone",
+          "coverageNotes",
+          "outcomePhrase",
+          "mechanismPhrase",
+          "fixPhrase",
+          "reportExcerpt",
+          "mechanismId"
+        ],
+        "additionalProperties": false
+      },
+      "SwarmJourneyFindings": {
+        "type": "object",
+        "properties": {
+          "contractVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "generatedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "sourceRevision": {
+            "type": "string"
+          },
+          "pipelineVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "extractionVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "extractionModel": {
+            "type": "string"
+          },
+          "reasoningModel": {
+            "type": "string"
+          },
+          "summaryKind": {
+            "type": "string",
+            "enum": [
+              "notLaunched",
+              "broken",
+              "friction",
+              "landed",
+              "ungraded",
+              "unread"
+            ],
+            "description": "`notLaunched`, `broken`, `friction`, `landed`, `ungraded`, `unread`"
+          },
+          "population": {
+            "type": "object",
+            "properties": {
+              "configured": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "started": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "read": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "unread": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "withdrawn": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "limited": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "graded": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "configured",
+              "started",
+              "read",
+              "unread",
+              "withdrawn",
+              "limited",
+              "graded"
+            ],
+            "additionalProperties": false
+          },
+          "coverageNotes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "sessionScanCapped",
+                "budgetExhausted",
+                "transcriptMissing",
+                "contextTooLarge",
+                "extractionRejected",
+                "chainUnmeasured",
+                "judgeNotRun",
+                "sessionsWithdrawn",
+                "sessionsRateLimited",
+                "partialRead",
+                "toolCatalogMissing"
+              ],
+              "description": "`sessionScanCapped`, `budgetExhausted`, `transcriptMissing`, `contextTooLarge`, `extractionRejected`, `chainUnmeasured`, `judgeNotRun`, `sessionsWithdrawn`, `sessionsRateLimited`, `partialRead`, `toolCatalogMissing`"
+            }
+          },
+          "disclosure": {
+            "type": "object",
+            "properties": {
+              "rail": {
+                "type": "string",
+                "enum": [
+                  "gateway",
+                  "openrouter"
+                ]
+              },
+              "evidenceSent": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "rail",
+              "evidenceSent"
+            ],
+            "additionalProperties": false
+          },
+          "personas": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "persona": {
+                  "type": "object",
+                  "properties": {
+                    "personaRefId": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "personaRefId",
+                    "name"
+                  ],
+                  "additionalProperties": false
+                },
+                "disposition": {
+                  "type": "string",
+                  "enum": [
+                    "notRun",
+                    "blockedConnecting",
+                    "lostFindingTool",
+                    "blockedCallingTool",
+                    "blockedByResponse",
+                    "goalMissed",
+                    "goalMetWithFriction",
+                    "goalMet",
+                    "notMeasured"
+                  ],
+                  "description": "`notRun`, `blockedConnecting`, `lostFindingTool`, `blockedCallingTool`, `blockedByResponse`, `goalMissed`, `goalMetWithFriction`, `goalMet`, `notMeasured`"
+                },
+                "tone": {
+                  "type": "string",
+                  "enum": [
+                    "fail",
+                    "warn",
+                    "ok",
+                    "muted"
+                  ]
+                },
+                "goalRunIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "persona",
+                "disposition",
+                "tone",
+                "goalRunIds"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "findings": {
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SwarmJourneyFinding"
+            }
+          }
+        },
+        "required": [
+          "contractVersion",
+          "generatedAt",
+          "sourceRevision",
+          "pipelineVersion",
+          "extractionVersion",
+          "extractionModel",
+          "reasoningModel",
+          "summaryKind",
+          "population",
+          "coverageNotes",
+          "disclosure",
+          "personas",
+          "findings"
+        ],
+        "additionalProperties": false
+      },
+      "SwarmJourneyFindingsJob": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "completed",
+              "failed",
+              "skipped"
+            ]
+          },
+          "errorCode": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "status",
+          "updatedAt"
+        ],
+        "additionalProperties": false
       }
     },
     "responses": {

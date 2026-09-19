@@ -10,9 +10,12 @@
 export {
   PLATFORM_V1_ERROR_CODES,
   PlatformApiError,
+  describePlatformRefusal,
   isPlatformApiError,
+  platformRefusalHint,
   type PlatformApiErrorCode,
   type PlatformApiErrorOptions,
+  type PlatformRefusal,
   type PlatformV1ErrorCode,
 } from "./errors.js";
 
@@ -247,6 +250,10 @@ export type {
   PlatformSwarm,
   PlatformSwarmArchived,
   PlatformSwarmFinding,
+  PlatformSwarmJourneyFinding,
+  PlatformSwarmJourneyFindings,
+  PlatformSwarmJourneyFindingsJob,
+  SwarmJourneyFindingsJob,
   PlatformSwarmOverview,
   PlatformSwarmOverviewRun,
   PlatformSwarmOverviewFinding,

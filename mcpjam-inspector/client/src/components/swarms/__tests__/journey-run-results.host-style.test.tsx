@@ -11,6 +11,7 @@ const { sessionHost, targetHost, viewer, persisted } = vi.hoisted(() => ({
   viewer: vi.fn(),
 }));
 vi.mock("convex/react", () => ({
+  useQuery: () => null,
   useConvexAuth: () => ({ isAuthenticated: true }),
 }));
 vi.mock("@/hooks/use-host-snapshot", () => ({

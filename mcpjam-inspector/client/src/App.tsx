@@ -13,6 +13,7 @@ import {
   useRef,
   useState,
   type ComponentProps,
+  type ReactElement,
 } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
@@ -286,6 +287,9 @@ import {
   useHostMutations,
 } from "@/hooks/useClients";
 import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
+import { GuestFeaturePreview } from "@/components/guest-preview/GatedFeaturePreview";
+import { GuestPreviewCta } from "@/components/guest-preview/GuestPreviewCta";
+import type { GatedFeatureId } from "@/components/guest-preview/feature-highlights";
 import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
 import { useEvaluateEnabled } from "@/hooks/useEvaluateEnabled";
 import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
@@ -1601,33 +1605,101 @@ export function CompatibilityRoute() {
   );
 }
 
+/**
+ * The signed-out preview decision, shared by Swarms and User Testing (REEV-6).
+ *
+ * Both surfaces answer "is this person signed in?" identically, so the answer
+ * lives once. Returns the element to render INSTEAD of the real tab, or `null`
+ * to mean "carry on".
+ *
+ * ONE QUESTION, since the plan gate came out. An earlier pass also asked
+ * whether the reader's plan included the feature and showed an upsell if not.
+ * Both features are on every plan and bounded by credits rather than
+ * entitlement, so there was never a plan-locked reader to catch: the branch
+ * was answering a question nobody was asking.
+ *
+ * The one ordering that still matters: an unresolved identity HOLDS. `user` is
+ * null during WorkOS hydrate for signed-in people too, so deciding early
+ * flashes a sign-up screen at customers on every cold load.
+ *
+ * Callers must invoke this from the top of the component with their other
+ * hooks — it calls hooks itself, so it can never sit after an early return.
+ */
+function useGatedFeatureGate(feature: GatedFeatureId): ReactElement | null {
+  // `useIsMemberActor`, NOT a WorkOS-identity hook, and the difference is a
+  // real production window rather than a preference. In hosted mode every SPA
+  // document is served with `__MCP_GUEST_BOOTSTRAP__` injected regardless of
+  // session cookie, so a signed-in user's first render carries a GUEST bearer:
+  // WorkOS says "member", Convex says "authenticated", and the socket holds a
+  // guest. Anything reading `useAuth().user` answers "member" for a caller the
+  // backend will treat as a guest. This hook asks `users:getCurrentUser`, whose
+  // answer is resolved from the JWT actually received, so it reports the
+  // identity a member-only function would see.
+  //
+  // REEV-6 shipped its own `useIsHostedGuest` before this existed; that hook is
+  // deleted rather than kept beside this one. Two identity hooks that disagree
+  // in a window neither names is how the gate drifts from the backend.
+  const isMember = useIsMemberActor();
+  const isGuest = isMember === undefined ? undefined : !isMember;
+
+  if (isGuest === undefined) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (isGuest) {
+    return (
+      <GuestFeaturePreview feature={feature}>
+        <GuestPreviewCta feature={feature} />
+      </GuestFeaturePreview>
+    );
+  }
+
+  return null;
+}
+
 // The User Testing surface: `/user-testing` (the project's scenarios) and
-// `/user-testing/:scenarioId` (one scenario). Same billing feature and
-// `sandboxes-enabled` flag as Swarms below.
+// `/user-testing/:scenarioId` (one scenario). Same billing feature,
+// `sandboxes-enabled` flag and gated-preview decision as Swarms below. The
+// flag decides whether the surface exists for a visitor; identity then
+// decides whether they get the preview or the real tab.
 export function ScenariosRoute() {
-  return (
-    <PricingFeatureSignInGate feature="User testing">
-      <ScenariosRouteContent />
-    </PricingFeatureSignInGate>
-  );
+  // NO `PricingFeatureSignInGate` HERE, deliberately, and it is not an
+  // oversight from the merge that brought it in.
+  //
+  // #5104 added that wrapper to Evals, Swarm and User Testing behind
+  // `pricing-feature-signin-required`, solving the same problem REEV-6 solves
+  // and reaching a different answer: a one-line "Sign in to use User testing."
+  // with a sign-in button. Two gates for one job is worse than either alone —
+  // whichever flag moves last silently decides what a visitor sees — so REEV-6
+  // owns these two routes and the wrapper is removed from them.
+  //
+  // It STAYS on Evals (`EvalsRoute`, `EvalRunnerRoute`). Evaluate is out of
+  // REEV-6's scope by decision, so nothing here replaces that gate.
+  //
+  // What the preview has that the message does not: it shows the product, and
+  // it offers sign-UP. Their message only offers sign-in, which is the wrong
+  // primary action for someone who has never had an account.
+  return <ScenariosRouteContent />;
 }
 
 function ScenariosRouteContent() {
-  const {
-    billingUiEnabled,
-    activeTabBillingLocked,
-    activeTabBillingFeature,
-    convexProjectId,
-    isAuthenticated,
-  } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
   // The sidebar filters this item on the flag, but a filtered nav item is not
   // a gate — `/user-testing` is a plain route, so without this a direct URL
   // mounts the whole surface for users the flag excludes.
   const sandboxesEnabled = useSandboxesEnabledState();
   // Hooks first: every gate below early-returns, and a hook after one of them
   // would crash React the moment a gate settles between renders.
+  const gate = useGatedFeatureGate("user-testing");
   const params = useParams<{ scenarioId?: string }>();
 
+  // The flag is the rollout control and runs before the preview: a visitor the
+  // flag excludes gets no surface at all, not a sign-up pitch for one.
+  //
   // Only redirect on an explicit `false`. While PostHog hydrates the flag is
   // `undefined`, and bouncing then would strand a flagged-in user who cold-
   // loads the URL. (Same tradeoff SwarmsRoute makes.)
@@ -1638,8 +1710,8 @@ function ScenariosRouteContent() {
     return null;
   }
 
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
-    return <ActiveBillingUpsellGate />;
+  if (gate) {
+    return gate;
   }
 
   // Router params arrive decoded, but App also renders this component outside
@@ -1715,11 +1787,9 @@ function decodeParam(raw: string): string | null {
 }
 
 export function SwarmsRoute() {
-  return (
-    <PricingFeatureSignInGate feature="Swarm">
-      <SwarmsRouteContent />
-    </PricingFeatureSignInGate>
-  );
+  // No `PricingFeatureSignInGate`, for the reason spelled out on
+  // `ScenariosRoute` above: REEV-6's preview is the gate for this surface.
+  return <SwarmsRouteContent />;
 }
 
 function SwarmsRouteContent() {
@@ -1727,13 +1797,7 @@ function SwarmsRouteContent() {
   // longer a per-host scenario tab. Keeps the same billing gate as the scenario
   // product surface, and re-mounts per project so selection state can't leak
   // across a project switch.
-  const {
-    billingUiEnabled,
-    activeTabBillingLocked,
-    activeTabBillingFeature,
-    convexProjectId,
-    isAuthenticated,
-  } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated, activeProject } = useAppRouteContext();
   // WorkOS identity is the membership match key for the *invitee guest*
   // notice. Convex `isAuthenticated` is also true for anonymous sessions,
   // which never get a WorkOS `user.email` — but those actors still own a
@@ -1745,7 +1809,6 @@ function SwarmsRouteContent() {
   // item is not a gate — `/swarms` is a plain route, so a direct URL mounted
   // the whole surface for users the flag excludes.
   const sandboxesEnabled = useSandboxesEnabledState();
-
   // The backend made Swarm member-only vs project *invitee guests* (role
   // `guest`): personas/journeys/runs reject that tier. Mirror that for
   // WorkOS-signed-in viewers by resolving role from the members list.
@@ -1756,22 +1819,30 @@ function SwarmsRouteContent() {
   const roleGateActive =
     isAuthenticated && !!convexProjectId && isWorkOsSignedIn;
   const { role, isLoading: roleLoading } = useViewerProjectRole({
-    isAuthenticated,
+    // `roleGateActive`, NOT the bare Convex `isAuthenticated` (REEV-6).
+    // `isAuthenticated` is true for an anonymous guest, so passing it fired
+    // `projects:getProjectMembers` for a visitor who never mounts SwarmsTab
+    // and could not read the answer anyway. A member-only query running on a
+    // sign-up screen is the thing the preview was supposed to prevent.
+    //
+    // This only narrows WHEN the query runs. The role it returns is consulted
+    // solely under `roleGateActive`, which is the same condition, so no
+    // decision below loses an input it used to have.
+    isAuthenticated: roleGateActive,
     projectId: convexProjectId,
     viewerEmail: user?.email,
-    // Bound the "wait for email" window to WorkOS hydrate — not Convex auth —
+    // Bound the "wait for email" window to WorkOS hydrate, not Convex auth,
     // so we never spin forever on anonymous sessions.
     identityLoading: isWorkOsLoading,
   });
   // Hook order: must run on EVERY render — the gates below early-return on
   // hydration states that flip between renders, and a hook after them would
   // crash React the moment a gate settles.
+  const gate = useGatedFeatureGate("swarms");
   const params = useParams<{ swarmId?: string }>();
 
-  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
-  // `undefined`; bouncing then would strand a flagged-in user who cold-loads
-  // /swarms directly. Render nothing until it settles. (Same tradeoff the
-  // Environments route already makes.)
+  // Flag before preview, for the reason given on ScenariosRoute. Only redirect
+  // on an explicit `false`; `undefined` means PostHog is still hydrating.
   if (sandboxesEnabled === false) {
     return <ScopedNavigate to={routePaths.servers} replace />;
   }
@@ -1779,8 +1850,14 @@ function SwarmsRouteContent() {
     return null;
   }
 
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
-    return <ActiveBillingUpsellGate />;
+  // Guests stop here. `null` means the viewer is a signed-in member.
+  //
+  // This is ABOVE the invitee-guest notice below on purpose: the two "guests"
+  // are different populations. This one has no account at all; that one is a
+  // signed-in person holding project role `guest`, who needs to be told to ask
+  // an admin, not to sign up for an account they already have.
+  if (gate) {
+    return gate;
   }
 
   // Wait for WorkOS before choosing signed-in gate vs anonymous fallthrough,
@@ -1844,6 +1921,7 @@ function SwarmsRouteContent() {
     <SwarmsTab
       key={convexProjectId ?? "no-project"}
       projectId={convexProjectId}
+      organizationId={activeProject?.organizationId}
       isAuthenticated={isAuthenticated}
       swarmId={swarmId}
       createFlow={createFlow}
@@ -2991,7 +3069,11 @@ export default function App() {
       !!readPersistedCheckoutIntent() &&
       !!readBillingSignInReturnPath() &&
       !workOsUser;
-    if (isBillingReturnWaitingForWorkOs) return;
+    // Convex can still be authenticated as a guest while AuthKit settles.
+    // Preserve the scenario destination until the account sign-in completes.
+    const isScenarioReturnWaitingForWorkOs =
+      !!readScenarioSignInReturnPath() && (!workOsUser || isWorkOsLoading);
+    if (isBillingReturnWaitingForWorkOs || isScenarioReturnWaitingForWorkOs) return;
 
     // Select the return exactly once after AuthKit + Convex auth settle. A
     // project-scoped return stays on `/callback` until the database user and
@@ -3333,11 +3415,19 @@ export default function App() {
     !isHostedChatRoute &&
     isHostedDefaultRoute &&
     hostedShellGateState === "auth-loading";
+  // Auth is done and nobody is signed in: the guest was refused, its
+  // bootstrap ran out of retries, or its token was rejected. None of these
+  // resolve on their own, and the first-run redirect needs `isAuthenticated`,
+  // so there is nothing to wait for — holding here only hides the sign-in
+  // banner behind a spinner that never ends.
+  const isSettledSignedOut =
+    !isWorkOsLoading && !workOsUser && !isAuthLoading && !isAuthenticated;
   const shouldHoldHostedHomeRouteForAppReady =
     HOSTED_MODE &&
     !isHostedChatRoute &&
     activeTab === "home" &&
     effectiveHostedShellGateState === "ready" &&
+    !isSettledSignedOut &&
     (isAuthLoading ||
       !isAuthenticated ||
       isLoadingRemoteProjects ||

@@ -366,12 +366,15 @@ drafts are stable across retries when they are not.
 | `POST .../journeys/generate` | Draft journeys for a persona passed **by value**, so you can draft before you save |
 
 <Warning>
-  The generation routes consume **no credits** — the model cost is on MCPJam.
-  They are still metered two ways, by request COUNT, and the two mean
-  different waits: a per-minute burst brake (`429`, retry in seconds) and your
-  plan's daily generation quota (`429`, resets at UTC midnight). Both normally
-  carry `Retry-After` — honor it rather than guessing, and fall back to your
-  own backoff on the refusal that arrives without one.
+  The generation routes consume **no customer credits** — the model cost is on
+  MCPJam. They are still subject to usage limits, and each limit means a
+  different wait: a per-minute burst brake (`429`, retry in seconds), your
+  organization's daily generation quota (`429`, resets at UTC midnight), and
+  MCPJam's own daily budget for the feature (`429` with
+  `details.code: "platform_capacity"`, resets at UTC midnight). All three carry
+  `Retry-After` — honor it rather than guessing. `details.canTopUp` is `false`
+  on every one: buying credits does not lift them, so do not retry in a loop
+  or switch identities to get around them.
 </Warning>
 
 **Swarms — runs** (`/projects/{projectId}/journeys/{journeyId}/runs`,
@@ -501,6 +504,25 @@ deterministic and free; the insights request runs a model.
 | `DELETE .../user-testing/scenarios/{scenarioId}/insights` | Release a generation stuck `pending`. Takes `windowId` in the body |
 | `POST .../user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss` | Dismiss a finding. Keyed on its stable id, so it stays dismissed when insights regenerate |
 | `POST .../user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss` | Undo that |
+
+The `usage` response includes an `analysis` summary: `total`, `analyzed`,
+`pending`, `running`, `failed`, `skipped`, and `deferred` describe session
+coverage. Failure/skip reasons and `deferredUntil` explain incomplete work;
+`awaitingTaxonomy`, `unassigned`, and `staleAssignments` distinguish catalog
+coverage from extraction. `projectionPending` and `projectionFailed` describe
+the map independently. Reading this response never starts analysis.
+
+Taxonomy entries carry the published version and discovery status. Theme ids
+remain stable across additions and cosmetic renames. An older assignment
+version can still be valid when its theme is unchanged; a retired or replaced
+membership remains visible while cached reassignment completes. These are
+current views with version provenance, not historical traffic snapshots.
+
+Check `scan.truncated` and `analysis.sampled` before interpreting coverage as a
+whole-scope total. Map reads separately expose displayed counts, scope totals,
+sampling, and freshness; a wave's displayed counts cover only its requested
+journey runs. A pending projection contributes to the unmapped count rather
+than a fabricated map node.
 
 The five analytics shapes above are documented as **open objects** on purpose.
 Their upstream projections grow with the product and the SDK types them the

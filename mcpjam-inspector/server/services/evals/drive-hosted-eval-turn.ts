@@ -1,3 +1,5 @@
+import { expandPersistedRequestPayloads } from "@/shared/live-chat-trace";
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { getHostedTurnFailure } from "../../utils/hosted-turn-failure.js";
 import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
 /**
@@ -358,6 +360,7 @@ export interface DriveHostedEvalTurnParams {
      */
     traceMessageHistory: ModelMessage[];
     capturedSpans: EvalTraceSpan[];
+    requestPayloads?: LiveChatTraceRequestPayloadEntry[];
     /**
      * Wire results, keyed by the `toolCallId` the GRADED call array uses:
      * a matched call under its narrated id, a wire-only call under
@@ -954,6 +957,11 @@ export async function driveHostedEvalTurn(
       : {}),
   });
   acc.capturedSpans.push(...evidence.spans);
+  (acc.requestPayloads ??= []).push(
+    ...expandPersistedRequestPayloads(
+      turnResult.turnTrace?.requestPayloads ?? [],
+    ).map((entry) => ({ ...entry, promptIndex: params.promptIndex })),
+  );
   collectEvidenceResults(acc, evidence);
   // Reconcile accumulated usage to the engine's canonical post-turn total
   // against the pre-turn baseline. The stream runner's `onStepFinish` sink

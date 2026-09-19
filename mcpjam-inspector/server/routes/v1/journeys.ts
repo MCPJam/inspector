@@ -47,6 +47,11 @@
  * These routes are therefore absent from the public OpenAPI spec and excluded
  * from the MCP/agent/workspace catalogs until GA.
  */
+import type {
+  SwarmSessionVerdict,
+  JourneyRunVerdictSummary,
+  SwarmReport,
+} from "@mcpjam/sdk/contract";
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -138,6 +143,8 @@ type JourneyRow = {
 };
 
 type JourneyRunRow = {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   _id: string;
   projectId: string;
   journeyRefId: string;
@@ -186,6 +193,23 @@ type JourneyRunRow = {
 };
 
 type JourneySessionRow = {
+  criteria?: {
+    status: "pending" | "completed" | "failed";
+    generation: number;
+    criterionIds?: string[];
+    results?: {
+      criterionId: string;
+      passed: boolean;
+      status?: "scored" | "error";
+    }[];
+  };
+  verdict?: SwarmSessionVerdict;
+  observations?: Array<{
+    evaluatorId: string;
+    predicateType: string;
+    role: "advisory" | "required";
+    status: "passed" | "failed" | "pending" | "unavailable";
+  }>;
   id: string;
   chatSessionId: string;
   projectId: string;
@@ -235,6 +259,8 @@ function toJourneyRunDto(row: JourneyRunRow) {
     id: row._id,
     projectId: row.projectId,
     journeyId: row.journeyRefId,
+    ...(row.verdictSummary ? { verdictSummary: row.verdictSummary } : {}),
+    ...(row.report ? { report: row.report } : {}),
     // `swarmRunGroupId` upstream. Renamed because the public meaning is "the
     // batch this run was launched with", and every run of a solo relaunch is
     // a wave of one.
@@ -300,6 +326,9 @@ function toJourneySessionDto(row: JourneySessionRow, outcome?: string | null) {
      * A caller that listed a run's sessions could not then look one of them up.
      */
     id: row.id,
+    ...(row.verdict ? { verdict: row.verdict } : {}),
+    ...(row.observations ? { observations: row.observations } : {}),
+    ...(row.criteria ? { criteria: row.criteria } : {}),
     /**
      * The runtime key, kept but named for what it is. It is what the chat
      * transport and the app's own deep links use, so dropping it would strand

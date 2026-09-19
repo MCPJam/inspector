@@ -650,10 +650,18 @@ export function UserTestingTab({
           <h1 className="text-xl font-bold tracking-tight text-foreground">
             User Testing
           </h1>
-          <Button size="sm" onClick={goCreate}>
-            <Plus className="mr-1.5 size-4" />
-            Create new study
-          </Button>
+          {/* Hidden while the list is empty (REEV-6, Vig in review): the
+              empty state below has its own centred button, and two create
+              buttons on one screen is the duplication he flagged. It returns
+              as soon as there is a study to sit beside, because by then the
+              empty state's button is gone. Also hidden while loading, so it
+              does not appear and then vanish for an empty project. */}
+          {scenarios !== undefined && rows.length > 0 ? (
+            <Button size="sm" onClick={goCreate}>
+              <Plus className="mr-1.5 size-4" />
+              Create new study
+            </Button>
+          ) : null}
         </div>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
           Create a study with real users or internal testers, then read what

@@ -1,3 +1,8 @@
+import {
+  isTransientSpendRefusal,
+  humanizeSwarmAttemptError,
+} from "../../../shared/swarm-attempt-error.js";
+import type { SpendRefusal } from "./admission-retry.js";
 import { prepareTargetGrounding } from "./target-grounding";
 import { SwarmSetupError } from "./swarm-setup-turn";
 import { composeAbortSignals } from "@mcpjam/sdk";
@@ -45,6 +50,7 @@ import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
 import { swarmAttemptChatSessionId } from "../../../shared/swarm-session-id.js";
 import {
+  accountLimitCode,
   humanizeSwarmAttemptErrorMessage,
   isAccountLimit,
   MAX_ATTEMPT_ERROR_CHARS,
@@ -146,6 +152,20 @@ async function withArtifactFlushDeadline(
  * project environment (two environments may share a host and still count as
  * two targets). */
 export const MAX_CONCURRENT_TARGETS = 3;
+
+/**
+ * Tool-step cap for one persona turn, pinned by the swarm runner rather than
+ * inherited from the engine's Playground default of 30.
+ *
+ * Every step of a turn resends every tool result the turn has produced, so
+ * steps multiply context, wall clock and cost together. Measured on dev
+ * (2026-09-17): persona turns against the MCPJam server reached 677k to 881k
+ * tokens and 2 to 5 minutes each under the default, and then tripped the
+ * 6-minute turn budget. Ten steps still lets a persona chain several tool
+ * calls per turn while bounding the worst turn to roughly a third of that.
+ * A journey-level knob is deliberately not added yet; this is the default.
+ */
+export const SWARM_PERSONA_TURN_MAX_STEPS = 10;
 /** @deprecated Renamed {@link MAX_CONCURRENT_TARGETS} (targets ≠ hosts once
  * environments land). Kept for existing tests/imports. */
 export const MAX_CONCURRENT_HOSTS = MAX_CONCURRENT_TARGETS;
@@ -329,13 +349,18 @@ function terminalForOutcome(
   // JSON body — unreadable, and it embeds the deployment URL. The stored field
   // is specified as a human string that is never a raw provider payload, so
   // the humanizer runs HERE, at the producer, not at every render site.
-  const safeMessage = errorMessage
-    ? humanizeSwarmAttemptErrorMessage(errorMessage)
+  const info = errorMessage
+    ? humanizeSwarmAttemptError(errorMessage)
     : undefined;
+  const safeMessage = info?.message;
   if (outcome === "rate_limited") {
     return {
       status: "rate_limited",
-      errorCode: "rate_limited",
+      // Keep MCPJam's own denial code (`user_rate_limit`, …) when the raw
+      // message carries one. The humanized sentence has dropped it, and a bare
+      // `rate_limited` reads to the run screen as the user's PROVIDER
+      // throttling their key — naming Anthropic for MCPJam's daily limit.
+      errorCode: accountLimitCode(errorMessage) ?? "rate_limited",
       ...(safeMessage ? { errorMessage: safeMessage } : {}),
     };
   }
@@ -347,7 +372,7 @@ function terminalForOutcome(
   // `succeeded` terminal, which must carry the claim's chatSessionId).
   return {
     status: "failed",
-    errorCode: errorReason ?? "session_failed",
+    errorCode: errorReason ?? info?.code ?? "session_failed",
     ...(safeMessage ? { errorMessage: safeMessage } : {}),
   };
 }
@@ -374,7 +399,11 @@ function terminalForOutcome(
  */
 export function classifyRateLimit(
   message: string | undefined,
-): "org_spend_cap" | "provider_rate_limit" {
+  hint?: SpendRefusal,
+): "org_spend_cap" | "provider_rate_limit" | "transient_capacity" {
+  const refusal = hint ?? humanizeSwarmAttemptError(message);
+  if (isTransientSpendRefusal(refusal.code, refusal.refusalReason))
+    return "transient_capacity";
   if (!message) return "provider_rate_limit";
   if (isAccountLimit(message)) return "org_spend_cap";
   if (/\bspend\b|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
@@ -986,7 +1015,7 @@ async function runJourneyFanOut(
             emit({
               type: "attempt_status",
               status: "failed",
-              errorMessage: message.slice(0, MAX_ATTEMPT_ERROR_CHARS),
+              errorMessage: humanizeSwarmAttemptErrorMessage(message),
             });
             await reportAttempt(convexHttpUrl, bearer, {
               projectId,
@@ -997,7 +1026,7 @@ async function runJourneyFanOut(
               status: "failed",
               chatSessionId,
               errorCode: "sandbox_unavailable",
-              errorMessage: message.slice(0, MAX_ATTEMPT_ERROR_CHARS),
+              errorMessage: humanizeSwarmAttemptErrorMessage(message),
             }).catch((err) => {
               logger.error(
                 "[swarm.runner] failed to report sandbox-unavailable terminal",
@@ -1071,9 +1100,8 @@ async function runJourneyFanOut(
               const failure = {
                 status: "failed" as SwarmAttemptStatus,
                 errorCode: provisioned.code,
-                errorMessage: provisioned.message.slice(
-                  0,
-                  MAX_ATTEMPT_ERROR_CHARS,
+                errorMessage: humanizeSwarmAttemptErrorMessage(
+                  provisioned.message,
                 ),
               };
               emit({
@@ -1133,13 +1161,13 @@ async function runJourneyFanOut(
         // personal computer.
         const harnessBlockedReason = !harnessNeedsBox
           ? undefined
-          : (harnessTargetBlockedReason ??
+          : harnessTargetBlockedReason ??
             (attemptSandbox
               ? undefined
               : "This session could not get a disposable sandbox for its " +
                 `${target.harness} harness. A swarm harness never falls back ` +
                 "to the launcher's shared project computer, so this session " +
-                "cannot run."));
+                "cannot run.");
 
         try {
           // Execute the session via the shared core. It owns manager lifecycle +
@@ -1157,6 +1185,7 @@ async function runJourneyFanOut(
               modelDefinition,
               systemPrompt: target.systemPrompt,
               temperature: target.temperature,
+              maxSteps: SWARM_PERSONA_TURN_MAX_STEPS,
               requireToolApproval: target.requireToolApproval,
               respectToolVisibility: target.respectToolVisibility,
               progressiveToolDiscovery: target.progressiveToolDiscovery,
@@ -1271,7 +1300,8 @@ async function runJourneyFanOut(
               });
             },
           });
-          const { outcome, errorMessage, errorReason } = sessionResult;
+          const { outcome, errorMessage, errorReason, errorRefusal } =
+            sessionResult;
 
           // The core has persisted its partial transcript before returning.
           // Convex already settled the attempts; do not replace that outcome
@@ -1386,8 +1416,8 @@ async function runJourneyFanOut(
           // their keep; grading only the happy path would blind the scorecard
           // to the sessions worth looking at. Skipped only when the run has no
           // rubric or when there is no session to read a transcript from —
-          // a `rate_limited` attempt never produced one.
-          if (hasRubric && terminal.status !== "rate_limited") {
+          // The claim refuses empty transcripts; mid-conversation rate limits still grade.
+          if (hasRubric) {
             try {
               const graded = await runSwarmChecks({
                 convexHttpUrl,
@@ -1450,7 +1480,7 @@ async function runJourneyFanOut(
             !abortedBySpendCap &&
             isAccountLimit(errorMessage, errorReason);
           if (outcome === "rate_limited" || accountLimitFailure) {
-            const cause = classifyRateLimit(errorMessage);
+            const cause = classifyRateLimit(errorMessage, errorRefusal);
             if (cause === "org_spend_cap") {
               // WHOLE-RUN stop: halt all hosts + cancel in-flight turns. The
               // finalize sweep runs once the pool drains.
@@ -1483,6 +1513,9 @@ async function runJourneyFanOut(
               { convexHttpUrl, bearer, projectId, runId, target },
               sessionIdx + 1,
               sessionsPerTarget,
+              cause === "transient_capacity"
+                ? humanizeSwarmAttemptErrorMessage(errorMessage)
+                : undefined,
             );
             return;
           }
@@ -1873,6 +1906,7 @@ async function markRemainingTargetAttemptsRateLimited(
   },
   fromIdx: number,
   toIdx: number,
+  transientMessage?: string,
 ): Promise<void> {
   const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
   const { hostId, targetId } = target;
@@ -1900,7 +1934,8 @@ async function markRemainingTargetAttemptsRateLimited(
         sessionIdx,
         status: "rate_limited",
         chatSessionId,
-        errorCode: "rate_limited",
+        errorCode: transientMessage ? "user_rate_limit" : "rate_limited",
+        ...(transientMessage ? { errorMessage: transientMessage } : {}),
       });
     } catch (err) {
       logger.warn(

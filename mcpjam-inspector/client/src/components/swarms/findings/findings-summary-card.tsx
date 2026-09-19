@@ -1,20 +1,16 @@
 /**
- * The summary card at the top of the Findings tab: kicker, the deterministic
- * summary, then honesty footnote chips. Layout matches the Paper findings mock
- * — a light card with accent orbs on the right. The orbs use the `primary`
- * role token; literal hex is forbidden by AGENTS.md.
+ * The summary card at the top of the Findings tab: kicker, one headline, then
+ * honesty footnote chips. Layout matches the Paper findings mock — a light
+ * card with accent orbs on the right. The orbs use the `primary` role token;
+ * literal hex is forbidden by AGENTS.md.
  *
- * The summary arrives as SENTENCES and renders as ONE PARAGRAPH.
- *
- * It still needs to name the goal, the persona, the stage and the feeling, so
- * the composers keep producing those as separate strings — each one is tested
- * on its own, and a joined blob would be far harder to assert against. The
- * joining happens here, at the presentation layer, because that is what it is:
- * Vignesh asked for one flowing paragraph rather than the stacked lines this
- * card used to render (standup, 2026-09-12).
+ * The template arrives as SENTENCES and joins into ONE PARAGRAPH. Lane A's
+ * suggested fix, when present, takes that headline slot — the template is
+ * what the card says when there is no model line to promote.
  */
 
 import { SectionLabel } from "@/components/shared/section-label";
+import { FindingText } from "@/components/shared/actionable-insights/finding-text";
 
 export function FindingsSummaryCard({
   sessionCount,
@@ -25,14 +21,7 @@ export function FindingsSummaryCard({
   sessionCount: number;
   /** 1–4 sentences, joined into one paragraph here. */
   summary: readonly string[];
-  /**
-   * Lane A's one-line suggested fix, BELOW the summary and in a quieter face.
-   *
-   * It is not the headline and must not become one: the summary answers what
-   * happened (which goal, whose, which stage, how it felt) from counts, and
-   * this answers what to change, from a model. Replacing one with the other
-   * loses the four answers the card exists to give.
-   */
+  /** Lane A's suggested fix. When set, it is the headline. */
   recommendation?: string | null;
   footnotes: readonly string[];
 }) {
@@ -43,6 +32,7 @@ export function FindingsSummaryCard({
     .map((sentence) => sentence.trim())
     .filter(Boolean)
     .join(" ");
+  const headline = recommendation?.trim() || paragraph;
 
   return (
     <section
@@ -77,20 +67,9 @@ export function FindingsSummaryCard({
             className="mt-1.5 text-pretty text-2xl font-semibold leading-[1.25] tracking-[-0.02em] text-foreground"
             data-testid="findings-headline"
           >
-            {paragraph}
+            <FindingText text={headline} />
           </p>
         </div>
-        {recommendation ? (
-          <p
-            className="mt-3 max-w-md text-[13px] leading-snug text-muted-foreground"
-            data-testid="findings-recommendation"
-          >
-            <span className="font-semibold text-foreground">
-              Suggested fix:
-            </span>{" "}
-            {recommendation}
-          </p>
-        ) : null}
         {footnotes.length > 0 ? (
           <div
             className="mt-4 flex flex-wrap gap-1.5"

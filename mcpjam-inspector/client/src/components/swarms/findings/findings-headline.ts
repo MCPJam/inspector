@@ -17,6 +17,10 @@
  * Chen left frustrated"); a persona never fails.
  */
 
+import {
+  SWARM_FINDING_COVERAGE_NOTE_LABELS,
+  type SwarmJourneyFindings,
+} from "@mcpjam/sdk/contract";
 import type { SwarmWaveSignals } from "@/lib/swarm-api";
 import {
   JOURNEY_STAGES,
@@ -94,6 +98,27 @@ export function shortenGoalTitle(
   return `${words.slice(0, maxWords).join(" ")}…`;
 }
 
+/**
+ * Lane A's wave summary, only when a model actually narrated something.
+ *
+ * A wave with no mined candidates completes WITHOUT calling a model: the
+ * backend stores fixed prose ("No anomalies concentrated along any dimension
+ * of this wave.") with `candidates: []`. Promoted to the headline, that prose
+ * replaced a deterministic summary saying every graded session failed. Gate on
+ * `candidates`, never on the sentence, which will be reworded.
+ */
+export function narratedWaveSummary(
+  status: string | null | undefined,
+  insights:
+    | { summary?: string | null; candidates?: readonly unknown[] | null }
+    | null
+    | undefined,
+): string | null {
+  if (status !== "completed" || !insights) return null;
+  if ((insights.candidates?.length ?? 0) === 0) return null;
+  return insights.summary?.trim() || null;
+}
+
 function firstSentence(text: string): string {
   const trimmed = text.trim();
   const end = trimmed.search(/[.!?](\s|$)/);
@@ -165,7 +190,12 @@ function feelingLine(persona: PersonaFindingsModel): string | null {
  * can improve on, because there is no session for a model to have read.
  */
 export type FindingsSummaryKind =
-  "not_launched" | "broken" | "friction" | "landed" | "ungraded";
+  | "not_launched"
+  | "broken"
+  | "friction"
+  | "landed"
+  | "ungraded"
+  | "unread";
 
 export interface FindingsSummary {
   lines: string[];
@@ -213,8 +243,7 @@ function composeLines(
   if (
     opts.terminal === true &&
     launch.total > 0 &&
-    launch.succeeded === 0 &&
-    launch.failed + launch.rateLimited > 0
+    model.neverLaunched === true
   ) {
     if (launch.failed > 0) {
       lines.push(
@@ -301,7 +330,9 @@ function composeLines(
     return { lines, kind: "friction" };
   }
 
-  const landedGoals = goals.filter((goal) => goal.sentiment.label === "Landed");
+  // Tone, not the label: the legacy derivation says "Landed" and the shared
+  // contract says "Relieved" for the same met goal.
+  const landedGoals = goals.filter((goal) => goal.sentiment.tone === "ok");
   if (landedGoals.length > 0) {
     const personaCount = model.personas.length;
     lines.push("Every graded goal landed.");
@@ -356,16 +387,19 @@ export function deriveHonestyFootnotes(args: {
   hasGroupId: boolean;
   /** Wave launch outcomes. Absent on callers that predate the launch chips. */
   launch?: LaunchTotals;
-  /** The card is showing a model-written summary rather than the template. */
-  generatedSummary?: boolean;
+  narration?: SwarmNarration;
 }): string[] {
-  const { signals, hasGroupId, launch, generatedSummary } = args;
+  const { signals, hasGroupId, launch } = args;
   const notes: string[] = [];
+  if (args.narration?.modelRan === false)
+    notes.push(
+      `No model narration, ${Math.max(0, args.narration.sessionCount - args.narration.unanalyzedSessionCount)} of ${args.narration.sessionCount} sessions covered by deterministic checks only`,
+    );
   if (!signals || !hasGroupId) {
     // Legacy wave (or a backend that has not answered): the deterministic
     // detector lane never ran, so the tab is rubric findings only.
     notes.push(
-      "Rubric findings only — deterministic signals unavailable for this wave",
+      "Evaluator findings only — deterministic signals unavailable for this wave",
     );
   } else {
     if (!signals.terminal) {
@@ -378,25 +412,116 @@ export function deriveHonestyFootnotes(args: {
       notes.push("Most sessions are unanalyzed — treat counts as partial");
     }
   }
-  // Partial launch. A wave where NOTHING launched says so in the summary
-  // itself, so a chip there would only repeat it; this is the mixed case,
-  // where the findings below silently cover fewer sessions than the header
-  // counts.
-  if (launch && launch.succeeded > 0) {
-    if (launch.failed > 0) {
-      notes.push(
-        `${launch.failed} of ${launch.total} sessions failed to launch; findings cover the sessions that ran`,
-      );
-    }
-    if (launch.rateLimited > 0) {
-      notes.push(`${plural(launch.rateLimited, "session")} rate limited`);
-    }
-  }
-  // The recommendation line is the only model-written text on this tab. Say
-  // so: the summary above it and every stage row below it are deterministic
-  // templates over counts.
-  if (generatedSummary) {
-    notes.push("Suggested fix is model-written — the findings are not");
+  // Partial launch. Failed-to-launch counts used to chip here; they repeated
+  // the header tally and are gone. Rate-limits stay — those do not already
+  // have a sentence on the card.
+  if (launch && launch.succeeded > 0 && launch.rateLimited > 0) {
+    notes.push(`${plural(launch.rateLimited, "session")} rate limited`);
   }
   return notes;
+}
+
+export type SwarmNarration = {
+  modelRan: boolean;
+  sessionCount: number;
+  unanalyzedSessionCount: number;
+};
+/**
+ * What the footnote needs to know about Lane A. `modelRan` uses the SAME gate
+ * as {@link narratedWaveSummary}, so the headline and the footnote can never
+ * disagree about whether a model wrote anything. Undefined until the analysis
+ * completes: a pending or failed analysis is not evidence that no model ran.
+ */
+export function waveNarration(
+  status: string | null | undefined,
+  insights:
+    | {
+        summary?: string | null;
+        candidates?: readonly unknown[] | null;
+        sessionCount?: number;
+        unanalyzedSessionCount?: number;
+      }
+    | null
+    | undefined,
+): SwarmNarration | undefined {
+  if (status !== "completed" || !insights) return undefined;
+  return {
+    modelRan: narratedWaveSummary(status, insights) !== null,
+    sessionCount: insights.sessionCount ?? 0,
+    unanalyzedSessionCount: insights.unanalyzedSessionCount ?? 0,
+  };
+}
+const WIRE_SUMMARY_KIND: Record<
+  SwarmJourneyFindings["summaryKind"],
+  FindingsSummaryKind
+> = {
+  notLaunched: "not_launched",
+  broken: "broken",
+  friction: "friction",
+  landed: "landed",
+  ungraded: "ungraded",
+  unread: "unread",
+};
+
+function genericWireLine(wire: SwarmJourneyFindings): string {
+  switch (wire.summaryKind) {
+    case "notLaunched":
+      return "No sessions launched.";
+    case "broken":
+      return "Some goals were blocked.";
+    case "friction":
+      return "Goals were met with friction.";
+    case "landed":
+      return "The measured goals were met.";
+    case "ungraded":
+      return "No graded outcome is available.";
+    case "unread":
+      return `${wire.population.read} of ${wire.population.started} sessions were read.`;
+  }
+}
+
+/**
+ * The summary for a run the shared findings pipeline published. The KIND is
+ * the producer's; the SENTENCES come from the same composer the legacy path
+ * uses, fed the wire-derived model, so both paths name the goal, the persona
+ * and the stage. When that composer lands on a different kind (a blocked goal
+ * the chain never located, say) the goal and persona are still named from the
+ * wire, and only a model with no personas falls back to a generic sentence.
+ */
+export function composeWireFindingsSummary(
+  wire: SwarmJourneyFindings,
+  model: SwarmFindingsModel,
+  opts: { terminal: boolean | null },
+): FindingsSummary {
+  const kind = WIRE_SUMMARY_KIND[wire.summaryKind];
+  // Unread: the counts ARE the finding. The coverage notes ride as footnotes.
+  if (kind === "unread" || model.personas.length === 0) {
+    return { kind, lines: [genericWireLine(wire)] };
+  }
+  const composed = composeFindingsSummary(model, {
+    terminal: kind === "not_launched" ? true : opts.terminal,
+  });
+  if (composed.kind === kind) return composed;
+  if (kind === "broken" || kind === "friction") {
+    const tone = kind === "broken" ? "fail" : "warn";
+    for (const persona of model.personas) {
+      const goal = persona.goals.find((g) => g.sentiment.tone === tone);
+      if (!goal) continue;
+      const title = shortenGoalTitle(goal.title);
+      const lines = [
+        kind === "broken"
+          ? `"${title}" broke for ${persona.name}.`
+          : `"${title}" showed friction for ${persona.name}.`,
+      ];
+      const feeling = feelingLine(persona);
+      if (feeling) lines.push(feeling);
+      return { kind, lines: lines.map((line) => limitWords(line)) };
+    }
+  }
+  return { kind, lines: [genericWireLine(wire)] };
+}
+export function wireFindingsFootnotes(wire: SwarmJourneyFindings): string[] {
+  return wire.coverageNotes.map(
+    (note) => SWARM_FINDING_COVERAGE_NOTE_LABELS[note],
+  );
 }

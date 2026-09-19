@@ -20,6 +20,31 @@
  */
 import type { InsightsFindingProvenance } from "@/lib/insights-envelope-api";
 
+/** Absent on older results; a missing history is never described as a new issue. */
+export function recurrenceLine(
+  provenance: InsightsFindingProvenance | null,
+): string | null {
+  const history = provenance?.recurrence;
+  if (
+    !history ||
+    !Number.isInteger(history.occurrences) ||
+    !Number.isInteger(history.analyzedRuns) ||
+    history.occurrences < 1 ||
+    history.analyzedRuns < history.occurrences ||
+    !Number.isFinite(history.firstSeenAt)
+  )
+    return null;
+  const date = new Date(history.firstSeenAt);
+  if (Number.isNaN(date.getTime())) return null;
+  const first = date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+  return `Seen in ${history.occurrences} of this suite’s last ${history.analyzedRuns} analyzed runs, first on ${first}.`;
+}
+
 export type FindingView = "deterministic" | "ai";
 
 export type ProseSource = "deterministic" | "ai" | "unknown";
@@ -79,7 +104,9 @@ export function verificationLine(
       : null,
     verification.unchecked > 0 ? `${verification.unchecked} not checked` : null,
   ].filter(Boolean);
-  return `Verified ${verification.confirmed} of ${verification.proposed} proposed trials (${parts.join(", ")}); only verified trials are counted.`;
+  return `Verified ${verification.confirmed} of ${
+    verification.proposed
+  } proposed trials (${parts.join(", ")}); only verified trials are counted.`;
 }
 
 /** A one-line rendering of recorded judge coverage. */

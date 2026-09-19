@@ -1,3 +1,18 @@
+import type {
+  SwarmJourneyFinding,
+  SwarmJourneyFindings,
+  SwarmJourneyFindingsJob,
+} from "../contract/swarm-finding.js";
+export type PlatformSwarmJourneyFinding = SwarmJourneyFinding;
+export type PlatformSwarmJourneyFindings = SwarmJourneyFindings;
+export type PlatformSwarmJourneyFindingsJob = SwarmJourneyFindingsJob;
+export type { SwarmJourneyFindingsJob };
+
+import type {
+  SwarmSessionVerdict,
+  JourneyRunVerdictSummary,
+  SwarmReport,
+} from "../contract/index.js";
 import type { CaseJudgeSettings } from "../contract/judge-settings.js";
 import type {
   JudgeRubric,
@@ -1125,7 +1140,8 @@ export interface PlatformEvalRunJudgeState {
   threshold: number | null;
 }
 
-export interface PlatformEvalRunGoalCompletionJudge extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGoalCompletionJudge
+  extends PlatformEvalRunJudgeState {
   progress?: {
     total: number;
     completed: number;
@@ -1169,7 +1185,8 @@ export interface PlatformEvalRunJudgeCase {
   reason: string | null;
 }
 
-export interface PlatformEvalRunGoalCompletionCase extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGoalCompletionCase
+  extends PlatformEvalRunJudgeCase {
   status?: "scored" | "error" | "skipped";
   gradingKey?: string;
   errorCode?: string;
@@ -1753,7 +1770,8 @@ export interface PlatformEvalSuiteSettingsBase {
 }
 
 /** A suite's settings as vocabulary 1 (no header) spells them. */
-export interface PlatformEvalSuiteSettings extends PlatformEvalSuiteSettingsBase {
+export interface PlatformEvalSuiteSettings
+  extends PlatformEvalSuiteSettingsBase {
   checks: PublicCheck[];
   /**
    * Suite defaults a case inherits under policy 2. Present only with
@@ -3566,6 +3584,8 @@ export interface PlatformJourneyRunAttempt {
 }
 
 export interface PlatformJourneyRun {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   id: string;
   projectId: string;
   journeyId: string;
@@ -3615,6 +3635,23 @@ export interface PlatformJourneyRun {
 }
 
 export interface PlatformJourneyRunSession {
+  criteria?: {
+    status: "pending" | "completed" | "failed";
+    generation: number;
+    criterionIds?: string[];
+    results?: {
+      criterionId: string;
+      passed: boolean;
+      status?: "scored" | "error";
+    }[];
+  };
+  verdict?: SwarmSessionVerdict;
+  observations?: Array<{
+    evaluatorId: string;
+    predicateType: string;
+    role: "advisory" | "required";
+    status: "passed" | "failed" | "pending" | "unavailable";
+  }>;
   /**
    * The session's document id — the same value `listChatSessions` returns as
    * `id`, so a session found here can be looked up there.
@@ -3634,7 +3671,7 @@ export interface PlatformJourneyRunSession {
   /**
    * ARCHIVAL state (`active` | `archived`) — a run session stays `active`
    * forever unless archived, so this says nothing about how it went. Read
-   * `outcome` for the verdict.
+   * `verdict` for goal grading and execution lifecycle. `outcome` is legacy execution only.
    */
   status: string | null;
   /**
@@ -4283,7 +4320,9 @@ export interface PlatformActionableFinding {
  * `unavailable`.
  */
 export type PlatformInsightsObservationState =
-  "ready" | "partial" | "unavailable";
+  | "ready"
+  | "partial"
+  | "unavailable";
 
 /** Coverage for `currentFindings`, describing its OWN population. */
 export interface PlatformInsightsObservationCoverage {
@@ -4298,6 +4337,15 @@ export interface PlatformInsightsObservationCoverage {
 
 /** Where a finding's observation came from, and how complete it is. */
 export interface PlatformInsightsFindingProvenance {
+  recurrence?: {
+    claimId: string;
+    occurrences: number;
+    analyzedRuns: number;
+    firstSeenAt: number;
+    firstSourceId: string;
+    previousSourceId?: string;
+    novelty: "measured" | "notMeasured";
+  };
   candidateId: string;
   stage?: import("../contract/chain.js").UserValueStage;
   reason?: import("../contract/stage-derivation.js").StageReason;
@@ -4414,6 +4462,8 @@ export interface PlatformEvalFindingsAnalysis {
   models: string[];
   completeness: {
     iterationReports: number;
+    embedded?: number;
+    unindexed?: number;
     total: number;
     missingTraces: number;
   };
@@ -4465,6 +4515,8 @@ export interface PlatformUnifiedFindings {
 }
 
 export interface PlatformInsightsEnvelope {
+  journeyFindings?: PlatformSwarmJourneyFindings | null;
+  journeyFindingsJob?: PlatformSwarmJourneyFindingsJob | null;
   schemaVersion: 1;
   scope: PlatformInsightScope;
   status: PlatformInsightsStatus;

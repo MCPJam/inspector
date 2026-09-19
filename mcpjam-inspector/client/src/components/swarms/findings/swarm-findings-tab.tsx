@@ -14,26 +14,38 @@
  * Findings is the DEFAULT landing tab and landing on a tab must never start a
  * billed generation.
  *
- * It renders BESIDE the template, never instead of it. Lane A is prompted for
- * the Insights tab's recommendations rail, so it writes in the voice of a fix
- * ("The main fix is to…") and names no goal, persona or stage — promoting it
- * to the headline deletes the four answers this card owes the reader. It is
- * suppressed entirely on a wave that failed to launch: there is no session for
- * a model to have read, and it will cheerfully report that nothing is wrong.
+ * When present it is the summary headline — Lane A is already prompted as a
+ * suggested fix. It is suppressed entirely on a wave that failed to launch:
+ * there is no session for a model to have read, and it will cheerfully report
+ * that nothing is wrong.
  */
+import { useQuery } from "convex/react";
+import { useEffect, useCallback } from "react";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chain/user-value-chain-types";
+import type {
+  SwarmJourneyFindings,
+  SwarmJourneyFindingsJob,
+} from "@mcpjam/sdk/contract";
+import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
 
 import { useMemo, useState } from "react";
 import type { SwarmWaveSignals } from "@/lib/swarm-api";
 import type { SwarmWave } from "@/components/swarms/swarm-overview-panel";
 import {
   deriveSwarmFindingsModel,
+  deriveSwarmFindingsModelFromWire,
   runIsTerminal,
+  wireRecommendation,
   type FindingsPersonaDoc,
 } from "./findings-derivation";
 import {
   clampNarration,
   composeFindingsSummary,
+  composeWireFindingsSummary,
   deriveHonestyFootnotes,
+  wireFindingsFootnotes,
+  type SwarmNarration,
 } from "./findings-headline";
 import type { JourneyStageId } from "./journey-stages";
 import { SectionLabel } from "@/components/shared/section-label";
@@ -48,6 +60,9 @@ export function SwarmFindingsTab({
   onOpenSession,
   projectId,
   generatedSummary,
+  journeyFindings,
+  journeyFindingsJob,
+  narration,
 }: {
   wave: SwarmWave;
   waveSignals: SwarmWaveSignals | null | undefined;
@@ -56,26 +71,48 @@ export function SwarmFindingsTab({
   projectId?: string;
   /** Lane A's completed wave narration, else null. Never requested here. */
   generatedSummary?: string | null;
+  journeyFindings?: SwarmJourneyFindings | null;
+  journeyFindingsJob?: SwarmJourneyFindingsJob | null;
+  narration?: SwarmNarration;
 }) {
+  const [funnels, setFunnels] = useState<
+    Record<string, ChatSessionStageFunnel | null>
+  >({});
+  const receiveFunnel = useCallback(
+    (id: string, funnel: ChatSessionStageFunnel | null) => {
+      setFunnels((old) =>
+        old[id] === funnel ? old : { ...old, [id]: funnel },
+      );
+    },
+    [],
+  );
   const model = useMemo(
     () =>
-      deriveSwarmFindingsModel({
-        runs: wave.runs,
-        signals: waveSignals,
-        personas,
-      }),
-    [wave.runs, waveSignals, personas],
+      journeyFindings
+        ? deriveSwarmFindingsModelFromWire({
+            journeyFindings,
+            personas,
+            runs: wave.runs,
+          })
+        : deriveSwarmFindingsModel({
+            runs: wave.runs,
+            signals: waveSignals,
+            personas,
+            funnels,
+          }),
+    [wave.runs, waveSignals, personas, funnels, journeyFindings],
   );
   // Signals carry the authoritative answer. A legacy wave has none, so fall
   // back to the runs themselves rather than hiding that the run finished.
+  const terminal = waveSignals
+    ? waveSignals.terminal
+    : wave.runs.every(runIsTerminal);
   const summary = useMemo(
     () =>
-      composeFindingsSummary(model, {
-        terminal: waveSignals
-          ? waveSignals.terminal
-          : wave.runs.every(runIsTerminal),
-      }),
-    [model, waveSignals, wave.runs],
+      journeyFindings
+        ? composeWireFindingsSummary(journeyFindings, model, { terminal })
+        : composeFindingsSummary(model, { terminal }),
+    [model, terminal, journeyFindings],
   );
   // Swarm keys a goal by its run, so the scope is just the project. Memoized
   // because it reaches a query's arguments through the goal inspect panel.
@@ -88,17 +125,25 @@ export function SwarmFindingsTab({
   // whose ten runs all failed to launch — "No anomalies concentrated along any
   // dimension of this wave. Nothing to act on." is exactly the reassurance the
   // reader must not be given.
+  // On the shared-findings path the fix comes from the top verified
+  // mechanism, never from Lane A's wave prose.
   const recommendation =
-    summary.kind === "not_launched" ? null : clampNarration(generatedSummary);
+    summary.kind === "not_launched"
+      ? null
+      : journeyFindings
+        ? wireRecommendation(journeyFindings)
+        : clampNarration(generatedSummary);
   const footnotes = useMemo(
     () =>
-      deriveHonestyFootnotes({
-        signals: waveSignals,
-        hasGroupId: Boolean(wave.runs[0]?.swarmRunGroupId),
-        launch: model.launch,
-        generatedSummary: recommendation !== null,
-      }),
-    [waveSignals, wave.runs, model.launch, recommendation],
+      journeyFindings
+        ? wireFindingsFootnotes(journeyFindings)
+        : deriveHonestyFootnotes({
+            narration,
+            signals: waveSignals,
+            hasGroupId: Boolean(wave.runs[0]?.swarmRunGroupId),
+            launch: model.launch,
+          }),
+    [waveSignals, wave.runs, model.launch, journeyFindings, narration],
   );
 
   // Keyed by name, not index: `deriveSwarmFindingsModel` sorts personas
@@ -137,19 +182,58 @@ export function SwarmFindingsTab({
       ? stageChoice.stage
       : (expandedGoal?.defaultStage ?? "value");
 
+  const jobStatus = journeyFindingsJob &&
+    journeyFindingsJob.status !== "completed" && (
+      <p className="mb-3 text-sm text-muted-foreground">
+        {journeyFindingsJob.status === "pending"
+          ? "Reading session evidence…"
+          : journeyFindingsJob.status === "failed"
+            ? "Session analysis did not complete."
+            : "Session analysis was skipped."}
+      </p>
+    );
+
   if (!persona) {
+    // No persona to show. With a wire payload the summary card still has
+    // something true to say (e.g. "No sessions launched."); without one there
+    // is genuinely nothing here, and an empty card would read as a finding.
+    if (!journeyFindings) {
+      return (
+        <div
+          className="flex h-full flex-col items-center justify-center text-sm text-muted-foreground"
+          data-testid="findings-empty"
+        >
+          {jobStatus}
+          No sessions in this swarm run.
+        </div>
+      );
+    }
     return (
-      <div
-        className="flex h-full items-center justify-center text-sm text-muted-foreground"
-        data-testid="findings-empty"
-      >
-        No sessions in this swarm run.
+      <div data-testid="swarm-findings-tab">
+        {jobStatus}
+        <FindingsSummaryCard
+          sessionCount={model.sessionCount}
+          summary={summary.lines}
+          recommendation={recommendation}
+          footnotes={footnotes}
+        />
       </div>
     );
   }
 
   return (
     <div className="w-full" data-testid="swarm-findings-tab">
+      <ErrorBoundary fallback={null}>
+        {!journeyFindings &&
+          wave.runs.map((run) => (
+            <RunFunnelRead
+              key={run.runId}
+              runId={run.runId}
+              onRead={receiveFunnel}
+            />
+          ))}
+      </ErrorBoundary>
+      {jobStatus}
       <FindingsSummaryCard
         sessionCount={model.sessionCount}
         summary={summary.lines}
@@ -188,6 +272,31 @@ export function SwarmFindingsTab({
         onOpenSession={onOpenSession}
         sessionScope={sessionScope}
       />
+      {projectId && (
+        <ActionableFindings
+          surface={{ kind: "journey_run", projectId, runId: wave.anchor.runId }}
+          context={{ rerunLabel: "this swarm" }}
+          boundaryName="swarm-actionable-findings"
+          onOpenSession={onOpenSession}
+        />
+      )}
     </div>
   );
+}
+
+function RunFunnelRead({
+  runId,
+  onRead,
+}: {
+  runId: string;
+  onRead: (id: string, value: ChatSessionStageFunnel | null) => void;
+}) {
+  const value = useQuery(
+    "chatSessionStageDerivation:getSwarmRunStageFunnel" as never,
+    { journeyRunId: runId } as never,
+  ) as ChatSessionStageFunnel | null | undefined;
+  useEffect(() => {
+    if (value !== undefined) onRead(runId, value);
+  }, [runId, value, onRead]);
+  return null;
 }

@@ -893,6 +893,9 @@ chatV2.post("/", async (c) => {
           // where the client's `readRouteError` looks. Only the access
           // verdicts carry one; every other status keeps the pre-existing
           // shape.
+          if (runtime.code === "SCENARIO_SIGN_IN_REQUIRED") {
+            return c.json({ error: runtime.error, code: runtime.code }, 401);
+          }
           if (runtime.code === "SCENARIO_ACCESS_STALE") {
             return c.json(
               { error: failClosedMessage, code: "SCENARIO_ACCESS_STALE" },
@@ -961,17 +964,30 @@ chatV2.post("/", async (c) => {
     });
     let localBrowserSettingsUnavailable = false;
     if (!HOSTED_MODE && !isScenarioSession && body.browserEngine === "local") {
-      let enabled = typeof hostRuntimeConfig?.localBrowserEnabled === "boolean"
-        ? hostRuntimeConfig.localBrowserEnabled : undefined;
-      if (!hostRuntimeConfig && typeof body.projectId === "string" && body.projectId && c.req.header("authorization") && !isGuestChatRequest(c.req.header("authorization"))) {
+      let enabled =
+        typeof hostRuntimeConfig?.localBrowserEnabled === "boolean"
+          ? hostRuntimeConfig.localBrowserEnabled
+          : undefined;
+      if (
+        !hostRuntimeConfig &&
+        typeof body.projectId === "string" &&
+        body.projectId &&
+        c.req.header("authorization") &&
+        !isGuestChatRequest(c.req.header("authorization"))
+      ) {
         try {
-          enabled = await readLocalBrowserSetting(await getConvexBearerForRequest(c), body.projectId);
+          enabled = await readLocalBrowserSetting(
+            await getConvexBearerForRequest(c),
+            body.projectId,
+          );
         } catch {
           localBrowserSettingsUnavailable = true;
         }
       }
       resolvedExecution.builtInToolIds = resolveLocalBrowserTools(
-        resolvedExecution.builtInToolIds, enabled, true,
+        resolvedExecution.builtInToolIds,
+        enabled,
+        true,
       );
     }
     // Preserve the per-field warnings the inline code emitted — the
@@ -1402,11 +1418,11 @@ chatV2.post("/", async (c) => {
     });
 
     const localBrowserRequested = body.browserEngine === "local";
-    const browserRollout = !localBrowserSettingsUnavailable && resolvedExecution.builtInToolIds?.includes(
-      BROWSER_BUILT_IN_TOOL_ID,
-    )
-      ? await resolveBrowserRollout(c, localBrowserRequested)
-      : { enabled: false, actor: null };
+    const browserRollout =
+      !localBrowserSettingsUnavailable &&
+      resolvedExecution.builtInToolIds?.includes(BROWSER_BUILT_IN_TOOL_ID)
+        ? await resolveBrowserRollout(c, localBrowserRequested)
+        : { enabled: false, actor: null };
     const localBrowserGuestId =
       localBrowserRequested &&
       browserRollout.enabled &&

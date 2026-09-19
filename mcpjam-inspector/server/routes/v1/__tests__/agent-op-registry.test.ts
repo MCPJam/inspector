@@ -1925,7 +1925,7 @@ describe("tier derives from operation.risk", () => {
     // They stay GATED anyway, and the reason is the same for all eight, so it
     // is stated once here: what they consume is a BOUNDED DAILY QUOTA that
     // belongs to the whole organization (the `insightsPerDay` ledger for the
-    // insight ops, the per-project generation quota for the rest). A `direct`
+    // insight ops, the organization's generation quota or MCPJam's daily analysis budget for the rest). A `direct`
     // tool is one an agent may call without asking, and an agent that
     // exhausted today's shared quota on its own initiative would have taken
     // something a person was going to use, with no way to give it back until
@@ -1954,14 +1954,14 @@ describe("tier derives from operation.risk", () => {
         "The authoring model is platform-paid, so risk is none and would " +
         "derive direct. Gated because it PERSISTS generated cases into the " +
         "suite — the one generation op that writes — and because it draws on " +
-        "the project's shared daily generation quota.",
+        "the organization's shared daily generation quota.",
     },
     propose_eval_description_rewrite: {
       tier: "gated",
       reason:
         "Platform-paid, so risk is none. Gated because it persists a " +
-        "proposing experiment row and takes a slice of the shared daily " +
-        "generation quota; a caller that re-proposes in a loop exhausts it.",
+        "proposing experiment row and draws on MCPJam's daily analysis " +
+        "budget; a caller that re-proposes in a loop exhausts it.",
     },
     generate_personas: {
       tier: "gated",
@@ -2174,6 +2174,7 @@ const PROMPT_BEFORE_REGISTRY = [
   "- NEVER invent server names or ids. Call `list_project_servers` first and use exactly what it returns. If no server matches what the user described, ask which server they mean — do not guess and do not fabricate placeholders.",
   "- Before authoring tool-call assertions, check the server's real tool names with `list_server_tools`.",
   "- Author cases as `steps` arrays; prefer a `prompt` step plus `toolCalledWith`-style assertions on the tools the conversation showed. Set `expectedOutput` when the user stated one.",
+  "- For new AI-authored cases, use generate_eval_cases and its spend approval flow. Use create/update case tools only for explicit user payloads or already reviewed drafts. Keep each full workflow as ordered steps.",
   "- When creating a suite, set the suite `model` explicitly to `anthropic/claude-haiku-4.5` unless the user asks for a different model.",
   "- Some actions SPEND the user's quota or credits (running a suite or a case, generating cases, cancelling a run). Calling those tools does NOT perform them: it PROPOSES the action and returns an approval id, and a person must click to confirm. Say that you've proposed it and what it will do. NEVER say it has started, is running, or has been cancelled.",
   "- If a proposal tool is not available to you, you cannot run anything at all. Say so plainly and report the ids the user needs — do not imply you started something.",
@@ -2229,7 +2230,7 @@ const EXPECTED_PROMPT_NOTES = [
   "- `get_client` is the first step of every client edit, not an optional one: `update_client` and `set_client_servers` require the `configId` it returns as `expectedConfigId`, and a rename requires the `name` it returns as `expectedName`.",
   "- To run an eval suite against a specific client/model/computer/skills combination, compose it with `ensure_adhoc_environment` (or `run_eval_suite`'s `compose`) rather than `create_project_environment`. A composed environment is unnamed and deduplicated by content, so repeating the same stack reuses one row instead of littering the project's environment list with throwaway entries. Promote one with `name_environment` only when the user asks to keep it.",
   "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
-  "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again takes another slice of the daily generation quota.",
+  "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again runs another analysis against MCPJam's daily analysis budget.",
   "- `start_eval_description_experiment` launches TWO replayed runs (original + rewrite) and spends eval-iteration credits for both. Poll `get_eval_description_experiment`. Emulated engine only; a harness source is refused.",
   "- `connect_eval_github_repo` affects everyone who opens a pull request on that repository, and `outagePolicy: fail_closed` can block their merges. Ask which policy the user wants — never pick one for them — and check `list_eval_github_repos` first: a repository missing from `connectable` needs the MCPJam GitHub App installed on it, which no tool here can do. `connect_eval_check_repo` and `list_eval_check_repos` are the pre-rename spellings of the same two operations — a `check` there is a GITHUB check, never a case's grading check.",
   "- `call_server_tool` runs a real tool on the user's MCP server, as them, with effects MCPJam cannot undo. Calling it PROPOSES the call; a person approves it. Read the tool's schema from `list_server_tools` first and pass exactly the arguments you mean — the arguments you send are shown to the approver and are what will run, so a placeholder is a lie they will act on. Never call a tool to 'test' or 'see what happens'.",
@@ -2243,6 +2244,7 @@ const EXPECTED_PROMPT_NOTES = [
   "- To explain why a run failed, read `get_journey_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
   "- Launching a journey fans out real model conversations and spends credits for every one. Calling `launch_journey_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_journey`.",
   "- `request_wave_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
+  "- Included operations (generation and insights) can be refused with `RATE_LIMITED`. `canTopUp` is false on those refusals: tell the user when it lifts (`retryAfterSeconds`, or 00:00 UTC for a daily budget), and do not retry sooner, suggest topping up credits, or switch identities to get around it.",
   "- For user testing, read `get_user_testing_metrics` and `list_user_testing_findings` first. They answer how a scenario is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
   "- `get_user_testing_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole scenario.",
   "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",

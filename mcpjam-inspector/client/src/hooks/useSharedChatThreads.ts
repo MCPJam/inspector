@@ -317,6 +317,7 @@ export interface SharedChatTurnTrace {
   };
   spanCount: number;
   modelId?: string;
+  requestPayloadsBlobUrl?: string | null;
   spansBlobUrl?: string | null;
   /** The `webmcp_*` page tools this turn advertised; see `ChatHistoryTurnTrace`. */
   pageToolsAtTurn?: MintedPageToolRecord[];

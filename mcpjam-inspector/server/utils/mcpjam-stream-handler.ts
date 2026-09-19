@@ -1,3 +1,4 @@
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 /**
  * MCPJam Stream Handler
  *
@@ -65,6 +66,7 @@ import {
 import { z } from "zod";
 import {
   hasUnresolvedToolCalls,
+  hasUnresolvedApprovalResponses,
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
 import { isMrtrSuspendSignalShape } from "@/shared/mrtr-continuation";
@@ -314,6 +316,8 @@ import {
   wrapBackendToolsForTrace,
 } from "../services/evals/eval-trace-capture";
 import {
+  capRequestPayloadsForPersist,
+  cloneTraceValue,
   emitRequestPayload,
   emitTraceSnapshot,
   generateLiveTraceTurnId,
@@ -487,6 +491,10 @@ export interface MCPJamStepFinishEvent {
  *     only (anything else that escaped the per-step handlers).
  */
 export interface MCPJamEngineErrorEvent {
+  retryAfterMs?: number;
+  isRetryable?: boolean;
+  refusalReason?: string;
+  outstandingHolds?: number;
   /**
    * Human-readable display message. For site (1) when the body
    * parsed structured, this is `"<error> <details>"`; otherwise the
@@ -593,8 +601,10 @@ export function describeBackendStreamFailure(
   // matter which upstream status was mirrored onto it. The slug still comes
   // from the status so the user-facing copy stays accurate ("the provider
   // rejected the key" IS what happened — it was just our key).
-  if (code === "platform_free_budget_exhausted") return describeAsSlug("provider/mcpjam_platform_budget", detail);
-  if (code === "account_suspended") return describeAsSlug("account/suspended", detail);
+  if (code === "platform_free_budget_exhausted")
+    return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  if (code === "account_suspended")
+    return describeAsSlug("account/suspended", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -641,8 +651,10 @@ export function describeStreamErrorChunkFailure(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
 
-  if (code === "platform_free_budget_exhausted") return describeAsSlug("provider/mcpjam_platform_budget", detail);
-  if (code === "account_suspended") return describeAsSlug("account/suspended", detail);
+  if (code === "platform_free_budget_exhausted")
+    return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  if (code === "account_suspended")
+    return describeAsSlug("account/suspended", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -736,6 +748,13 @@ function applyToolRefresh(
 }
 
 export interface MCPJamHandlerOptions {
+  /** Durable callers must finish this write before the next external effect. */
+  durableCheckpoint?: (state: {
+    phase: "model" | "tools" | "ready" | "complete";
+    messages: ModelMessage[];
+    step: number;
+  }) => Promise<void>;
+  yieldAfterStep?: boolean;
   messages: ModelMessage[];
   modelId: string;
   /**
@@ -1213,6 +1232,7 @@ export interface MCPJamHandlerOptions {
 }
 
 interface StepContext {
+  durableCheckpoint?: MCPJamHandlerOptions["durableCheckpoint"];
   writer: {
     write: (chunk: UIMessageChunk) => void;
   };
@@ -1285,6 +1305,7 @@ interface StepContext {
 type PersistedAssistantPart = TextPart | ToolCallPart | ReasoningUIPart;
 
 interface LiveTraceTurnContext {
+  recordedRequestPayloads: LiveChatTraceRequestPayloadEntry[];
   turnId: string;
   promptIndex: number;
   promptMessageStartIndex: number;
@@ -1543,7 +1564,7 @@ function createClientFinishChunk(
     !Array.isArray(metadata) &&
     usage
       ? { ...metadata, ...usage }
-      : (metadata ?? usage);
+      : metadata ?? usage;
 
   return buildFinishChunk({
     finishReason: source?.finishReason ?? fallbackReason,
@@ -1851,27 +1872,50 @@ function attachedFailureCode(error: unknown): string | undefined {
 function parseEngineErrorBody(
   status: number | undefined,
   bodyText: string,
-): { message: string; code?: string; details?: string } {
-  let code: string | undefined;
+): Pick<
+  MCPJamEngineErrorEvent,
+  | "message"
+  | "code"
+  | "details"
+  | "retryAfterMs"
+  | "isRetryable"
+  | "refusalReason"
+  | "outstandingHolds"
+> {
   try {
     const body = JSON.parse(bodyText) as {
       code?: string;
       error?: string;
       details?: string;
+      retryAfter?: number;
+      isRetryable?: boolean;
+      refusalReason?: string;
+      outstandingHolds?: number;
     };
-    if (body?.error) {
+    if (body && typeof body === "object") {
       return {
-        message: body.details ? `${body.error} ${body.details}` : body.error,
+        message: body.error
+          ? body.details
+            ? `${body.error} ${body.details}`
+            : body.error
+          : `Backend stream error: ${status} ${bodyText}`,
         ...(body.code ? { code: body.code } : {}),
         ...(body.details ? { details: body.details } : {}),
+        ...(typeof body.retryAfter === "number" &&
+        Number.isFinite(body.retryAfter)
+          ? { retryAfterMs: body.retryAfter }
+          : {}),
+        ...(typeof body.isRetryable === "boolean"
+          ? { isRetryable: body.isRetryable }
+          : {}),
+        ...(typeof body.refusalReason === "string"
+          ? { refusalReason: body.refusalReason }
+          : {}),
+        ...(typeof body.outstandingHolds === "number"
+          ? { outstandingHolds: body.outstandingHolds }
+          : {}),
       };
     }
-    // Bodies without an `error` field can still carry a machine-readable
-    // `code` — the spend-precheck denial is `{ok:false, code:"user_rate_limit",
-    // isRetryable, retryAfter}` (issue #3708). Surface it alongside the
-    // generic message so consumers (agent route's rate-limit mapping) can
-    // branch on `code` instead of regexing the raw body text.
-    code = typeof body?.code === "string" ? body.code : undefined;
   } catch {
     // body wasn't JSON — fall through to generic shape
   }
@@ -1880,7 +1924,6 @@ function parseEngineErrorBody(
       status !== undefined
         ? `Backend stream error: ${status} ${bodyText}`
         : bodyText,
-    ...(code ? { code } : {}),
   };
 }
 
@@ -2000,9 +2043,9 @@ async function processStream(
           ? parseErr
           : new Error(
               typeof parseErr === "object" &&
-                parseErr !== null &&
-                "message" in parseErr &&
-                typeof (parseErr as { message?: unknown }).message === "string"
+              parseErr !== null &&
+              "message" in parseErr &&
+              typeof (parseErr as { message?: unknown }).message === "string"
                 ? (parseErr as { message: string }).message
                 : "stream parse failed",
             );
@@ -2336,7 +2379,7 @@ async function emitToolResults(
             ("structuredContent" in rawResult ||
               isModelVisibleImageOutput(part.output))
               ? rawResult
-              : (part.output ?? rawResult);
+              : part.output ?? rawResult;
 
           let outputForUi: unknown = rawOutput;
           if (rawOutput && typeof rawOutput === "object") {
@@ -2349,8 +2392,7 @@ async function emitToolResults(
                 : {};
             const toolMeta =
               serverId && toolName
-                ? (mcpClientManager.getAllToolsMetadata(serverId)[toolName] ??
-                  {})
+                ? mcpClientManager.getAllToolsMetadata(serverId)[toolName] ?? {}
                 : {};
 
             // Include descriptor metadata in streamed output so shared/minimal chat
@@ -2908,7 +2950,7 @@ async function processOneStep(
       .filter((pair): pair is [string, unknown] => pair !== null),
   ) as ToolSet;
 
-  emitRequestPayload(writer, {
+  const requestPayloadEntry: LiveChatTraceRequestPayloadEntry = {
     turnId: traceTurn.turnId,
     promptIndex: traceTurn.promptIndex,
     stepIndex,
@@ -2917,7 +2959,9 @@ async function processOneStep(
       tools: toolsForPayload,
       messages: scrubbedMessages,
     }),
-  });
+  };
+  traceTurn.recordedRequestPayloads.push(cloneTraceValue(requestPayloadEntry));
+  emitRequestPayload(writer, requestPayloadEntry);
 
   // Call the Convex streaming endpoint. The default endpoint is /stream
   // (MCPJam-provided models); org BYOK chat targets /stream/org and adds
@@ -2947,6 +2991,13 @@ async function processOneStep(
     }
   }
   Object.assign(convexHeaders, guestIpForwardHeaders(ipHash));
+  // Sponsored study inference must come through the trusted execution path
+  // that resolves the study's model and tools. This proof is required even
+  // when there is no client IP to forward. The viewer bearer remains intact.
+  const scenarioServiceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
+  if (scenarioId && scenarioServiceToken) {
+    convexHeaders["x-inspector-service-token"] = scenarioServiceToken;
+  }
   let res: Response;
   // Everything above this line is ours; everything at or below it is the
   // model's turn. Marked HERE, at the handover, not once a response comes
@@ -3002,7 +3053,11 @@ async function processOneStep(
   // unguarded `.get` throws a TypeError that the outer catch converts into a
   // failed turn (7 evals-runner / runner-parity tests).
   if (res.headers?.get("x-mcpjam-platform-paid-fallback") === "1") {
-    writer.write({ type: "data-platform-paid-fallback", data: { usingCredits: true }, transient: true });
+    writer.write({
+      type: "data-platform-paid-fallback",
+      data: { usingCredits: true },
+      transient: true,
+    });
   }
   const isJsonDenial =
     res.ok &&
@@ -3120,7 +3175,7 @@ async function processOneStep(
       });
     }
     safelyEmitEngineError(onEngineError, {
-      message: parsed.message,
+      ...parsed,
       ...(parsed.code ? { code: parsed.code } : {}),
       ...(parsed.details ? { details: parsed.details } : {}),
       httpStatus: res.status,
@@ -3168,6 +3223,12 @@ async function processOneStep(
       content: contentParts,
     } as ModelMessage);
   }
+  if (contentParts.length > 0)
+    await ctx.durableCheckpoint?.({
+      phase: "tools",
+      messages: messageHistory,
+      step: stepIndex,
+    });
 
   const stepMessageEndIndex =
     messageHistory.length > traceTurn.promptMessageStartIndex
@@ -3983,6 +4044,7 @@ export async function runChatEngineLoop(
   // three must reach the same answer about the same call — once.
   const approvalDecisions = createApprovalDecisionCache();
   const traceTurn: LiveTraceTurnContext = {
+    recordedRequestPayloads: [],
     turnId: generateLiveTraceTurnId(),
     promptIndex: getPromptIndex(messageHistory),
     promptMessageStartIndex: getPromptMessageStartIndex(messageHistory),
@@ -4077,28 +4139,25 @@ export async function runChatEngineLoop(
     // surface as user-visible failures.
     const startHeartbeat = () => {
       if (resolvedHeartbeatMs <= 0) return;
-      heartbeatTimer = setInterval(
-        () => {
-          if (streamClosed || aborted) return;
-          const sinceLastWrite = Date.now() - lastWriteAt;
-          if (sinceLastWrite < resolvedHeartbeatMs) return;
-          try {
-            writeTraceEvent(safeWriter, {
-              type: "heartbeat",
-              turnId: traceTurn.turnId,
-              promptIndex: traceTurn.promptIndex,
-            });
-          } catch (error) {
-            // Should not happen — safeWriter swallows write errors —
-            // but a final guard here keeps a misbehaving writeTraceEvent
-            // from killing the loop.
-            logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-        },
-        Math.max(250, Math.floor(resolvedHeartbeatMs / 2)),
-      );
+      heartbeatTimer = setInterval(() => {
+        if (streamClosed || aborted) return;
+        const sinceLastWrite = Date.now() - lastWriteAt;
+        if (sinceLastWrite < resolvedHeartbeatMs) return;
+        try {
+          writeTraceEvent(safeWriter, {
+            type: "heartbeat",
+            turnId: traceTurn.turnId,
+            promptIndex: traceTurn.promptIndex,
+          });
+        } catch (error) {
+          // Should not happen — safeWriter swallows write errors —
+          // but a final guard here keeps a misbehaving writeTraceEvent
+          // from killing the loop.
+          logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }, Math.max(250, Math.floor(resolvedHeartbeatMs / 2)));
     };
 
     // External abort listener: marks `aborted` so downstream catch
@@ -4157,6 +4216,13 @@ export async function runChatEngineLoop(
       // approve path ships a tool-result instead), and the turn hung forever.
       // A history that carries an approval request is the only fact that
       // matters, and it is a fact this function can read for itself.
+      if (options.durableCheckpoint && hasUnresolvedApprovalResponses(messageHistory)) {
+        await options.durableCheckpoint({
+          phase: "tools",
+          messages: messageHistory,
+          step: effectiveSteps(),
+        });
+      }
       await handlePendingApprovals(
         safeWriter,
         messageHistory,
@@ -4248,7 +4314,13 @@ export async function runChatEngineLoop(
 
       while (!mrtrPaused && effectiveSteps() < resolvedMaxSteps) {
         if (aborted) break;
+        await options.durableCheckpoint?.({
+          phase: "model",
+          messages: messageHistory,
+          step: effectiveSteps(),
+        });
         const { shouldContinue, didEmitFinish } = await processOneStep({
+          durableCheckpoint: options.durableCheckpoint,
           writer: safeWriter,
           messageHistory,
           toolDefs,
@@ -4298,6 +4370,15 @@ export async function runChatEngineLoop(
         });
 
         steps++;
+        await options.durableCheckpoint?.({
+          phase: shouldContinue
+            ? "ready"
+            : didEmitFinish
+            ? "complete"
+            : "model",
+          messages: messageHistory,
+          step: effectiveSteps(),
+        });
         if (didEmitFinish) {
           finishEmitted = true;
         }
@@ -4319,6 +4400,7 @@ export async function runChatEngineLoop(
         if (!shouldContinue) {
           break;
         }
+        if (options.yieldAfterStep) break;
 
         // BETWEEN STEPS, and only on a step that continues: a turn that is
         // finishing has nothing to advertise to. Placed after
@@ -4494,7 +4576,12 @@ export async function runChatEngineLoop(
       // partial by definition — recording it as a completed conversation
       // would corrupt history and reverse the cost-safety win.
       if (runSucceeded && !aborted) {
-        const trace: PersistedTurnTrace = driver.buildPersistedTrace();
+        const trace: PersistedTurnTrace = {
+          ...driver.buildPersistedTrace(),
+          requestPayloads: capRequestPayloadsForPersist(
+            traceTurn.recordedRequestPayloads,
+          ),
+        };
         capturedTurnTrace = trace;
         try {
           const persistOutcome = await onConversationComplete?.(

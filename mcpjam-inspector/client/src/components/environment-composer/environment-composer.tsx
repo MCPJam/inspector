@@ -51,7 +51,12 @@ import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { cn } from "@/lib/utils";
 
 export type ComposerSlot =
-  "environments" | "clients" | "servers" | "skills" | "computers" | "models";
+  | "environments"
+  | "clients"
+  | "servers"
+  | "skills"
+  | "computers"
+  | "models";
 
 /** Default strip: no models slot. Evals opt in via `slots`. */
 export const DEFAULT_COMPOSER_SLOTS: ComposerSlot[] = [
@@ -63,6 +68,11 @@ export const DEFAULT_COMPOSER_SLOTS: ComposerSlot[] = [
 ];
 
 export const EVALS_COMPOSER_SLOTS: ComposerSlot[] = [
+  ...DEFAULT_COMPOSER_SLOTS,
+  "models",
+];
+
+export const SWARM_COMPOSER_SLOTS: ComposerSlot[] = [
   ...DEFAULT_COMPOSER_SLOTS,
   "models",
 ];
@@ -96,8 +106,8 @@ export function EnvironmentComposer({
   disabled?: boolean;
   /**
    * Which pills to offer. `models` stays out of the default and is opted
-   * into by evals. Swarm / User Testing omit it so a model-bearing env
-   * cannot silently shed its override.
+   * into by Evals and Swarms. Surfaces without it lock model-bearing stacks
+   * so they cannot silently shed their override.
    */
   slots?: readonly ComposerSlot[];
   /**
@@ -394,7 +404,7 @@ export function EnvironmentComposer({
                 projectId={projectId}
                 value={
                   maxTargets === 1
-                    ? (value.environmentIds[0] ?? null)
+                    ? value.environmentIds[0] ?? null
                     : value.environmentIds
                 }
                 onChange={(next: string | string[] | null) =>
@@ -411,8 +421,8 @@ export function EnvironmentComposer({
                       ? "Select a client"
                       : "No clients · pick some"
                     : maxTargets === 1
-                      ? "Select an environment"
-                      : "No environments · pick some"
+                    ? "Select an environment"
+                    : "No environments · pick some"
                 }
                 headingLabel={
                   environmentsVocabulary === "client"
@@ -529,8 +539,8 @@ export function EnvironmentComposer({
           {stackEditBlock === "pins"
             ? "This selection pins plugin versions, which this strip can't carry — editing the stack would run without them. Change the environment selection instead."
             : stackEditBlock === "models"
-              ? "This selection pins a model override, which this strip can't carry — editing the stack would run the client default instead. Change the environment selection instead."
-              : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
+            ? "This selection pins a model override, which this strip can't carry — editing the stack would run the client default instead. Change the environment selection instead."
+            : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
         </p>
       ) : null}
       {modelsEnabled &&

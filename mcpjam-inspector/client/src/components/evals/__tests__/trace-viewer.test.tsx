@@ -1607,3 +1607,48 @@ describe("TraceViewer host shell", () => {
     );
   });
 });
+
+it.each(["array", "json"])(
+  "derives Raw from persisted %s requests and expands inherited fields",
+  async (format) => {
+    const entries = [
+      {
+        turnId: "turn",
+        promptIndex: 0,
+        stepIndex: 0,
+        payload: {
+          system: "historic system",
+          tools: {
+            search: { name: "search", inputSchema: { $ref: "#/schema" } },
+          },
+          messages: [],
+        },
+      },
+      {
+        turnId: "turn",
+        promptIndex: 0,
+        stepIndex: 1,
+        payload: { messages: [{ role: "user", content: "step two" }] },
+        inherits: { system: true, tools: true },
+      },
+    ];
+    const trace = {
+      messages: [],
+      ...(format === "json"
+        ? { requestPayloadsJson: JSON.stringify(entries) }
+        : { requestPayloads: entries }),
+    };
+    render(<TraceViewer trace={trace as any} forcedViewMode="raw" />);
+    await waitFor(() =>
+      expect(mockJsonEditor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          value: {
+            system: "historic system",
+            tools: entries[0].payload.tools,
+            messages: entries[1].payload.messages,
+          },
+        }),
+      ),
+    );
+  },
+);

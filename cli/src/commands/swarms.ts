@@ -251,7 +251,7 @@ export function registerSwarmAuthoringCommands(
         personas
           .command("generate")
           .description(
-            "Draft candidate personas with a model, grounded in what the project's servers do. SAVES NOTHING — pipe what you want into `personas create`. Included with MCPJam; counts against the daily generation quota."
+            "Draft candidate personas with a model, grounded in what the project's servers do. SAVES NOTHING — pipe what you want into `personas create`. Included with MCPJam; no customer credits consumed; counts against the organization's daily generation quota."
           )
           .option("--persona-count <n>", "Draft a slate of N personas.")
       )
@@ -462,7 +462,7 @@ export function registerSwarmAuthoringCommands(
         journeys
           .command("generate")
           .description(
-            "Draft candidate journeys for a persona with a model. The persona is passed BY VALUE and does not have to exist yet, because the create flow drafts both before saving either. SAVES NOTHING; included with MCPJam and counts against the daily generation quota."
+            "Draft candidate journeys for a persona with a model. The persona is passed BY VALUE and does not have to exist yet, because the create flow drafts both before saving either. SAVES NOTHING; included with MCPJam (no customer credits consumed) and counts against the organization's daily generation quota."
           )
           .requiredOption("--persona-name <name>")
           .requiredOption("--persona-role <role>")

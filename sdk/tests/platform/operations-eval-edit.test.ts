@@ -405,7 +405,11 @@ describe("eval-edit operation execution", () => {
     expect(generateEvalCasesOperation.risk).toBe("none");
     expect(generateEvalCasesOperation.description).not.toMatch(/spends/i);
     expect(generateEvalCasesOperation.description).toContain(
-      "no credits are consumed"
+      "no customer credits consumed"
+    );
+    // The quota is the organization's, not the project's.
+    expect(generateEvalCasesOperation.description).not.toMatch(
+      /project's daily generation quota/
     );
   });
 

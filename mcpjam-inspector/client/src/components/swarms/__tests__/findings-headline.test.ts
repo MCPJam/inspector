@@ -1,3 +1,4 @@
+import { neverStartedReport } from "./swarm-report-fixtures";
 import { describe, expect, it } from "vitest";
 
 import type { SwarmOverviewRun, SwarmWaveSignals } from "@/lib/swarm-api";
@@ -7,6 +8,7 @@ import {
   composeFindingsSummary,
   countWords,
   deriveHonestyFootnotes,
+  narratedWaveSummary,
   shortenGoalTitle,
 } from "../findings/findings-headline";
 
@@ -107,6 +109,7 @@ describe("composeFindingsSummary: a wave that never launched", () => {
     run({
       runId,
       journeyRefId,
+      report: neverStartedReport(3),
       summary: { total: 3, succeeded: 0, failed: 3, rateLimited: 0 },
     });
 
@@ -129,7 +132,10 @@ describe("composeFindingsSummary: a wave that never launched", () => {
 
   it("names rate limiting separately from refusal", () => {
     const lines = summaryFor([
-      run({ summary: { total: 4, succeeded: 0, failed: 3, rateLimited: 1 } }),
+      run({
+        report: neverStartedReport(4),
+        summary: { total: 4, succeeded: 0, failed: 3, rateLimited: 1 },
+      }),
     ]);
     expect(lines[0]).toBe("3 of 4 sessions failed to launch.");
     expect(lines).toContain("1 session were rate limited.");
@@ -429,11 +435,11 @@ describe("deriveHonestyFootnotes", () => {
     expect(
       deriveHonestyFootnotes({ signals: null, hasGroupId: false }),
     ).toEqual([
-      "Rubric findings only — deterministic signals unavailable for this wave",
+      "Evaluator findings only — deterministic signals unavailable for this wave",
     ]);
     expect(
       deriveHonestyFootnotes({ signals: signals(), hasGroupId: false })[0],
-    ).toContain("Rubric findings only");
+    ).toContain("Evaluator findings only");
   });
 
   it("flags truncation, low confidence, and a live wave", () => {
@@ -466,16 +472,13 @@ describe("deriveHonestyFootnotes", () => {
     ).toEqual([]);
   });
 
-  it("chips a PARTIAL launch, where the findings quietly cover fewer sessions", () => {
+  it("chips rate limits on a partial launch, not the failed-to-launch tally", () => {
     const notes = deriveHonestyFootnotes({
       signals: signals(),
       hasGroupId: true,
       launch: { total: 9, succeeded: 6, failed: 3, rateLimited: 2 },
     });
-    expect(notes).toContain(
-      "3 of 9 sessions failed to launch; findings cover the sessions that ran",
-    );
-    expect(notes).toContain("2 sessions rate limited");
+    expect(notes).toEqual(["2 sessions rate limited"]);
   });
 
   it("does not chip a launch nothing survived — the summary already says it", () => {
@@ -487,15 +490,37 @@ describe("deriveHonestyFootnotes", () => {
       }),
     ).toEqual([]);
   });
+});
 
-  it("marks the model-written line so the findings are not tarred with it", () => {
-    const notes = deriveHonestyFootnotes({
-      signals: signals(),
-      hasGroupId: true,
-      generatedSummary: true,
-    });
-    expect(notes).toEqual([
-      "Suggested fix is model-written — the findings are not",
-    ]);
+describe("narratedWaveSummary", () => {
+  it("drops the fixed prose a zero-candidate wave stores without a model", () => {
+    // Real prod row: 3 graded sessions all failed, 2 rate limited, no mined
+    // candidates. This sentence replaced the deterministic headline.
+    expect(
+      narratedWaveSummary("completed", {
+        summary:
+          "No anomalies concentrated along any dimension of this wave. Nothing to act on from the deterministic signals.",
+        candidates: [],
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps the summary when a model narrated candidates", () => {
+    expect(
+      narratedWaveSummary("completed", {
+        summary: "  Resolve the saved server first.  ",
+        candidates: [{}],
+      }),
+    ).toBe("Resolve the saved server first.");
+  });
+
+  it("is null until the analysis completes, or when it has no summary", () => {
+    expect(
+      narratedWaveSummary("pending", { summary: "x", candidates: [{}] }),
+    ).toBeNull();
+    expect(narratedWaveSummary("completed", null)).toBeNull();
+    expect(
+      narratedWaveSummary("completed", { summary: "  ", candidates: [{}] }),
+    ).toBeNull();
   });
 });

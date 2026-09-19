@@ -16,6 +16,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/hooks/use-host-snapshot", () => ({
+  useHostSnapshotForHost: () => ({ status: "unavailable" }),
+  useHostSnapshotForSession: () => ({ status: "unavailable" }),
+}));
+
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
@@ -102,6 +107,9 @@ vi.mock("@/components/swarms/use-journey-run-stream", () => ({
 }));
 
 const createSwarmMock = vi.fn();
+// The launch preflight (`projectEnvironments:resolveEnvironmentForLaunch`)
+// goes through `useConvex().query`; resolves a runnable target by default.
+const convexQueryMock = vi.fn();
 const createPersonaMock = vi.fn();
 const createJourneyMock = vi.fn();
 
@@ -146,6 +154,7 @@ vi.mock("convex/react", () => ({
     isLoading: false,
   }),
   useConvexAuth: () => ({ isAuthenticated: true }),
+  useConvex: () => ({ query: convexQueryMock }),
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -259,6 +268,10 @@ function describeAcrossBothClients() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  convexQueryMock.mockResolvedValue({
+    effectiveModelId: "anthropic/claude-haiku-4.5",
+    modelSource: "host",
+  });
   // The flow mirrors its resumable state into sessionStorage, so a leftover
   // draft would otherwise resume the previous case's slate.
   sessionStorage.clear();

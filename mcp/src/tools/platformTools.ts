@@ -7,6 +7,10 @@
  * widget-backed `show_servers` tool lives in `showServers.ts` and reuses the
  * helpers here.
  */
+import type {
+  SwarmJourneyFinding,
+  SwarmJourneyFindings,
+} from "@mcpjam/sdk/contract";
 import {
   callServerToolOperation,
   renderServerWidgetOperation,
@@ -67,7 +71,9 @@ import {
   cancelProjectServerConnectionOperation,
   getProjectServerOperation,
   getServerPromptOperation,
+  describePlatformRefusal,
   isPlatformApiError,
+  platformRefusalHint,
   listScenariosOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
@@ -917,7 +923,18 @@ function errorStructuredContent(
   error: unknown
 ): Record<string, unknown> | undefined {
   if (isPlatformApiError(error)) {
-    return { error: { code: error.code, message: error.message } };
+    // A usage-limit refusal also carries WHEN to come back and whether credits
+    // would help — allowlisted by `describePlatformRefusal`, never the raw
+    // server envelope — so an agent can wait instead of looping or suggesting
+    // a top-up that cannot lift it.
+    const refusal = describePlatformRefusal(error);
+    return {
+      error: {
+        code: error.code,
+        message: error.message,
+        ...(refusal ? { refusal } : {}),
+      },
+    };
   }
   return undefined;
 }
@@ -926,7 +943,12 @@ function describeOperationError(error: unknown): string {
   if (isPlatformApiError(error)) {
     // Wire errors keep their stable code for agent retry logic; synthesized
     // client-side errors (status 0) are already self-explanatory messages.
-    return error.status > 0 ? `${error.code}: ${error.message}` : error.message;
+    const base =
+      error.status > 0 ? `${error.code}: ${error.message}` : error.message;
+    // Hosts vary in whether the model sees `structuredContent`, so the retry
+    // guidance is in the text too.
+    const refusal = describePlatformRefusal(error);
+    return refusal ? `${base} ${platformRefusalHint(refusal)}` : base;
   }
   return error instanceof Error ? error.message : String(error);
 }
@@ -951,6 +973,7 @@ export const MODEL_MAX_EVIDENCE_PER_FINDING = 2;
 export const MODEL_CONTRACT_JSON_CAP = 600;
 
 type EnvelopeLike = {
+  journeyFindings?: SwarmJourneyFindings | null;
   schemaVersion: number;
   findings: Array<Record<string, unknown>>;
   truncation: {
@@ -976,9 +999,96 @@ function isInsightsEnvelope(value: unknown): value is EnvelopeLike {
   );
 }
 
-function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
+export const MODEL_MAX_SESSION_IDS_PER_FINDING = 5;
+export const MODEL_EXCERPT_CAP = 400;
+export const MODEL_PHRASE_CAP = 240;
+
+/**
+ * Cut `text` to at most `cap` characters, ellipsis included, preferring the
+ * last word boundary. Text with no space to cut at is hard-cut rather than
+ * collapsed to a bare ellipsis.
+ */
+export function clampAtWord(text: string, cap: number): string {
+  if (text.length <= cap) return text;
+  const head = text.slice(0, cap - 1);
+  const space = head.lastIndexOf(" ");
+  return (space > 0 ? head.slice(0, space) : head).trimEnd() + "…";
+}
+
+const JOURNEY_BASIS_RANK: Record<SwarmJourneyFinding["basis"], number> = {
+  verifiedMechanism: 0,
+  populationFact: 1,
+  sessionReport: 2,
+};
+
+/**
+ * Compact a swarm run's `journeyFindings` the way {@link compactEnvelope}
+ * compacts the envelope's own findings: verified mechanisms first, a head
+ * slice, evidence capped per finding, model phrases clamped. Personas and
+ * populations are never touched: they are the counts every sentence rests on.
+ */
+export function compactJourneyFindings(value: SwarmJourneyFindings) {
   let omittedEvidence = 0;
   let contractTruncated = false;
+  const clampPhrase = (phrase: string | null, cap: number) => {
+    if (phrase === null || phrase.length <= cap) return phrase;
+    contractTruncated = true;
+    return clampAtWord(phrase, cap);
+  };
+  const findings = [...value.findings]
+    .sort((a, b) => JOURNEY_BASIS_RANK[a.basis] - JOURNEY_BASIS_RANK[b.basis])
+    .slice(0, MODEL_MAX_FINDINGS)
+    .map((finding) => {
+      omittedEvidence += Math.max(
+        0,
+        finding.citations.length - MODEL_MAX_EVIDENCE_PER_FINDING
+      );
+      omittedEvidence += Math.max(
+        0,
+        finding.sessionIds.length - MODEL_MAX_SESSION_IDS_PER_FINDING
+      );
+      let reportExcerpt = finding.reportExcerpt;
+      if (reportExcerpt) {
+        omittedEvidence += Math.max(
+          0,
+          reportExcerpt.citations.length - MODEL_MAX_EVIDENCE_PER_FINDING
+        );
+        reportExcerpt = {
+          actual: clampPhrase(reportExcerpt.actual, MODEL_EXCERPT_CAP)!,
+          citations: reportExcerpt.citations.slice(
+            0,
+            MODEL_MAX_EVIDENCE_PER_FINDING
+          ),
+        };
+      }
+      return {
+        ...finding,
+        sessionIds: finding.sessionIds.slice(
+          0,
+          MODEL_MAX_SESSION_IDS_PER_FINDING
+        ),
+        citations: finding.citations.slice(0, MODEL_MAX_EVIDENCE_PER_FINDING),
+        outcomePhrase: clampPhrase(finding.outcomePhrase, MODEL_PHRASE_CAP),
+        mechanismPhrase: clampPhrase(finding.mechanismPhrase, MODEL_PHRASE_CAP),
+        fixPhrase: clampPhrase(finding.fixPhrase, MODEL_PHRASE_CAP),
+        reportExcerpt,
+      };
+    });
+  const omittedFindings = value.findings.length - findings.length;
+  return {
+    value: { ...value, findings },
+    omittedFindings,
+    omittedEvidence,
+    contractTruncated,
+  };
+}
+
+function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
+  const journey = envelope.journeyFindings
+    ? compactJourneyFindings(envelope.journeyFindings)
+    : null;
+  let omittedEvidence = journey?.omittedEvidence ?? 0;
+  let contractTruncated = journey?.contractTruncated ?? false;
   // Findings arrive ready-first from the producer, so a head slice keeps
   // every server-ready finding before any investigation is dropped.
   const kept = envelope.findings.slice(0, MODEL_MAX_FINDINGS).map((finding) => {
@@ -1008,13 +1118,15 @@ function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
     }
     return next;
   });
-  const omittedFindings = envelope.findings.length - kept.length;
+  const omittedFindings =
+    envelope.findings.length - kept.length + (journey?.omittedFindings ?? 0);
   if (omittedFindings === 0 && omittedEvidence === 0 && !contractTruncated) {
     return envelope;
   }
   return {
     ...envelope,
     findings: kept,
+    ...(journey ? { journeyFindings: journey.value } : {}),
     truncation: {
       truncated: true,
       omittedFindings: envelope.truncation.omittedFindings + omittedFindings,

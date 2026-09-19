@@ -1,3 +1,4 @@
+import { neverStartedReport } from "./swarm-report-fixtures";
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -258,7 +259,10 @@ describe("connection stage", () => {
   it("reads a settled run that never launched as Not run, not Unscored", () => {
     const model = derive({
       runs: [
-        run({ summary: { total: 3, succeeded: 0, failed: 3, rateLimited: 0 } }),
+        run({
+          report: neverStartedReport(3),
+          summary: { total: 3, succeeded: 0, failed: 3, rateLimited: 0 },
+        }),
       ],
     });
     const goal = model.personas[0]!.goals[0]!;
@@ -370,7 +374,7 @@ describe("value stage: rubric findings + judge rollup", () => {
       e.observation.includes("Export completes"),
     )!;
     expect(blocking.tone).toBe("fail");
-    expect(blocking.meta).toBe("3 of 4 sessions");
+    expect(blocking.meta).toContain("3 of 4 sessions");
     const degraded = value.evidence.find((e) =>
       e.observation.includes("Tone stays helpful"),
     )!;
@@ -656,4 +660,41 @@ it("never consumes setup or grounding as findings evidence", () => {
     },
   });
   expect(derive({ runs: [withGrounding] })).toEqual(derive({ runs: [run()] }));
+});
+
+it("keeps partial chain coverage explicit rather than claiming the whole run passed", () => {
+  const model = deriveSwarmFindingsModel({
+    runs: [run()],
+    signals: null,
+    personas: [],
+    funnels: {
+      "run-1": {
+        source: "swarm",
+        total: 10,
+        counted: 1,
+        exclusions: { absent: 9, deriving: 0, stale: 0, failed: 0 },
+        stages: [
+          {
+            stage: "userValue",
+            passed: 1,
+            failed: 0,
+            eligible: 1,
+            notMeasured: 0,
+            notApplicable: 0,
+            notReached: 0,
+            observations: 0,
+            passRate: 1,
+          },
+        ],
+        firstFailedStage: {},
+        notMeasured: false,
+        truncated: false,
+      },
+    },
+  });
+  const evidence = model.personas[0].goals[0].stages.value.evidence;
+  expect(evidence[0].meta).toContain("1/10 sessions");
+  expect(evidence[0].meta).toContain("9 absent");
+  expect(evidence[0].observation).toContain("1 measured sessions");
+  expect(model.neverLaunched).toBe(false);
 });
