@@ -27,6 +27,14 @@ The OAuth Debugger includes:
 - **Sequence Diagram** - Visual representation of the OAuth flow synchronized with your progress, showing the exact resource value the flow sends
 - **Export Capabilities** - Copy logs in guide or raw format for debugging and documentation
 
+### Security: outbound metadata fetch guard
+
+Inspector validates every outbound OAuth metadata fetch — Protected Resource Metadata (PRM) pointers, authorization-server discovery endpoints, and Client ID Metadata Documents — before the request is sent. Destinations that resolve to private or reserved IP ranges (cloud metadata services such as `169.254.169.254`, RFC 1918 LAN ranges, link-local addresses, and similar) are blocked regardless of how the server advertises them.
+
+**Local development servers** (`localhost`, `127.0.0.1`, `::1`) are handled automatically: when the server URL you configure is itself a loopback address, Inspector permits loopback metadata fetches for that server. When the server URL is a public or remote host, loopback destinations are blocked even if the server's metadata points at one.
+
+If you see an error such as `Refusing outbound OAuth fetch to private/reserved host`, verify that the server URL you entered is correct and that the server's OAuth metadata endpoints are reachable from a public host.
+
 ### Resource indicator warnings
 
 When the server's Protected Resource Metadata (PRM) advertises a `resource` identifier that does not fully satisfy RFC 9728 — for example, a same-origin resource on a different path than the transport endpoint — the debugger logs a warning at the `received_resource_metadata` step and continues the flow. The warning includes the advertised value, the server URL, and whether strict MCP clients (such as Quick OAuth or the official MCP SDK) will refuse to connect.
