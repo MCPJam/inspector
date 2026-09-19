@@ -83,6 +83,8 @@ describe("collectConnectedServerDoctorState", () => {
     expect(result.prompts).toEqual([{ name: "summarize" }]);
     expect(result.resourceTemplates).toEqual([{ uriTemplate: "note://{id}" }]);
     expect(result.checks.tools.status).toBe("ok");
+    expect(result.checks.toolHygiene.status).toBe("ok");
+    expect(result.toolLints).toEqual([]);
     expect(result.errors).toEqual([]);
   });
 
@@ -491,6 +493,52 @@ describe("runServerDoctor", () => {
     expect(result.checks.probe.status).toBe("ok");
     expect(result.checks.probe.detail).toMatch(/HTTP 403/);
     expect(result.checks.probe.detail).toMatch(/401 Unauthorized/);
+  });
+
+  it("reports tool hygiene warnings without failing readiness", async () => {
+    const manager = createMockManager({
+      listTools: jest.fn().mockResolvedValue({
+        tools: [
+          {
+            name: "insight-get",
+            description: "Retrieve a saved insight.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                insightId: { type: "string", description: "The insight ID." },
+              },
+              required: ["insightId"],
+            },
+          },
+        ],
+      }),
+    });
+
+    const result = await runServerDoctor(
+      {
+        config: {
+          url: "https://example.com/mcp",
+          timeout: 4_000,
+        },
+        target: { label: "https://example.com/mcp" },
+        timeout: 4_000,
+      },
+      {
+        probeServer: jest.fn().mockResolvedValue(createProbeResult()),
+        withManager: async (_config, fn) => fn(manager, "srv"),
+      }
+    );
+
+    expect(result.status).toBe("ready");
+    expect(result.error).toBeNull();
+    expect(result.checks.toolHygiene.status).toBe("warn");
+    expect(result.toolLints).toEqual([
+      expect.objectContaining({
+        rule: "unknowable-required-id",
+        tools: ["insight-get"],
+        param: "insightId",
+      }),
+    ]);
   });
 
   it("passes retry policy through probe and ephemeral manager dependencies", async () => {

@@ -1,5 +1,7 @@
 import type { MCPServerConfig, ServerDoctorResult } from "@mcpjam/sdk";
 
+const MAX_TOOL_LINT_LINES = 20;
+
 export interface ServerDoctorTargetSummary {
   kind: "http" | "stdio";
   label: string;
@@ -89,6 +91,26 @@ export function formatServerDoctorHuman(
   lines.push("Checks:");
   for (const [name, check] of Object.entries(result.checks)) {
     lines.push(`- ${name}: ${check.status} (${check.detail})`);
+  }
+
+  const toolLints = result.toolLints ?? [];
+  if (toolLints.length > 0) {
+    lines.push(
+      `Tool hygiene: ${toolLints.length} warning${
+        toolLints.length === 1 ? "" : "s"
+      } (advisory; readiness is unaffected)`,
+    );
+    for (const finding of toolLints.slice(0, MAX_TOOL_LINT_LINES)) {
+      const where = finding.param
+        ? `${finding.tools.join(", ")} · ${finding.param}`
+        : finding.tools.join(", ");
+      lines.push(`- [${finding.rule}] ${where}: ${finding.message}`);
+    }
+    if (toolLints.length > MAX_TOOL_LINT_LINES) {
+      lines.push(
+        `- …and ${toolLints.length - MAX_TOOL_LINT_LINES} more. Use --out to capture the full JSON artifact.`,
+      );
+    }
   }
 
   if (options.artifactPath) {
