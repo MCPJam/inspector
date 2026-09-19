@@ -366,12 +366,15 @@ drafts are stable across retries when they are not.
 | `POST .../journeys/generate` | Draft journeys for a persona passed **by value**, so you can draft before you save |
 
 <Warning>
-  The generation routes **spend** — they run models on your organization's
-  account. They are metered two ways, and the two mean different waits: a
-  per-minute burst brake (`429`, retry in seconds) and your plan's daily
-  budget (`429`, resets at UTC midnight). Both normally carry `Retry-After` —
-  honor it rather than guessing, and fall back to your own backoff on the
-  refusal that arrives without one.
+  The generation routes consume **no customer credits** — the model cost is on
+  MCPJam. They are still subject to usage limits, and each limit means a
+  different wait: a per-minute burst brake (`429`, retry in seconds), your
+  organization's daily generation quota (`429`, resets at UTC midnight), and
+  MCPJam's own daily budget for the feature (`429` with
+  `details.code: "platform_capacity"`, resets at UTC midnight). All three carry
+  `Retry-After` — honor it rather than guessing. `details.canTopUp` is `false`
+  on every one: buying credits does not lift them, so do not retry in a loop
+  or switch identities to get around them.
 </Warning>
 
 **Swarms — runs** (`/projects/{projectId}/journeys/{journeyId}/runs`,
@@ -437,10 +440,11 @@ Dismissal is the orthogonal `dismissedAt`, so a finding can be both recurring
 and dismissed, and hiding one never claims it stopped happening.
 
 <Warning>
-  Requesting wave insights **spends**, and draws on the `insightsPerDay`
-  ledger that is **shared** with eval-run and user-testing insights — burning
-  it here takes it from there too. Poll the `GET` rather than re-requesting;
-  `force: true` deliberately spends a second time.
+  Requesting wave insights consumes **no credits** — the model cost is on
+  MCPJam. It still counts against the `insightsPerDay` ledger, which counts
+  REQUESTS and is **shared** with eval-run and user-testing insights, so a
+  request here takes one from there too. Poll the `GET` rather than
+  re-requesting; `force: true` deliberately takes a second slice.
 
   Three refusals, three different meanings: a short `429` is the per-minute
   brake (wait seconds), a `429` naming `insightsPerDay` is the daily ledger
@@ -496,10 +500,29 @@ deterministic and free; the insights request runs a model.
 | `GET .../user-testing/scenarios/{scenarioId}/signals` | What the miner found in the current window — and where you get the `windowId` |
 | `GET .../user-testing/scenarios/{scenarioId}/findings` | Every finding raised over this scenario, dismissed ones included |
 | `GET .../user-testing/scenarios/{scenarioId}/windows/{windowId}/insights` | One window's insights. **`404` means nobody asked**, which is not the same as `pending` |
-| `POST .../user-testing/scenarios/{scenarioId}/insights` | **Spends.** `202` with the `windowId` to poll. `409` if the window has not been mined yet |
+| `POST .../user-testing/scenarios/{scenarioId}/insights` | **No credits; counts against `insightsPerDay`.** `202` with the `windowId` to poll. `409` if the window has not been mined yet |
 | `DELETE .../user-testing/scenarios/{scenarioId}/insights` | Release a generation stuck `pending`. Takes `windowId` in the body |
 | `POST .../user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss` | Dismiss a finding. Keyed on its stable id, so it stays dismissed when insights regenerate |
 | `POST .../user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss` | Undo that |
+
+The `usage` response includes an `analysis` summary: `total`, `analyzed`,
+`pending`, `running`, `failed`, `skipped`, and `deferred` describe session
+coverage. Failure/skip reasons and `deferredUntil` explain incomplete work;
+`awaitingTaxonomy`, `unassigned`, and `staleAssignments` distinguish catalog
+coverage from extraction. `projectionPending` and `projectionFailed` describe
+the map independently. Reading this response never starts analysis.
+
+Taxonomy entries carry the published version and discovery status. Theme ids
+remain stable across additions and cosmetic renames. An older assignment
+version can still be valid when its theme is unchanged; a retired or replaced
+membership remains visible while cached reassignment completes. These are
+current views with version provenance, not historical traffic snapshots.
+
+Check `scan.truncated` and `analysis.sampled` before interpreting coverage as a
+whole-scope total. Map reads separately expose displayed counts, scope totals,
+sampling, and freshness; a wave's displayed counts cover only its requested
+journey runs. A pending projection contributes to the unmapped count rather
+than a fabricated map node.
 
 The five analytics shapes above are documented as **open objects** on purpose.
 Their upstream projections grow with the product and the SDK types them the
@@ -507,10 +530,11 @@ same way, so pinning a field list would turn every new metric into a spec
 violation. Read what you recognize; ignore the rest.
 
 <Warning>
-  Requesting insights **spends**, and draws on the same `insightsPerDay` ledger
-  as eval-run and swarm wave insights — one budget, three producers. Poll the
-  window read rather than re-requesting; `force: true` deliberately spends a
-  second time, which is why it is never inferred from anything else.
+  Requesting insights consumes **no credits** — the model cost is on MCPJam.
+  It still draws on the same `insightsPerDay` ledger as eval-run and swarm wave
+  insights — one REQUEST quota, three producers. Poll the window read rather
+  than re-requesting; `force: true` deliberately takes a second slice, which is
+  why it is never inferred from anything else.
 </Warning>
 
 **Planning** — one read that answers "may I?" before you try:
@@ -582,10 +606,12 @@ curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID/it
 The decision summary composes steps 2 and 4 into one versioned object so every
 client reads a run the same way. Four things to know before gating on it:
 
-- **`measurementUnit` ships with every count.** Under verdict policy v2 the
-  counts are case-execution *variants*, with repetitions as trials inside them;
-  on a legacy run they are trials. The same suite reports a different total
-  under each, so a count without its unit is not a fact.
+- **`measurementUnit` ships with every count.** Under per-case grading the
+  counts are case-execution *variants*, with iterations as trials inside them;
+  under a suite-wide accuracy threshold they are trials. The same suite reports
+  a different total under each — 3 against 15 for three cases run five times —
+  so a count without its unit is not a fact, and a rate is never converted
+  across that line.
 - **It explains the verdict; it never re-decides it.** The run's own decision is
   the authority and is carried through on `decision`. The per-trial
   `diagnostics` sit underneath it — a case can pass with a failing trial in it,
@@ -648,6 +674,10 @@ rather than executing against a different configuration than the one whose
 tools were captured. Use
 `GET /projects/{projectId}/environments/{environmentId}/resolve` to see what it
 will connect before launching.
+
+When creating a new inline suite, `POST .../eval-runs` also accepts `hosts: [{ host: "Claude", servers: ["my-server"] }]`, using the same host name or ID and optional server selection as `POST .../eval-suites`. A single host is selected for the run automatically. With multiple attachments, use `namedHostId` to select the run's client. For an existing suite, update its attachments first. If `hosts` is omitted, the backend supplies the project's default client.
+
+Run reads and listings expose `client: { id, name, source, hostStyle?, modelId? }` when recorded. `id` is the named host ID or `null`; `source` is `environment`, `attached_host`, `suite_default`, or `sdk`. The name is durable even if the host is deleted. SDK executions use `SDK harness`; `launcher.client` separately identifies the launching process. Older runs without a descriptor omit `client`. `modelSource: "case"` means the run's sole model came from its case snapshot; `client_default` and `override` retain their existing meanings.
 
 Every run records which environment it used. `GET .../eval-runs/{runId}` (and
 the run listings) return `environment: { id, name, revision }` — read from the

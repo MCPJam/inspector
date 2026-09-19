@@ -62,7 +62,7 @@ import {
   type OrgProviderRuntime,
 } from "./org-model-config.js";
 import { type ModelDefinition } from "@/shared/types";
-import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
+import { isHostedModelDefinition } from "../services/hosted-model-catalog.js";
 import {
   buildWidgetModelContextSystemPrompt,
   guardPageToolRefresh,
@@ -120,7 +120,7 @@ import {
 } from "./../routes/web/hosted-rpc-logs.js";
 import { buildServerNamesById } from "./../routes/web/auth.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
-import { getClientIp } from "./client-ip.js";
+import { getSpendClientIp } from "./client-ip.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
 import {
   resolveWebAuthorizedHarnessStrategy,
@@ -514,7 +514,7 @@ export interface WebChatTurnRuntime {
    * fail for "your sandbox was reset, earlier files are gone".
    */
   ackSandboxNotices?: (notices: SandboxNoticeReason[]) => void;
-  /** Hono context (needed for getClientIp fallback / future hooks). */
+  /** Hono context (needed for getSpendClientIp fallback / future hooks). */
   c: Context;
 }
 
@@ -995,17 +995,17 @@ export async function streamWebChatTurn(
   };
 
   const isScenarioSession = persist.sourceType === "scenario";
-  // Provider is REQUIRED here: bare hosted ids (`gpt-5-nano` + `openai`) only
-  // canonicalize to their prefixed form (`openai/gpt-5-nano`) when the provider
-  // is supplied. Without it, a bare id fails this check and the turn silently
-  // branches into org-BYOK — skipping runHarnessTurn even when the route's
-  // harness preflight (which does pass the provider) approved the turn.
+  // The WHOLE definition, not `(id, provider)`: bare hosted ids (`gpt-5-nano`
+  // + `openai`) only canonicalize to their prefixed form (`openai/gpt-5-nano`)
+  // when the provider is supplied — without it a bare id failed this check and
+  // the turn silently branched into org-BYOK, skipping runHarnessTurn even when
+  // the route's harness preflight (which does pass the provider) approved the
+  // turn. And the same pair, sent from the picker's "Your providers" row, means
+  // the OPPOSITE: the user chose their own key. Only the picker's explicit
+  // `hosted: false` tells the two apart; see `isHostedModelDefinition`.
   const isMCPJam =
     Boolean(prepare.modelDefinition.id) &&
-    isHostedCatalogModel(
-      String(prepare.modelDefinition.id),
-      prepare.modelDefinition.provider,
-    );
+    isHostedModelDefinition(prepare.modelDefinition);
   // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
   // (`cursor/auto`) that is deliberately not MCPJam-hosted.
   //
@@ -1290,7 +1290,7 @@ export async function streamWebChatTurn(
       progressivePlan,
       discoveryState,
       authHeader: runtime.authHeader,
-      clientIp: runtime.clientIp ?? getClientIp(c),
+      clientIp: runtime.clientIp ?? getSpendClientIp(c),
       scenarioId: persist.scenarioId,
       accessVersion: persist.accessVersion,
       mcpClientManager: manager,
@@ -1372,7 +1372,7 @@ export async function streamWebChatTurn(
     progressivePlan,
     discoveryState,
     authHeader: runtime.authHeader,
-    clientIp: runtime.clientIp ?? getClientIp(c),
+    clientIp: runtime.clientIp ?? getSpendClientIp(c),
     scenarioId: persist.scenarioId,
     accessVersion: persist.accessVersion,
     projectId: persist.projectId,

@@ -5,6 +5,7 @@ import { defineConfig } from "tsup";
 export default defineConfig({
   entry: [
     "src/index.ts",
+    "src/json-tokens.ts",
     "src/thread-helpers.ts",
     "src/trace.ts",
     "src/trace-timeline.ts",

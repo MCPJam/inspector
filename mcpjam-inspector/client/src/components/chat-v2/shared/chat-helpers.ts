@@ -1,3 +1,4 @@
+import { looksLikeErrorPage } from "@/shared/error-page";
 import { generateId, type UIMessage, type DynamicToolUIPart } from "ai";
 import type { MCPPromptResult } from "../chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "../chat-input/skills/skill-types";
@@ -29,6 +30,43 @@ export const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
     text: "Give me example prompts to try",
   },
 ];
+
+/**
+ * Whether the composer's empty state offers {@link STARTER_PROMPTS}.
+ *
+ * They are a PLAYGROUND affordance: they get someone who just connected a
+ * server to a first tool call, and every one of them asks the assistant about
+ * its own tooling.
+ *
+ * A published study is the opposite situation. The tester is there to use the
+ * thing; the study's own "What to try" list is what tells them where to start;
+ * and no product a real user opens greets them with three prompts asking the
+ * assistant to describe itself. So the chips both duplicate the study's
+ * instructions and break the illusion the study exists to test.
+ *
+ * `hostedScenarioId` is the exact signal for that surface — only the hosted
+ * study page sets it (the Playground's hosted context carries `hostId`
+ * instead), and it covers BOTH ways that page is reached: a tester's share
+ * link, and the creator's own "Open preview", which has to look like what the
+ * tester sees.
+ *
+ * A predicate rather than an inline `&&` chain because the component that
+ * renders it cannot be mounted in a unit test — the rule would otherwise be
+ * asserted only by tests that mock the component away, which is how the first
+ * version of this shipped with a test that could not fail.
+ */
+export function shouldShowStarterPrompts(input: {
+  hasMessages: boolean;
+  isAuthLoading: boolean;
+  showDisabledCallout: boolean;
+  /** Set only on the hosted study page; `undefined` everywhere else. */
+  hostedScenarioId: string | undefined;
+}): boolean {
+  if (input.hostedScenarioId) return false;
+  return (
+    !input.showDisabledCallout && !input.hasMessages && !input.isAuthLoading
+  );
+}
 
 export interface FormattedError {
   message: string;
@@ -501,35 +539,6 @@ const RAW_PAYLOAD_MAX = 4000;
  * order mark, whitespace, HTML comments, an XML declaration. Gateways and
  * proxies prepend these freely.
  */
-const HTML_PREAMBLE = /^(?:﻿|\s|<!--[\s\S]*?-->|<\?xml[\s\S]*?\?>)+/i;
-
-/** Markup that can only be a document, once any preamble is stripped. */
-const MARKUP_OPENER = /^<(?:!doctype\s+html|html|head|body|title)\b/i;
-
-/**
- * The one marker conclusive wherever it appears. `<html>` is NOT: error text
- * quotes it ("expected <html> but the tool returned a number"), and treating
- * that as a document would summarize a perfectly readable message away.
- */
-const DOCTYPE_MARKER = /<!doctype\s+html/i;
-
-/**
- * Detection has to survive bodies that are not well-formed documents. A
- * truncated or streamed response never reaches `</html>`; a proxy may prepend
- * a comment or an XML declaration; a fragment may begin at `<head>` with no
- * doctype at all. Matching only "starts with `<html`" or "ends with
- * `</html>`" let all of those through to be rendered as raw markup — the
- * exact failure this function exists to prevent.
- *
- * The start-anchored check runs against the preamble-stripped body so that
- * ordinary prose which merely mentions a tag ("expected `<html>` here") is not
- * mistaken for a document.
- */
-function looksLikeErrorPage(trimmed: string): boolean {
-  if (DOCTYPE_MARKER.test(trimmed)) return true;
-  if (/<\/html>\s*$/i.test(trimmed)) return true;
-  return MARKUP_OPENER.test(trimmed.replace(HTML_PREAMBLE, ""));
-}
 
 /**
  * `code` carried by a formatted upstream-error-page failure.

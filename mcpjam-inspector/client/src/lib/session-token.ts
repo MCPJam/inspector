@@ -492,11 +492,18 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // resource beneath it are a transcript and a row, read elsewhere with their
   // own auth, and a pattern that swallowed them would be the blanket prefix
   // this list exists to avoid. The eval-chain test pins all three.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/backtest$/,
   /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/,
   // What changed since the previous run. Same grant, same reason as the reads
   // above, and anchored the same way: `compare` is one segment and nothing
   // hangs beneath it.
   /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/compare$/,
+  // Stopping a run. The only WRITE among the eval-run entries, and it needs
+  // the grant for the same reason the reads do: it goes out through
+  // `authFetch`, so without an entry here it ships no `Authorization` and the
+  // route answers "Bearer token required" — which reaches the user as a failed
+  // cancel on a run that is still burning model spend.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/cancel$/,
 ];
 
 function pathMatchesHostedPrefix(pathname: string): boolean {
@@ -600,9 +607,10 @@ export async function authFetch(
   // those calls don't block on minting a guest session at cold boot and
   // don't trigger guest refresh on unrelated 401s.
   const hostedAuthEligible = shouldAttachHostedAuthorization(input);
-  const hostedAuthHeader = hostedAuthEligible
-    ? await getApiAuthorizationHeader()
-    : null;
+  const hostedAuthHeader =
+    hostedAuthEligible && !callerProvidedAuthorization
+      ? await getApiAuthorizationHeader()
+      : null;
   const mergedInit = buildAuthFetchInit(input, init, hostedAuthHeader);
   const response = await fetch(input, mergedInit);
 
