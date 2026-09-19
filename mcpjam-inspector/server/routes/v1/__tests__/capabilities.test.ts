@@ -31,6 +31,7 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 
 import capabilities from "../capabilities.js";
 import { v1OnError } from "../envelope.js";
+import { EVAL_VOCABULARY_CAPABILITY } from "../eval-vocabulary.js";
 
 const PROJECT = "proj_a";
 
@@ -284,5 +285,31 @@ describe("capability derivation", () => {
     // Never 403: that would confirm the project exists.
     queryMock.mockResolvedValue(null);
     expect((await get()).status).toBe(404);
+  });
+});
+
+describe("the eval vocabulary block", () => {
+  it("advertises the pinned vocabulary, deployment-wide", async () => {
+    // A client reads this VALUE to learn which spellings a
+    // `x-mcpjam-eval-vocabulary: 2` body may use; it never infers support
+    // from the presence of a field on an unrelated object. Pinned to the
+    // contract's literal so a drift is a failing test, not a client sending a
+    // spelling the route refuses.
+    queryMock.mockResolvedValue(row());
+    const body = (await (await get()).json()) as {
+      vocabulary: typeof EVAL_VOCABULARY_CAPABILITY;
+    };
+    expect(body.vocabulary).toEqual({
+      version: 2,
+      evaluatorKinds: ["assertion", "judge"],
+      assertionKinds: EVAL_VOCABULARY_CAPABILITY.assertionKinds,
+      fields: {
+        assertions: ["checks", "predicates"],
+        defaultAssertions: ["defaultPredicates", "checks"],
+        iterations: ["repetitions"],
+        legacyIterations: ["runs"],
+      },
+    });
+    expect(body.vocabulary.fields.legacyIterations).not.toContain("iterations");
   });
 });

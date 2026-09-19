@@ -483,6 +483,9 @@ export function deriveIterationPayload(args: {
   const predicateRows = (asArray(metadata.predicates) ?? []).filter(
     isPredicateRow,
   );
+  const storedAgentActivity = isNoAgentActivity(metadata.agentActivity)
+    ? metadata.agentActivity
+    : undefined;
   // Derived HERE from the run's own frozen case snapshot, through the SAME
   // function the runner used on the first pass, whenever the backend served
   // the raw `authoredCase`. The backend also serves a derived `stageCase` for
@@ -599,6 +602,10 @@ export function deriveIterationPayload(args: {
     // different `implementationHash` and orphan the first pass's row.
     ...(iteration.matchOptions ? { matchOptions: iteration.matchOptions } : {}),
     ...(iteration.isNegativeTest ? { isNegativeTest: true } : {}),
+    // Redeclared from first-pass metadata (this pass has no trace), for the
+    // same reason as `toolMatchAuthored`: an omitted definition leaves the
+    // first pass's row unjoinable.
+    ...(storedAgentActivity ? { agentActivity: storedAgentActivity } : {}),
     ...(judgeVerdict && isFiniteNumber(judgeVerdict.threshold)
       ? { judgeVerdict }
       : {}),
@@ -606,6 +613,18 @@ export function deriveIterationPayload(args: {
   return scores.length > 0
     ? { stage, scores, config: evaluationConfig }
     : { stage };
+}
+
+/** Narrow on purpose: only `no_agent_activity` redeclares a scorer. */
+function isNoAgentActivity(
+  value: unknown,
+): value is { status: "no_agent_activity"; detail: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { status?: unknown }).status === "no_agent_activity" &&
+    typeof (value as { detail?: unknown }).detail === "string"
+  );
 }
 
 /** The derivation-owned fields common to both judges' write bodies. */
@@ -658,9 +677,6 @@ export async function runJudgeSecondPass(
   });
 
   const envMode = resolveGradingEngineMode();
-  if (envMode === "off") {
-    return emptyResult("off", "mode_off");
-  }
 
   let run: JudgeSecondPassRunRow;
   try {
@@ -680,20 +696,12 @@ export async function runJudgeSecondPass(
   // "unconstrained" would fall through to this process's env ceiling and run
   // the REAL-WRITE second pass for a run whose frozen position was `off`,
   // contaminating the off and legacy cohorts with real score rows.
-  const mode = resolveFrozenRunGradingMode(
-    run.configSnapshot?.gradingEngine ?? run.gradingEngine,
-  );
-  // `shadow` deliberately writes NOTHING here: a shadow row is produced
-  // in-process by the first pass, and a second-pass write is by definition a
-  // real write. `enforce` runs exactly as `dual_write` does.
-  if (!isDualWrite(mode)) {
-    // Through `emptyResult`, which is the only place that knows the full shape
-    // — `JudgeSecondPassResult` requires `metadataAttributionOutcomes`, and a
-    // hand-built literal here silently omitted it for every `off` and `shadow`
-    // run, which is most of them.
-    return emptyResult(mode, mode === "off" ? "mode_off" : "mode_shadow");
-  }
-
+  const mode =
+    envMode === "off"
+      ? "off"
+      : resolveFrozenRunGradingMode(
+          run.configSnapshot?.gradingEngine ?? run.gradingEngine,
+        );
   const goalCompletionJobId = run.goalCompletionJobId;
   const metadataAttributionJobId = run.metadataAttributionJobId;
   if (
@@ -703,6 +711,32 @@ export async function runJudgeSecondPass(
     // Without a job id the backend cannot tell this derivation from a stale
     // one, and a derivation it cannot date is one it should not accept.
     return emptyResult(mode, "no_job_id");
+  }
+
+  // A no-op is still a completed delivery. Date it with the fetched job ids.
+  const settleNoop = async () => {
+    if (goalCompletionJobId !== undefined) {
+      await ports.markFanout({
+        runId,
+        goalCompletionJobId,
+        outcomes: [],
+        noop: true,
+        ...(run.incomplete ? { failed: true } : {}),
+      });
+    }
+    if (metadataAttributionJobId !== undefined) {
+      await ports.markMetadataAttributionFanout({
+        runId,
+        metadataAttributionJobId,
+        outcomes: [],
+        noop: true,
+        ...(run.incomplete ? { failed: true } : {}),
+      });
+    }
+  };
+  if (!isDualWrite(mode)) {
+    await settleNoop();
+    return emptyResult(mode, mode === "off" ? "mode_off" : "mode_shadow");
   }
 
   const derivedAt = Date.now();
@@ -857,18 +891,19 @@ export async function runJudgeSecondPass(
     goalCompletionOutcomes.length === 0 &&
     metadataAttributionOutcomes.length === 0;
   if (nothingGraded && !goalCompletionFailed && !metadataAttributionFailed) {
+    await settleNoop();
     return emptyResult(mode, "no_judge_verdicts");
   }
 
-  if (
-    goalCompletionJobId !== undefined &&
-    (goalCompletionOutcomes.length > 0 || goalCompletionFailed)
-  ) {
+  if (goalCompletionJobId !== undefined) {
     try {
       await ports.markFanout({
         runId,
         goalCompletionJobId,
         outcomes: goalCompletionOutcomes,
+        ...(goalCompletionOutcomes.length === 0 && !goalCompletionFailed
+          ? { noop: true }
+          : {}),
         // `run.incomplete` ⇒ the FETCH stopped short of the run's tail, so
         // this report covers a subset. `markFanout` marks a fanout complete
         // when every reported outcome succeeded and cannot tell a fully
@@ -888,15 +923,16 @@ export async function runJudgeSecondPass(
     }
   }
 
-  if (
-    metadataAttributionJobId !== undefined &&
-    (metadataAttributionOutcomes.length > 0 || metadataAttributionFailed)
-  ) {
+  if (metadataAttributionJobId !== undefined) {
     try {
       await ports.markMetadataAttributionFanout({
         runId,
         metadataAttributionJobId,
         outcomes: metadataAttributionOutcomes,
+        ...(metadataAttributionOutcomes.length === 0 &&
+        !metadataAttributionFailed
+          ? { noop: true }
+          : {}),
         // Same guard, same reason — see goal-completion's report above.
         ...(metadataAttributionFailed || run.incomplete
           ? { failed: true }

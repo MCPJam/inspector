@@ -33,7 +33,32 @@
  * eval-runner dependency graph (and its `@/` path aliases) behind one string
  * constant.
  *
- * TEMPORARY. Retire the arg (and this module) once every runner version in
- * the wild declares it; the backend can then pin `harness` unconditionally.
+ * TEMPORARY for the harness entry: retire it once every runner version
+ * declares it. The browser-secrets entry below is conditional, not temporary.
  */
-export const RUNNER_CAPABILITIES = ["harness-execution"] as const;
+import { browserSecretPlaceholdersEnabled } from "../../config.js";
+
+const HARNESS_EXECUTION = "harness-execution";
+
+/**
+ * This runner can put materialized secrets into a browser (only, not the box's
+ * shell or harness). Declared only while `MCPJAM_BROWSER_SECRET_PLACEHOLDERS`
+ * is on, since with it off no secret is actually delivered; the backend uses
+ * it to lift its materialized-secret launch gates.
+ */
+const BROWSER_MATERIALIZED_SECRETS = "browser-materialized-secrets";
+
+/** A function so the flag is read at call time, not frozen at module load. */
+export function runnerCapabilities(
+  env: NodeJS.ProcessEnv = process.env,
+): readonly string[] {
+  return [
+    HARNESS_EXECUTION,
+    ...(browserSecretPlaceholdersEnabled(env)
+      ? [BROWSER_MATERIALIZED_SECRETS]
+      : []),
+  ];
+}
+
+/** @deprecated Use {@link runnerCapabilities}, which reads the flag at call time. */
+export const RUNNER_CAPABILITIES = [HARNESS_EXECUTION] as const;
