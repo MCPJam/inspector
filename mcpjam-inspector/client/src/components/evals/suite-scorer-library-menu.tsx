@@ -17,8 +17,9 @@ export function SuiteScorerLibraryMenu({
   onAdd,
   kinds,
   authorableKinds,
-  triggerLabel = "Add scorer",
+  triggerLabel = "Add assertion",
   triggerClassName,
+  primary = false,
   onAddWidgetCheck,
 }: {
   onAdd: (kind: Predicate["type"]) => void;
@@ -32,7 +33,7 @@ export function SuiteScorerLibraryMenu({
   kinds?: readonly Predicate["type"][];
   /**
    * The kinds this DEPLOYMENT accepts (`authorablePredicateKinds`). Offering
-   * a kind the backend rejects turns "Add scorer" into a failed save, and one
+   * a kind the backend rejects turns "Add assertion" into a failed save, and one
    * an older runner cannot evaluate fails closed on every trial.
    *
    * Independent of `kinds` and intersected with it: that one is about this
@@ -43,12 +44,13 @@ export function SuiteScorerLibraryMenu({
    */
   authorableKinds?: readonly Predicate["type"][];
   /**
-   * What the button says. The suite table's "Add scorer" is the default; the
+   * What the button says. The suite table's "Add assertion" is the default; the
    * spine says "Add a check after this", because there the menu answers WHERE
    * as well as what, and a generic label would lose the position.
    */
   triggerLabel?: string;
   triggerClassName?: string;
+  primary?: boolean;
   /**
    * Offers DOM-level widget assertions alongside the predicates, under their
    * own category. Only a surface that can place a check at a position can
@@ -65,6 +67,7 @@ export function SuiteScorerLibraryMenu({
       authorableKinds={authorableKinds}
       className={triggerClassName}
       triggerLabel={triggerLabel}
+      primary={primary}
       onSelect={(choice) => {
         if (choice.kind === "check") onAdd(choice.predicateKind);
         else if (choice.kind === "widget-check")

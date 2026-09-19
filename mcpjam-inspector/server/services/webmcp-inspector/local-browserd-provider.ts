@@ -16,6 +16,7 @@ import type {
   WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
 import { ChromiumDriver } from "../browserd/daemon/chromium-driver";
+import { parseBrowserdFeatures } from "../browserd/daemon/config";
 import { launchBrowserdContext } from "../browserd/daemon/chromium-launch";
 import {
   buildBrowserdStack,
@@ -26,7 +27,7 @@ import {
   type InProcessPaneClient,
 } from "../browserd/in-process-client";
 import { BrowserdWebMcpSession } from "./browserd-provider";
-import { buildWebMcpLaunchArgs, webMcpHeadlessRequested } from "./launch-args";
+import { webMcpHeadlessRequested } from "./launch-args";
 import {
   WebMcpNoDisplayError,
   WebMcpChromiumNotInstalledError,
@@ -224,7 +225,10 @@ export const localBrowserdWebMcpProvider: WebMcpBrowserProvider = {
             contextMode: "ephemeral",
             headless,
             channel: "chromium",
-            extraArgs: buildWebMcpLaunchArgs(),
+            // Local surface: skips the GPU-less sandbox pins and applies the
+            // headless UA correction.
+            surface: "local",
+            // No `extraArgs`: the WebMCP args are already in the shared args.
             deviceScaleFactor: options.devicePixelRatio ?? 1,
           });
     } catch (error) {
@@ -249,6 +253,8 @@ export const localBrowserdWebMcpProvider: WebMcpBrowserProvider = {
     }
     driver = new ChromiumDriver(context, {
       webmcpOutputBytes: WEBMCP_RESULT_CAP_BYTES,
+      // Chromium runs in this process, so flags come from its environment.
+      features: parseBrowserdFeatures(),
       onPopupOpened: options.callbacks.onPopupOpened,
       onTabLimit: () =>
         options.callbacks.onSessionNotice?.(

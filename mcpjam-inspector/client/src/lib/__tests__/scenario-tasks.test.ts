@@ -124,23 +124,23 @@ describe("scenarioTasksEqual", () => {
 });
 
 describe("scenarioTasksRemainingLabel", () => {
-  it("counts what is left, not what exists", () => {
+  it("counts what is unchecked, not what exists", () => {
     // A tester reads this to decide whether to keep going; "3 of 5" makes them
     // do the subtraction.
-    expect(scenarioTasksRemainingLabel(3, 0)).toBe("3 left");
-    expect(scenarioTasksRemainingLabel(3, 2)).toBe("1 left");
+    expect(scenarioTasksRemainingLabel(3, 0)).toBe("3 unchecked");
+    expect(scenarioTasksRemainingLabel(3, 2)).toBe("1 unchecked");
   });
 
-  it("says Done rather than 0 left", () => {
+  it("says All checked rather than 0 unchecked", () => {
     // Zero-of-anything reads as an error state.
-    expect(scenarioTasksRemainingLabel(3, 3)).toBe("Done");
+    expect(scenarioTasksRemainingLabel(3, 3)).toBe("All checked");
     // And a creator who removed tasks after the tester ticked them must not
     // produce a negative count.
-    expect(scenarioTasksRemainingLabel(1, 4)).toBe("Done");
+    expect(scenarioTasksRemainingLabel(1, 4)).toBe("All checked");
   });
 
-  it("has nothing left when there is nothing to do", () => {
-    expect(scenarioTasksRemainingLabel(0, 0)).toBe("Done");
+  it("is all checked when there is nothing to do", () => {
+    expect(scenarioTasksRemainingLabel(0, 0)).toBe("All checked");
   });
 });
 
@@ -187,9 +187,7 @@ describe("tester check state", () => {
 
 describe("mintScenarioTaskId", () => {
   it("does not repeat within a tab", () => {
-    const ids = new Set(
-      Array.from({ length: 50 }, () => mintScenarioTaskId()),
-    );
+    const ids = new Set(Array.from({ length: 50 }, () => mintScenarioTaskId()));
     expect(ids.size).toBe(50);
   });
 });

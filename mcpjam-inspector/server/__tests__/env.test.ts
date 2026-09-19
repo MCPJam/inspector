@@ -125,6 +125,19 @@ describe("env loader", () => {
     });
   });
 
+  it("passes custom Convex domains through unchanged", () => {
+    // Production fronts the deployment on first-party hostnames, so there is no
+    // `.convex.cloud` ↔ `.convex.site` suffix to swap: both values must come
+    // straight from the environment.
+    process.env.VITE_CONVEX_URL = "https://rt.mcpjam.com";
+    process.env.CONVEX_HTTP_URL = "https://rt-http.mcpjam.com";
+
+    expect(getInspectorClientRuntimeConfig()).toEqual({
+      convexUrl: "https://rt.mcpjam.com",
+      convexSiteUrl: "https://rt-http.mcpjam.com",
+    });
+  });
+
   it("serializes hosted client runtime config for html injection", () => {
     process.env.CONVEX_HTTP_URL = "https://demo-deployment.convex.site";
 

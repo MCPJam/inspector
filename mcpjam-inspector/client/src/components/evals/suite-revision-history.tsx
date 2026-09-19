@@ -83,15 +83,21 @@ const SNAPSHOT_KEY_TO_MANIFEST_KEY: Record<string, EvalSuiteSettingKey> = {
  * (`description`, `tags`), the client and skill pickers (`hostConfigId`,
  * `serverAttachmentId`, `namedHostId`, `hostAttachments`,
  * `selectedSkillIds`), the environment resolver (`environmentFingerprints`),
- * or the policy upgrade and rollout machinery (`verdictPolicyDefaults`,
+ * or the scope and rollout machinery (`verdictPolicyDefaults`,
  * `verdictPolicyRolloutMode`, `gradingEngine`). The manifest's `repetitions`,
  * `passThreshold` and `validity` rows all edit `verdictPolicyDefaults`, so it
- * gets one label of its own rather than three. Add a row to the manifest and
- * an alias above before adding here.
+ * gets one label of its own rather than three — and that label has to name all
+ * three, because a history row is the only place a reader learns which of them
+ * moved. Add a row to the manifest and an alias above before adding here.
  */
 const UNLISTED_FIELD_LABELS: Record<string, string> = {
   description: "Description",
-  verdictPolicyDefaults: "Quality gate defaults",
+  // "Pass criteria and iterations", not "Quality gate defaults": this one
+  // stored object holds the per-case threshold, the per-case count and the
+  // evidence requirements, and the quality gate is a different setting
+  // entirely (`gatePolicy`). A reader auditing a threshold change found a
+  // history row naming the gate.
+  verdictPolicyDefaults: "Pass criteria and iterations",
   verdictPolicyRolloutMode: "Policy rollout",
   gradingEngine: "Grading engine",
   environmentFingerprints: "Environment fingerprints",

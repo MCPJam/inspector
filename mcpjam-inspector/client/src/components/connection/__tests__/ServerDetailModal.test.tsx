@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
@@ -411,6 +418,74 @@ describe("ServerDetailModal", () => {
         },
       });
     });
+  });
+
+  it("keeps Save blocked until the last overlapping wire-mode reconnect settles", async () => {
+    // Two quick override changes run two reconnects at once. A boolean guard
+    // was cleared by whichever finished first, which let a configuration save
+    // through while the other reconnect was still in flight.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      installPointerCaptureMocks();
+      mockUseFeatureFlagEnabled.mockReturnValue(true);
+      // The read-back never reports the new override, so each change reaches
+      // the reconnect through its own 1.5s safety net.
+      mockUseQuery.mockReturnValue({
+        projectId: "jh7abc123def456ghi789jk",
+        serverIds: [],
+        overrides: {},
+      });
+      const settle: Array<() => void> = [];
+      const onReconnect = vi.fn(
+        () => new Promise<void>((resolve) => settle.push(resolve))
+      );
+
+      render(
+        <ServerDetailModal
+          {...defaultProps}
+          onReconnect={onReconnect}
+          projectId="jh7abc123def456ghi789jk"
+          hostedServerId="server_123"
+          hostDefaultMcpProtocolVersion="2026-07-28"
+        />
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: /connection overrides/i })
+      );
+
+      const startReconnectFor = async (version: RegExp) => {
+        await user.click(getProtocolVersionCombobox());
+        await user.click(await screen.findByRole("option", { name: version }));
+        await act(async () => {
+          vi.advanceTimersByTime(1500);
+        });
+      };
+
+      await startReconnectFor(/2025-11-25/);
+      await waitFor(() => expect(onReconnect).toHaveBeenCalledTimes(1));
+      await startReconnectFor(/2026-07-28/);
+      await waitFor(() => expect(onReconnect).toHaveBeenCalledTimes(2));
+
+      // The footer's only button; its label tracks the reconnect, so match it
+      // by position rather than by text.
+      const saveButton = () =>
+        within(screen.getByTestId("modal-footer")).getByRole("button");
+      expect(saveButton()).toBeDisabled();
+
+      await act(async () => {
+        settle[0]();
+      });
+      expect(saveButton()).toBeDisabled();
+
+      await act(async () => {
+        settle[1]();
+      });
+      await waitFor(() => expect(saveButton()).toBeEnabled());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not fire the fallback reconnect after the modal closes", async () => {
