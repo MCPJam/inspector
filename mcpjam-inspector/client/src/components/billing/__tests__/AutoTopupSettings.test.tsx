@@ -1,181 +1,190 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
+import type { AutoTopupView } from "@/hooks/useAutoTopup";
 import { AutoTopupSettings } from "../AutoTopupSettings";
-
+const view = (overrides: Partial<AutoTopupView> = {}): AutoTopupView => ({
+  preferences: {
+    thresholdCredits: 100,
+    topupCredits: 1000,
+    monthlySpendLimitCents: 2700,
+    updatedAt: 1,
+    updatedByUserId: "user",
+  },
+  revision: 1,
+  consentVersion: "auto-topup-v1",
+  currency: "usd",
+  refillPriceCents: 900,
+  eligible: true,
+  activationAllowed: true,
+  status: "not_active",
+  paymentIssue: null,
+  card: null,
+  monthlySpend: { month: "2026-09", chargedCents: 900, reservedCents: 900 },
+  ...overrides,
+});
 describe("AutoTopupSettings", () => {
-  it("saves a selected preset and validates custom amounts", async () => {
-    const user = userEvent.setup();
-    const save = vi.fn().mockResolvedValue(undefined);
-    render(<AutoTopupSettings enrollment={null} canManage onSave={save} />);
-    await user.click(screen.getByRole("radio", { name: "2,000 credits $20" }));
-    await user.click(
-      screen.getByRole("button", { name: "Turn on auto-reload" }),
-    );
-    expect(save).toHaveBeenCalledWith({
-      thresholdCredits: 100,
-      topupCredits: 2000,
-      monthlySpendLimitCredits: null,
-    });
-    await user.click(screen.getByRole("radio", { name: "Custom amount" }));
-    await user.clear(screen.getByLabelText("Credits to add"));
-    await user.click(
-      screen.getByRole("button", { name: "Turn on auto-reload" }),
-    );
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "positive whole number",
-    );
-    expect(save).toHaveBeenCalledTimes(1);
-  });
-  it("converts dollar limits and rejects a cap smaller than one reload", async () => {
-    const user = userEvent.setup();
-    const save = vi.fn().mockResolvedValue(undefined);
-    render(<AutoTopupSettings enrollment={null} canManage onSave={save} />);
-    const minimum = screen.getByLabelText("Minimum balance");
-    await user.clear(minimum);
-    await user.type(minimum, "250");
-    const limit = screen.getByLabelText("Maximum monthly spend (optional)");
-    await user.type(limit, "2");
-    await user.click(
-      screen.getByRole("button", { name: "Turn on auto-reload" }),
-    );
-    expect(save).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert")).toHaveTextContent("at least one reload");
-    await user.clear(limit);
-    await user.type(limit, "25");
-    await user.click(
-      screen.getByRole("button", { name: "Turn on auto-reload" }),
-    );
-    expect(save).toHaveBeenCalledWith({
-      thresholdCredits: 250,
-      topupCredits: 500,
-      monthlySpendLimitCredits: 2500,
-    });
-  });
-  it("requires reviewing configuration before enrolling", async () => {
-    const user = userEvent.setup();
-    const save = vi.fn().mockResolvedValue(undefined);
-    render(<AutoTopupSettings enrollment={null} canManage onSave={save} />);
-    expect(screen.getByRole("radio", { name: "500 credits $5" })).toBeChecked();
-    expect(save).not.toHaveBeenCalled();
-    await user.click(
-      screen.getByRole("button", { name: "Turn on auto-reload" }),
-    );
-    expect(save).toHaveBeenCalledWith({
-      thresholdCredits: 100,
-      topupCredits: 500,
-      monthlySpendLimitCredits: null,
-    });
-    expect(screen.queryByText("Enrolled")).not.toBeInTheDocument();
-  });
-  it("shows a compact configuration view for an enrolled organization", () => {
+  it("keeps unconfigured setup concise and billing details collapsed", () => {
     render(
       <AutoTopupSettings
-        enrollment={{ thresholdCredits: 200, topupCredits: 1000 }}
         canManage
-        onSave={vi.fn()}
+        cardSetupConfigured={false}
+        view={view({
+          preferences: null,
+          status: "not_configured",
+          activationAllowed: false,
+          monthlySpend: { month: "2026-09", chargedCents: 0, reservedCents: 0 },
+        })}
       />,
     );
-    expect(screen.getByLabelText("Minimum balance")).toHaveValue(200);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "setup is currently unavailable",
+    );
+    expect(screen.queryByText(/Charged:/)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("radio", { name: "1,000 credits $10" }),
-    ).toBeChecked();
-    expect(
-      screen.queryByRole("button", { name: "Enroll here" }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+      screen.getByText("How billing works").closest("details"),
+    ).not.toHaveAttribute("open");
   });
-  it("shows a loading state and never saves before enrollment resolves", () => {
-    render(<AutoTopupSettings canManage onSave={vi.fn()} />);
-    expect(screen.getByRole("status")).toHaveTextContent("Loading");
-    expect(
-      screen.getByRole("button", { name: "Turn on auto-reload" }),
-    ).toBeDisabled();
-    expect(
-      screen.queryByRole("button", { name: "Turn off auto-reload" }),
-    ).not.toBeInTheDocument();
-  });
-  it("only offers Turn off once enrolled, and closes after it succeeds", async () => {
-    const user = userEvent.setup();
-    const disable = vi.fn().mockResolvedValue(undefined);
-    const close = vi.fn();
-    const { rerender } = render(
+  it("allows clearing settings after downgrade and surfaces failures", async () => {
+    const clear = vi.fn().mockRejectedValue(new Error("Try again"));
+    render(
       <AutoTopupSettings
-        enrollment={null}
+        view={view({ eligible: false })}
         canManage
-        onSave={vi.fn()}
+        onClear={clear}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Clear saved settings" }),
+    );
+    expect(clear).toHaveBeenCalledOnce();
+    expect(screen.getByRole("alert")).toHaveTextContent("Try again");
+  });
+  it("does not resave unchanged enrolled preferences but allows edits", async () => {
+    const user = userEvent.setup();
+    const save = vi.fn();
+    render(
+      <AutoTopupSettings
+        view={view({ status: "enrolled" })}
+        canManage
+        onSave={save}
+      />,
+    );
+    const button = screen.getByRole("button", { name: "Save settings" });
+    expect(button).toBeDisabled();
+    await user.click(button);
+    expect(save).not.toHaveBeenCalled();
+    await user.clear(screen.getByLabelText("Minimum balance"));
+    await user.type(screen.getByLabelText("Minimum balance"), "200");
+    expect(button).toBeEnabled();
+    await user.click(button);
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ thresholdCredits: 200 }),
+    );
+  });
+  it("saves integer USD cents without claiming enrollment", async () => {
+    const user = userEvent.setup();
+    const save = vi.fn();
+    render(<AutoTopupSettings view={view()} canManage onSave={save} />);
+    expect(screen.getByText(/Saved, not active/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Maximum monthly spend/)).toHaveValue("27.00");
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(save).toHaveBeenCalledWith({
+      thresholdCredits: 100,
+      topupCredits: 1000,
+      monthlySpendLimitCents: 2700,
+    });
+  });
+  it("requires unchecked consent to the exact saved quote, and blocks unsaved edits", async () => {
+    const user = userEvent.setup();
+    const begin = vi.fn();
+    render(<AutoTopupSettings view={view()} canManage onBegin={begin} />);
+    expect(screen.getByLabelText(/I authorize/)).not.toBeChecked();
+    expect(screen.getByLabelText(/I authorize/)).toHaveAccessibleName(
+      /1,000 credits for \$9.00.*100.*\$27.00.*UTC/,
+    );
+    const button = screen.getByRole("button", {
+      name: "Continue to card setup",
+    });
+    expect(button).toBeDisabled();
+    await user.click(screen.getByLabelText(/I authorize/));
+    await user.click(button);
+    expect(begin).toHaveBeenCalledOnce();
+    await user.clear(screen.getByLabelText("Minimum balance"));
+    await user.type(screen.getByLabelText("Minimum balance"), "200");
+    expect(button).toBeDisabled();
+  });
+  it("validates threshold, refill range and decimal money without rounding", async () => {
+    const user = userEvent.setup();
+    const save = vi.fn();
+    render(<AutoTopupSettings view={view()} canManage onSave={save} />);
+    const amount = screen.getByLabelText("Credits to add");
+    await user.clear(amount);
+    await user.type(amount, "499");
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("500");
+    await user.clear(amount);
+    await user.type(amount, "1000");
+    const cap = screen.getByLabelText(/Maximum monthly spend/);
+    await user.clear(cap);
+    await user.type(cap, "9.001");
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(save).not.toHaveBeenCalled();
+  });
+  it("shows reserved spend and permits disabling when payment masks enrollment", async () => {
+    const user = userEvent.setup();
+    const disable = vi.fn();
+    render(
+      <AutoTopupSettings
+        view={view({ status: "payment_pending", activationAllowed: false })}
+        canManage
         onDisable={disable}
-        onClose={close}
       />,
     );
     expect(
-      screen.queryByRole("button", { name: "Turn off auto-reload" }),
+      screen.getByText(/already-authorized payment can still complete/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Charged: \$9.00.*Reserved: \$9.00/),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Turn off auto-reload" }),
+    );
+    expect(disable).toHaveBeenCalledOnce();
+    expect(
+      screen.getByText(/New automatic purchases are off/),
+    ).toBeInTheDocument();
+  });
+  it("keeps members read-only and rollout-off enrollment unavailable", () => {
+    const { rerender } = render(
+      <AutoTopupSettings view={view()} canManage={false} onBegin={vi.fn()} />,
+    );
+    expect(screen.getByLabelText("Credits to add")).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Continue to card setup" }),
     ).not.toBeInTheDocument();
     rerender(
       <AutoTopupSettings
-        enrollment={{ thresholdCredits: 100, topupCredits: 500 }}
+        view={view({ activationAllowed: false })}
         canManage
-        onSave={vi.fn()}
-        onDisable={disable}
-        onClose={close}
-      />,
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Turn off auto-reload" }),
-    );
-    expect(disable).toHaveBeenCalledTimes(1);
-    expect(close).toHaveBeenCalledTimes(1);
-  });
-  it("surfaces a Convex payload message when turning off fails", async () => {
-    const user = userEvent.setup();
-    const close = vi.fn();
-    const failure = Object.assign(new Error("[Request ID abc] Server Error"), {
-      data: "Only owners can change auto-reload.",
-    });
-    render(
-      <AutoTopupSettings
-        enrollment={{ thresholdCredits: 100, topupCredits: 500 }}
-        canManage
-        onSave={vi.fn()}
-        onDisable={vi.fn().mockRejectedValue(failure)}
-        onClose={close}
-      />,
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Turn off auto-reload" }),
-    );
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Only owners can change auto-reload.",
-    );
-    expect(close).not.toHaveBeenCalled();
-  });
-  it("keeps member configuration read-only", () => {
-    render(
-      <AutoTopupSettings
-        enrollment={{ thresholdCredits: 100, topupCredits: 500 }}
-        canManage={false}
+        onBegin={vi.fn()}
       />,
     );
     expect(
-      screen.getByRole("radio", { name: "500 credits $5" }),
-    ).toBeDisabled();
-    expect(
-      screen.queryByRole("button", { name: "Save changes" }),
+      screen.queryByRole("button", { name: "Continue to card setup" }),
     ).not.toBeInTheDocument();
   });
-  it("shows a failed save without claiming enrollment", async () => {
-    const user = userEvent.setup();
+  it("shows unknown payment issues without offering a payment retry", () => {
     render(
       <AutoTopupSettings
-        enrollment={null}
+        view={view({ status: "needs_attention", paymentIssue: "future_issue" })}
         canManage
-        onSave={vi.fn().mockRejectedValue(new Error("Please retry"))}
       />,
     );
-    await user.click(
-      screen.getByRole("button", { name: "Turn on auto-reload" }),
-    );
-    expect(await screen.findByRole("alert")).toHaveTextContent("Please retry");
-    expect(screen.queryByText("Enrolled")).not.toBeInTheDocument();
+    expect(screen.getByText(/needs attention/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /retry payment/i }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -40,17 +40,37 @@ import {
   type PredicateKind,
 } from "@/shared/predicate-kinds";
 import { WIDGET_ASSERTION_LABELS, type WidgetAssertion } from "@/shared/steps";
+import {
+  LIBRARY_CATEGORY_ORDER,
+  SCORER_LIBRARY_CATEGORY_LABELS,
+  libraryCategoryOfKind,
+  type ScorerLibraryCategoryId,
+} from "./suite-scorer-table-model";
 
-export const ADD_SECTIONS = [
+/**
+ * Sections of the Add drawer, in chain order.
+ *
+ * Every assertion files under the stage its evidence is reported at
+ * (`ASSERTION_STAGE`, via `libraryCategoryOfKind`), so the heading a reader
+ * picks it from is the heading its result appears under on the run page.
+ * Budgets are the one presentation group the contract carries. Actions are
+ * steps, not evaluators, and keep their own section.
+ */
+export type AddSection =
+  | "Actions"
+  | `Assertions · ${(typeof SCORER_LIBRARY_CATEGORY_LABELS)[ScorerLibraryCategoryId]}`;
+
+const ASSERTION_SECTIONS: Record<ScorerLibraryCategoryId, AddSection> =
+  Object.fromEntries(
+    LIBRARY_CATEGORY_ORDER.map((id) => [
+      id,
+      `Assertions · ${SCORER_LIBRARY_CATEGORY_LABELS[id]}` as const,
+    ]),
+  ) as Record<ScorerLibraryCategoryId, AddSection>;
+export const ADD_SECTIONS: readonly AddSection[] = [
   "Actions",
-  "Assertions · Tool selection",
-  "Assertions · Tool inputs and results",
-  "Assertions · Answer and outcome",
-  "Assertions · View",
-  "Limits · Time and usage",
-  "Observations · Advisory checks",
-] as const;
-export type AddSection = (typeof ADD_SECTIONS)[number];
+  ...LIBRARY_CATEGORY_ORDER.map((id) => ASSERTION_SECTIONS[id]),
+];
 export type EvalAddChoice =
   | { kind: "step"; stepKind: "prompt" | "interact" | "toolCall" }
   | { kind: "check"; predicateKind: PredicateKind }
@@ -65,40 +85,41 @@ export type EvalAddEntry = {
   advisory: boolean;
   choice: EvalAddChoice;
 };
-const predicateMeta: Record<PredicateKind, [AddSection, LucideIcon]> = {
-  toolDescriptionsPresent: [ADD_SECTIONS[2], FileJson],
-  toolAnnotationsPresent: [ADD_SECTIONS[2], FileJson],
-  toolNamesUnique: [ADD_SECTIONS[2], FileJson],
-  toolInputSchemasWellFormed: [ADD_SECTIONS[2], FileJson],
-  toolOutputSchemasPresent: [ADD_SECTIONS[2], FileJson],
-  noDeprecatedToolExposed: [ADD_SECTIONS[6], Archive],
-  toolCalledWith: [ADD_SECTIONS[1], Wrench],
-  toolCalledAtLeastOnce: [ADD_SECTIONS[1], CheckCheck],
-  toolNeverCalled: [ADD_SECTIONS[1], Ban],
-  onlyToolsCalled: [ADD_SECTIONS[1], ListFilter],
-  firstToolWas: [ADD_SECTIONS[1], ListStart],
-  toolCalledBefore: [ADD_SECTIONS[1], ListOrdered],
-  noDestructiveToolCalled: [ADD_SECTIONS[1], ShieldCheck],
-  argumentsMatchToolSchema: [ADD_SECTIONS[2], Braces],
-  noToolErrors: [ADD_SECTIONS[2], ShieldCheck],
-  toolResultContains: [ADD_SECTIONS[2], TextSearch],
-  toolResultMatchesSchema: [ADD_SECTIONS[2], FileJson],
-  responseContains: [ADD_SECTIONS[3], MessageSquareText],
-  responseMatches: [ADD_SECTIONS[3], Regex],
-  finalAssistantMessageNonEmpty: [ADD_SECTIONS[3], CheckCheck],
-  widgetRendered: [ADD_SECTIONS[4], LayoutPanelTop],
-  widgetNoConsoleErrors: [ADD_SECTIONS[4], ShieldCheck],
-  toolLatencyUnder: [ADD_SECTIONS[5], Timer],
-  widgetRenderLatencyUnder: [ADD_SECTIONS[5], Timer],
-  toolResultSizeUnder: [ADD_SECTIONS[5], FileDigit],
-  tokenBudgetUnder: [ADD_SECTIONS[5], Coins],
-  turnCountUnder: [ADD_SECTIONS[5], MessagesSquare],
-  toolCallCountUnder: [ADD_SECTIONS[5], Gauge],
-  noEndingQuestion: [ADD_SECTIONS[6], MessageCircleQuestion],
-  noRepeatedIdenticalCall: [ADD_SECTIONS[6], Repeat2],
-  noDeprecatedToolCalled: [ADD_SECTIONS[6], Archive],
-  toolErrorNamesInput: [ADD_SECTIONS[6], CircleAlert],
-  fullPageHasContinuation: [ADD_SECTIONS[6], ListEnd],
+const predicateIcons: Record<PredicateKind, LucideIcon> = {
+  toolDescriptionsPresent: FileJson,
+  toolAnnotationsPresent: FileJson,
+  toolNamesUnique: FileJson,
+  toolInputSchemasWellFormed: FileJson,
+  toolOutputSchemasPresent: FileJson,
+  noDeprecatedToolExposed: Archive,
+  toolCalledWith: Wrench,
+  toolCalledAtLeastOnce: CheckCheck,
+  toolNeverCalled: Ban,
+  onlyToolsCalled: ListFilter,
+  firstToolWas: ListStart,
+  toolCalledBefore: ListOrdered,
+  noDestructiveToolCalled: ShieldCheck,
+  argumentsMatchToolSchema: Braces,
+  noToolErrors: ShieldCheck,
+  toolResultContains: TextSearch,
+  toolResultMatchesSchema: FileJson,
+  responseContains: MessageSquareText,
+  responseCloseTo: MessageSquareText,
+  responseMatches: Regex,
+  finalAssistantMessageNonEmpty: CheckCheck,
+  widgetRendered: LayoutPanelTop,
+  widgetNoConsoleErrors: ShieldCheck,
+  toolLatencyUnder: Timer,
+  widgetRenderLatencyUnder: Timer,
+  toolResultSizeUnder: FileDigit,
+  tokenBudgetUnder: Coins,
+  turnCountUnder: MessagesSquare,
+  toolCallCountUnder: Gauge,
+  noEndingQuestion: MessageCircleQuestion,
+  noRepeatedIdenticalCall: Repeat2,
+  noDeprecatedToolCalled: Archive,
+  toolErrorNamesInput: CircleAlert,
+  fullPageHasContinuation: ListEnd,
 };
 const widgetIcons: Record<WidgetAssertion["kind"], LucideIcon> = {
   textVisible: Type,
@@ -114,21 +135,23 @@ export const EVAL_ADD_CATALOG: EvalAddEntry[] = [
       ["interact", "Interact", MousePointerClick],
       ["toolCall", "Call tool", Wrench],
     ] as const
-  ).map(([stepKind, label, Icon]): EvalAddEntry => ({
-    key: stepKind,
-    label,
-    Icon,
-    section: "Actions",
-    scope: "inline",
-    advisory: false,
-    choice: { kind: "step", stepKind },
-  })),
+  ).map(
+    ([stepKind, label, Icon]): EvalAddEntry => ({
+      key: stepKind,
+      label,
+      Icon,
+      section: "Actions",
+      scope: "inline",
+      advisory: false,
+      choice: { kind: "step", stepKind },
+    }),
+  ),
   ...(Object.keys(PREDICATE_KIND_LABELS) as PredicateKind[]).map(
     (predicateKind): EvalAddEntry => ({
       key: `check:${predicateKind}`,
       label: PREDICATE_KIND_LABELS[predicateKind],
-      section: predicateMeta[predicateKind][0],
-      Icon: predicateMeta[predicateKind][1],
+      section: ASSERTION_SECTIONS[libraryCategoryOfKind(predicateKind)],
+      Icon: predicateIcons[predicateKind],
       scope: isTurnScopablePredicateKind(predicateKind)
         ? "inline"
         : "whole-run",
@@ -140,7 +163,7 @@ export const EVAL_ADD_CATALOG: EvalAddEntry[] = [
     (widgetKind): EvalAddEntry => ({
       key: `widget:${widgetKind}`,
       label: WIDGET_ASSERTION_LABELS[widgetKind],
-      section: ADD_SECTIONS[4],
+      section: ASSERTION_SECTIONS.userValue,
       Icon: widgetIcons[widgetKind],
       scope: "inline",
       advisory: false,
@@ -150,7 +173,7 @@ export const EVAL_ADD_CATALOG: EvalAddEntry[] = [
   {
     key: "outcome",
     label: "Expected outcome / goal completion",
-    section: ADD_SECTIONS[3],
+    section: ASSERTION_SECTIONS.userValue,
     Icon: Target,
     scope: "outcome",
     advisory: false,

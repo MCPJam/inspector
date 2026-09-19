@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { USER_VALUE_STAGE_QUESTIONS } from "@mcpjam/sdk/contract";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import { SuiteScorerTable } from "../suite-scorer-table";
 import { PASS_OR_FAIL_HINT, JUDGE_HINT } from "../suite-pass-or-fail-section";
@@ -48,8 +49,11 @@ function renderTable(
     <SuiteScorerTable
       matchOptions={undefined}
       onMatchOptionsChange={onMatchOptionsChange}
-      predicates={overrides.predicates ?? []}
-      onPredicatesChange={onPredicatesChange}
+      scope={{
+        kind: "suite",
+        predicates: overrides.predicates ?? [],
+        onPredicatesChange,
+      }}
       judgeConfig={overrides.judgeConfig}
       onJudgeConfigChange={onJudgeConfigChange}
       availableModels={[]}
@@ -68,6 +72,16 @@ function renderTable(
 }
 
 describe("SuiteScorerTable", () => {
+  it("shows disabled checked boxes for required match rules", () => {
+    const { container } = renderTable();
+    const rows = container.querySelectorAll('[data-scorer-row="match"]');
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    for (const row of rows) {
+      const checkbox = within(row as HTMLElement).getByRole("checkbox");
+      expect(checkbox).toBeChecked();
+      expect(checkbox).toBeDisabled();
+    }
+  });
   it("mounts muted observed rows with folded facts", () => {
     const { container } = renderTable({
       stageFacts: {
@@ -79,7 +93,7 @@ describe("SuiteScorerTable", () => {
       const group = container.querySelector(
         `[data-stage-group="${stage}"]`,
       ) as HTMLElement;
-      expect(group.textContent).toContain("Observed by the runner");
+      expect(group.textContent).toContain("Required");
       const details = group.querySelector("details");
       expect(details).toBeTruthy();
       expect(
@@ -88,17 +102,7 @@ describe("SuiteScorerTable", () => {
     }
   });
 
-  it("marks the stage group when a chain card is selected", async () => {
-    const user = userEvent.setup();
-    const { container } = renderTable();
-    await user.click(screen.getByTestId("stage-chain-card-selection"));
-    const group = container.querySelector(
-      '[data-stage-group="selection"]',
-    ) as HTMLElement;
-    expect(group.getAttribute("data-selected")).toBe("true");
-  });
-
-  it("drafts severity when a predicate is set to Warn", async () => {
+  it("writes advisory with no severity when a predicate is set to Advisory", async () => {
     const user = userEvent.setup();
     const predicates: Predicate[] = [{ type: "noToolErrors" }];
     const { nextPredicates } = renderTable({
@@ -127,13 +131,19 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
-    await user.click(screen.getByRole("button", { name: "Warn" }));
+    await user.click(
+      screen.getByRole("button", { name: "Tool errors (isError)" }),
+    );
+    const assertionRole = screen.getByRole("group", { name: "Assertion role" });
+    await user.click(
+      within(assertionRole).getByRole("button", { name: "Advisory" }),
+    );
     expect(nextPredicates()).toEqual([
-      { type: "noToolErrors", role: "advisory", severity: "warn" },
+      { type: "noToolErrors", role: "advisory" },
     ]);
   });
 
-  it("offers a judge Warn control only after C1 judges capabilities", async () => {
+  it("writes an advisory judge with no severity, whatever the judges capability says", async () => {
     const user = userEvent.setup();
     const { onJudgeConfigChange } = renderTable({
       capabilities: {
@@ -186,20 +196,18 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
-    const judgeRole = document.querySelector('[aria-label="Judge role"]');
-    expect(within(judgeRole as HTMLElement).getByText("Warn")).toBeTruthy();
-    await user.click(within(judgeRole as HTMLElement).getByText("Warn"));
-    expect(onJudgeConfigChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        goalCompletion: expect.objectContaining({
-          role: "advisory",
-          severity: "warn",
-        }),
-      }),
+    await user.click(
+      screen.getByRole("button", { name: "Goal completion judge" }),
     );
+    const judgeRole = document.querySelector('[aria-label="Judge role"]');
+    expect(within(judgeRole as HTMLElement).getByText("Advisory")).toBeTruthy();
+    await user.click(within(judgeRole as HTMLElement).getByText("Advisory"));
+    const [next] = onJudgeConfigChange.mock.calls.at(-1)!;
+    expect(next.goalCompletion).toMatchObject({ role: "advisory" });
+    expect("severity" in next.goalCompletion).toBe(false);
   });
 
-  it("does not offer a judge Warn control", () => {
+  it("offers the judge exactly two segments, whatever the capability advertises", () => {
     const { container } = renderTable({
       capabilities: {
         suiteId: "s",
@@ -237,26 +245,33 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Goal completion judge" }),
+    );
     const judgeRole = container.querySelector('[aria-label="Judge role"]');
     expect(judgeRole).toBeTruthy();
+    // Warn collapsed into Advisory, so there is no third tier for the
+    // judge-severity capability to withhold.
     expect(within(judgeRole as HTMLElement).queryByText("Warn")).toBeNull();
-    expect(within(judgeRole as HTMLElement).getByText("Gate")).toBeTruthy();
-    expect(within(judgeRole as HTMLElement).getByText("Report")).toBeTruthy();
+    expect(within(judgeRole as HTMLElement).queryByText("Report")).toBeNull();
+    expect(within(judgeRole as HTMLElement).getByText("Required")).toBeTruthy();
+    expect(within(judgeRole as HTMLElement).getByText("Advisory")).toBeTruthy();
   });
 
-  it("renders groundedness as a report chip with no gate toggle", () => {
+  it("renders groundedness as an advisory chip with no role toggle", () => {
     const { container } = renderTable();
     const row = container.querySelector(
       '[data-scorer-id="judge:groundedness"]',
     ) as HTMLElement;
     expect(row).toBeTruthy();
-    expect(within(row).getByText("Report")).toBeTruthy();
+    fireEvent.click(within(row).getByRole("button"));
+    expect(within(row).getByText("Advisory")).toBeTruthy();
     expect(within(row).queryByRole("group", { name: "Judge role" })).toBeNull();
     expect(screen.getByText(/Groundedness runs on demand/)).toBeTruthy();
     expect(screen.getByTestId("groundedness-not-yet-run")).toBeTruthy();
   });
 
-  it("disables judge Gate with the panel's copy", () => {
+  it("disables the judge's Required segment with the panel's copy", () => {
     renderTable({
       capabilities: {
         suiteId: "s",
@@ -281,10 +296,13 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
-    const gate = screen
-      .getAllByRole("button", { name: "Gate" })
+    fireEvent.click(
+      screen.getByRole("button", { name: "Goal completion judge" }),
+    );
+    const required = screen
+      .getAllByRole("button", { name: "Required" })
       .find((button) => button.closest('[aria-label="Judge role"]'));
-    expect(gate).toBeDisabled();
+    expect(required).toBeDisabled();
     expect(screen.getByTestId("judge-gate-disabled-reason").textContent).toBe(
       "Not available on this deployment",
     );
@@ -293,12 +311,14 @@ describe("SuiteScorerTable", () => {
   it("lists library categories that have kinds", async () => {
     const user = userEvent.setup();
     renderTable();
-    await user.click(screen.getByRole("button", { name: "Add scorer" }));
+    await user.click(screen.getByRole("button", { name: "Add assertion" }));
     for (const name of [
-      "Assertions · Tool selection",
-      "Assertions · Answer and outcome",
-      "Limits · Time and usage",
-      "Assertions · Tool inputs and results",
+      "Assertions · Discovery",
+      "Assertions · Selection",
+      "Assertions · Tool call",
+      "Assertions · Response",
+      "Assertions · User value",
+      "Assertions · Budgets",
     ]) {
       expect(screen.getByRole("region", { name })).toBeInTheDocument();
     }
@@ -307,75 +327,120 @@ describe("SuiteScorerTable", () => {
 
   it("has no Last run or Trend column", () => {
     const { container } = renderTable();
-    const heads = Array.from(container.querySelectorAll("thead th")).map(
-      (head) => head.textContent?.trim(),
-    );
-    expect(heads).toEqual(["Scorer", "Kind", "Threshold", "Role"]);
+    // A list, not a grid: no column headers to grow a Last run into.
+    expect(container.querySelector("table")).toBeNull();
     expect(container.textContent).not.toMatch(/Last run/i);
     expect(container.textContent).not.toMatch(/Trend/i);
   });
 
-  it("degrades predicate Role to a read-only chip without checkPolicy", () => {
+  it("degrades the predicate role to a read-only chip without checkPolicy", () => {
     const { container } = renderTable({
       predicates: [{ type: "noToolErrors" }],
     });
-    expect(screen.queryByRole("group", { name: "Check role" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Assertion role" })).toBeNull();
     const row = container.querySelector(
       '[data-scorer-id="predicate:0"]',
     ) as HTMLElement;
-    expect(within(row).getByText("Gate")).toBeTruthy();
+    fireEvent.click(within(row).getByRole("button"));
+    expect(within(row).getByText("Required")).toBeTruthy();
   });
 
   it("still reports an advisory check honestly when it cannot be edited", () => {
     // A suite file or the CLI can author `role: "advisory"` on a backend that
-    // does not advertise check policy. Rendering that as "Gate" tells a reader
-    // the check will fail their trial when it cannot. Not being able to EDIT a
-    // role is not a reason to misreport it.
+    // does not advertise check policy. Rendering that as "Required" tells a
+    // reader the check will fail their trial when it cannot. Not being able to
+    // EDIT a role is not a reason to misreport it.
     const { container } = renderTable({
       predicates: [
         { type: "noToolErrors", role: "advisory", severity: "warn" } as never,
       ],
     });
-    expect(screen.queryByRole("group", { name: "Check role" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Assertion role" })).toBeNull();
     const row = container.querySelector(
       '[data-scorer-id="predicate:0"]',
     ) as HTMLElement;
-    expect(within(row).getByText("Warn")).toBeTruthy();
-    expect(within(row).queryByText("Gate")).toBeNull();
+    fireEvent.click(within(row).getByRole("button"));
+    expect(within(row).getByText("Advisory")).toBeTruthy();
+    expect(within(row).queryByText("Required")).toBeNull();
   });
 });
 
 describe("SuiteScorerTable — role colour", () => {
-  it("gives Warn the one colour, because it is the role that must catch the eye", () => {
-    // Gate is the default and reads as ordinary; Report is muted because
-    // "recorded, changes nothing" is what muted means. Warn is the role whose
-    // whole job is to be noticed without failing anything.
+  it("renders a stored severity identically to none, because it is one tier", () => {
+    // These two rows used to be Warn and Report, told apart by an amber
+    // highlight alone. Neither failed the iteration, so the reader was being
+    // asked to learn a distinction the verdict never made.
     const { container } = renderTable({
       predicates: [
         { type: "noToolErrors", role: "advisory", severity: "warn" } as never,
         { type: "noToolErrors", role: "advisory" } as never,
       ],
     });
-    const warn = within(
+    for (const button of screen.getAllByRole("button", {
+      name: "Tool errors (isError)",
+    }))
+      fireEvent.click(button);
+    const withSeverity = within(
       container.querySelector('[data-scorer-id="predicate:0"]') as HTMLElement,
-    ).getByText("Warn");
-    const report = within(
+    ).getByText("Advisory");
+    const without = within(
       container.querySelector('[data-scorer-id="predicate:1"]') as HTMLElement,
-    ).getByText("Report");
-    expect(warn.className).not.toBe(report.className);
-    expect(warn.className).toMatch(/amber|warn/i);
+    ).getByText("Advisory");
+    expect(withSeverity.className).toBe(without.className);
   });
 });
 
 it("keeps each standard numeric criterion in its own editable field", () => {
-  renderTable({ predicates: [
-    { type: "toolDescriptionsPresent", minLength: 31 },
-    { type: "toolLatencyUnder", ms: 1234 },
-    { type: "toolResultSizeUnder", maxBytes: 64000 },
-    { type: "toolCallCountUnder", count: 4 },
-  ] });
-  expect(screen.getByRole("spinbutton", { name: "Minimum tool description length" })).toHaveValue(31);
-  expect(screen.getByRole("spinbutton", { name: "Tool latency budget in ms" })).toHaveValue(1234);
-  expect(screen.getByRole("spinbutton", { name: "Tool result size budget in bytes" })).toHaveValue(64000);
-  expect(screen.getByRole("spinbutton", { name: "Tool call budget" })).toHaveValue(4);
+  renderTable({
+    predicates: [
+      { type: "toolDescriptionsPresent", minLength: 31 },
+      { type: "toolLatencyUnder", ms: 1234 },
+      { type: "toolResultSizeUnder", maxBytes: 64000 },
+      { type: "toolCallCountUnder", count: 4 },
+    ],
+  });
+  // Each row reads its number, and opens its own field from the title.
+  const cases: [string, string, number][] = [
+    ["Description quality", "Minimum description length", 31],
+    ["Tool latency", "Max time in ms (strictly under)", 1234],
+    ["Payload size", "Max result size in bytes (strictly under)", 64000],
+    ["Tool hops before the right tool", "Max tool calls (strictly under)", 4],
+  ];
+  for (const [title, field, value] of cases) {
+    fireEvent.click(screen.getByRole("button", { name: title }));
+    expect(screen.getByRole("spinbutton", { name: field })).toHaveValue(value);
+    fireEvent.click(screen.getByRole("button", { name: title }));
+  }
+});
+
+it("shows short names at rest and allows multiple role editors to stay open", () => {
+  const { container } = renderTable({
+    predicates: [
+      { type: "noToolErrors" },
+      { type: "toolLatencyUnder", ms: 1234 },
+    ],
+  });
+  for (const question of Object.values(USER_VALUE_STAGE_QUESTIONS))
+    expect(screen.queryByText(question)).toBeNull();
+  expect(
+    screen.getByRole("heading", { name: "Evaluators" }),
+  ).toBeInTheDocument();
+  const row = container.querySelector(
+    '[data-scorer-id="predicate:0"]',
+  ) as HTMLElement;
+  expect(
+    within(row).getByRole("checkbox", { name: "Tool errors (isError)" }),
+  ).toBeChecked();
+  expect(row.textContent).toBe("Tool errors (isError)");
+  expect(within(row).queryByRole("group")).toBeNull();
+  for (const name of ["Tool errors (isError)", "Tool latency"]) {
+    fireEvent.click(screen.getByRole("button", { name }));
+    expect(screen.getByRole("button", { name })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  }
+  expect(container.querySelectorAll("[data-scorer-editor]")).toHaveLength(2);
+  expect(within(row).getByText("No tool returns an error")).toBeInTheDocument();
+  expect(within(row).getByText("Required")).toBeInTheDocument();
 });

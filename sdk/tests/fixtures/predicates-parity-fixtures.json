@@ -1,5 +1,5 @@
 {
-  "__readme": "Shared parity fixtures for the predicate wire shape. ONE FILE, byte-identical in both repos: mcpjam-inspector at sdk/tests/fixtures/predicates-parity-fixtures.json (checked by the Zod `predicateSchema`) and mcpjam-backend at tests/convex/fixtures/predicates-parity-fixtures.json (checked by the Convex `predicateValidator` plus `assertValidPredicate`, through the real mutation boundary). Pinned by `predicates-parity-fixtures` in convex/lib/mirrors.json, so editing one side without the other fails CI. Every `accept` row must parse on both sides; every `reject` row must fail on both. When adding a predicate kind, edit BOTH validators and this file in the same PR — a kind with no accept row here has no proof the two validators agree about it.",
+  "__readme": "Shared parity fixtures for the predicate wire shape. ONE FILE, byte-identical in both repos: mcpjam-inspector at sdk/tests/fixtures/predicates-parity-fixtures.json (checked by the Zod `predicateSchema`) and mcpjam-backend at tests/convex/fixtures/predicates-parity-fixtures.json (checked by the Convex `predicateValidator` plus `assertValidPredicate`, through the real mutation boundary). Pinned by `predicates-parity-fixtures` in convex/lib/mirrors.json, so editing one side without the other fails CI. Every `accept` row must parse on both sides; every `reject` row must fail on both. The policy `role` has two spellings of one value — canonical `required`, legacy `gating` — and both must be accepted by both validators; `severity` still requires `advisory` under either. When adding a predicate kind, edit BOTH validators and this file in the same PR — a kind with no accept row here has no proof the two validators agree about it.",
   "accept": [
     {
       "label": "toolCalledWith — minimal (only required fields)",
@@ -806,6 +806,54 @@
         "role": "advisory",
         "severity": "warn"
       }
+    },
+    {
+      "label": "responseCloseTo — exact normalized distance",
+      "value": {
+        "type": "responseCloseTo",
+        "reference": "hello",
+        "maxDistance": 0
+      }
+    },
+    {
+      "label": "responseCloseTo — Unicode and normalization",
+      "value": {
+        "type": "responseCloseTo",
+        "reference": "Hello 😀",
+        "maxDistance": 0.25,
+        "caseSensitive": false,
+        "normalizeWhitespace": true
+      }
+    },
+    {
+      "label": "noToolErrors — role required (the canonical spelling of gating)",
+      "value": {
+        "type": "noToolErrors",
+        "role": "required"
+      }
+    },
+    {
+      "label": "toolCalledAtLeastOnce — role required",
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": "search",
+        "role": "required"
+      }
+    },
+    {
+      "label": "responseContains — role required",
+      "value": {
+        "type": "responseContains",
+        "needle": "refund",
+        "role": "required"
+      }
+    },
+    {
+      "label": "noToolErrors — role gating (the legacy spelling, still accepted)",
+      "value": {
+        "type": "noToolErrors",
+        "role": "gating"
+      }
     }
   ],
   "reject": [
@@ -1375,6 +1423,59 @@
           "readOnlyHint",
           "readOnlyHint"
         ]
+      }
+    },
+    {
+      "label": "responseCloseTo — normalized reference must not be empty",
+      "value": {
+        "type": "responseCloseTo",
+        "reference": "  ",
+        "maxDistance": 0.2,
+        "normalizeWhitespace": true
+      }
+    },
+    {
+      "label": "responseCloseTo — distance outside unit interval",
+      "value": {
+        "type": "responseCloseTo",
+        "reference": "hello",
+        "maxDistance": 1.1
+      }
+    },
+    {
+      "label": "role required + severity warn (severity still requires advisory)",
+      "value": {
+        "type": "noToolErrors",
+        "role": "required",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "noEndingQuestion — role required (an observation may not be required either)",
+      "value": {
+        "type": "noEndingQuestion",
+        "role": "required"
+      }
+    },
+    {
+      "label": "noRepeatedIdenticalCall — role required",
+      "value": {
+        "type": "noRepeatedIdenticalCall",
+        "role": "required"
+      }
+    },
+    {
+      "label": "role Required — the widening added one spelling, not case-insensitivity",
+      "value": {
+        "type": "noToolErrors",
+        "role": "Required"
+      }
+    },
+    {
+      "label": "role require — a near miss must still fail closed",
+      "value": {
+        "type": "noToolErrors",
+        "role": "require"
       }
     }
   ]

@@ -1,3 +1,7 @@
+import {
+  suiteJudgeSettingsSchema,
+  caseJudgeSettingsSchema,
+} from "./judge-settings.js";
 import { suppressedSuiteStandardCheckIdsSchema } from "./standard-checks.js";
 /**
  * The versioned eval **suite file** — one declarative document describing a
@@ -49,10 +53,28 @@ import { suppressedSuiteStandardCheckIdsSchema } from "./standard-checks.js";
  *
  * ── Versioning policy ────────────────────────────────────────────────────────
  *
- * `schemaVersion` is `const "1"`. Additive OPTIONAL fields stay within `"1"`; a
- * breaking revision becomes `"2"`. A v1 validator handed a `"2"` file says so in
- * words that name the fix ("upgrade the CLI/SDK"), because the alternative — a
- * generic "invalid enum value" — sends people to edit a file that is correct.
+ * `schemaVersion` selects a DIALECT, and the validator is a discriminated union
+ * over the dialects it knows. Additive OPTIONAL fields stay within a dialect; a
+ * breaking revision is a new one. A validator handed a version it does not know
+ * says so in words that name the fix ("upgrade the CLI/SDK"), because the
+ * alternative — a generic "invalid enum value" — sends people to edit a file
+ * that is correct.
+ *
+ * Two dialects exist:
+ *
+ *   - `"1"` — the original. The configured count is `repetitions`; the case's
+ *     rules are `checks` with `assertions` as a deprecated alias. It is FROZEN:
+ *     its zod shape and its published JSON Schema (`…/eval-suite/v1.json`) do
+ *     not change, so an older strict reader can never misread a new file under
+ *     the version it already knows.
+ *   - `"2"` — the pinned evaluator vocabulary (`docs/evals-vocabulary-
+ *     consolidation.md`): the configured count is `iterations`, the case's
+ *     rules are `assertions`, and the dialect-1 spellings are unknown keys.
+ *     There is no alias in dialect 2 and therefore no both-spellings refusal:
+ *     one word per field is the point of the revision.
+ *
+ * The loader reads both; a writer emits the file's own dialect and never
+ * upgrades a file on its author's behalf.
  */
 
 import { z } from "zod";
@@ -62,12 +84,30 @@ import { opaqueIdSchema } from "./identity.js";
 import { caseIntentUpdateSchema } from "./stage-intent.js";
 import { stepsSchema } from "./steps.js";
 
-/** The only `schemaVersion` this validator accepts. */
+/**
+ * The original dialect's `schemaVersion`.
+ *
+ * Kept under its unqualified name because it is what every existing file,
+ * exporter and mirror pins; {@link EVAL_SUITE_SCHEMA_VERSION_2} is the newer
+ * dialect and {@link EVAL_SUITE_SCHEMA_VERSIONS} is the closed set.
+ */
 export const EVAL_SUITE_SCHEMA_VERSION = "1";
+/** The evaluator-vocabulary dialect's `schemaVersion`. */
+export const EVAL_SUITE_SCHEMA_VERSION_2 = "2";
+/** Every `schemaVersion` this validator reads, oldest first. */
+export const EVAL_SUITE_SCHEMA_VERSIONS = [
+  EVAL_SUITE_SCHEMA_VERSION,
+  EVAL_SUITE_SCHEMA_VERSION_2,
+] as const;
+export type EvalSuiteSchemaVersion =
+  (typeof EVAL_SUITE_SCHEMA_VERSIONS)[number];
 
-/** The `$id` of the published JSON Schema for this contract. */
+/** The `$id` of the published JSON Schema for dialect 1. */
 export const EVAL_SUITE_SCHEMA_ID =
   "https://mcpjam.com/schemas/eval-suite/v1.json";
+/** The `$id` of the published JSON Schema for dialect 2. */
+export const EVAL_SUITE_SCHEMA_ID_V2 =
+  "https://mcpjam.com/schemas/eval-suite/v2.json";
 
 // ── caps ─────────────────────────────────────────────────────────────────────
 /**
@@ -94,8 +134,17 @@ export const MAX_BATCH_CREATE_CASES = 100;
 export const MAX_SUITE_FILE_TITLE_CHARS = 200;
 /** Max transcript predicates attached to one case. */
 export const MAX_CASE_ASSERTIONS = 50;
-/** Max repetitions per case (suite default or per-case override). */
+/**
+ * Max configured iterations per case (suite default or per-case override).
+ *
+ * Named for the dialect-1 field it was born with, and kept under that name
+ * because `verdict-policy.ts` and `scorer-rollup.ts` import it as the portable
+ * count range. {@link MAX_ITERATIONS} is the same number under the canonical
+ * word; neither is a second limit.
+ */
 export const MAX_REPETITIONS = 100;
+/** The canonical spelling of {@link MAX_REPETITIONS}. Same value, one limit. */
+export const MAX_ITERATIONS = MAX_REPETITIONS;
 /**
  * Max characters in `import.sourceCaseKey` — the case's identity in the source
  * system. Generous because a source key is a path-like string from somebody
@@ -119,7 +168,12 @@ export const MAX_IMPORT_NOTE_CHARS = 2000;
 /** A rate or a threshold: a real number in [0,1]. Never a percent. */
 const unitIntervalSchema = z.number().min(0).max(1);
 
-const repetitionsSchema = z.number().int().min(1).max(MAX_REPETITIONS);
+/**
+ * The configured count's range, shared by both dialects: `repetitions` in
+ * dialect 1 and `iterations` in dialect 2 are one field under two names, so
+ * they cannot have two ranges.
+ */
+const iterationsSchema = z.number().int().min(1).max(MAX_ITERATIONS);
 
 /**
  * Build the error message for a reserved-value literal.
@@ -131,19 +185,20 @@ const repetitionsSchema = z.number().int().min(1).max(MAX_REPETITIONS);
 function reservedLiteralError(
   field: string,
   supported: string,
-  reserved: readonly string[]
+  reserved: readonly string[],
+  version: EvalSuiteSchemaVersion
 ) {
   return (issue: { input: unknown }): string => {
     const received = issue.input;
     if (typeof received === "string" && reserved.includes(received)) {
       return (
         `${field} "${received}" is reserved and not accepted in schemaVersion ` +
-        `${EVAL_SUITE_SCHEMA_VERSION}; the only supported ${field} is "${supported}"`
+        `${version}; the only supported ${field} is "${supported}"`
       );
     }
     return (
       `${field} must be "${supported}" in schemaVersion ` +
-      `${EVAL_SUITE_SCHEMA_VERSION} (received ${JSON.stringify(received)}); ` +
+      `${version} (received ${JSON.stringify(received)}); ` +
       `"${reserved.join('", "')}" are reserved for a future version`
     );
   };
@@ -282,39 +337,78 @@ export type EvalSuiteFileToolPolicy = z.infer<
   typeof evalSuiteFileToolPolicySchema
 >;
 
+/**
+ * The suite defaults, minus the configured count.
+ *
+ * Split in two around the count because the count is the ONE field whose name
+ * differs by dialect. Everything else is spelled identically in both, and
+ * declaring it twice would be two places for the next field to be added to
+ * one of. Key order matters: it is the order the generated JSON Schema lists
+ * properties in, and dialect 1's document is frozen — so the count is spliced
+ * in at its original position rather than appended.
+ */
+function defaultsShape(version: EvalSuiteSchemaVersion) {
+  return {
+    head: {
+      /** Model id every case runs with unless it overrides `model`. */
+      model: z.string().min(1),
+      /** Optional provider hint when the model id alone is ambiguous. */
+      provider: z.string().min(1).optional(),
+      /** Suite execution instructions. Omitted means use the platform default. */
+      systemPrompt: z.string().optional(),
+      /** Suite execution temperature. Omitted means use the platform default. */
+      temperature: z.number().optional(),
+    },
+    tail: {
+      judge: suiteJudgeSettingsSchema.optional(),
+      /** Fraction of iterations a case must pass to pass. Never a percent. */
+      passThreshold: unitIntervalSchema,
+      validity: evalSuiteFileValiditySchema,
+      toolPolicy: evalSuiteFileToolPolicySchema.optional(),
+      /**
+       * How much of a run is captured. `"full"` is the only level implemented;
+       * `"metadataOnly"` and `"none"` are reserved and rejected — see the module
+       * docblock on why a reserved capture level can never be accepted-and-ignored.
+       */
+      captureLevel: z
+        .literal("full", {
+          error: reservedLiteralError(
+            "captureLevel",
+            "full",
+            RESERVED_CAPTURE_LEVELS,
+            version
+          ),
+        })
+        .optional(),
+    },
+  };
+}
+
+const defaultsV1 = defaultsShape(EVAL_SUITE_SCHEMA_VERSION);
+/** Dialect 1 suite defaults: the configured count is `repetitions`. */
 export const evalSuiteFileDefaultsSchema = z
   .object({
-    /** Model id every case runs with unless it overrides `model`. */
-    model: z.string().min(1),
-    /** Optional provider hint when the model id alone is ambiguous. */
-    provider: z.string().min(1).optional(),
-    /** Suite execution instructions. Omitted means use the platform default. */
-    systemPrompt: z.string().optional(),
-    /** Suite execution temperature. Omitted means use the platform default. */
-    temperature: z.number().optional(),
+    ...defaultsV1.head,
     /** Iterations per case unless the case overrides `repetitions`. */
-    repetitions: repetitionsSchema,
-    /** Fraction of iterations a case must pass to pass. Never a percent. */
-    passThreshold: unitIntervalSchema,
-    validity: evalSuiteFileValiditySchema,
-    toolPolicy: evalSuiteFileToolPolicySchema.optional(),
-    /**
-     * How much of a run is captured. `"full"` is the only level implemented;
-     * `"metadataOnly"` and `"none"` are reserved and rejected — see the module
-     * docblock on why a reserved capture level can never be accepted-and-ignored.
-     */
-    captureLevel: z
-      .literal("full", {
-        error: reservedLiteralError(
-          "captureLevel",
-          "full",
-          RESERVED_CAPTURE_LEVELS
-        ),
-      })
-      .optional(),
+    repetitions: iterationsSchema,
+    ...defaultsV1.tail,
   })
   .strict();
 export type EvalSuiteFileDefaults = z.infer<typeof evalSuiteFileDefaultsSchema>;
+
+const defaultsV2 = defaultsShape(EVAL_SUITE_SCHEMA_VERSION_2);
+/** Dialect 2 suite defaults: the configured count is `iterations`. */
+export const evalSuiteFileDefaultsV2Schema = z
+  .object({
+    ...defaultsV2.head,
+    /** Iterations per case unless the case overrides `iterations`. */
+    iterations: iterationsSchema,
+    ...defaultsV2.tail,
+  })
+  .strict();
+export type EvalSuiteFileDefaultsV2 = z.infer<
+  typeof evalSuiteFileDefaultsV2Schema
+>;
 
 // ── provenance (import audit trail) ──────────────────────────────────────────
 /**
@@ -423,34 +517,60 @@ export type EvalSuiteFileCaseImport = z.infer<
  * is the entire reason `id` exists as a separate required field rather than
  * being hashed out of the title.
  */
+/**
+ * The parts of a case that are spelled identically in both dialects.
+ *
+ * Same arrangement as {@link defaultsShape}: the dialect-specific fields (the
+ * rule list and the configured count) are spliced in at their dialect-1
+ * positions so dialect 1's generated JSON Schema stays byte-identical.
+ */
+const caseHeadShape = {
+  id: opaqueIdSchema,
+  title: z.string().min(1).max(MAX_SUITE_FILE_TITLE_CHARS),
+  /** Optional analytics grouping label. `null` explicitly clears it. */
+  intent: caseIntentUpdateSchema.optional(),
+  /**
+   * Authored case kind. Absent means the editor derives it from
+   * matchOptions. `null` explicitly clears it.
+   */
+  kind: z.enum(["capability", "regression"]).nullable().optional(),
+  /**
+   * The authored steps, reused VERBATIM from the canonical step union — this
+   * is not a suite-file dialect of steps. Step `id`s are therefore required
+   * here too: they carry per-step history and make the round-trip exact.
+   * Agents and exporters mint them.
+   */
+  steps: stepsSchema.min(1),
+};
+const caseMiddleShape = {
+  judge: caseJudgeSettingsSchema.optional(),
+  /** Reference output for judge scorers. */
+  expectedOutput: z.string().optional(),
+  /** The case passes only when NO tool was called. */
+  isNegativeTest: z.boolean().optional(),
+  /** Per-case overrides of the suite defaults. */
+  model: z.string().min(1).optional(),
+};
+const caseTailShape = {
+  passThreshold: unitIntervalSchema.optional(),
+  /** Present and true: the loader skips this case (it stays in the file). */
+  disabled: z.boolean().optional(),
+  import: evalSuiteFileCaseImportSchema.optional(),
+};
+
+/** Dialect 1 case: rules are `checks` (alias `assertions`), count is `repetitions`. */
 export const evalSuiteFileCaseSchema = z
   .object({
-    id: opaqueIdSchema,
-    title: z.string().min(1).max(MAX_SUITE_FILE_TITLE_CHARS),
-    /** Optional analytics grouping label. `null` explicitly clears it. */
-    intent: caseIntentUpdateSchema.optional(),
-    /**
-     * Authored case kind. Absent means the editor derives it from
-     * matchOptions. `null` explicitly clears it.
-     */
-    kind: z.enum(["capability", "regression"]).nullable().optional(),
-    /**
-     * The authored steps, reused VERBATIM from the canonical step union — this
-     * is not a suite-file dialect of steps. Step `id`s are therefore required
-     * here too: they carry per-step history and make the round-trip exact.
-     * Agents and exporters mint them.
-     */
-    steps: stepsSchema.min(1),
+    ...caseHeadShape,
     /**
      * Case-level transcript CHECKS, from the existing predicate corpus. No new
      * predicate kinds are introduced by the suite file.
      *
-     * `check` is the user-facing word for this rule everywhere else — the API
-     * field, the UI section, and the SDK's own `CheckPolicy` / `checkRole` /
-     * `checkSeverity` prefix — so a file authored beside the API reads the same
-     * word in both. {@link EvalSuiteFileCase.assertions} is the same list under
-     * its original name and keeps working; a file may set one or the other,
-     * never both.
+     * `check` was the user-facing word for this rule when dialect 1 was cut —
+     * the API field, the UI section, and the SDK's own `CheckPolicy` /
+     * `checkRole` / `checkSeverity` prefix. {@link EvalSuiteFileCase.assertions}
+     * is the same list under its original name and keeps working; a file may
+     * set one or the other, never both. Dialect 2 keeps only `assertions`.
      *
      * NOT the same field as `steps[].assertion`, which is deliberately NOT
      * renamed: its type is `WidgetAssertion | Predicate`, genuinely broader
@@ -461,62 +581,124 @@ export const evalSuiteFileCaseSchema = z
       suppressedSuiteStandardCheckIdsSchema.optional(),
     /** @deprecated Use {@link EvalSuiteFileCase.checks}, which means exactly this. */
     assertions: z.array(predicateSchema).max(MAX_CASE_ASSERTIONS).optional(),
-    /** Reference output for judge scorers. */
-    expectedOutput: z.string().optional(),
-    /** The case passes only when NO tool was called. */
-    isNegativeTest: z.boolean().optional(),
-    /** Per-case overrides of the suite defaults. */
-    model: z.string().min(1).optional(),
-    repetitions: repetitionsSchema.optional(),
-    passThreshold: unitIntervalSchema.optional(),
-    /** Present and true: the loader skips this case (it stays in the file). */
-    disabled: z.boolean().optional(),
-    import: evalSuiteFileCaseImportSchema.optional(),
+    ...caseMiddleShape,
+    repetitions: iterationsSchema.optional(),
+    ...caseTailShape,
   })
   .strict();
 export type EvalSuiteFileCase = z.infer<typeof evalSuiteFileCaseSchema>;
 
-// ── the file ─────────────────────────────────────────────────────────────────
-const evalSuiteFileObjectSchema = z
+/** Dialect 2 case: rules are `assertions` (no alias), count is `iterations`. */
+export const evalSuiteFileCaseV2Schema = z
   .object({
-    schemaVersion: z.literal(EVAL_SUITE_SCHEMA_VERSION, {
-      error: (issue: { input: unknown }) =>
-        `schemaVersion ${JSON.stringify(issue.input)} is not supported by ` +
-        `this validator, which reads schemaVersion ` +
-        `"${EVAL_SUITE_SCHEMA_VERSION}". This file needs a newer CLI/SDK — ` +
-        `upgrade @mcpjam/cli or @mcpjam/sdk rather than editing the file.`,
-    }),
+    ...caseHeadShape,
     /**
-     * What kind of evaluation this is. `"agentWorkflow"` — a model driving the
-     * server — is the only kind implemented; `"serverContract"` is reserved.
+     * Case-level ASSERTIONS, from the existing predicate corpus — the canonical
+     * name from the pinned evaluator vocabulary. `checks` is not an alias here:
+     * it is an unknown key, and the loader's finding says which dialect spells
+     * it that way.
      */
-    mode: z.literal("agentWorkflow", {
-      error: reservedLiteralError("mode", "agentWorkflow", RESERVED_MODES),
-    }),
-    /**
-     * How much of the run is reported. `"standard"` is the only level
-     * implemented; `"restricted"` and `"summary"` are reserved.
-     */
-    reportingMode: z.literal("standard", {
-      error: reservedLiteralError(
-        "reportingMode",
-        "standard",
-        RESERVED_REPORTING_MODES
-      ),
-    }),
-    suite: z
-      .object({
-        id: opaqueIdSchema,
-        name: z.string().min(1).max(MAX_SUITE_FILE_TITLE_CHARS),
-        description: z.string().optional(),
-      })
-      .strict(),
-    target: evalSuiteFileTargetSchema,
-    defaults: evalSuiteFileDefaultsSchema,
-    provenance: evalSuiteFileProvenanceSchema.optional(),
-    cases: z.array(evalSuiteFileCaseSchema).min(1).max(MAX_SUITE_FILE_CASES),
+    assertions: z.array(predicateSchema).max(MAX_CASE_ASSERTIONS).optional(),
+    suppressedSuiteStandardCheckIds:
+      suppressedSuiteStandardCheckIdsSchema.optional(),
+    ...caseMiddleShape,
+    iterations: iterationsSchema.optional(),
+    ...caseTailShape,
   })
   .strict();
+export type EvalSuiteFileCaseV2 = z.infer<typeof evalSuiteFileCaseV2Schema>;
+
+// ── the file ─────────────────────────────────────────────────────────────────
+/**
+ * One dialect's file object. The version literal keeps its own upgrade message
+ * for a reader that validates a dialect's structural schema directly; a file
+ * validated through {@link evalSuiteFileSchema} hits the union's message first.
+ */
+function fileObjectSchema<
+  Version extends EvalSuiteSchemaVersion,
+  Defaults extends z.ZodTypeAny,
+  Case extends z.ZodTypeAny,
+>(version: Version, defaults: Defaults, testCase: Case) {
+  return z
+    .object({
+      schemaVersion: z.literal(version, {
+        error: (issue: { input: unknown }) =>
+          `schemaVersion ${JSON.stringify(issue.input)} is not supported by ` +
+          `this validator, which reads schemaVersion ` +
+          `"${version}". This file needs a newer CLI/SDK — ` +
+          `upgrade @mcpjam/cli or @mcpjam/sdk rather than editing the file.`,
+      }),
+      /**
+       * What kind of evaluation this is. `"agentWorkflow"` — a model driving the
+       * server — is the only kind implemented; `"serverContract"` is reserved.
+       */
+      mode: z.literal("agentWorkflow", {
+        error: reservedLiteralError(
+          "mode",
+          "agentWorkflow",
+          RESERVED_MODES,
+          version
+        ),
+      }),
+      /**
+       * How much of the run is reported. `"standard"` is the only level
+       * implemented; `"restricted"` and `"summary"` are reserved.
+       */
+      reportingMode: z.literal("standard", {
+        error: reservedLiteralError(
+          "reportingMode",
+          "standard",
+          RESERVED_REPORTING_MODES,
+          version
+        ),
+      }),
+      suite: z
+        .object({
+          id: opaqueIdSchema,
+          name: z.string().min(1).max(MAX_SUITE_FILE_TITLE_CHARS),
+          description: z.string().optional(),
+        })
+        .strict(),
+      target: evalSuiteFileTargetSchema,
+      defaults,
+      provenance: evalSuiteFileProvenanceSchema.optional(),
+      cases: z.array(testCase).min(1).max(MAX_SUITE_FILE_CASES),
+    })
+    .strict();
+}
+
+const evalSuiteFileObjectSchema = fileObjectSchema(
+  EVAL_SUITE_SCHEMA_VERSION,
+  evalSuiteFileDefaultsSchema,
+  evalSuiteFileCaseSchema
+);
+const evalSuiteFileV2ObjectSchema = fileObjectSchema(
+  EVAL_SUITE_SCHEMA_VERSION_2,
+  evalSuiteFileDefaultsV2Schema,
+  evalSuiteFileCaseV2Schema
+);
+
+/** The dialect union, before cross-field refinement. */
+const evalSuiteFileUnionSchema = z.discriminatedUnion(
+  "schemaVersion",
+  [evalSuiteFileObjectSchema, evalSuiteFileV2ObjectSchema],
+  {
+    // Fires only when `schemaVersion` matches no dialect. The message names
+    // the fix, not the enum: a file declaring a version this build does not
+    // know is a correct file read by an old reader.
+    error: (issue: { input: unknown }) => {
+      const received = (issue.input as { schemaVersion?: unknown } | undefined)
+        ?.schemaVersion;
+      return (
+        `schemaVersion ${JSON.stringify(received)} is not supported by this ` +
+        `validator, which reads schemaVersion ` +
+        `${EVAL_SUITE_SCHEMA_VERSIONS.map((v) => `"${v}"`).join(" or ")}. ` +
+        `This file needs a newer CLI/SDK — upgrade @mcpjam/cli or @mcpjam/sdk ` +
+        `rather than editing the file.`
+      );
+    },
+  }
+);
 
 /**
  * The suite-file validator.
@@ -539,7 +721,7 @@ const evalSuiteFileObjectSchema = z
  *    guard; a second implementation here would be a second thing to keep in
  *    sync.
  */
-export const evalSuiteFileSchema = evalSuiteFileObjectSchema.superRefine(
+export const evalSuiteFileSchema = evalSuiteFileUnionSchema.superRefine(
   (file, ctx) => {
     // Duplicate case ids make the results→case join ambiguous, and an ambiguous
     // identity join is one where a case silently inherits another's history.
@@ -566,20 +748,6 @@ export const evalSuiteFileSchema = evalSuiteFileObjectSchema.superRefine(
         seenStepIds.add(step.id);
       });
 
-      // Both spellings of the case's check list is a refusal, not a merge or a
-      // precedence rule: two lists are two different gradings of one case, and
-      // silently keeping one would score the file against rules its author
-      // could see in it.
-      if (testCase.checks && testCase.assertions) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["cases", index, "checks"],
-          message:
-            `case "${testCase.id}" sets both \`checks\` and its deprecated ` +
-            `\`assertions\` alias — set one`,
-        });
-      }
-
       // A mapping status with no report to point at is unauditable: it asserts
       // a faithfulness claim while withholding the evidence for it.
       if (testCase.import && !file.provenance) {
@@ -592,17 +760,44 @@ export const evalSuiteFileSchema = evalSuiteFileObjectSchema.superRefine(
         });
       }
     });
+
+    // Both spellings of the case's check list is a refusal, not a merge or a
+    // precedence rule: two lists are two different gradings of one case, and
+    // silently keeping one would score the file against rules its author
+    // could see in it. Dialect 1 only: dialect 2 has no alias, so `checks`
+    // there is an unknown key the strict object already refused.
+    if (file.schemaVersion === EVAL_SUITE_SCHEMA_VERSION) {
+      file.cases.forEach((testCase, index) => {
+        if (testCase.checks && testCase.assertions) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["cases", index, "checks"],
+            message:
+              `case "${testCase.id}" sets both \`checks\` and its deprecated ` +
+              `\`assertions\` alias — set one`,
+          });
+        }
+      });
+    }
   }
 );
 
+/** A validated suite file in either dialect. Narrow on `schemaVersion`. */
 export type EvalSuiteFile = z.infer<typeof evalSuiteFileSchema>;
+/** A validated dialect-1 file. */
+export type EvalSuiteFileV1 = z.infer<typeof evalSuiteFileObjectSchema>;
+/** A validated dialect-2 file. */
+export type EvalSuiteFileV2 = z.infer<typeof evalSuiteFileV2ObjectSchema>;
 
 /**
  * The strictly-structural half of the contract, without the cross-field
- * refinements.
+ * refinements — one per dialect, because each dialect publishes its own JSON
+ * Schema document at its own `$id`. A `oneOf` over both would have changed the
+ * dialect-1 document, and that document is frozen.
  *
  * Exported for ONE purpose: generating the JSON Schema, and proving in a test
  * that the generated schema and the zod validator agree on everything that is
  * structural. Validate real files with {@link evalSuiteFileSchema}.
  */
 export const evalSuiteFileStructuralSchema = evalSuiteFileObjectSchema;
+export const evalSuiteFileV2StructuralSchema = evalSuiteFileV2ObjectSchema;

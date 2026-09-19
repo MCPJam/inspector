@@ -23,6 +23,7 @@ import {
 } from "@modelcontextprotocol/client";
 // beta.4 moved the Node stdio client transport to the `/stdio` subpath.
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { wrapFetchForHttpErrors } from "./http-error-fetch.js";
 
 import type {
   MCPClientManagerConfig,
@@ -2789,7 +2790,10 @@ export class MCPClientManager {
         // (hosted inherits it, since hosted builds transports through here).
         // The same seam captures HTTP headers for the wire log when a
         // `httpLogger` is configured — see `buildTransportFetch`.
-        fetch: this.buildTransportFetch(serverId, config),
+        fetch: wrapFetchForHttpErrors(
+          this.buildTransportFetch(serverId, config),
+          effectiveAuthProvider !== undefined
+        ),
         reconnectionOptions: config.reconnectionOptions,
         authProvider: effectiveAuthProvider,
         sessionId: config.sessionId,

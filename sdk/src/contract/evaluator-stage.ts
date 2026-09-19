@@ -122,6 +122,7 @@ export const ASSERTION_STAGE: Record<AssertionKind, UserValueStage> = {
   toolErrorNamesInput: "response",
   fullPageHasContinuation: "response",
   // ── User value: did the person get what they asked for ──────────────────
+  responseCloseTo: "userValue",
   responseContains: "userValue",
   responseMatches: "userValue",
   finalAssistantMessageNonEmpty: "userValue",

@@ -35,7 +35,7 @@ import path from "node:path";
 import { loadEvalSuiteFile } from "@mcpjam/sdk";
 import {
   fractionToPercent,
-  modalRepetitions,
+  modalIterations,
   percentToFraction,
 } from "../src/lib/eval-suite-export.js";
 import {
@@ -594,15 +594,15 @@ describe("directed --file overload", () => {
   });
 });
 
-describe("modalRepetitions", () => {
+describe("modalIterations", () => {
   test("picks the most common count, smallest on a tie", () => {
-    assert.equal(modalRepetitions([5, 5, 9]), 5);
-    assert.equal(modalRepetitions([9, 5, 5]), 5);
+    assert.equal(modalIterations([5, 5, 9]), 5);
+    assert.equal(modalIterations([9, 5, 5]), 5);
     // A tie must resolve the SAME way whatever order the cases arrive in, or
     // an export's diff moves when somebody reorders the suite.
-    assert.equal(modalRepetitions([9, 3]), 3);
-    assert.equal(modalRepetitions([3, 9]), 3);
-    assert.equal(modalRepetitions([]), 1);
+    assert.equal(modalIterations([9, 3]), 3);
+    assert.equal(modalIterations([3, 9]), 3);
+    assert.equal(modalIterations([]), 1);
   });
 });
 
@@ -954,6 +954,9 @@ describe("eval export", () => {
       const reloaded = loadEvalSuiteFile(text);
       assert.equal(reloaded.ok, true);
       if (!reloaded.ok) return;
+      // Export writes dialect 1, whose count is spelled `repetitions`.
+      assert.equal(reloaded.authored.schemaVersion, "1");
+      if (reloaded.authored.schemaVersion !== "1") return;
       assert.equal(reloaded.authored.suite.id, "s_billing");
       assert.equal(reloaded.authored.defaults.passThreshold, 0.8);
       assert.equal(reloaded.authored.defaults.repetitions, 5);
@@ -993,6 +996,7 @@ describe("eval export", () => {
                 enabled: true,
                 autoRun: false,
                 model: "anthropic/claude-sonnet-4-6",
+                rubric: { instructions: "Require confirming evidence" },
               },
             },
           },
@@ -1006,6 +1010,10 @@ describe("eval export", () => {
       );
       assert.equal(reloaded.ok, true);
       if (!reloaded.ok) return;
+      assert.equal(reloaded.authored.defaults.judge?.autoRun, false);
+      assert.deepEqual(reloaded.authored.defaults.judge?.rubric, {
+        instructions: "Require confirming evidence",
+      });
       assert.equal(reloaded.authored.target.environment, "Production");
       assert.deepEqual(reloaded.authored.target.servers, undefined);
       assert.deepEqual(reloaded.authored.target.hosts, [
@@ -1157,24 +1165,6 @@ describe("eval export", () => {
           },
         },
         pointer: "settings.matchOptions",
-      },
-      {
-        label: "LLM-as-judge grading",
-        state: {
-          detail: {
-            settings: {
-              minimumAccuracy: 80,
-              matchOptions: null,
-              checks: [],
-              judge: {
-                enabled: true,
-                autoRun: true,
-                model: "anthropic/claude-sonnet-4-6",
-              },
-            },
-          },
-        },
-        pointer: "settings.judge",
       },
       {
         label: "a compare-across-models case",
@@ -1397,6 +1387,9 @@ describe("eval export", () => {
       );
       assert.equal(loaded.ok, true);
       if (!loaded.ok) return;
+      // Export writes dialect 1, whose count is spelled `repetitions`.
+      assert.equal(loaded.authored.schemaVersion, "1");
+      if (loaded.authored.schemaVersion !== "1") return;
 
       // The modal count is the suite default and the odd one out is explicit.
       assert.equal(loaded.authored.defaults.repetitions, 5);
@@ -1411,8 +1404,8 @@ describe("eval export", () => {
       assert.equal(loaded.authored.defaults.provider, "openai");
 
       // Resolution puts each case back on the count it was fetched with.
-      assert.equal(loaded.resolved.cases[0].repetitions, 5);
-      assert.equal(loaded.resolved.cases[1].repetitions, 9);
+      assert.equal(loaded.resolved.cases[0].iterations, 5);
+      assert.equal(loaded.resolved.cases[1].iterations, 9);
     });
   });
 
@@ -1474,6 +1467,63 @@ describe("eval export", () => {
       );
       assert.equal(forced.exitCode, 0, forced.stderr);
       assert.match(await readFile(out, "utf8"), /schemaVersion: "1"/);
+    });
+  });
+
+  test("--schema-version 2 writes the dialect-2 spellings, and the file reloads", async () => {
+    await withTempDir(async (dir) => {
+      const out = path.join(dir, "suite-v2.yaml");
+      const run = await runExport(
+        {
+          cases: [
+            { iterations: 5 },
+            { id: "case_row_2", title: "Refuses twice", iterations: 9 },
+          ],
+        },
+        "--suite",
+        "Billing smoke",
+        "--out",
+        out,
+        "--schema-version",
+        "2"
+      );
+      assert.equal(run.exitCode, 0, run.stderr);
+      const text = await readFile(out, "utf8");
+      assert.match(text, /schemaVersion: "2"/);
+      assert.match(text, /^  iterations: 5$/m);
+      // The dialect-1 words never appear: the writer emits ONE dialect.
+      assert.doesNotMatch(text, /repetitions/);
+      assert.doesNotMatch(text, /^\s+checks:/m);
+
+      const loaded = loadEvalSuiteFile(text);
+      assert.equal(loaded.ok, true);
+      if (!loaded.ok) return;
+      assert.equal(loaded.authored.schemaVersion, "2");
+      if (loaded.authored.schemaVersion !== "2") return;
+      assert.equal(loaded.authored.defaults.iterations, 5);
+      assert.equal(loaded.authored.cases[0].iterations, undefined);
+      assert.equal(loaded.authored.cases[1].iterations, 9);
+      assert.equal(loaded.resolved.cases[0].iterations, 5);
+      assert.equal(loaded.resolved.cases[1].iterations, 9);
+    });
+  });
+
+  test("--schema-version outside the dialects this build writes is a usage error", async () => {
+    await withTempDir(async (dir) => {
+      const out = path.join(dir, "suite.yaml");
+      const run = await runExport(
+        {},
+        "--suite",
+        "Billing smoke",
+        "--out",
+        out,
+        "--schema-version",
+        "3"
+      );
+      assert.equal(run.exitCode, 2);
+      // `--format json` escapes the quotes in the message; match the words.
+      assert.match(run.stderr, /--schema-version must be .*1.* or .*2/);
+      assert.match(run.stderr, /USAGE_ERROR/);
     });
   });
 
@@ -1618,6 +1668,12 @@ function validateVerdictPolicyDefaults(value: unknown): string | undefined {
 
 async function startFileRunFixture(options?: {
   existingCases?: Array<{ id: string; declaredId: string; title: string }>;
+  /**
+   * Advertise eval vocabulary 2 from `GET /capabilities`. Omitted, the
+   * fixture answers like a deployment that predates the negotiation: no
+   * `vocabulary` block at all.
+   */
+  vocabulary?: 2;
   existingHosts?: Array<{
     id: string;
     name: string;
@@ -1633,6 +1689,8 @@ async function startFileRunFixture(options?: {
 }): Promise<{
   baseUrl: string;
   authHeaders: string[];
+  /** The `x-mcpjam-eval-vocabulary` header of every request, by path. */
+  vocabularyHeaders: Array<{ path: string; value: string | undefined }>;
   fromFileBodies: unknown[];
   batchBodies: unknown[];
   /**
@@ -1651,6 +1709,8 @@ async function startFileRunFixture(options?: {
   close: () => Promise<void>;
 }> {
   const authHeaders: string[] = [];
+  const vocabularyHeaders: Array<{ path: string; value: string | undefined }> =
+    [];
   const fromFileBodies: unknown[] = [];
   const batchBodies: unknown[] = [];
   const batchQueries: Record<string, string>[] = [];
@@ -1683,6 +1743,46 @@ async function startFileRunFixture(options?: {
     const url = new URL(req.url ?? "/", "http://fixture");
     res.setHeader("content-type", "application/json");
     const method = req.method ?? "GET";
+    const vocabularyHeader = req.headers["x-mcpjam-eval-vocabulary"];
+    vocabularyHeaders.push({
+      path: url.pathname,
+      value: Array.isArray(vocabularyHeader)
+        ? vocabularyHeader[0]
+        : vocabularyHeader,
+    });
+
+    if (url.pathname === "/api/v1/projects/proj-alpha/capabilities") {
+      res.end(
+        JSON.stringify({
+          projectId: "proj-alpha",
+          organizationId: "org-1",
+          role: "owner",
+          projectRole: "owner",
+          surface: "api",
+          features: {
+            sandboxes: { enabled: false, mode: "off", enforced: false },
+          },
+          plan: null,
+          ...(options?.vocabulary === 2
+            ? {
+                vocabulary: {
+                  version: 2,
+                  evaluatorKinds: ["assertion", "judge"],
+                  assertionKinds: [],
+                  fields: {
+                    assertions: ["checks", "predicates"],
+                    defaultAssertions: ["defaultPredicates", "checks"],
+                    iterations: ["repetitions"],
+                    legacyIterations: ["runs"],
+                  },
+                },
+              }
+            : {}),
+          can: {},
+        })
+      );
+      return;
+    }
 
     if (url.pathname === "/api/v1/projects") {
       res.end(
@@ -2004,6 +2104,7 @@ async function startFileRunFixture(options?: {
   return {
     baseUrl: `http://127.0.0.1:${address.port}/api/v1`,
     authHeaders,
+    vocabularyHeaders,
     fromFileBodies,
     batchBodies,
     batchQueries,
@@ -3029,6 +3130,86 @@ describe("eval run --file", () => {
     }
   });
 
+  test("speaks vocabulary 2 when the deployment advertises it, and 1 when it does not", async () => {
+    // Advertised: the header rides EVERY request after the handshake, and the
+    // batch body uses the canonical keys.
+    const advertising = await startFileRunFixture({ vocabulary: 2 });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(
+              advertising.baseUrl,
+              "--file",
+              file,
+              "--project",
+              "Alpha"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        const batch = advertising.batchBodies[0] as {
+          cases: Array<Record<string, unknown>>;
+        };
+        assert.equal(batch.cases[0].iterations, 5);
+        assert.equal(batch.cases[0].legacyIterations, 5);
+        assert.equal("repetitions" in batch.cases[0], false);
+        assert.equal("checks" in batch.cases[0], false);
+        // The handshake itself is made without the header — the CLI has not
+        // learned the answer yet — and every write after it carries "2".
+        const byPath = (suffix: string) =>
+          advertising.vocabularyHeaders.filter((h) => h.path.endsWith(suffix));
+        assert.deepEqual(
+          byPath("/capabilities").map((h) => h.value),
+          [undefined]
+        );
+        assert.deepEqual(
+          byPath("/from-file").map((h) => h.value),
+          ["2"]
+        );
+        assert.deepEqual(
+          byPath("/cases/batch").map((h) => h.value),
+          ["2"]
+        );
+        assert.deepEqual(
+          byPath("/eval-runs").map((h) => h.value),
+          ["2"]
+        );
+      });
+    } finally {
+      await advertising.close();
+    }
+
+    // Not advertised: no header anywhere, and the vocabulary-1 body.
+    const silent = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(silent.baseUrl, "--file", file, "--project", "Alpha"),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        const batch = silent.batchBodies[0] as {
+          cases: Array<Record<string, unknown>>;
+        };
+        assert.equal(batch.cases[0].iterations, 5);
+        assert.equal(batch.cases[0].repetitions, 5);
+        assert.equal("legacyIterations" in batch.cases[0], false);
+        assert.ok(silent.vocabularyHeaders.length > 0);
+        assert.ok(silent.vocabularyHeaders.every((h) => h.value === undefined));
+      });
+    } finally {
+      await silent.close();
+    }
+  });
+
   test("authored toolPolicy is refused while validity gates are uploaded", async () => {
     const fixture = await startFileRunFixture();
     try {
@@ -3158,11 +3339,12 @@ describe("file-owned case bodies and idempotency", () => {
         ...testCase,
         suppressedSuiteStandardCheckIds: ["response.errors"],
       }).suppressedSuiteStandardCheckIds,
-      ["response.errors"],
+      ["response.errors"]
     );
     assert.deepEqual(
-      fileCaseToUpdateBody(testCase, ["response.errors"]).suppressedSuiteStandardCheckIds,
-      [],
+      fileCaseToUpdateBody(testCase, ["response.errors"])
+        .suppressedSuiteStandardCheckIds,
+      []
     );
     const created = fileCaseToCreateBody(testCase);
     assert.equal("isNegative" in created, false);
@@ -3172,6 +3354,48 @@ describe("file-owned case bodies and idempotency", () => {
     assert.equal(updated.checks, null);
     assert.equal(updated.expectedOutput, "");
     assert.equal(updated.intent, null);
+  });
+
+  test("under vocabulary 2 the bodies spell the count and the rules canonically", () => {
+    // The vocabulary-2 half of the pin `eval-case-vocabulary-2-cli-body.test.ts`
+    // holds on the server: these keys, and only these keys, are what the
+    // route accepts under `x-mcpjam-eval-vocabulary: 2`. The old body
+    // (`iterations` + `repetitions` + `checks`) is a 400 there.
+    const loaded = loadEvalSuiteFile(VALID_SUITE_FILE);
+    assert.equal(loaded.ok, true);
+    if (!loaded.ok) return;
+    const testCase = loaded.resolved.enabledCases[0];
+    const rule = { type: "toolCalledAtLeastOnce", toolName: "search" } as const;
+
+    const created = fileCaseToCreateBody(
+      { ...testCase, assertions: [rule] },
+      2
+    );
+    assert.equal(created.iterations, testCase.iterations);
+    assert.equal(created.legacyIterations, testCase.iterations);
+    assert.deepEqual(created.assertions, { mode: "replace", list: [rule] });
+    assert.equal("repetitions" in created, false);
+    assert.equal("checks" in created, false);
+    // No rules → no override key on create, exactly as under vocabulary 1.
+    assert.equal("assertions" in fileCaseToCreateBody(testCase, 2), false);
+
+    const updated = fileCaseToUpdateBody(testCase, undefined, 2);
+    assert.equal(updated.iterations, testCase.iterations);
+    assert.equal(updated.legacyIterations, testCase.iterations);
+    assert.equal(updated.assertions, null);
+    assert.equal("repetitions" in updated, false);
+    assert.equal("checks" in updated, false);
+
+    // And vocabulary 1 is still the default: the same call with no
+    // vocabulary is byte-for-byte the body every earlier release sent.
+    assert.deepEqual(
+      fileCaseToCreateBody(testCase),
+      fileCaseToCreateBody(testCase, 1)
+    );
+    assert.deepEqual(
+      Object.keys(fileCaseToUpdateBody(testCase)),
+      Object.keys(fileCaseToUpdateBody(testCase, undefined, 1))
+    );
   });
 
   test("case bodies carry the converter's claim, and clear it on re-sync", () => {
@@ -3216,7 +3440,10 @@ describe("file-owned case bodies and idempotency", () => {
     const loaded = loadEvalSuiteFile(VALID_SUITE_FILE);
     assert.equal(loaded.ok, true);
     if (!loaded.ok) return;
-    const labelled = { ...loaded.resolved.cases[0], kind: "regression" as const };
+    const labelled = {
+      ...loaded.resolved.cases[0],
+      kind: "regression" as const,
+    };
     assert.equal(fileCaseToCreateBody(labelled).kind, "regression");
     assert.equal(fileCaseToUpdateBody(labelled).kind, "regression");
     assert.equal(fileCaseToUpdateBody(loaded.resolved.cases[0]).kind, null);

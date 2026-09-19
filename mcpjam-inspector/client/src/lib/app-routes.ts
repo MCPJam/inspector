@@ -92,6 +92,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     scope: "global",
   },
   {
+    path: "organizations/:orgId/billing/byok",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
     path: "organizations/:orgId/billing/usage",
     kind: "screen",
     surfaceId: "organizations",
@@ -567,7 +573,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "evals",
     scope: "project",
   },
-  // Evaluate (New) — the flag-gated redesign. A sibling tree of `/evals`, so
+  // Public Evaluate. A sibling tree of `/evals`, so
   // the original tab's URLs are untouched. Suites lens only: the new landing's
   // Runs view is in-page state, and the commit lens stays on /evals/runs.
   { path: "evaluate", kind: "screen", surfaceId: "evaluate", scope: "project" },
@@ -601,6 +607,16 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "evaluate",
     scope: "project",
   },
+  // The run page's "Compare runs" destination. `buildEvalRoutePath` has
+  // emitted this path and `parseEvalRouteFromUrl` has parsed it back to
+  // `comparison: true` since the compare page landed, but nothing registered
+  // it here — so the URL fell through to `"*"` and the link 404'd.
+  {
+    path: "evaluate/suite/:suiteId/runs/:runId/compare",
+    kind: "screen",
+    surfaceId: "evaluate",
+    scope: "project",
+  },
   {
     path: "evaluate/suite/:suiteId/test/:testId",
     kind: "screen",
@@ -616,13 +632,13 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   {
     path: "ci-evals",
     kind: "redirect",
-    note: "Legacy: Runs moved under Evaluate; redirects to /evals/runs.",
+    note: "Legacy: redirects to public Evaluate.",
     scope: "project",
   },
   {
     path: "ci-evals/*",
     kind: "redirect",
-    note: "Legacy Runs deep links (commit SHAs, suites, runs). These shipped in CI logs, bookmarks, and the SDK quickstart's post-sign-in return path, so the whole sub-tree is rewritten onto /evals/runs with query and hash intact.",
+    note: "Legacy CI links open Evaluate. Run links preserve context; commit links open the unfiltered run table.",
     scope: "project",
   },
   {

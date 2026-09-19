@@ -28,7 +28,11 @@ import {
   suiteFilePointer,
   type SuiteFileLoadSuccess,
 } from "../src/suite-file-loader.js";
-import type { EvalSuiteFile } from "../src/contract/suite-file.js";
+import {
+  EVAL_SUITE_SCHEMA_VERSION_2,
+  type EvalSuiteFile,
+  type EvalSuiteFileV2,
+} from "../src/contract/suite-file.js";
 import {
   findFixture,
   suiteFileFixtures as data,
@@ -51,10 +55,13 @@ function loadOrThrow(text: string): SuiteFileLoadSuccess {
 }
 
 const MINIMAL = payload(findFixture(data.accept, "minimal")) as EvalSuiteFile;
+const MINIMAL_V2 = payload(
+  findFixture(data.accept, "dialect 2 — minimal")
+) as EvalSuiteFileV2;
 
 describe("the parity corpus, through the loader", () => {
   it("accepts every accept row", () => {
-    expect(data.accept).toHaveLength(6);
+    expect(data.accept).toHaveLength(8);
     for (const row of data.accept) {
       const result = loadEvalSuiteFile(asText(payload(row)));
       expect(result.ok, `${row.__label}: ${JSON.stringify(result)}`).toBe(true);
@@ -62,7 +69,7 @@ describe("the parity corpus, through the loader", () => {
   });
 
   it("rejects every reject row as a CONTRACT failure, not a parse failure", () => {
-    expect(data.reject).toHaveLength(35);
+    expect(data.reject).toHaveLength(39);
     for (const row of data.reject) {
       const result = loadEvalSuiteFile(asText(payload(row)));
       expect(result.ok, row.__label).toBe(false);
@@ -79,7 +86,7 @@ describe("the parity corpus, through the loader", () => {
   });
 
   it("round-trips every roundTrip row through serialize → load", () => {
-    expect(data.roundTrip).toHaveLength(2);
+    expect(data.roundTrip).toHaveLength(3);
     for (const row of data.roundTrip) {
       const authored = payload(row) as EvalSuiteFile;
       const reloaded = loadOrThrow(serializeEvalSuiteFile(authored));
@@ -235,7 +242,7 @@ describe("defaults are resolved in memory and never written back", () => {
     const { resolved } = loadOrThrow(asText(MINIMAL));
     const [only] = resolved.cases;
     expect(only?.model).toBe(MINIMAL.defaults.model);
-    expect(only?.repetitions).toBe(MINIMAL.defaults.repetitions);
+    expect(only?.iterations).toBe(MINIMAL.defaults.repetitions);
     expect(only?.passThreshold).toBe(MINIMAL.defaults.passThreshold);
     expect(only?.isNegativeTest).toBe(false);
     expect(only?.disabled).toBe(false);
@@ -506,6 +513,132 @@ describe("case checks", () => {
   });
 });
 
+/**
+ * Dialect 2 spells the configured count `iterations` and the rule list
+ * `assertions`. The loader reads both dialects into ONE resolved shape, and
+ * writes each file back in its own dialect — never upgrading a file on its
+ * author's behalf.
+ */
+describe("dialect 2", () => {
+  const RULE = { type: "toolCalledAtLeastOnce", toolName: "search" } as const;
+
+  it("resolves to the same in-memory view as its dialect-1 twin", () => {
+    // The two minimal rows are the same suite under two spellings, so the
+    // runner must not be able to tell them apart once resolved. Only the
+    // declared version survives, because it is a fact about the file.
+    const v1 = loadOrThrow(asText(MINIMAL)).resolved;
+    const v2 = loadOrThrow(asText(MINIMAL_V2)).resolved;
+    expect(v2.schemaVersion).toBe(EVAL_SUITE_SCHEMA_VERSION_2);
+    expect({ ...v2, schemaVersion: undefined }).toEqual({
+      ...v1,
+      schemaVersion: undefined,
+    });
+    expect(v2.defaults.iterations).toBe(MINIMAL_V2.defaults.iterations);
+    expect(v2.cases[0]?.iterations).toBe(MINIMAL_V2.defaults.iterations);
+  });
+
+  it("applies a per-case `iterations` override and loads `assertions`", () => {
+    const authored: EvalSuiteFileV2 = {
+      ...MINIMAL_V2,
+      cases: MINIMAL_V2.cases.map((entry, index) =>
+        index === 0 ? { ...entry, iterations: 2, assertions: [RULE] } : entry
+      ),
+    };
+    const loaded = loadOrThrow(asText(authored));
+    expect(loaded.resolved.cases[0]?.iterations).toBe(2);
+    expect(loaded.resolved.cases[0]?.assertions).toEqual([RULE]);
+  });
+
+  it("writes a dialect-2 file back in dialect 2, in canonical key order", () => {
+    const authored: EvalSuiteFileV2 = {
+      ...MINIMAL_V2,
+      cases: MINIMAL_V2.cases.map((entry, index) =>
+        index === 0 ? { ...entry, iterations: 2, assertions: [RULE] } : entry
+      ),
+    };
+    const text = serializeEvalSuiteFile(authored);
+    expect(text).toContain('schemaVersion: "2"');
+    expect(text).toContain("iterations:");
+    expect(text).toContain("assertions:");
+    // The dialect-1 words never appear: a writer emits the file's OWN dialect.
+    expect(text).not.toContain("repetitions");
+    expect(text).not.toContain("checks:");
+    // `iterations` sits where `repetitions` sits in dialect 1, and
+    // `assertions` where `checks` does — so the file reads in the order a
+    // dialect-1 author already knows.
+    expect(text.indexOf("iterations:")).toBeLessThan(
+      text.indexOf("passThreshold:")
+    );
+    const caseAssertionsAt = text.lastIndexOf("assertions:");
+    expect(caseAssertionsAt).toBeGreaterThan(text.indexOf("steps:"));
+    // And it is STABLE: serializing the reparsed file returns the same bytes.
+    expect(serializeEvalSuiteFile(loadOrThrow(text).authored)).toBe(text);
+  });
+
+  it("keeps a dialect-1 file in dialect 1 — nothing is upgraded on write", () => {
+    const text = serializeEvalSuiteFile(MINIMAL);
+    expect(text).toContain('schemaVersion: "1"');
+    expect(text).toContain("repetitions:");
+    expect(text).not.toContain("iterations:");
+  });
+
+  it("names the dialect that owns a foreign spelling, instead of just 'unrecognized'", () => {
+    // A strict object refuses `repetitions` in a dialect-2 file, correctly —
+    // but "Unrecognized key" alone sends the author hunting for a typo in a
+    // word that is spelled right. The finding says which dialect spells it
+    // that way and offers both fixes.
+    const v2WithRepetitions = {
+      ...MINIMAL_V2,
+      defaults: { ...MINIMAL_V2.defaults, repetitions: 5 },
+    };
+    const result = loadEvalSuiteFile(asText(v2WithRepetitions));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const message = result.findings.map((entry) => entry.message).join("\n");
+    expect(message).toContain(
+      'schemaVersion "2" spells this field `iterations`'
+    );
+    expect(message).toContain(
+      '`repetitions` is the schemaVersion "1" spelling'
+    );
+
+    const v2WithChecks = {
+      ...MINIMAL_V2,
+      cases: [{ ...MINIMAL_V2.cases[0], checks: [RULE] }],
+    };
+    const checks = loadEvalSuiteFile(asText(v2WithChecks));
+    expect(checks.ok).toBe(false);
+    if (checks.ok) return;
+    expect(checks.findings.map((entry) => entry.message).join("\n")).toContain(
+      'schemaVersion "2" spells this field `assertions`'
+    );
+
+    const v1WithIterations = {
+      ...MINIMAL,
+      defaults: { ...MINIMAL.defaults, iterations: 5 },
+    };
+    const v1 = loadEvalSuiteFile(asText(v1WithIterations));
+    expect(v1.ok).toBe(false);
+    if (v1.ok) return;
+    expect(v1.findings.map((entry) => entry.message).join("\n")).toContain(
+      'schemaVersion "1" spells this field `repetitions`'
+    );
+  });
+
+  it("does not decorate an unknown key that is not a dialect spelling", () => {
+    const stray = {
+      ...MINIMAL_V2,
+      cases: [{ ...MINIMAL_V2.cases[0], timeoutMs: 30_000 }],
+    };
+    const result = loadEvalSuiteFile(asText(stray));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const message = result.findings.map((entry) => entry.message).join("\n");
+    expect(message).toContain("timeoutMs");
+    expect(message).not.toContain("spells this field");
+  });
+});
+
 describe("findings", () => {
   const duplicateCaseIds = asText(
     payload(findFixture(data.reject, "duplicate case ids"))
@@ -605,4 +738,36 @@ it("round-trips case family suppression without inventing defaults", () => {
   expect(reloaded.authored.cases[0].suppressedSuiteStandardCheckIds).toEqual([
     "response.errors",
   ]);
+});
+
+describe("judge settings file parity", () => {
+  it.each([MINIMAL, MINIMAL_V2])(
+    "round trips instructions, manual mode and case opt-outs in both dialects",
+    (minimal) => {
+      const judge = {
+        enabled: true,
+        autoRun: false,
+        model: "openai/gpt-5.4-mini",
+        threshold: 0.8,
+        rubric: {
+          instructions: "Require a confirming tool result",
+          criteria: [{ id: "confirmed", label: "Confirmed", required: true }],
+        },
+      };
+      const input = {
+        ...minimal,
+        defaults: { ...minimal.defaults, judge },
+        cases: minimal.cases.map((item) => ({
+          ...item,
+          judge: { enabled: false },
+        })),
+      };
+      const loaded = loadOrThrow(JSON.stringify(input));
+      expect(loaded.resolved.defaults.judge).toEqual(judge);
+      expect(loaded.resolved.cases[0].judge).toEqual({ enabled: false });
+      const reloaded = loadOrThrow(serializeEvalSuiteFile(loaded.authored));
+      expect(reloaded.resolved.defaults.judge).toEqual(judge);
+      expect(reloaded.resolved.cases[0].judge).toEqual({ enabled: false });
+    }
+  );
 });

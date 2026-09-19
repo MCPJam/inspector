@@ -15,6 +15,8 @@ import {
   type GenerateCasesConfig,
 } from "@/lib/evals/eval-generation-config";
 import { EvalGeneratedDrafts } from "./eval-generated-drafts";
+import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
+import { isUnretryableGenerationScope } from "@/shared/eval-generation-errors";
 
 export function EvalGenerationWorkspace({
   projectId,
@@ -22,12 +24,18 @@ export function EvalGenerationWorkspace({
   suiteName,
   autoStart = true,
   config,
+  onChangeSettings,
+  onDone,
 }: {
   projectId: string;
   suiteId: string;
   suiteName: string;
   autoStart?: boolean;
   config?: GenerateCasesConfig;
+  /** Reopen the scope dialog, for a failure that retrying cannot fix. */
+  onChangeSettings?: () => void;
+  /** Back to the suite, once there is nothing left to do here. */
+  onDone?: () => void;
 }) {
   const generation = useEvalGeneration(
     (s) => s.suites[evalSuiteKey({ projectId, suiteId })],
@@ -40,14 +48,12 @@ export function EvalGenerationWorkspace({
     () => new Set(initialIds.current),
   );
   const [startError, setStartError] = useState<string>();
-  const [expectedCount] = useState(
-    () => {
-      const selected = config ?? loadGenerateConfig(suiteId);
-      // Show placeholders for the lower bound; the final count is model-selected.
-      if (selected.testSet) return selected.testSet === "quick" ? 5 : 20;
-      return totalCases(selected) || totalCases(DEFAULT_GENERATE_CONFIG);
-    },
-  );
+  const [expectedCount] = useState(() => {
+    const selected = config ?? loadGenerateConfig(suiteId);
+    // Show placeholders for the lower bound; the final count is model-selected.
+    if (selected.testSet) return selected.testSet === "quick" ? 5 : 20;
+    return totalCases(selected) || totalCases(DEFAULT_GENERATE_CONFIG);
+  });
   const start = () => {
     initialIds.current = new Set(generation?.drafts.map((draft) => draft.id));
     setVisibleIds(new Set(initialIds.current));
@@ -90,6 +96,28 @@ export function EvalGenerationWorkspace({
   }, [nextDraftId]);
 
   const error = startError || generation?.error;
+  // The limit dialog already opened on the refusal; the inline line only has
+  // to say why generation stopped, not echo the raw JSON body.
+  const errorText = error
+    ? (describeMCPJamLimitMessage(error) ?? error)
+    : undefined;
+  const scopeIsUnfixableByRetry = isUnretryableGenerationScope(error);
+  /**
+   * An empty list reads as "nothing was generated", but the usual way to
+   * reach it is the opposite: every draft was saved or discarded, and the
+   * list emptied as they went. Remember that a draft was here.
+   *
+   * Cleared when a run starts with nothing carried over: a retry that returns
+   * no cases at all is the "nothing was generated" case again, and a flag that
+   * only ever latched true reported the previous run's drafts as this one's.
+   */
+  const [sawDraft, setSawDraft] = useState(false);
+  const draftCount = generation?.drafts.length ?? 0;
+  const generationStatus = generation?.status;
+  useEffect(() => {
+    if (draftCount > 0) setSawDraft(true);
+    else if (generationStatus === "running") setSawDraft(false);
+  }, [draftCount, generationStatus]);
   const running = generation?.status === "running" || (!generation && !error);
   const revealing = Boolean(nextDraftId);
   const busy = running || revealing;
@@ -107,11 +135,10 @@ export function EvalGenerationWorkspace({
       data-testid="suite-case-generation-workspace"
       className="flex min-h-0 flex-1 flex-col gap-4"
     >
-      <header className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold">Generate test cases</h2>
-          <p className="text-xs text-muted-foreground">{suiteName}</p>
-        </div>
+      {/* No title here: the breadcrumb above reads
+          Evaluate / <suite> / Generate test cases, and repeating both lines
+          under it said the same thing twice. */}
+      <header className="flex items-center justify-end gap-3">
         <div
           role="status"
           className="flex items-center gap-2 text-xs text-muted-foreground"
@@ -164,18 +191,47 @@ export function EvalGenerationWorkspace({
           <div className="space-y-3">
             {(startError || !generation?.drafts.length) && (
               <p role="alert" className="text-sm text-destructive">
-                {error}
+                {errorText}
               </p>
             )}
-            <Button variant="outline" size="sm" onClick={start} disabled={busy}>
-              Retry generation
-            </Button>
+            {/* Retrying a scope the servers cannot satisfy fails identically
+                every time. Offer the setting that would fix it instead. */}
+            {scopeIsUnfixableByRetry && onChangeSettings ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onChangeSettings}
+                disabled={busy}
+              >
+                Change generation settings
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={start}
+                disabled={busy}
+              >
+                Retry generation
+              </Button>
+            )}
           </div>
         )}
         {!busy && !error && !generation?.drafts.length && (
-          <p className="text-sm text-muted-foreground">
-            No generated drafts to review.
-          </p>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {sawDraft
+                ? "Every generated case has been reviewed."
+                : "No cases were generated."}
+            </p>
+            {/* The breadcrumb is the only other way back, and it does not
+                read as the next step once the work here is done. */}
+            {onDone && (
+              <Button variant="outline" size="sm" onClick={onDone}>
+                Back to {suiteName}
+              </Button>
+            )}
+          </div>
         )}
       </div>
     </section>

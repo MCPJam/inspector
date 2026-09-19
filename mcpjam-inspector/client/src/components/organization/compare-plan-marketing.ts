@@ -16,6 +16,7 @@ export type ComparePlanRow = {
   /** When set, used for tooltip lookup while `label` is shown in the table. */
   tooltipKey?: string;
   free: ComparePlanCell;
+  pro?: ComparePlanCell;
   team: ComparePlanCell;
   enterprise: ComparePlanCell;
 };

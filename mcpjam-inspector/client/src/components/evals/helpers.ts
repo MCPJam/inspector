@@ -6,6 +6,8 @@ import {
   EvalSuite,
   EvalSuiteOverviewEntry,
   EvalSuiteRun,
+  EvalSuiteConfigTest,
+  RunClientDescriptor,
   SuiteAggregate,
   TagGroupAggregate,
 } from "./types";
@@ -14,6 +16,11 @@ import { toast } from "sonner";
 import { RESULT_STATUS } from "./constants";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { clientDisplayName } from "@/lib/client-display-name";
+import { findHostStyle, type HostThemeMode } from "@/lib/client-styles";
+import {
+  getScenarioHostLabel,
+  getScenarioHostLogo,
+} from "@/lib/scenario-client-style";
 
 /**
  * What servers can this suite see at run-time? Mirrors the precedence
@@ -68,6 +75,7 @@ export type SuiteHostRunPlan = {
 };
 
 function suiteDefaultRunPlan(serverIds: string[]): SuiteHostRunPlan {
+  // Defensive mixed-version fallback; the backend now attaches a default client.
   return {
     namedHostId: undefined,
     hostName: null,
@@ -240,7 +248,7 @@ export function formatRunId(runId: string): string {
 /**
  * The launch provenance the context helpers below read. Structurally narrower
  * than `EvalSuiteRun` on purpose: case-history and rail code carries partial
- * run rows, and every call site only ever needs these two fields.
+ * run rows, and callers only need the descriptor and launch context.
  *
  * NOTE `configSnapshot.environment` (the flat `{ servers }` bag) is a THIRD,
  * unrelated meaning of the word "environment" — a raw server-name list. It is
@@ -249,6 +257,7 @@ export function formatRunId(runId: string): string {
  */
 export type RunContextSource = {
   namedHostId?: string;
+  client?: RunClientDescriptor | null;
   configSnapshot?: {
     environmentRef?: {
       environmentId: string;
@@ -268,46 +277,112 @@ export function runEnvironmentRef(
 }
 
 /**
- * Canonical identity for "which context produced this run" — the unit every
- * user-visible run grouping/labelling keys on.
- *
- * Keyed by the environment ID, **never** the revision. An environment is
- * live-editable, so every edit bumps `revision`; keying on it would shatter a
- * suite's history into singletons on each edit. Two environments that resolve
- * to the SAME host stay distinct because the ids differ. Legacy/host-backed
- * runs key on `namedHostId` exactly as before.
- *
- * This is NOT the host dimension: cross-host comparison code that deliberately
- * compares resolved hosts must keep using `namedHostId`.
+ * Execution-client identity, independent of the environment that selected it.
+ * A historical style or SDK harness is a valid comparison key without a host ID.
  */
+export type RunClientIdentity = {
+  name: string;
+  hostStyle?: string;
+  key: string;
+  source: RunClientDescriptor["source"] | "unknown";
+  namedHostId?: string;
+};
+
+export function runClientIdentity(
+  run: RunContextSource,
+  hostNamesById?: ReadonlyMap<string, string | null>,
+): RunClientIdentity {
+  const client = run.client;
+  const namedHostId = client?.namedHostId ?? run.namedHostId;
+  if (client) {
+    const hostStyle = client.hostStyle?.trim();
+    // Use the persisted style, not the inspector's default: the backend's
+    // historical fallback is Claude while the inspector defaults to MCPJam.
+    const name =
+      (client.versionId
+        ? client.name.trim()
+        : namedHostId && hostNamesById?.get(namedHostId)?.trim()) ||
+      (client.source === "suite_default" && findHostStyle(hostStyle)
+        ? getScenarioHostLabel(hostStyle!)
+        : client.name.trim()) ||
+      "Client";
+    return {
+      name,
+      hostStyle,
+      namedHostId,
+      source: client.source,
+      key: namedHostId
+        ? `host:${namedHostId}`
+        : client.source === "sdk"
+          ? "sdk"
+          : `style:${hostStyle || "unknown"}`,
+    };
+  }
+  if (namedHostId)
+    return {
+      name: hostNamesById?.get(namedHostId)?.trim() || formatRunId(namedHostId),
+      namedHostId,
+      key: `host:${namedHostId}`,
+      source: "unknown",
+    };
+  return { name: "Suite default", key: "style:unknown", source: "unknown" };
+}
+
+export function runClientLogo(
+  run: RunContextSource,
+  theme?: HostThemeMode,
+): string | undefined {
+  const style = runClientIdentity(run).hostStyle;
+  return style && findHostStyle(style)
+    ? getScenarioHostLogo(style, undefined, theme)
+    : undefined;
+}
+
+export function snapshotTestModels(
+  test: Pick<EvalSuiteConfigTest, "models" | "model" | "provider">,
+): Array<{ model: string; provider: string }> {
+  if (Array.isArray(test.models))
+    return test.models.filter((entry) => Boolean(entry.model));
+  return test.model
+    ? [{ model: test.model, provider: test.provider ?? "" }]
+    : [];
+}
+
+/** Context groups retain environment identity, never its mutable revision. */
 export function runContextKey(run: RunContextSource): string {
   const ref = runEnvironmentRef(run);
-  return ref
-    ? `environment:${ref.environmentId}`
-    : `host:${run.namedHostId ?? "none"}`;
+  return ref ? `environment:${ref.environmentId}` : runClientIdentity(run).key;
 }
 
 /**
  * The run's resolved HOST name only — never its environment name. Falls back to
- * a truncated host id, and returns `null` when the run names no host.
+ * a truncated host id or the descriptor's durable name for historical runs.
  *
  * This is the branch the `project-environments-enabled` kill-switch falls back
- * to. An environment-backed run carries no `namedHostId`, so with the flag off
- * it yields `null` here and the caller shows a neutral placeholder rather than
- * leaking the environment name through a host-shaped chip.
+ * to. An old environment-backed run without a resolved host or descriptor
+ * yields `null` so its environment name cannot leak through a host chip.
  */
 export function runHostLabel(
   run: RunContextSource,
   hostNamesById?: Map<string, string | null>,
 ): string | null {
-  if (!run.namedHostId) return null;
-  return hostNamesById?.get(run.namedHostId) ?? formatRunId(run.namedHostId);
+  // A run that names no client at all stays null rather than borrowing
+  // `runClientIdentity`'s "Suite default" placeholder. That string is a label
+  // for a client the run DOES have and could not name; handing it back here
+  // would invent a host for rows that never recorded one, and callers read a
+  // non-null label as "this run ran somewhere nameable" — one of them turns it
+  // into a client filter option.
+  if (!run.client && !run.namedHostId) return null;
+  return runClientIdentity(run, hostNamesById).name;
 }
 
 /**
  * Display name for a run's context: the environment name for environment-backed
  * runs, the resolved host name (falling back to a truncated id) for legacy runs.
- * `null` when the run names neither — the caller decides what to show instead.
+ * A run that names neither gets the neutral "Suite default" placeholder rather
+ * than `null` — a context chip always says something. Callers that want to show
+ * their own text instead (a count, say) must read {@link runHostLabel}, which
+ * DOES return `null` there.
  *
  * This CAN return environment identity, so every call site must sit behind
  * `project-environments-enabled`; the flag-off branch uses
@@ -319,7 +394,13 @@ export function runContextLabel(
 ): string | null {
   const ref = runEnvironmentRef(run);
   if (ref) return ref.name;
-  return runHostLabel(run, hostNamesById);
+  // A context chip always says something, so a run that names no client falls
+  // back to the neutral placeholder. `runHostLabel` deliberately does not —
+  // see the note there.
+  return (
+    runHostLabel(run, hostNamesById) ??
+    runClientIdentity(run, hostNamesById).name
+  );
 }
 
 /**
@@ -1341,6 +1422,41 @@ export function formatCostOrDash(value: number | null | undefined): string {
 }
 
 /**
+ * Mean of the values that WERE measured, or `null` when none were. Callers
+ * decide which iterations count as measured before handing them over — a
+ * missing reading is not a zero.
+ */
+export function average(values: readonly number[]): number | null {
+  return values.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : null;
+}
+
+/**
+ * Compact metric numbers for the run matrix and case workspace tiles:
+ * `1240` → `1.2k`, `2000` → `2k`, `1500000` → `1.5m`, `18` → `18`,
+ * `1.75` → `1.8`.
+ *
+ * Lowercase units on purpose (the matrix toggle's design), which is why this
+ * is not `Intl.NumberFormat`'s compact notation. It still has to carry the
+ * millions step the way that formatter did: without it a long agent run's
+ * token average renders as `1500k` and overflows the fixed-width tile.
+ */
+export function compactMetric(value: number): string {
+  const unit = (divisor: number, suffix: string) =>
+    `${(value / divisor).toFixed(1).replace(/\.0$/, "")}${suffix}`;
+  return value >= 1_000_000_000
+    ? unit(1_000_000_000, "b")
+    : value >= 1_000_000
+      ? unit(1_000_000, "m")
+      : value >= 1000
+        ? unit(1000, "k")
+        : Number.isInteger(value)
+          ? value.toLocaleString()
+          : value.toFixed(1);
+}
+
+/**
  * Why this row has no cost, phrased for the person reading it.
  *
  * Returns `null` when a cost IS present and needs no explanation — except for
@@ -1369,9 +1485,9 @@ export function costUnavailableReason(
     case "harness_mixed_models":
       return "Harness runs mix models within a turn; their cost arrives with billed attribution.";
     case "no_tokens":
-      return "This trial reported no token usage.";
+      return "This iteration reported no token usage.";
     default:
-      return "No cost was recorded for this trial.";
+      return "No cost was recorded for this iteration.";
   }
 }
 
@@ -1434,4 +1550,30 @@ export function iterationCosts(
   return iterations
     .map((iteration) => iteration.usage?.estimatedCostUsd)
     .filter((value): value is number => typeof value === "number");
+}
+
+/**
+ * Statuses a run can still be cancelled from.
+ *
+ * Mirrors the backend gate in `cancelSuiteRunRows` (Convex `testSuites.ts`),
+ * which rejects anything else with `Cannot cancel run with status: …`.
+ * `grading` counts: the trials are done but the gating judge is still billing.
+ */
+export function isRunCancellable(run: { status?: string | null }): boolean {
+  return (
+    run.status === "pending" ||
+    run.status === "running" ||
+    run.status === "grading"
+  );
+}
+
+/**
+ * Ids of every still-cancellable run in `runs` — what a Cancel button hands to
+ * `handleCancelRun`. A launch fans out into one run per client-model pairing,
+ * so cancelling a launch means cancelling all of them.
+ */
+export function cancellableRunIds(
+  runs: readonly { _id: string; status?: string | null }[],
+): string[] {
+  return runs.filter(isRunCancellable).map((run) => run._id);
 }

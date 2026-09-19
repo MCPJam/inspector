@@ -15,19 +15,33 @@ export { isObservationPredicateKind, OBSERVATION_PREDICATE_KINDS };
 export type PredicateKind = Predicate["type"];
 
 /**
+ * What a failing assertion does to the iteration, as the UI names it.
+ *
+ * Two tiers, named by consequence rather than by mechanism: `required` fails
+ * the iteration, `advisory` is shown on the result and never fails it. The
+ * wire spells the first one `"gating"` on historical rows and `"required"`
+ * canonically; `severity: "warn"` no longer splits advisory into two tiers.
+ *
+ * Declared here rather than in the authoring model so the two places that
+ * enumerate the set — {@link rolesForPredicateKind} and the scorer table's
+ * `ROLE_LEGEND` — cannot drift apart.
+ */
+export type ScorerUiRole = "required" | "advisory";
+
+/**
  * The roles this kind's authoring control may offer.
  *
  * An observation is a heuristic, and a heuristic must not decide a release —
- * so Gate is not a segment it can reach. The schema refuses a gating
+ * so Required is not a segment it can reach. The schema refuses a gating
  * observation on save; withholding the segment means an author never gets to
  * click a control that is going to be rejected.
  */
 export function rolesForPredicateKind(
   kind: PredicateKind,
-): readonly ("gate" | "warn" | "report")[] {
+): readonly ScorerUiRole[] {
   return isObservationPredicateKind(kind)
-    ? (["warn", "report"] as const)
-    : (["gate", "warn", "report"] as const);
+    ? (["advisory"] as const)
+    : (["required", "advisory"] as const);
 }
 
 export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
@@ -45,6 +59,7 @@ export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
   onlyToolsCalled: "Only these tools may be called",
   firstToolWas: "First tool called was…",
   responseContains: "Response contains…",
+  responseCloseTo: "Response close to…",
   responseMatches: "Response matches regex…",
   noToolErrors: "No tool errors",
   finalAssistantMessageNonEmpty: "Final message non-empty",
@@ -119,6 +134,7 @@ export const PREDICATE_KIND_ORDER: PredicateKind[] = [
   "onlyToolsCalled",
   "firstToolWas",
   "responseContains",
+  "responseCloseTo",
   "responseMatches",
   "noToolErrors",
   "finalAssistantMessageNonEmpty",
@@ -168,7 +184,7 @@ export const GLOBAL_GATES_SECTION_HELP = {
   title: "Whole-run checks",
   paragraphs: [
     "Whole-run rules evaluated after the scenario finishes, using the full transcript.",
-    "Step checks run inline at a specific point in the flow — use those for conversation and view assertions.",
+    "Step checks run inline at a specific point in the flow. Use those for conversation and view assertions.",
     "Case checks extend suite defaults. Add here only for policies that must hold across the entire run.",
   ],
 } as const;
@@ -260,6 +276,8 @@ export function blankPredicate(kind: PredicateKind): Predicate {
       return { type: "onlyToolsCalled", toolNames: [] };
     case "firstToolWas":
       return { type: "firstToolWas", toolName: "" };
+    case "responseCloseTo":
+      return { type: "responseCloseTo", reference: "", maxDistance: 0.1 };
     case "responseContains":
       return { type: "responseContains", needle: "" };
     case "responseMatches":
@@ -379,6 +397,8 @@ export function formatCriterion(
         ? "No tool should be called"
         : `Only these tools may be called: ${names.join(", ")}`;
     }
+    case "responseCloseTo":
+      return `Response distance ≤ ${num(predicate.maxDistance)} from reference`;
     case "responseContains":
       return `Response contains "${predicate.needle}"`;
     case "responseMatches":

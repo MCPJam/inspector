@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { act, render } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { ActionRow } from "../case-spine/action-row";
 import type { ComponentProps } from "react";
 import type { PinnedToolCallFields } from "@/components/evals/pinned-tool-call-fields";
@@ -11,15 +11,21 @@ vi.mock("@/components/evals/pinned-tool-call-fields", () => ({
 vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => false }));
 
 const step = { id: "call", kind: "toolCall" as const, serverId: "server-id", serverName: "srv", toolName: "view", arguments: {}, renderTimeoutMs: 1000 };
-const mount = (readOnly = false) => {
+const mount = (readOnly = false, isActive = false) => {
   const onUpdate = vi.fn();
   render(<ActionRow action={{ step, ordinal: 1, checks: [] } as never} total={1} status={undefined}
-    isActive={false} readOnly={readOnly} availableTools={[]} suiteServers={["srv"]}
+    isActive={isActive} readOnly={readOnly} availableTools={[]} suiteServers={["srv"]}
     promptAriaLabel="Prompt" onUpdate={onUpdate} onMove={vi.fn()} onRemove={vi.fn()} defaultOpen>{null}</ActionRow>);
   return onUpdate;
 };
 
 describe("pinned tool field updates", () => {
+  it("keeps hover feedback on individual controls instead of the action wrapper", () => {
+    mount(false, true);
+    const row = screen.getByTestId("spine-action-row");
+    expect(row).not.toHaveClass("ring-1", "ring-ring", "ring-border");
+    expect(screen.getByRole("button", { name: "Edit step 1" })).toHaveClass("hover:bg-muted/50");
+  });
   it("ignores mount-time normalization in a frozen view", () => {
     const onUpdate = mount(true);
     act(() => fields.onChange({ serverName: "srv", toolName: "view", arguments: {} }));

@@ -45,6 +45,27 @@ Every gate resolves `undefined` → **hidden/off**. Two shapes:
 | `stateless-mcp-enabled`                           | per-server protocol toggle                                               | Opt-in stays off                                                                                                                                  | ✅           |
 | `mcp-inspector-multi-host/model-enabled`          | playground                                                               | Feature off                                                                                                                                       | ✅           |
 
+### `sandboxes-enabled` and the REEV-6 preview
+
+Swarms and User Testing still roll out on `sandboxes-enabled`. The flag gates
+both nav items (`mcp-sidebar.tsx`) and both route guards
+(`useSandboxesEnabledState`, which redirects on `false` and holds on
+`undefined`). It runs BEFORE the REEV-6 guest preview, so a visitor the flag
+excludes gets no surface at all rather than a sign-up pitch for one.
+
+Unlike before REEV-6, the sidebar resolves it as the flag alone, not
+`flag && isAuthenticated`. When the flag is on, a signed-out visitor sees both
+items, and the route decides what they get: the preview for a guest, the real
+tab for a member. That identity check is `useIsMemberActor()`, a tri-state that
+holds on `undefined` for the same reason the flag hooks above do.
+
+The server-side gate of the same name lives in
+`mcpjam-backend/convex/lib/sandboxesGate.ts`. Since backend #1381 it refuses
+anonymous guests before it reads the flag and regardless of
+`SANDBOXES_GATE_MODE`, so the preview is never the only thing between a guest
+and a write. That backend change must be in production before this flag is
+widened to signed-out visitors.
+
 For every beta/nav/opt-in feature, fail-closed is **correct**: a not-yet-GA
 surface briefly not showing is strictly better than flickering it on for a
 user who shouldn't have it.

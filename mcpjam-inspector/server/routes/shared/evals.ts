@@ -38,6 +38,7 @@ import {
   resolveOpenAiCompatForHostConfig,
 } from "@mcpjam/sdk/host-config/internal";
 import {
+  defaultEvalExecutionBudgets,
   resolveSteps,
   runEvalSuiteWithAiSdk,
   streamTestCase,
@@ -72,8 +73,8 @@ import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize
 import type { BenchmarkWriteGuard } from "../../services/evals/artifact-ledger.js";
 import {
   environmentEffectiveServerIds,
-  environmentServerIds,
   environmentServerNames,
+  environmentServerRefsForManager,
   resolveEnvironmentForLaunch,
   type ResolvedEnvironmentForLaunch,
 } from "../../services/environments/resolve.js";
@@ -595,6 +596,11 @@ export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
  * {@link EvalRunProvenance} beside the mutation call that has to honour it.
  */
 type RunEvalsWithManagerRequest = RunEvalsRequest & {
+  /** Already resolved by the public inline-suite boundary. */
+  hostAttachments?: Array<{
+    namedHostId: string;
+    selectedServerIds?: string[];
+  }>;
   orgModelConfig?: ResolvedOrgModelConfig;
   /**
    * Extra headers stamped on every per-step Convex request this run makes.
@@ -1605,6 +1611,10 @@ function flushCaseOutcomes(
  * stays the single run engine that calls this then starts the recorder.
  */
 export async function authorEvalSuite(args: {
+  hostAttachments?: Array<{
+    namedHostId: string;
+    selectedServerIds?: string[];
+  }>;
   convexClient: ReturnType<typeof createConvexClients>["convexClient"];
   tests: RunEvalsRequest["tests"];
   resolvedServerIds: string[];
@@ -1963,6 +1973,9 @@ export async function authorEvalSuite(args: {
         description: suiteDescription,
         environment: persistedEnvironment,
         defaultPassCriteria: passCriteria,
+        ...(args.hostAttachments
+          ? { hostAttachments: args.hostAttachments }
+          : {}),
         ...(idempotencyKey ? { idempotencyKey } : {}),
       },
     );
@@ -2359,7 +2372,9 @@ export async function prepareEvalRun(
   }
 
   const resolvedServerIds = resolveServerIdsOrThrow(
-    environmentLaunch ? environmentServerIds(environmentLaunch) : serverIds,
+    environmentLaunch
+      ? environmentServerRefsForManager(environmentLaunch, clientManager)
+      : serverIds,
     clientManager,
   );
   const persistedServerRefs =
@@ -2381,6 +2396,7 @@ export async function prepareEvalRun(
   // their names so the run record + return below still reference them.
   const { suiteId: resolvedSuiteId, caseUpsert: authoredCaseUpsert } =
     await authorEvalSuite({
+      hostAttachments: request.hostAttachments,
       convexClient,
       tests,
       resolvedServerIds,
@@ -2414,6 +2430,7 @@ export async function prepareEvalRun(
     recorder,
     deduped: runWasDeduped,
     status: existingRunStatus,
+    executionBudgets: runExecutionBudgets,
     githubCredentialPolicy,
     hostConfig: runHostConfigSnapshot,
     pluginVersions: runEnvironmentPluginVersions = [],
@@ -2858,6 +2875,10 @@ export async function prepareEvalRun(
     await runEvalSuiteWithAiSdk({
       suiteId: resolvedSuiteId,
       runId,
+      // The budgets the LAUNCH froze. Omitted when the backend predates the
+      // field, which the runner reads as "resolve the platform defaults" —
+      // same code path, differing only in which rung each field came from.
+      ...(runExecutionBudgets ? { executionBudgets: runExecutionBudgets } : {}),
       config,
       modelApiKeys: resolvedModelApiKeys ?? undefined,
       orgModelConfig: resolvedOrgModelConfig,
@@ -3657,6 +3678,10 @@ export async function streamEvalTestCaseWithManager(
       try {
         const outcomes = await streamTestCase({
           test,
+          // A quick run has no launch response to carry frozen budgets, so it
+          // takes the platform defaults — resolved through the real resolver,
+          // not hand-written, so it matches what a launch would freeze.
+          budgets: defaultEvalExecutionBudgets(),
           tools,
           selectedServers: resolvedServerIds,
           mcpClientManager: clientManager,

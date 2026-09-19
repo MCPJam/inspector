@@ -14,7 +14,7 @@
             "label": "test()",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -26,7 +26,7 @@
             "label": "expected tool calls",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           }
@@ -50,7 +50,7 @@
             "label": "test()",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -62,7 +62,7 @@
             "label": "expected tool calls",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -74,7 +74,7 @@
             "label": "responseContains",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -86,7 +86,7 @@
             "label": "responseContains",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           }
@@ -112,7 +112,7 @@
             "label": "test()",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -124,7 +124,7 @@
             "label": "expected tool calls",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -136,7 +136,7 @@
             "label": "noToolErrors",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -175,7 +175,7 @@
             "label": "test()",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -187,7 +187,7 @@
             "label": "expected tool calls",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           }
@@ -211,7 +211,7 @@
             "label": "test()",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -223,7 +223,7 @@
             "label": "expected tool calls",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -235,7 +235,7 @@
             "label": "finalAssistantMessageNonEmpty",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           }
@@ -260,7 +260,7 @@
             "label": "test()",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -272,7 +272,7 @@
             "label": "expected tool calls",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -284,7 +284,7 @@
             "label": "responseContains",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -323,7 +323,7 @@
             "label": "test()",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -335,7 +335,7 @@
             "label": "expected tool calls",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -347,7 +347,7 @@
             "label": "responseContains",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           }
@@ -372,7 +372,7 @@
             "label": "test()",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -384,7 +384,7 @@
             "label": "expected tool calls",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -421,7 +421,7 @@
             "label": "test()",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },
@@ -433,7 +433,7 @@
             "label": "expected tool calls",
             "deterministic": true,
             "passThreshold": 1,
-            "role": "gating",
+            "role": "required",
             "onError": "fail",
             "onSkipped": "fail"
           },

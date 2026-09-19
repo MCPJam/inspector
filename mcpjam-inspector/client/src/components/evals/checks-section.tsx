@@ -117,6 +117,13 @@ export interface ChecksSectionProps {
    */
   globalGatesMenu?: boolean;
   /**
+   * What one row is CALLED on this surface, for the Add placeholder and the
+   * Remove label. Two vocabularies share this editor: the eval surfaces say
+   * "assertion" (the pinned word), and swarm rubrics still say "check". The
+   * default keeps a caller that says nothing on the word it has today.
+   */
+  noun?: string;
+  /**
    * Fires when the section starts or stops holding a raw-JSON draft that does
    * not parse. Such a draft is deliberately never written into a predicate (a
    * half-typed schema is not an assertion), so `areAllChecksValid` cannot see
@@ -209,6 +216,7 @@ export function ChecksSection({
   hideEmptyState = false,
   allowedKinds,
   globalGatesMenu = false,
+  noun = "check",
   onDraftValidityChange,
   showAllErrors = false,
 }: ChecksSectionProps & { hideAddButton?: boolean; hideEmptyState?: boolean }) {
@@ -324,6 +332,7 @@ export function ChecksSection({
                     globalGatesMenu && isGlobalPolicyKind(predicate.type)
                   }
                   showAllErrors={showAllErrors}
+                  noun={noun}
                 />
               </li>
             ))}
@@ -337,6 +346,7 @@ export function ChecksSection({
               globalGatesMenu ? GLOBAL_POLICY_MENU_KINDS : allowedKinds
             }
             globalGatesMenu={globalGatesMenu}
+            noun={noun}
           />
         ) : null}
       </div>
@@ -348,11 +358,14 @@ export function AddCheckMenu({
   onAdd,
   allowedKinds,
   globalGatesMenu = false,
+  noun = "check",
 }: {
   onAdd: (kind: Predicate["type"]) => void;
   /** When set, restrict the menu to these kinds. */
   allowedKinds?: readonly Predicate["type"][];
   globalGatesMenu?: boolean;
+  /** @see ChecksSectionProps.noun */
+  noun?: string;
 }) {
   if (globalGatesMenu) {
     return <AddGlobalGateMenu onAdd={onAdd} />;
@@ -379,7 +392,7 @@ export function AddCheckMenu({
       >
         <SelectTrigger className="h-8 w-auto gap-2 text-xs">
           <Plus className="h-3.5 w-3.5" />
-          <SelectValue placeholder="Add check…" />
+          <SelectValue placeholder={`Add ${noun}…`} />
         </SelectTrigger>
         <SelectContent>
           {kinds.map((kind) => (
@@ -416,6 +429,8 @@ export interface CheckRowProps {
   legacyScenarioGate?: boolean;
   /** Compact whole-run gate row (label + hint in header, minimal fields). */
   globalGate?: boolean;
+  /** @see ChecksSectionProps.noun */
+  noun?: string;
   /** Reveal issues on untouched fields too — the Save-attempt case. */
   showAllErrors?: boolean;
 }
@@ -431,6 +446,7 @@ export function CheckRow({
   embedded = false,
   legacyScenarioGate = false,
   globalGate = false,
+  noun = "check",
   showAllErrors = false,
 }: CheckRowProps) {
   // Zod-validate the current row. Callers gate Save on the same schema via
@@ -542,7 +558,7 @@ export function CheckRow({
           ) : null}
           {legacyScenarioGate ? (
             <p className="text-[11px] text-muted-foreground">
-              Scenario check — use Move to Steps to edit inline in the flow.
+              Scenario {noun} — use Move to Steps to edit inline in the flow.
             </p>
           ) : null}
         </div>
@@ -553,7 +569,7 @@ export function CheckRow({
             size="sm"
             className="h-7 w-7 shrink-0 p-0 text-muted-foreground"
             onClick={onRemove}
-            aria-label="Remove check"
+            aria-label={`Remove ${noun}`}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
@@ -778,6 +794,14 @@ function CheckFields({
           readOnly={readOnly}
         />
       );
+    case "responseCloseTo":
+      return (
+        <ResponseCloseToFields
+          predicate={predicate}
+          onChange={onChange}
+          readOnly={readOnly}
+        />
+      );
     case "responseContains":
       return (
         <ResponseContainsFields
@@ -854,8 +878,8 @@ function CheckFields({
         <div className="text-xs text-muted-foreground">
           Notices answers whose last non-empty line ends with a question mark.
           It cannot tell an offer ("Would you like a breakdown?") from a request
-          for something missing, so it reports what it saw and never fails a
-          trial.
+          for something missing, so it reports what it saw and never fails an
+          iteration.
         </div>
       );
     case "tokenBudgetUnder":
@@ -1515,7 +1539,8 @@ function StructuredArgsRow({
   const argKeys = argProperties ? Object.keys(argProperties) : [];
   const useKeyDropdown = argKeys.length > 0;
   const argSchema = argProperties?.[persistedKey] as
-    { type?: string; description?: string } | undefined;
+    | { type?: string; description?: string }
+    | undefined;
   // A freshly-added row uses a synthetic `arg`/`argN` key that isn't a real
   // schema property — show the placeholder so the user is prompted to pick.
   const isPlaceholderKey =
@@ -1526,7 +1551,8 @@ function StructuredArgsRow({
     .filter((k) => k === persistedKey || !isKeyTaken(k))
     .map((k) => {
       const schema = argProperties![k] as
-        { type?: string; description?: string } | undefined;
+        | { type?: string; description?: string }
+        | undefined;
       let description = schema?.description || "";
       if (schema?.type) {
         description += description
@@ -2487,7 +2513,7 @@ export function CaseChecksSection({
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-1 min-w-0">
             <h4 className="text-xs font-medium text-foreground">
-              Whole-run checks
+              Whole-run assertions
             </h4>
             <GlobalGatesSectionInfoHint />
           </div>
@@ -2500,17 +2526,17 @@ export function CaseChecksSection({
         </div>
         {suiteScenarioAsserts.length > 0 ? (
           <p className="text-[11px] text-warning">
-            Suite defaults include {suiteScenarioAsserts.length} scenario check
-            {suiteScenarioAsserts.length === 1 ? "" : "s"} — review in Suite
-            settings.
+            Suite defaults include {suiteScenarioAsserts.length} scenario
+            assertion{suiteScenarioAsserts.length === 1 ? "" : "s"} — review in
+            Suite settings.
           </p>
         ) : null}
         {caseScenarioAsserts.length > 0 ? (
           <div className="rounded-md border border-border/50 bg-muted/20 p-2.5 space-y-2">
             <p className="text-[11px] text-muted-foreground">
-              {caseScenarioAsserts.length} scenario check
+              {caseScenarioAsserts.length} scenario assertion
               {caseScenarioAsserts.length === 1 ? "" : "s"} here — move to Steps
-              for inline checks.
+              for inline assertions.
             </p>
             {onAppendScenarioToSteps ? (
               <Button
@@ -2543,6 +2569,7 @@ export function CaseChecksSection({
             hideAddButton
             hideEmptyState
             globalGatesMenu
+            noun="assertion"
             value={caseList}
             onChange={setEmbeddedList}
             availableTools={availableTools}
@@ -2636,16 +2663,16 @@ export function CaseChecksSection({
                 ⚠
               </span>
               <span>
-                Suite has no default checks. This case has{" "}
-                <strong className="font-semibold">no checks</strong> — it will
-                always pass on the checks axis. Switch to Replace or Extend to
-                author case-specific checks.
+                Suite has no default assertions. This case has{" "}
+                <strong className="font-semibold">no assertions</strong> — it
+                will always pass on the assertions axis. Switch to Replace or
+                Extend to author case-specific assertions.
               </span>
             </div>
           )
         ) : (
           <div className="rounded-md border border-border/40 bg-background p-3 text-xs text-muted-foreground">
-            {`${suiteDefaults.length} check${suiteDefaults.length === 1 ? "" : "s"} inherited from suite — view defaults on the suite settings page.`}
+            {`${suiteDefaults.length} assertion${suiteDefaults.length === 1 ? "" : "s"} inherited from suite — view defaults on the suite settings page.`}
           </div>
         )
       ) : null}
@@ -2660,6 +2687,7 @@ export function CaseChecksSection({
             onChange={() => {}}
             availableTools={availableTools}
             title=""
+            noun="assertion"
             readOnly
           />
         </div>
@@ -2670,17 +2698,18 @@ export function CaseChecksSection({
           value={resolved.list}
           onChange={setList}
           availableTools={availableTools}
+          noun="assertion"
           title={
             mode === "extend"
-              ? "Additional checks for this case"
-              : "Checks for this case"
+              ? "Additional assertions for this case"
+              : "Assertions for this case"
           }
-          // In extend mode the inherited suite checks still run, so the
+          // In extend mode the inherited suite assertions still run, so the
           // default "every case passes by default" would be false — an empty
-          // list here means no EXTRA checks, not no checks.
+          // list here means no EXTRA assertions, not none.
           emptyStateText={
             mode === "extend" && suiteDefaults.length > 0
-              ? "No additional checks on this case."
+              ? "No additional assertions on this case."
               : undefined
           }
         />
@@ -2729,4 +2758,73 @@ function RadioRow({
  */
 export function areAllChecksValid(list: Predicate[]): boolean {
   return list.every((p) => predicateSchema.safeParse(p).success);
+}
+
+function ResponseCloseToFields({
+  predicate,
+  onChange,
+  readOnly,
+}: {
+  predicate: Extract<Predicate, { type: "responseCloseTo" }>;
+  onChange: (next: Predicate) => void;
+  readOnly: boolean;
+}) {
+  const referenceId = useId();
+  const distanceId = useId();
+  const caseId = useId();
+  const whitespaceId = useId();
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={referenceId}>Reference response</Label>
+      <Input
+        id={referenceId}
+        value={predicate.reference}
+        disabled={readOnly}
+        onChange={(event) =>
+          onChange({ ...predicate, reference: event.target.value })
+        }
+      />
+      <Label htmlFor={distanceId}>Maximum text distance (0–1)</Label>
+      <Input
+        id={distanceId}
+        type="number"
+        min={0}
+        max={1}
+        step={0.01}
+        value={predicate.maxDistance}
+        disabled={readOnly}
+        onChange={(event) =>
+          onChange({ ...predicate, maxDistance: event.target.valueAsNumber })
+        }
+      />
+      <div className="flex items-center gap-2">
+        <Switch
+          id={caseId}
+          checked={predicate.caseSensitive ?? false}
+          disabled={readOnly}
+          onCheckedChange={(checked) =>
+            onChange({ ...predicate, caseSensitive: checked })
+          }
+        />
+        <Label htmlFor={caseId}>Case sensitive</Label>
+      </div>
+      <div className="flex items-center gap-2">
+        <Switch
+          id={whitespaceId}
+          checked={predicate.normalizeWhitespace ?? false}
+          disabled={readOnly}
+          onCheckedChange={(checked) =>
+            onChange({ ...predicate, normalizeWhitespace: checked })
+          }
+        />
+        <Label htmlFor={whitespaceId}>Normalize whitespace</Label>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Compares characters, not meaning. Zero requires an exact match after
+        normalization. Inputs are limited to 100,000 characters. Unequal text
+        that needs more than 4 million edit-distance cells is ungradable, not a
+        failed assertion; equal prefixes and suffixes do not consume that budget.
+      </p>
+    </div>
+  );
 }

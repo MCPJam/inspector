@@ -1,11 +1,21 @@
-import { resolveEvalCiMetadata } from "./eval-ci.js";
+import { reportingReceiptError } from "./eval-reporting-receipt.js";
+import { LEGACY_SUITE_WIDE_THRESHOLD_PERCENT } from "./contract/grading-policy.js";
+import {
+  normalizeReportingConfig,
+  prepareReportingConfig,
+  snapshotReportingInput,
+  buildReportingBody,
+} from "./eval-reporting-config.js";
 import type {
   EvalResultInput,
+  EvalReportingReceipt,
   ReportEvalResultsInput,
   ReportEvalResultsOutput,
 } from "./eval-reporting-types.js";
 import {
   appendEvalRunIterations,
+  attachReportingWarnings,
+  resolveTerminationStatus,
   chunkResultsForUpload,
   createRuntimeConfig,
   type EvalReportingRuntimeConfig,
@@ -14,14 +24,19 @@ import {
   printRunUrl,
   projectRunVerdict,
   reportEvalResults,
-  reportEvalResultsSafely,
+  reportCaseRunEvaluations,
   startEvalRun,
-  uploadWidgetSnapshots,
+  requireReportingCapabilities,
+  resolveWireHostConfigForRun,
 } from "./report-eval-results.js";
 import type { PromptResult } from "./PromptResult.js";
 import type { EvalRunResult } from "./EvalTest.js";
 import { captureEvalReportingFailure } from "./sentry.js";
-import { resolveServerReplayConfigs } from "./server-replay-configs.js";
+import {
+  resolveServerNames,
+  resolveServerReplayConfigs,
+} from "./server-replay-configs.js";
+import { writeGithubActionReceipt } from "./github-action-receipt.js";
 import {
   promptsToEvalResult,
   runToEvalResults,
@@ -33,16 +48,24 @@ import {
 
 export type CreateEvalRunReporterInput = Omit<
   ReportEvalResultsInput,
-  "results" | "framework"
+  "results"
 > & {
   results?: EvalResultInput[];
+  /** Limits include unacknowledged in-flight results. Omitted limits are unbounded. */
+  queueLimits?: { maxCount?: number; maxBytes?: number };
 };
 
 export interface EvalRunReporter {
   add(result: EvalResultInput): void;
   record(result: EvalResultInput): Promise<void>;
   flush(): Promise<void>;
-  finalize(): Promise<ReportEvalResultsOutput>;
+  finalize(options?: {
+    terminalStatus: "cancelled" | "timed_out";
+  }): Promise<ReportEvalResultsOutput>;
+  /** Always resolves with reporting state, including when strict mode rejects. */
+  finalizeWithReceipt(options?: {
+    terminalStatus: "cancelled" | "timed_out";
+  }): Promise<EvalReportingReceipt>;
   getBufferedCount(): number;
   setExpectedIterations(count: number): void;
 
@@ -120,24 +143,60 @@ export interface EvalRunReporter {
    * Get the total count of results added (including via helper methods).
    */
   getAddedCount(): number;
+  getReportingAccounting(): {
+    accepted: number;
+    acknowledged: number;
+    pending: number;
+  };
+  getReportingError(): unknown;
+  /** Memory-only recovery; may include results committed remotely with a lost response. */
+  exportPendingResults(): EvalResultInput[];
 }
 
 class EvalRunReporterImpl implements EvalRunReporter {
-  private readonly input: CreateEvalRunReporterInput;
+  private input: CreateEvalRunReporterInput;
   private readonly runtimeConfig: EvalReportingRuntimeConfig;
   private readonly externalRunId: string;
   private runId: string | null = null;
   private finalized = false;
   private completedResult: ReportEvalResultsOutput | null = null;
+  private preparation: Promise<CreateEvalRunReporterInput>;
+  private preparationApplied = false;
+  private reusedReport: ReportEvalResultsOutput | null = null;
   private buffered: EvalResultInput[] = [];
   private generatedIterationCount = 0;
   private expectedIterations: number | undefined;
   private addedCount = 0;
   private passedCount = 0;
+  private inFlight: EvalResultInput[] = [];
+  private acknowledgedCount = 0;
+  private reportingError: unknown;
+  private operation: Promise<unknown> = Promise.resolve();
+  private finalizing = false;
+  private finalizePromise: Promise<ReportEvalResultsOutput> | null = null;
+  private readonly acceptedIds = new Set<string>();
+  private readonly resultBytes = new Map<string, number>();
+  private queuedBytes = 0;
 
   constructor(input: CreateEvalRunReporterInput) {
+    input = normalizeReportingConfig(snapshotReportingInput(input));
+    this.preparation = prepareReportingConfig(input);
+    // Observe early rejection even when callers postpone their first flush.
+    void this.preparation.catch(() => {});
     // Empty CI keeps the one-shot fallback from detecting again at finalize.
-    this.input = { ...input, ci: { ...resolveEvalCiMetadata(input.ci) } };
+    this.input = {
+      ...input,
+      results: undefined,
+      ci: { ...input.ci },
+      runMetadata: structuredClone(input.runMetadata),
+      runTags: structuredClone(input.runTags),
+      queueLimits: input.queueLimits ? { ...input.queueLimits } : undefined,
+      verdictPolicy: structuredClone(input.verdictPolicy),
+      passCriteria: structuredClone(input.passCriteria),
+      serverNames: structuredClone(input.serverNames),
+      serverReplayConfigs: structuredClone(input.serverReplayConfigs),
+      tags: structuredClone(input.tags),
+    };
     this.runtimeConfig = createRuntimeConfig({
       ...input,
       suiteName: input.suiteName,
@@ -145,18 +204,53 @@ class EvalRunReporterImpl implements EvalRunReporter {
     } as ReportEvalResultsInput);
     this.externalRunId = input.externalRunId ?? generateExternalRunId();
     this.expectedIterations = input.expectedIterations;
-    if (Array.isArray(input.results) && input.results.length > 0) {
-      this.buffered.push(...input.results);
-      for (const result of input.results) {
-        this.recordAddedResult(result);
+    if (
+      this.expectedIterations !== undefined &&
+      (!Number.isSafeInteger(this.expectedIterations) ||
+        this.expectedIterations < 1)
+    )
+      throw new TypeError(
+        "Expected iterations must be a positive safe integer"
+      );
+    for (const value of Object.values(input.queueLimits ?? {})) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
+        throw new Error("Reporter queue limits must be positive safe integers");
       }
+    }
+    if (Array.isArray(input.results) && input.results.length > 0) {
+      for (const result of input.results) this.add(result);
     }
   }
 
   add(result: EvalResultInput): void {
     this.ensureNotFinalized();
-    this.buffered.push(result);
-    this.recordAddedResult(result);
+    const snapshot = structuredClone(result);
+    let generated = this.generatedIterationCount;
+    let id = snapshot.externalIterationId;
+    if (!id) {
+      do {
+        id = `${this.externalRunId}-${++generated}`;
+      } while (this.acceptedIds.has(id));
+    }
+    if (this.acceptedIds.has(id))
+      throw new Error("Duplicate externalIterationId in reporter");
+    snapshot.externalIterationId = id;
+    const bytes = new TextEncoder().encode(JSON.stringify(snapshot)).byteLength;
+    if (
+      this.getBufferedCount() + 1 >
+        (this.input.queueLimits?.maxCount ?? Infinity) ||
+      this.queuedBytes + bytes > (this.input.queueLimits?.maxBytes ?? Infinity)
+    ) {
+      throw new Error(
+        "Eval run reporter queue limit exceeded; flush before adding more results"
+      );
+    }
+    if (!result.externalIterationId) this.generatedIterationCount = generated;
+    this.acceptedIds.add(id);
+    this.resultBytes.set(id, bytes);
+    this.queuedBytes += bytes;
+    this.buffered.push(snapshot);
+    this.recordAddedResult(snapshot);
   }
 
   async record(result: EvalResultInput): Promise<void> {
@@ -296,30 +390,47 @@ class EvalRunReporterImpl implements EvalRunReporter {
     return this.addedCount;
   }
 
-  async flush(): Promise<void> {
+  private async applyPreparation(): Promise<void> {
+    if (this.preparationApplied) return;
+    const terminalStatus = this.input.terminalStatus;
+    this.input = {
+      ...this.input,
+      ...(await this.preparation),
+      ...(terminalStatus ? { terminalStatus } : {}),
+    };
+    this.preparationApplied = true;
+  }
+
+  flush(): Promise<void> {
     this.ensureNotFinalized();
+    return this.enqueue(async () => {
+      await this.flushInternal();
+    });
+  }
+
+  private async flushInternal(): Promise<void> {
     if (this.buffered.length === 0) {
       return;
     }
+    this.inFlight = this.buffered;
+    this.buffered = [];
+    this.reportingError = undefined;
     try {
+      await this.applyPreparation();
       const serverReplayConfigs = resolveServerReplayConfigs(this.input);
       if (!this.runId) {
+        await requireReportingCapabilities(this.runtimeConfig, this.input);
         const started = await startEvalRun(this.runtimeConfig, {
+          ...buildReportingBody(this.input),
+          serverNames: resolveServerNames(this.input, serverReplayConfigs),
           suiteName: this.input.suiteName,
-          suiteDescription: this.input.suiteDescription,
-          serverNames: this.input.serverNames,
           serverReplayConfigs,
-          notes: this.input.notes,
-          passCriteria: this.input.passCriteria,
           externalRunId: this.externalRunId,
-          ci: this.input.ci,
           expectedIterations: this.expectedIterations,
-          // The v2 marker rides the START call: the backend freezes the policy
-          // once, and every later chunk is evidence graded against that
-          // snapshot rather than a policy of its own.
-          ...(this.input.verdictPolicy
-            ? { verdictPolicy: this.input.verdictPolicy }
-            : {}),
+          ...((await resolveWireHostConfigForRun({
+            ...this.input,
+            results: this.inFlight,
+          })) ?? {}),
         });
         this.runId = started.runId;
         if (
@@ -328,21 +439,14 @@ class EvalRunReporterImpl implements EvalRunReporter {
           started.result &&
           started.summary
         ) {
-          this.completedResult = {
+          this.reusedReport = {
             suiteId: started.suiteId,
             runId: started.runId,
             ...(started.projectId ? { projectId: started.projectId } : {}),
-            status: started.status as "completed" | "failed",
+            status: "completed",
             ...projectRunVerdict(started),
             summary: started.summary,
           };
-          // The streaming reporter BYPASSES `reportEvalResultsInternal`, so
-          // its print sites are its own. This is the reuse short-circuit:
-          // the run is already complete, and nothing downstream will finalize
-          // it (and therefore nothing downstream would print).
-          printRunUrl(this.runtimeConfig, this.completedResult);
-          this.finalized = true;
-          this.buffered = [];
         }
       }
 
@@ -350,20 +454,35 @@ class EvalRunReporterImpl implements EvalRunReporter {
         return;
       }
 
-      const withIds = this.withUniqueExternalIterationIds(this.buffered);
-      const uploadReady = await uploadWidgetSnapshots(
-        this.runtimeConfig,
-        withIds
-      );
+      const withIds = this.inFlight;
+      const uploadReady = withIds;
       const chunks = chunkResultsForUpload(uploadReady);
       for (const chunk of chunks) {
-        await appendEvalRunIterations(this.runtimeConfig, {
+        const receipt = await appendEvalRunIterations(this.runtimeConfig, {
           runId: this.runId,
           results: chunk,
         });
+        if (
+          !Number.isSafeInteger(receipt.inserted) ||
+          receipt.inserted < 0 ||
+          !Number.isSafeInteger(receipt.skipped) ||
+          receipt.skipped < 0 ||
+          receipt.inserted + receipt.skipped !== chunk.length
+        ) {
+          throw new Error("Incomplete iteration upload acknowledgment");
+        }
+        const acknowledged = this.inFlight.splice(0, chunk.length);
+        this.acknowledgedCount += acknowledged.length;
+        for (const result of acknowledged) {
+          this.queuedBytes -=
+            this.resultBytes.get(result.externalIterationId!) ?? 0;
+          this.resultBytes.delete(result.externalIterationId!);
+        }
       }
-      this.buffered = [];
     } catch (error) {
+      this.reportingError = error;
+      this.buffered = [...this.inFlight, ...this.buffered];
+      this.inFlight = [];
       await captureEvalReportingFailure(error, {
         apiKey: this.runtimeConfig.apiKey,
         baseUrl: this.runtimeConfig.baseUrl,
@@ -377,73 +496,133 @@ class EvalRunReporterImpl implements EvalRunReporter {
       if (this.input.strict) {
         throw error;
       }
-      this.completedResult = this.buildLocalFallbackResult();
-      this.finalized = true;
-      this.buffered = [];
     }
   }
 
-  async finalize(): Promise<ReportEvalResultsOutput> {
+  finalize(options?: {
+    terminalStatus: "cancelled" | "timed_out";
+  }): Promise<ReportEvalResultsOutput> {
+    if (options) {
+      if (!["cancelled", "timed_out"].includes(options.terminalStatus))
+        throw new TypeError("terminalStatus must be cancelled or timed_out");
+      if (
+        (this.finalizing || this.finalized) &&
+        options.terminalStatus !== this.input.terminalStatus
+      )
+        throw new Error(
+          "Cannot change termination after finalization has started"
+        );
+      this.input = { ...this.input, terminalStatus: options.terminalStatus };
+    }
+    if (this.completedResult) return Promise.resolve(this.completedResult);
+    if (this.finalizePromise) return this.finalizePromise;
+    this.finalizing = true;
+    this.finalizePromise = this.enqueue(() => this.finalizeInternal()).finally(
+      () => {
+        this.finalizing = false;
+        this.finalizePromise = null;
+      }
+    );
+    return this.finalizePromise;
+  }
+
+  async finalizeWithReceipt(options?: {
+    terminalStatus: "cancelled" | "timed_out";
+  }): Promise<EvalReportingReceipt> {
+    let report: ReportEvalResultsOutput | undefined;
+    let failure: unknown;
+    try {
+      report = await this.finalize(options);
+    } catch (error) {
+      failure = error;
+    }
+    const reportingError = failure ?? this.reportingError;
+    const accounting = this.getReportingAccounting();
+    const persisted =
+      !!report?.runId && !reportingError && accounting.pending === 0;
+    // The one-shot helper can have acknowledged earlier chunks before failing.
+    const unknown = !!reportingError && !this.runId;
+    return {
+      schemaVersion: 1,
+      state: persisted ? "persisted" : "failed",
+      acceptedIterations: accounting.accepted,
+      acknowledgedIterations: unknown ? null : accounting.acknowledged,
+      pendingIterations: unknown ? null : accounting.pending,
+      ...(report?.warnings?.length
+        ? { warnings: structuredClone(report.warnings) }
+        : {}),
+      ...(persisted
+        ? { report }
+        : { error: reportingReceiptError(reportingError) }),
+    };
+  }
+
+  private async finalizeInternal(): Promise<ReportEvalResultsOutput> {
+    await this.applyPreparation();
     if (this.completedResult) {
       return this.completedResult;
     }
-    this.ensureNotFinalized();
-
     if (!this.runId) {
       const serverReplayConfigs = resolveServerReplayConfigs(this.input);
       const reportInput: ReportEvalResultsInput = {
+        ...this.input,
         suiteName: this.input.suiteName,
-        suiteDescription: this.input.suiteDescription,
-        serverNames: this.input.serverNames,
         serverReplayConfigs,
-        notes: this.input.notes,
-        passCriteria: this.input.passCriteria,
         externalRunId: this.externalRunId,
-        ci: this.input.ci,
-        apiKey: this.input.apiKey,
-        baseUrl: this.input.baseUrl,
-        project: this.input.project,
-        strict: this.input.strict,
-        agent: this.input.agent,
-        mcpClientManager: this.input.mcpClientManager,
-        ...(this.input.verdictPolicy
-          ? { verdictPolicy: this.input.verdictPolicy }
-          : {}),
+        expectedIterations: this.expectedIterations,
         results: this.buffered,
       };
 
-      const oneShotResult = this.input.strict
-        ? await reportEvalResults(reportInput)
-        : await reportEvalResultsSafely(reportInput);
-
-      if (!oneShotResult) {
-        const localResult = this.buildLocalFallbackResult();
-        this.completedResult = localResult;
-        this.finalized = true;
+      try {
+        const oneShotResult = await reportEvalResults(reportInput);
+        this.reportingError = undefined;
+        this.acknowledgedCount += this.buffered.length;
         this.buffered = [];
-        return localResult;
+        this.queuedBytes = 0;
+        this.resultBytes.clear();
+        this.completedResult = oneShotResult;
+        this.finalized = true;
+        return oneShotResult;
+      } catch (error) {
+        this.reportingError = error;
+        if (this.input.strict) throw error;
+        return this.buildLocalFallbackResult();
       }
-
-      this.completedResult = oneShotResult;
-      this.finalized = true;
-      this.buffered = [];
-      return oneShotResult;
     }
 
     try {
-      await this.flush();
+      this.reportingError = undefined;
+      await this.flushInternal();
+      if (this.reportingError) return this.buildLocalFallbackResult();
       if (this.completedResult) {
         return this.completedResult;
       }
-      const result = await finalizeEvalRun(this.runtimeConfig, {
-        runId: this.runId,
-        externalRunId: this.externalRunId,
-      });
-      printRunUrl(this.runtimeConfig, result);
-      this.completedResult = result;
+      const terminalStatus = await resolveTerminationStatus(
+        this.runtimeConfig,
+        this.input
+      );
+      const result =
+        (terminalStatus ? undefined : this.reusedReport) ??
+        (await finalizeEvalRun(this.runtimeConfig, {
+          runId: this.runId,
+          externalRunId: this.externalRunId,
+          ...(terminalStatus ? { terminalStatus } : {}),
+        }));
+      if (this.input.runEvaluations?.length)
+        await reportCaseRunEvaluations(
+          this.runtimeConfig,
+          result.runId,
+          this.externalRunId,
+          this.input.runEvaluations
+        );
+      const reported = attachReportingWarnings(this.runtimeConfig, result);
+      await writeGithubActionReceipt(this.runtimeConfig, this.input, reported);
+      printRunUrl(this.runtimeConfig, reported);
+      this.completedResult = reported;
       this.finalized = true;
-      return result;
+      return reported;
     } catch (error) {
+      this.reportingError = error;
       await captureEvalReportingFailure(error, {
         apiKey: this.runtimeConfig.apiKey,
         baseUrl: this.runtimeConfig.baseUrl,
@@ -458,47 +637,72 @@ class EvalRunReporterImpl implements EvalRunReporter {
         throw error;
       }
       const localResult = this.buildLocalFallbackResult();
-      this.completedResult = localResult;
-      this.finalized = true;
       return localResult;
     }
   }
 
   getBufferedCount(): number {
-    return this.buffered.length;
+    return this.buffered.length + this.inFlight.length;
   }
 
   setExpectedIterations(count: number): void {
+    this.ensureNotFinalized();
+    if (this.runId || this.inFlight.length)
+      throw new Error("Expected iterations are frozen after reporting starts");
+    if (!Number.isSafeInteger(count) || count < 1)
+      throw new Error("Expected iterations must be a positive safe integer");
     this.expectedIterations = count;
   }
 
   private ensureNotFinalized(): void {
-    if (this.finalized) {
+    if (this.finalized || this.finalizing) {
       throw new Error("Eval run reporter has already been finalized");
     }
   }
 
-  private withUniqueExternalIterationIds(
-    results: EvalResultInput[]
-  ): EvalResultInput[] {
-    return results.map((result) => {
-      if (result.externalIterationId) {
-        return result;
-      }
-      this.generatedIterationCount += 1;
-      return {
-        ...result,
-        externalIterationId: `${this.externalRunId}-${this.generatedIterationCount}`,
-      };
-    });
+  getReportingAccounting() {
+    return {
+      accepted: this.addedCount,
+      acknowledged: this.acknowledgedCount,
+      pending: this.getBufferedCount(),
+    };
   }
 
+  getReportingError(): unknown {
+    return this.reportingError;
+  }
+
+  exportPendingResults(): EvalResultInput[] {
+    return structuredClone([...this.inFlight, ...this.buffered]);
+  }
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.operation.then(operation);
+    this.operation = next.catch(() => {});
+    return next;
+  }
+
+  /**
+   * The summary this reporter produces when the run could not be reported.
+   *
+   * A NAMED legacy adapter, and one of the three suite-wide producers the
+   * grading-policy contract distinguishes: it counts the results it was HANDED,
+   * one per iteration, `failed` is the remainder rather than a classification,
+   * and an empty population rates `0` — where the hosted run finalizer rates
+   * the same empty run `1`. The arithmetic is deliberately unchanged;
+   * `resolveGradingPolicyFromRunReporting({ producer: "localFallback" })` is
+   * how a surface names which rule decided a summary from here, and
+   * `LEGACY_SUITE_WIDE_THRESHOLD_PERCENT` replaces the bare `100` so the
+   * producer fallback is spelled once across the repo.
+   */
   private buildLocalFallbackResult(): ReportEvalResultsOutput {
     const total = this.addedCount;
     const passed = this.passedCount;
     const failed = total - passed;
     const passRate = total > 0 ? passed / total : 0;
-    const minimumPassRate = this.input.passCriteria?.minimumPassRate ?? 100;
+    const minimumPassRate =
+      this.input.passCriteria?.minimumPassRate ??
+      LEGACY_SUITE_WIDE_THRESHOLD_PERCENT;
     const result = passRate * 100 >= minimumPassRate ? "passed" : "failed";
 
     return {

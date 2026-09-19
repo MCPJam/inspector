@@ -1,3 +1,4 @@
+import type { PlatformEvalIterationReport } from "@mcpjam/sdk/platform";
 /**
  * What actually happened to each authored scorer, on one trial.
  *
@@ -25,9 +26,9 @@
  * is also what the server does, since it de-dupes definitions by id.
  *
  * ADVISORY IS NOT A STATE. An advisory miss is a `failed` FACT; the row's role
- * decides whether it is worn as a Warn, a muted "reported", or a red cross.
- * The summary counts gates only, and it is a tally of facts — the trial's
- * verdict word stays where it already is, on the header.
+ * decides whether it is worn muted or as a red cross. The summary counts
+ * required rows only, and it is a tally of facts — the trial's verdict word
+ * stays where it already is, on the header.
  */
 
 import {
@@ -35,6 +36,7 @@ import {
   type EvaluationConfigSnapshot,
   type ResolvedScoreDefinition,
   type ScoreResult,
+  type ScorerRole,
 } from "@mcpjam/sdk/contract";
 import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
 import { hostedCriterionId } from "@/shared/hosted-criterion-id";
@@ -54,6 +56,7 @@ import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import type { EvalIteration } from "@/components/evals/types";
 import type { JudgeCase } from "@/components/evals/goal-completion-presentation";
 import type { ScorecardGroup, ScorecardRow } from "./case-scorecard-model";
+import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
 export type TrialRowResultSource =
   | "stepResult"
@@ -91,12 +94,17 @@ export type TrialRowEvidence = {
    * The role the trial was actually GRADED under, when it differs from what
    * the case now says. A role edited after a run does not re-grade it, and a
    * row that silently showed the new role would misreport what happened.
+   *
+   * The STORED spelling, verbatim — a run graded before the rename says
+   * `"gating"` and one graded after says `"required"`. Read it with
+   * `isRequiredRole`; the row renders one word either way.
    */
-  frozenRole?: "gating" | "advisory";
+  frozenRole?: ScorerRole;
 };
 
 export type JoinedScorecardRow = ScorecardRow & {
   result: TrialRowResult;
+  narrative?: { text: string; stale: boolean; citations: string[] };
   evidence?: TrialRowEvidence;
 };
 
@@ -105,6 +113,7 @@ export type JoinedScorecardGroup = Omit<ScorecardGroup, "rows"> & {
 };
 
 export type TrialFacts = {
+  report?: PlatformEvalIterationReport | null;
   iteration: EvalIteration | null;
   /** Authored steps as they were when the trial ran. */
   steps: readonly TestStep[];
@@ -162,7 +171,7 @@ function resultFromScore(
     return {
       state: "error",
       source: "scoreRow",
-      reason: score.error ?? "The scorer could not be evaluated.",
+      reason: score.error ?? "The evaluator could not run.",
     };
   }
   if (score.status === "skipped") {
@@ -240,6 +249,9 @@ function isTerminal(iteration: EvalIteration | null): boolean {
  *
  * Pure. Every branch either names a source or returns `notMeasured`.
  */
+/** Keyed once per key, so a re-render does not repeat the warning. */
+const warnedAmbiguousJoinKeys = new Set<string>();
+
 export function joinTrialResults(
   groups: readonly ScorecardGroup[],
   trial: TrialFacts,
@@ -284,8 +296,8 @@ export function joinTrialResults(
 
   return groups.map((group) => ({
     ...group,
-    rows: group.rows.map((row) =>
-      joinRow(row, {
+    rows: group.rows.map((row) => {
+      const joined = joinRow(row, {
         stepRows,
         byCriterionId,
         scores,
@@ -293,8 +305,47 @@ export function joinTrialResults(
         judgeCase: trial.judgeCase ?? null,
         liveStepStatusById: trial.liveStepStatusById,
         terminal,
-      }),
-    ),
+      });
+      const join = row.join;
+      // A widget-assert step row mints no scorer id — the server never graded
+      // it as a named scorer — so it has no key and legitimately never
+      // receives a narrative. Undefined here means "nothing to match", NOT
+      // "match anything".
+      const joinKey = !join
+        ? undefined
+        : join.kind === "predicate"
+        ? `predicate:${join.criterionId}`
+        : join.kind === "step"
+        ? join.criterionId
+          ? `predicate:${join.criterionId}`
+          : undefined
+        : join.scorerId;
+      const matches = joinKey
+        ? (trial.report?.rows.filter((note) => note.joinKey === joinKey) ?? [])
+        : [];
+      // Two notes for one key would make the narrative a coin flip, so the row
+      // keeps its recorded observation instead. The server de-dupes scorer
+      // definitions by id, so this is a bug in the producer if it ever fires.
+      if (matches.length > 1 && !warnedAmbiguousJoinKeys.has(joinKey!)) {
+        warnedAmbiguousJoinKeys.add(joinKey!);
+        console.warn(
+          `[scorecard] ${matches.length} trace narratives claim the scorer "${joinKey}"; showing the recorded observation instead.`,
+        );
+      }
+      const note = matches.length === 1 ? matches[0] : undefined;
+      return note
+        ? {
+            ...joined,
+            narrative: {
+              text: note.actual,
+              citations: note.citations,
+              stale:
+                trial.report?.status !== "ready" ||
+                note.verdictSeen !== joined.result.state,
+            },
+          }
+        : joined;
+    }),
   }));
 }
 
@@ -437,7 +488,7 @@ function judgeResult(judge: JudgeCase): TrialRowResult {
     return {
       state: "error",
       source: "judgeCase",
-      reason: judge.reason ?? "The judge could not grade this trial.",
+      reason: judge.reason ?? "The judge could not grade this iteration.",
     };
   }
   if (judge.status === "skipped") {
@@ -457,11 +508,11 @@ function scoreEvidence(
   definition: ResolvedScoreDefinition | null,
   row: ScorecardRow,
 ): TrialRowEvidence | undefined {
-  const authoredIsGating = row.role === "gate";
+  const authoredIsRequired = row.role === "required";
   const frozen = definition?.role;
   const drifted =
     frozen !== undefined &&
-    ((frozen === "gating") !== authoredIsGating);
+    (isRequiredRole(frozen) !== authoredIsRequired);
   const evidence: TrialRowEvidence = {
     ...(score.evidence && score.evidence.length > 0
       ? { scoreEvidence: [...score.evidence] }
@@ -472,19 +523,19 @@ function scoreEvidence(
 }
 
 export type TrialScorecardSummary = {
-  gates: { passed: number; counted: number };
-  warn: number;
-  report: number;
+  required: { passed: number; counted: number };
+  /** Advisory misses, with or without `severity: "warn"`. */
+  advisory: number;
   errors: number;
   notMeasured: number;
   pending: number;
 };
 
 /**
- * Count GATES, and only gates.
+ * Count REQUIRED rows, and only required rows.
  *
- * A Warn or Report miss is real and is shown on its row, but it did not fail
- * the trial and must not read as though it did. Rows with no measurement are
+ * An advisory miss is real and is shown on its row, but it did not fail the
+ * trial and must not read as though it did. Rows with no measurement are
  * excluded from the denominator rather than counted as failures — "1 of 2"
  * when one scorer never ran would claim a failure nobody observed.
  */
@@ -492,9 +543,8 @@ export function summarizeTrialScorecard(
   groups: ReadonlyArray<{ rows: readonly JoinedScorecardRow[] }>,
 ): TrialScorecardSummary {
   const summary: TrialScorecardSummary = {
-    gates: { passed: 0, counted: 0 },
-    warn: 0,
-    report: 0,
+    required: { passed: 0, counted: 0 },
+    advisory: 0,
     errors: 0,
     notMeasured: 0,
     pending: 0,
@@ -505,18 +555,17 @@ export function summarizeTrialScorecard(
       if (state === "notMeasured") summary.notMeasured += 1;
       if (state === "pending") summary.pending += 1;
       if (state === "error") summary.errors += 1;
-      if (row.role === "gate") {
+      if (row.role === "required") {
         if (state === "passed") {
-          summary.gates.counted += 1;
-          summary.gates.passed += 1;
+          summary.required.counted += 1;
+          summary.required.passed += 1;
         } else if (state === "failed" || state === "error") {
-          summary.gates.counted += 1;
+          summary.required.counted += 1;
         }
         continue;
       }
       if (state !== "failed") continue;
-      if (row.role === "warn") summary.warn += 1;
-      else summary.report += 1;
+      summary.advisory += 1;
     }
   }
   return summary;

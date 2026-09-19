@@ -1,7 +1,5 @@
-import { SuiteStageChecks } from "./suite-stage-checks";
-import { toggleSuiteStandardCheck } from "./standard-checks-model";
 /**
- * "Scorers and judges", organized by the stage each grader measures.
+ * "Evaluators", organized by the stage each one measures.
  *
  * THE PROBLEM THIS SOLVES. The settings sheet used to list Tool calls, Default
  * checks and LLM as Judge as three unrelated rows, in the order the fields
@@ -17,6 +15,10 @@ import { toggleSuiteStandardCheck } from "./standard-checks-model";
  * WHAT IT IS NOT. It shows no results. A chain is one trial's journey and a
  * funnel is a population statistic; this is neither. Every chip here says what
  * a grader IS (a gate, a warn, or a report), never what a run DID.
+ *
+ * The table is shared with a case's checks page (`CaseChecksPage`), which
+ * mounts the same `SuiteScorerTable` in case scope. Do not add a second list
+ * of the stages above it: one numbered 01–06 layout is the point.
  */
 
 import type { UserValueStage } from "@mcpjam/sdk/contract";
@@ -33,10 +35,10 @@ import type { EvalJudgeConfig } from "./types";
  * same sentence.
  */
 export const PASS_OR_FAIL_HINT =
-  "Scorers evaluate the evidence available for each trial. Gate results contribute to the trial verdict; Warn highlights an advisory result; Report records it.";
+  "Evaluators grade the evidence available for each iteration.";
 
 export const JUDGE_HINT =
-  "A judge scores trial evidence from 0–1. Goal completion can gate after review-protocol and calibration requirements are met, or through an explicit owner acknowledgement once protocol readiness is met.";
+  "A judge scores iteration evidence from 0–1. Goal completion can gate after review-protocol and calibration requirements are met, or through an explicit owner acknowledgement once protocol readiness is met.";
 
 export function SuitePassOrFailSection({
   matchOptions,
@@ -63,7 +65,7 @@ export function SuitePassOrFailSection({
   judgeConfig: EvalJudgeConfig | undefined;
   onJudgeConfigChange: (next: EvalJudgeConfig | undefined) => void;
   availableModels: ModelDefinition[];
-  /** The "migrate scenario checks per case" warning, when the suite has any. */
+  /** The "migrate scenario assertions per case" warning, when the suite has any. */
   scenarioMigrationNotice?: React.ReactNode;
   /** S6 mounts the agreement line, the gate switch and its acknowledgement. */
   judgeAccessory?: React.ReactNode;
@@ -81,52 +83,22 @@ export function SuitePassOrFailSection({
   groundednessEvidence?: GroundednessRunEvidence;
 }) {
   return (
-    <div className="space-y-6">
-      <SuiteStageChecks
-        suitePredicates={predicates}
-        capabilities={capabilities}
-        readOnly={!!unavailableReason}
-        onToggle={(check, enabled) =>
-          onPredicatesChange((previous) =>
-            toggleSuiteStandardCheck(previous, check, enabled),
-          )
-        }
-        judgeSkipped={judgeConfig?.goalCompletion?.enabled === false}
-        onJudgeSkippedChange={(skipped) =>
-          onJudgeConfigChange({
-            ...judgeConfig,
-            goalCompletion: {
-              ...(judgeConfig?.goalCompletion ?? {}),
-              enabled: !skipped,
-            },
-          })
-        }
-        onEditRules={() =>
-          document
-            .getElementById("standard-check-rules")
-            ?.scrollIntoView({ block: "start" })
-        }
-      />
-      <div id="standard-check-rules">
-        <SuiteScorerTable
-          matchOptions={matchOptions}
-          onMatchOptionsChange={onMatchOptionsChange}
-          predicates={predicates}
-          onPredicatesChange={onPredicatesChange}
-          judgeConfig={judgeConfig}
-          onJudgeConfigChange={onJudgeConfigChange}
-          availableModels={availableModels}
-          scenarioMigrationNotice={scenarioMigrationNotice}
-          judgeAccessory={judgeAccessory}
-          rubricEditor={rubricEditor}
-          stageFacts={stageFacts}
-          capabilities={capabilities}
-          unavailableReason={unavailableReason}
-          passOrFailHint={PASS_OR_FAIL_HINT}
-          judgeHint={JUDGE_HINT}
-          groundednessEvidence={groundednessEvidence}
-        />
-      </div>
-    </div>
+    <SuiteScorerTable
+      scope={{ kind: "suite", predicates, onPredicatesChange }}
+      matchOptions={matchOptions}
+      onMatchOptionsChange={onMatchOptionsChange}
+      judgeConfig={judgeConfig}
+      onJudgeConfigChange={onJudgeConfigChange}
+      availableModels={availableModels}
+      scenarioMigrationNotice={scenarioMigrationNotice}
+      judgeAccessory={judgeAccessory}
+      rubricEditor={rubricEditor}
+      stageFacts={stageFacts}
+      capabilities={capabilities}
+      unavailableReason={unavailableReason}
+      passOrFailHint={PASS_OR_FAIL_HINT}
+      judgeHint={JUDGE_HINT}
+      groundednessEvidence={groundednessEvidence}
+    />
   );
 }

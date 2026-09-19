@@ -1,6 +1,6 @@
 ---
 name: user-value-chain-glossary
-description: Defines every member of MCPJam's user-value chain vocabulary — the six stages, the five stage states, the twenty-nine stage reasons, the seven failure categories, the four verdicts, the stage-analytics exclusion classes, the five friction signals and the nine suspected conditions — plus the population rules that decide what a count means. Use when reading a `decisionSummary`, a stage chain, a trial's `frictionSignals` or `suspectedConditionVerdict`, or stage analytics returned by MCPJam's eval tools and you need to know what a wire value means or whether a number can be compared.
+description: Defines every member of MCPJam's user-value chain vocabulary — the six stages, the five stage states, the twenty-nine stage reasons, the seven failure categories, the four verdicts, the stage-analytics exclusion classes, the five friction signals and the nine suspected conditions, and the swarm findings vocabularies — plus the population rules that decide what a count means. Use when reading a `decisionSummary`, a stage chain, a trial's `frictionSignals` or `suspectedConditionVerdict`, or stage analytics returned by MCPJam's eval tools and you need to know what a wire value means or whether a number can be compared.
 ---
 
 # The user-value chain, member by member
@@ -90,6 +90,12 @@ what arrives, never widen it.
 | `egressUnverified` | the connection failed with no evidence that our own network egress works |
 | `lifecycleStopped` | the run was stopped mid-flight |
 
+A `setupAborted`, `egressUnverified`, `connectFailed` or `toolsListFailed` row
+may carry the producer's one-line explanation in `evidence.predicateReasons`
+— "rejected the stored token (invalid_token)", "MCPJam could not reach its
+authorization server" — the same slot judge reasons use. It explains the
+state; it never changes it.
+
 **The stage does not apply**
 
 | Wire value | …because |
@@ -163,7 +169,7 @@ as one poisons every rate derived from it.
 | `runNotTerminal` | the run has not finished yet |
 | `runStatusNotAVerdict` | the run stopped before it finished, so its recorded counts describe a sample rather than the run |
 | `runResultNotAVerdict` | the run finished without recording a verdict |
-| `verdictSummaryUnavailable` | the run was decided under verdict policy v2 and its decision could not be read |
+| `verdictSummaryUnavailable` | the run was decided by per-case grading and its decision could not be read |
 
 ### What the validity phase found
 
@@ -272,7 +278,7 @@ One run carries **two** derived documents, and they answer different questions.
 Do not use one to check the other.
 
 - **The decision summary decides.** Verdict, counts, the population those
-  counts are in, and per-trial diagnostics. Under verdict policy v2 the run's
+  counts are in, and per-trial diagnostics. Under per-case grading the run's
   own `decision` is the authority; the diagnostics sit *underneath* it as
   evidence. A case can pass with a failing trial in it, so tallying the
   diagnostics gives a different answer than the platform reached.
@@ -284,12 +290,18 @@ Do not use one to check the other.
 
 Getting these wrong produces numbers that look authoritative and mean nothing.
 
-1. **Read `measurementUnit` before quoting any count.** Under verdict policy
-   v2 the counts are `caseVariant` — one case under one provider/model
-   execution variant, with repetitions as TRIALS inside it. On a legacy run
-   they are `trial`. A 3-case suite with 5 repetitions is legitimately "3"
-   under one unit and "15" under the other, so a count quoted without its unit
-   is not a fact.
+1. **Read `measurementUnit` before quoting any count.** Under PER-CASE
+   GRADING the counts are `caseVariant` — one case under one provider/model
+   execution variant, with its configured iterations as TRIALS inside it.
+   Under a SUITE-WIDE ACCURACY THRESHOLD they are `trial`. A 3-case suite with
+   5 iterations is legitimately "3" under one unit and "15" under the other, so
+   a count quoted without its unit is not a fact.
+
+   The two are not one criterion in two units, so **never convert a rate across
+   that line.** A per-case pass rate is a fraction each case must meet over its
+   own iterations; a suite accuracy threshold is one percentage over the whole
+   run. Ten cases, nine always passing and one always failing, passes a 90%
+   suite-wide bar and fails a 0.9 per-case one.
 2. **A zero denominator is NOT MEASURED, never `0`.** Stage analytics stores
    counts and derives rates; `0/0` rendered as `0%` reads as "everything
    failed" and as `100%` reads as "all green", and neither was observed.
@@ -357,3 +369,83 @@ Three absences are three different facts, and none may impersonate another:
 - **The deployment does not serve the route.** A fact about the deployment,
   never about the run. Rendering it as "never measured" is a dark-ship failure:
   it reports every run on that deployment as unmeasured.
+
+## Swarm findings
+
+A swarm run's shared findings (`journeyFindings` on the insights envelope,
+`sdk/src/contract/swarm-finding.ts`) reuse the stages and stage states above
+and add five vocabularies of their own. Code decides every one of them; a
+model only writes the phrase slots (`outcomePhrase`, `mechanismPhrase`,
+`fixPhrase`). The label is the word the web app prints.
+
+### Dispositions
+
+What happened to one goal, or to a persona across its goals. The tone is
+fixed by the disposition (`SWARM_FINDING_TONE_OF_DISPOSITION`), never chosen
+separately.
+
+| Wire value | Label | Tone | Meaning |
+| --- | --- | --- | --- |
+| `notRun` | Not run | muted | No session for this goal started, so nothing about it was tested. |
+| `blockedConnecting` | Stuck | fail | The session never got a working connection to the server. |
+| `lostFindingTool` | Lost | fail | The agent could not find or pick the tool the goal needed. |
+| `blockedCallingTool` | Annoyed | fail | The agent picked a tool, but the call itself failed. |
+| `blockedByResponse` | Frustrated | fail | The call returned, but what came back did not let the agent go on. |
+| `goalMissed` | Stalled | fail | The chain ran to the end and the goal was still not met. |
+| `goalMetWithFriction` | Uneasy | warn | The goal was met, with friction along the way. |
+| `goalMet` | Relieved | ok | The goal was met. |
+| `notMeasured` | Unscored | muted | Sessions ran, but nothing graded the outcome. Not evidence either way. |
+
+### Summary kinds
+
+Which kind of sentence leads the run's summary.
+
+| Wire value | Label | Meaning |
+| --- | --- | --- |
+| `notLaunched` | Not launched | No session started. Nothing about the server was tested. |
+| `unread` | Not fully read | Sessions ran, but not enough of them were read to say how the goals went. |
+| `broken` | Goals blocked | At least one goal ended in a fail disposition. |
+| `friction` | Goals met with friction | No goal broke, and at least one was met with friction. |
+| `landed` | Goals met | Every measured goal was met. |
+| `ungraded` | Not graded | Sessions ran and nothing was graded. |
+
+### Coverage notes
+
+Ways the findings could understate what happened. Each one is a caveat on the
+counts, never a finding about the server.
+
+| Wire value | Label |
+| --- | --- |
+| `sessionScanCapped` | Session scan limit reached |
+| `budgetExhausted` | Analysis budget exhausted |
+| `transcriptMissing` | Transcript unavailable |
+| `contextTooLarge` | Transcript exceeds analysis limits |
+| `extractionRejected` | Analysis could not be verified |
+| `chainUnmeasured` | Journey stages not measured |
+| `judgeNotRun` | Judge did not run |
+| `sessionsWithdrawn` | Some sessions were withdrawn |
+| `sessionsRateLimited` | Some sessions were rate limited |
+| `partialRead` | Only part of this wave was read |
+| `toolCatalogMissing` | Tool catalog unavailable |
+
+### Bases
+
+How a finding is known.
+
+| Wire value | Label | Meaning |
+| --- | --- | --- |
+| `verifiedMechanism` | Verified explanation | A model explanation that was checked against the cited transcript turns. |
+| `sessionReport` | Session report | What the persona itself reported, quoted in `reportExcerpt`. A report, not a verified cause. |
+| `populationFact` | Population fact | A count computed by code over the sessions, with no model involved. |
+
+### Scope levels
+
+How wide a finding reaches. A finding never speaks for more than its scope.
+
+| Wire value | Meaning |
+| --- | --- |
+| `session` | One session. |
+| `goal` | Every session of one goal for one persona. |
+| `persona` | All of one persona's goals. It cannot single out which goal. |
+| `target` | One environment or host, across personas. |
+| `wave` | The whole swarm run. |

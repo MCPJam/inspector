@@ -29,6 +29,7 @@ import {
 import type { HostRunner } from "../src/HostRunner.js";
 import type { Predicate } from "../src/predicates/types.js";
 import type { PlatformEvalCase } from "../src/platform/types.js";
+import { authoredRequiredRole } from "../src/contract/policy-spelling.js";
 
 const FAILING_ADVISORY: Predicate = {
   type: "responseContains",
@@ -369,7 +370,10 @@ describe("predicateScoreDefinition strips policy from the hash", () => {
     const b = predicateScoreDefinition(advised, { ordinal: 0 });
     expect(a.scorerId).toBe(b.scorerId);
     expect(a.implementationHash).toBe(b.implementationHash);
-    expect(a.role).toBe("gating");
+    // The spelling this build emits. The two definitions differ in role and
+    // in NOTHING else — same id, same implementation hash — which is the
+    // property this test is really about.
+    expect(a.role).toBe(authoredRequiredRole());
     expect(b.role).toBe("advisory");
     expect(JSON.stringify(b)).not.toContain("severity");
   });

@@ -1,255 +1,314 @@
-import { creditsToUsdString, usdStringToCredits } from "@/shared/usd-credits";
-import { CreditAmountOption } from "./CreditAmountOption";
 import { useState } from "react";
-import { Info, RefreshCw } from "lucide-react";
-import { messageOf } from "@/hooks/useOrgScopedWrite";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
-
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@mcpjam/design-system/tooltip";
-
-export interface AutoTopupConfiguration {
-  monthlySpendLimitCredits?: number | null;
-  thresholdCredits: number;
-  topupCredits: number;
-}
-
+import { messageOf } from "@/hooks/useOrgScopedWrite";
+import type {
+  AutoTopupConfiguration,
+  AutoTopupView,
+} from "@/hooks/useAutoTopup";
+export type { AutoTopupConfiguration } from "@/hooks/useAutoTopup";
+export const refillDollars = (cents: number) =>
+  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
+    cents / 100,
+  );
+const STATUS: Record<AutoTopupView["status"], string> = {
+  not_configured: "",
+  not_active: "Saved, not active. Complete card setup to turn on.",
+  awaiting_card: "Card setup is awaiting completion.",
+  enrolled: "Auto-reload is on.",
+  paused: "Automatic refills are paused. Check your plan and payment settings.",
+  payment_pending:
+    "A refill payment is pending. An already-authorized payment can still complete after turning refills off.",
+  needs_attention: "Automatic refills: payment needs attention.",
+};
 export interface AutoTopupSettingsProps {
-  /** undefined: service unavailable; null: confirmed not enrolled. */
-  enrollment?: AutoTopupConfiguration | null;
-  onClose?: () => void;
+  view?: AutoTopupView;
   canManage: boolean;
-  /** Resolves only once enrollment/configuration has been persisted. */
   onSave?: (configuration: AutoTopupConfiguration) => Promise<void>;
-  /** Resolves only once enrollment has been removed. */
+  cardSetupConfigured?: boolean;
+  onClear?: () => Promise<void>;
   onDisable?: () => Promise<void>;
+  onBegin?: () => Promise<unknown>;
+  onClose?: () => void;
 }
-
+/** Parent keys this form by organization/revision so stale settings never carry consent. */
 export function AutoTopupSettings({
-  enrollment,
+  view,
   canManage,
   onSave,
   onDisable,
+  onClear,
+  cardSetupConfigured = true,
+  onBegin,
   onClose,
 }: AutoTopupSettingsProps) {
-  const [custom, setCustom] = useState(
-    ![500, 1000, 2000].includes(enrollment?.topupCredits ?? 500),
-  );
+  const preferences = view?.preferences;
   const [threshold, setThreshold] = useState(
-    String(enrollment?.thresholdCredits ?? 100),
+    String(preferences?.thresholdCredits ?? 100),
   );
-  const [amount, setAmount] = useState(String(enrollment?.topupCredits ?? 500));
-  const [monthlyLimit, setMonthlyLimit] = useState(
-    enrollment?.monthlySpendLimitCredits == null
+  const [amount, setAmount] = useState(
+    String(preferences?.topupCredits ?? 1000),
+  );
+  const [limit, setLimit] = useState(
+    preferences?.monthlySpendLimitCents == null
       ? ""
-      : creditsToUsdString(enrollment.monthlySpendLimitCredits),
+      : (preferences.monthlySpendLimitCents / 100).toFixed(2),
   );
-  const [saving, setSaving] = useState(false);
-  const [disabling, setDisabling] = useState(false);
+  const [consent, setConsent] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const enrolled = Boolean(enrollment);
-  const loading = enrollment === undefined;
-  const busy = saving || disabling;
-
+  const [notice, setNotice] = useState<string | null>(null);
+  const parsedLimit =
+    limit.trim() === ""
+      ? null
+      : /^\d+(\.\d{1,2})?$/.test(limit)
+        ? Math.round(Number(limit) * 100)
+        : NaN;
+  const dirty =
+    !preferences ||
+    Number(threshold) !== preferences.thresholdCredits ||
+    Number(amount) !== preferences.topupCredits ||
+    parsedLimit !== preferences.monthlySpendLimitCents;
+  const perform = async (work: () => Promise<unknown>) => {
+    if (busy || !canManage) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await work();
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
   const save = async () => {
-    const thresholdCredits = Number(threshold);
-    const topupCredits = Number(amount);
+    const thresholdCredits = Number(threshold),
+      topupCredits = Number(amount);
     if (
+      !Number.isSafeInteger(topupCredits) ||
+      topupCredits < 500 ||
+      topupCredits > 1000000 ||
       !Number.isSafeInteger(thresholdCredits) ||
       thresholdCredits < 1 ||
-      !Number.isSafeInteger(topupCredits) ||
-      topupCredits < 1
+      thresholdCredits > topupCredits
     ) {
-      setError("Enter a positive whole number of credits for both fields.");
+      setError(
+        "Enter 500–1,000,000 whole credits per refill and a minimum balance from 1 through the refill size.",
+      );
       return;
     }
-    const monthlySpendLimitCredits =
-      monthlyLimit.trim() === "" ? null : usdStringToCredits(monthlyLimit);
     if (
-      monthlyLimit.trim() !== "" &&
-      (monthlySpendLimitCredits === null ||
-        !Number.isSafeInteger(monthlySpendLimitCredits) ||
-        monthlySpendLimitCredits < topupCredits)
+      parsedLimit !== null &&
+      (!Number.isSafeInteger(parsedLimit) || parsedLimit <= 0)
     ) {
-      setError("Maximum monthly spend must cover at least one reload.");
+      setError(
+        "Enter a positive dollar limit with at most two decimal places, or leave it blank for unlimited.",
+      );
       return;
     }
-    if (!canManage || !onSave || enrollment === undefined) return;
-    setSaving(true);
-    setError(null);
-    try {
+    if (
+      parsedLimit !== null &&
+      Number(amount) === preferences?.topupCredits &&
+      view?.refillPriceCents != null &&
+      parsedLimit < view.refillPriceCents
+    ) {
+      setError("Maximum monthly spend must cover at least one refill.");
+      return;
+    }
+    if (
+      !onSave ||
+      !view ||
+      !view.eligible ||
+      (view.status === "enrolled" && !dirty)
+    )
+      return;
+    await perform(async () => {
       await onSave({
         thresholdCredits,
         topupCredits,
-        monthlySpendLimitCredits,
+        monthlySpendLimitCents: parsedLimit,
       });
-    } catch (cause) {
-      setError(
-        messageOf(cause) || "Could not save auto-reload settings. Try again.",
+      setConsent(false);
+      setNotice(
+        "Settings saved. Fresh authorization is required for automatic purchases.",
       );
-    } finally {
-      setSaving(false);
-    }
+    });
   };
-
-  const disable = async () => {
-    if (!canManage || !onDisable || !enrolled) return;
-    setDisabling(true);
-    setError(null);
-    try {
-      await onDisable();
-      onClose?.();
-    } catch (cause) {
-      setError(
-        messageOf(cause) || "Could not turn off auto-reload. Try again.",
-      );
-    } finally {
-      setDisabling(false);
-    }
-  };
-
+  const canAuthorize =
+    preferences &&
+    view?.activationAllowed &&
+    view.eligible &&
+    view.refillPriceCents != null &&
+    view.status !== "enrolled" &&
+    view.status !== "payment_pending" &&
+    view.paymentIssue !== "needs_review";
+  const setupUnavailable =
+    view &&
+    canManage &&
+    !["enrolled", "payment_pending", "needs_attention", "paused"].includes(
+      view.status,
+    ) &&
+    (!view.eligible || !view.activationAllowed || !cardSetupConfigured);
+  const statusText = !view
+    ? "Loading settings…"
+    : setupUnavailable
+      ? !view.eligible
+        ? "Auto-reload isn’t available for this organization."
+        : "Auto-reload setup is currently unavailable."
+      : STATUS[view.status];
   return (
-    <form
-      className="space-y-6"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void save();
-      }}
-    >
-      <fieldset className="space-y-3">
-        <legend className="text-sm font-medium">Credits per reload</legend>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {[500, 1000, 2000].map((credits) => (
-            <CreditAmountOption
-              key={credits}
-              credits={credits.toLocaleString()}
-              price={`$${Number(creditsToUsdString(credits))}`}
-              selected={!custom && amount === String(credits)}
-              disabled={!canManage || busy}
-              onSelect={() => {
-                setCustom(false);
-                setAmount(String(credits));
+    <div className="space-y-5">
+      {statusText && (
+        <p role="status" className="text-sm">
+          {statusText}
+        </p>
+      )}
+      {view?.paymentIssue && (
+        <p className="text-sm">
+          {view.paymentIssue === "payment_failed"
+            ? "The card payment failed. Review your card and authorize again."
+            : view.paymentIssue === "balance_still_low"
+              ? "The refill settled existing debt and the balance is still low. Review usage before authorizing again."
+              : "Contact support to review the payment. Pending payments are not retried from this screen."}
+        </p>
+      )}
+      {view?.card && (
+        <p className="text-sm">
+          Card: {view.card.brand} ending in {view.card.last4}
+        </p>
+      )}
+      {view?.monthlySpend &&
+        (view.monthlySpend.chargedCents > 0 ||
+          view.monthlySpend.reservedCents > 0) && (
+          <p className="text-sm">
+            {view.monthlySpend.month} UTC. Charged:{" "}
+            {refillDollars(view.monthlySpend.chargedCents)} · Reserved:{" "}
+            {refillDollars(view.monthlySpend.reservedCents)}
+          </p>
+        )}
+      <form
+        noValidate
+        className="space-y-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void save();
+        }}
+      >
+        <fieldset
+          disabled={!canManage || busy || !view || !view.eligible}
+          className="space-y-4"
+        >
+          <div className="space-y-2">
+            <Label htmlFor="auto-topup-amount">Credits to add</Label>
+            <Input
+              id="auto-topup-amount"
+              type="number"
+              min={500}
+              max={1000000}
+              step={1}
+              value={amount}
+              onChange={(event) => {
+                setAmount(event.target.value);
+                setConsent(false);
               }}
             />
-          ))}
-          <label className="cursor-pointer">
-            <input
-              type="radio"
-              name="reload-amount"
-              aria-label="Custom amount"
-              checked={custom}
-              disabled={!canManage || busy}
-              onChange={() => setCustom(true)}
-              className="peer sr-only"
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="auto-topup-threshold">Minimum balance</Label>
+            <Input
+              id="auto-topup-threshold"
+              type="number"
+              min={1}
+              step={1}
+              value={threshold}
+              onChange={(event) => {
+                setThreshold(event.target.value);
+                setConsent(false);
+              }}
             />
-            <span className="flex min-h-24 flex-col items-center justify-center gap-1 rounded-lg border border-input p-3 peer-checked:border-ring peer-checked:ring-2 peer-checked:ring-ring peer-focus-visible:ring-2 peer-focus-visible:ring-ring">
-              <span className="text-lg font-semibold">Other</span>
-              <span className="text-sm text-foreground">Custom amount</span>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="auto-topup-monthly-limit">
+              Maximum monthly spend (USD, optional)
+            </Label>
+            <Input
+              id="auto-topup-monthly-limit"
+              inputMode="decimal"
+              value={limit}
+              placeholder="No limit"
+              onChange={(event) => {
+                setLimit(event.target.value);
+                setConsent(false);
+              }}
+            />
+          </div>
+        </fieldset>
+        <p className="text-xs text-muted-foreground">
+          Leave blank for no monthly limit.
+        </p>
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer">How billing works</summary>
+          <p className="mt-2">
+            Limits reset each UTC calendar month. Manual purchases don’t count;
+            refunds don’t reduce monthly spend. Saving settings turns off
+            auto-reload until you authorize again. Saving alone won’t charge
+            you.
+          </p>
+        </details>
+        {canManage && (
+          <Button
+            type="submit"
+            disabled={
+              busy ||
+              !view?.eligible ||
+              !onSave ||
+              (view.status === "enrolled" && !dirty)
+            }
+          >
+            {busy ? "Working…" : "Save settings"}
+          </Button>
+        )}
+      </form>
+      {canManage && canAuthorize && onBegin && (
+        <div className="space-y-3 border-t border-border pt-4">
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={consent}
+              disabled={busy || dirty}
+              onChange={(event) => setConsent(event.target.checked)}
+            />
+            <span>
+              I authorize MCPJam to save this card and automatically buy{" "}
+              {preferences.topupCredits.toLocaleString("en-US")} credits for{" "}
+              {refillDollars(view.refillPriceCents!)} when my balance falls
+              below {preferences.thresholdCredits.toLocaleString("en-US")},{" "}
+              {preferences.monthlySpendLimitCents === null
+                ? "with no spending limit"
+                : `up to ${refillDollars(
+                    preferences.monthlySpendLimitCents,
+                  )}`}{" "}
+              per UTC calendar month. I can turn this off in billing settings.
             </span>
           </label>
-        </div>
-      </fieldset>
-      {custom && (
-        <div className="space-y-2">
-          <Label htmlFor="auto-topup-amount">Credits to add</Label>
-          <Input
-            id="auto-topup-amount"
-            type="number"
-            min="1"
-            step="1"
-            value={amount}
-            onChange={(event) => setAmount(event.target.value)}
-            disabled={!canManage || busy}
-          />
-          {Number(amount) > 0 && Number.isSafeInteger(Number(amount)) && (
-            <p className="text-xs text-muted-foreground">
-              ${creditsToUsdString(Number(amount))} per reload
-            </p>
-          )}
+          <Button
+            disabled={busy || dirty || !consent}
+            onClick={() => void perform(onBegin)}
+          >
+            Continue to card setup
+          </Button>
         </div>
       )}
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <Label htmlFor="auto-topup-threshold">Minimum balance</Label>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label="About minimum balance"
-                className="text-muted-foreground"
-              >
-                <Info className="size-4" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              Automatically purchase the selected amount when your credit
-              balance falls below this number of credits.
-            </TooltipContent>
-          </Tooltip>
-        </div>
-        <div className="relative">
-          <Input
-            id="auto-topup-threshold"
-            type="number"
-            min="1"
-            step="1"
-            value={threshold}
-            onChange={(event) => setThreshold(event.target.value)}
-            disabled={!canManage || busy}
-            className="pr-20"
-          />
-          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-            credits
-          </span>
-        </div>
-      </div>
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <Label htmlFor="auto-topup-monthly-limit">
-            Maximum monthly spend (optional)
-          </Label>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label="About maximum monthly spend"
-                className="text-muted-foreground"
-              >
-                <Info className="size-4" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              Limit automatic credit purchases per month. Leave blank for no
-              limit. This does not limit manual purchases or usage of existing
-              credits.
-            </TooltipContent>
-          </Tooltip>
-        </div>
-        <div className="relative">
-          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm">
-            $
-          </span>
-          <Input
-            id="auto-topup-monthly-limit"
-            type="number"
-            min="0.01"
-            step="0.01"
-            placeholder="No limit"
-            value={monthlyLimit}
-            onChange={(event) => setMonthlyLimit(event.target.value)}
-            disabled={!canManage || busy}
-            className="pl-7"
-          />
-        </div>
-      </div>
-      {loading && (
-        <p role="status" className="text-sm text-muted-foreground">
-          Loading auto-reload settings…
+      {!canManage && (
+        <p className="text-sm">
+          Ask an organization admin to manage auto-reload.
+        </p>
+      )}
+      {notice && (
+        <p role="status" className="text-sm">
+          {notice}
         </p>
       )}
       {error && (
@@ -257,47 +316,50 @@ export function AutoTopupSettings({
           {error}
         </p>
       )}
-      {!canManage && (
-        <p className="text-sm text-foreground">
-          Ask an organization admin to manage auto-reload.
-        </p>
-      )}
-      <div className="flex flex-wrap justify-end gap-3 border-t border-border pt-4">
-        {canManage && enrolled && onDisable && (
+      <div className="flex flex-wrap gap-3">
+        {canManage &&
+          view &&
+          onDisable &&
+          (preferences || view.status !== "not_configured") && (
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() =>
+                void perform(async () => {
+                  await onDisable();
+                  setConsent(false);
+                  setNotice(
+                    "New automatic purchases are off. Saved settings remain; already-authorized payments can still complete.",
+                  );
+                })
+              }
+            >
+              Turn off auto-reload
+            </Button>
+          )}
+        {canManage && preferences && onClear && (
           <Button
-            type="button"
-            variant="destructive"
+            variant="outline"
             disabled={busy}
-            onClick={() => void disable()}
-            className="mr-auto"
+            onClick={() =>
+              void perform(async () => {
+                await onClear();
+                setConsent(false);
+                setNotice(
+                  "Saved settings removed. New automatic purchases are off; already-authorized payments can still complete.",
+                );
+              })
+            }
           >
-            {disabling ? "Turning off…" : "Turn off auto-reload"}
+            Clear saved settings
           </Button>
         )}
         {onClose && (
-          <Button
-            type="button"
-            variant="outline"
-            disabled={busy}
-            onClick={onClose}
-          >
+          <Button variant="outline" disabled={busy} onClick={onClose}>
             Back
           </Button>
         )}
-        {canManage && (
-          <Button type="submit" disabled={busy || !onSave || loading}>
-            <RefreshCw
-              aria-hidden="true"
-              className={saving ? "size-4 animate-spin" : "size-4"}
-            />
-            {saving
-              ? "Saving…"
-              : enrolled
-                ? "Save changes"
-                : "Turn on auto-reload"}
-          </Button>
-        )}
       </div>
-    </form>
+    </div>
   );
 }

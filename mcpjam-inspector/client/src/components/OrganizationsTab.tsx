@@ -177,7 +177,7 @@ function getScheduledBillingChangeCancellationState(
   const scheduledBillingInterval = billingStatus.stripeScheduledBillingInterval;
 
   if (
-    currentPlan !== "team" ||
+    (currentPlan !== "team" && currentPlan !== "pro") ||
     currentBillingInterval == null ||
     scheduledPlan == null ||
     scheduledBillingInterval == null
@@ -677,26 +677,26 @@ function OrganizationPage({
     section === "data-management"
       ? section
       : section === "models"
-        ? "models"
-        : section === "billing"
-          ? "billing"
-          : // Flag OFF collapses the Slack section back to the overview rather
-            // than rendering an empty page: a user who kept the URL from a
-            // flagged-in session should land somewhere real.
-            section === "slack" && slackAgentSettingsEnabled
-            ? "slack"
-            : // Same collapse for Discord, and it matters more here: the agent is
-              // dark, so nearly everyone hitting this URL is flagged OFF.
-              section === "discord" && discordAgentEnabled
-              ? "discord"
-              : // Same collapse again for Observability.
-                section === "observability" && traceDestinationsEnabled
-                ? "observability"
-                : section === "members" || section === "sharing"
-                  ? "members"
-                  : section === "audit-log"
-                    ? section
-                    : "overview";
+      ? "models"
+      : section === "billing"
+      ? "billing"
+      : // Flag OFF collapses the Slack section back to the overview rather
+      // than rendering an empty page: a user who kept the URL from a
+      // flagged-in session should land somewhere real.
+      section === "slack" && slackAgentSettingsEnabled
+      ? "slack"
+      : // Same collapse for Discord, and it matters more here: the agent is
+      // dark, so nearly everyone hitting this URL is flagged OFF.
+      section === "discord" && discordAgentEnabled
+      ? "discord"
+      : // Same collapse again for Observability.
+      section === "observability" && traceDestinationsEnabled
+      ? "observability"
+      : section === "members" || section === "sharing"
+      ? "members"
+      : section === "audit-log"
+      ? section
+      : "overview";
   // The sub-tab lives in `?tab=` — views of one settings section, not separate
   // org routes. Read from the URL rather than component state so a link to a
   // specific tab works, and through the router's location context so switching
@@ -1166,7 +1166,11 @@ function OrganizationPage({
   ) => {
     const currentPlan = billingStatus?.plan;
 
-    if (currentPlan === "team" && targetPlan === "free" && billingStatus) {
+    if (
+      (currentPlan === "team" || currentPlan === "pro") &&
+      targetPlan === "free" &&
+      billingStatus
+    ) {
       setPendingDowngradeConfirmation({
         targetPlan: "free",
         targetBillingInterval: null,
@@ -1176,6 +1180,10 @@ function OrganizationPage({
       return;
     }
 
+    if (targetPlan === "pro" || targetPlan === "team") {
+      await handlePlanChange(targetPlan, _targetBillingInterval);
+      return;
+    }
     await handleManageBilling();
   };
 
@@ -1217,7 +1225,7 @@ function OrganizationPage({
   };
 
   const executeManualPlanChange = async (
-    tier: "team",
+    tier: "pro" | "team",
     billingInterval: "monthly" | "annual",
     options: CheckoutNavigationOptions = {},
   ) => {
@@ -1255,7 +1263,7 @@ function OrganizationPage({
   };
 
   const handlePlanChange = async (
-    tier: "team",
+    tier: "pro" | "team",
     billingInterval: "monthly" | "annual",
     options: CheckoutNavigationOptions = {},
   ) => {
@@ -1279,7 +1287,7 @@ function OrganizationPage({
     : null;
 
   const handleAutoPlanChange = useCallback(
-    async (tier: "team", billingInterval: "monthly" | "annual") => {
+    async (tier: "pro" | "team", billingInterval: "monthly" | "annual") => {
       try {
         const result = await startPlanChange(
           getBillingReturnUrl(),
@@ -1307,10 +1315,12 @@ function OrganizationPage({
         onCheckoutIntentNavigationStarted?.();
         openBillingUrl(billingUrl, "same-tab");
       } catch (error) {
-        if (!(
-          error instanceof Error &&
-          error.message === PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE
-        )) {
+        if (
+          !(
+            error instanceof Error &&
+            error.message === PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE
+          )
+        ) {
           toast.error(
             error instanceof Error ? error.message : "Failed to change plan",
           );
@@ -1377,6 +1387,14 @@ function OrganizationPage({
                 ? "Compare plans and manage your subscription."
                 : "Review usage, manage credits, and update your billing details."}
             </SettingsPageDescription>
+            {activeSection === "billing" && (
+              <a
+                href={`/organizations/${organization._id}/billing/byok`}
+                className="inline-block text-sm text-primary underline-offset-4 hover:underline"
+              >
+                BYOK and credits
+              </a>
+            )}
           </header>
         )}
 
@@ -1848,7 +1866,9 @@ function OrganizationPage({
             <AlertDialogDescription>
               {memberToRemove?.pending
                 ? `Cancel the invitation for ${memberToRemove.email} to join ${organization.name}?`
-                : `Remove ${memberToRemove?.email ?? "this member"} from ${organization.name}? They will lose their organization membership and the access it grants. You can invite them again later.`}
+                : `Remove ${memberToRemove?.email ?? "this member"} from ${
+                    organization.name
+                  }? They will lose their organization membership and the access it grants. You can invite them again later.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {removeMemberError && (
@@ -1868,8 +1888,8 @@ function OrganizationPage({
               {isRemovingMember
                 ? "Removing…"
                 : memberToRemove?.pending
-                  ? "Cancel invitation"
-                  : "Remove member"}
+                ? "Cancel invitation"
+                : "Remove member"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1945,8 +1965,8 @@ function OrganizationPage({
             >
               {isCancelingScheduledBillingChange
                 ? "Saving..."
-                : (scheduledBillingChangeCancellation?.confirmLabel ??
-                  "Keep current plan")}
+                : scheduledBillingChangeCancellation?.confirmLabel ??
+                  "Keep current plan"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2011,8 +2031,8 @@ function OrganizationPage({
               {isStartingPlanChange || isOpeningPortal
                 ? "Saving..."
                 : pendingDowngradeConfirmation?.targetPlan === "free"
-                  ? "Open cancellation flow"
-                  : "Schedule downgrade"}
+                ? "Open cancellation flow"
+                : "Schedule downgrade"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

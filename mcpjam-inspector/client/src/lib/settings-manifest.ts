@@ -11,7 +11,12 @@ export interface SettingsContext {
   authenticated: boolean;
   remoteProject: boolean;
   personalOrganization?: boolean;
-  features?: { github?: boolean; discord?: boolean; observability?: boolean };
+  features?: {
+    github?: boolean;
+    discord?: boolean;
+    observability?: boolean;
+    integrations?: boolean;
+  };
 }
 export type SettingsGroup = "Personal" | "Organization" | "Project" | "App";
 interface SettingsDestination {
@@ -123,7 +128,12 @@ export const SETTINGS_DESTINATIONS: readonly SettingsDestination[] = [
     ]),
     matches: (path) => /^\/organizations\/[^/]+\/(members|sharing)$/.test(path),
   },
-  org("api-keys", "API Keys", "/api-keys", ["organization keys", "key owners"]),
+  // Deliberately NOT "API Keys": the personal entry above owns that label,
+  // and the two pages do different jobs — personal creates and revokes your
+  // own keys, this one is a read-only admin review of every member's. Two
+  // identical labels read as the same page shown twice. "API keys" stays in
+  // the search terms so the old wording still finds it.
+  org("api-keys", "Organization keys", "/api-keys", ["API keys", "key owners"]),
   {
     ...org("byok", "AI providers", "/models", [
       "BYOK",
@@ -143,6 +153,10 @@ export const SETTINGS_DESTINATIONS: readonly SettingsDestination[] = [
     label: "Integrations",
     aliases: [],
     path: () => "/settings/integrations",
+    // The whole tab is a beta gate, one level above the per-card flags below.
+    // Absent features means the probe has not answered, which reads as OFF —
+    // a tab that appears and then vanishes is worse than one that arrives late.
+    visible: (c) => c.features?.integrations === true,
     sections: [
       {
         target: "github",
@@ -181,7 +195,7 @@ export const SETTINGS_DESTINATIONS: readonly SettingsDestination[] = [
       "auto-top-up",
     ]),
     matches: (p) =>
-      /^\/organizations\/[^/]+\/billing(?:\/usage)?$/.test(p) ||
+      /^\/organizations\/[^/]+\/billing(?:\/(?:usage|byok))?$/.test(p) ||
       p === "/billing",
   },
   org("audit-log", "Audit log", "/audit-log", ["activity", "CSV export"]),

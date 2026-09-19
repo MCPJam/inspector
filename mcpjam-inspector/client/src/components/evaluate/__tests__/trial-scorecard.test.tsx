@@ -243,7 +243,7 @@ describe("TrialScorecard", () => {
       "notMeasured",
     );
     expect(screen.getByTestId("trial-scorecard-summary").textContent).toBe(
-      "No scorers ran",
+      "No evaluators ran",
     );
   });
 
@@ -306,11 +306,11 @@ describe("TrialScorecard", () => {
     );
     const row = rowFor("Final message non-empty");
     expect(row).toHaveAttribute("data-state", "failed");
-    expect(row).toHaveAttribute("data-role", "warn");
-    expect(within(row).getByLabelText("Missed · warning")).toBeInTheDocument();
+    expect(row).toHaveAttribute("data-role", "advisory");
+    expect(within(row).getByLabelText("Missed · advisory")).toBeInTheDocument();
     const summary = screen.getByTestId("trial-scorecard-summary").textContent!;
-    expect(summary).toContain("1 of 1 gate passed");
-    expect(summary).toContain("1 warn");
+    expect(summary).toContain("1 of 1 required passed");
+    expect(summary).toContain("1 advisory");
   });
 
   it("never claims a verdict of its own", () => {
@@ -325,7 +325,7 @@ describe("TrialScorecard", () => {
     });
     const summary = screen.getByTestId("trial-scorecard-summary").textContent!;
     expect(summary).not.toMatch(/^Passed|^Failed/);
-    expect(summary).toBe("1 of 1 gate passed");
+    expect(summary).toBe("1 of 1 required passed");
   });
 
   it("keeps the score-row view reachable but out of the way", () => {
@@ -342,7 +342,7 @@ describe("TrialScorecard", () => {
     renderCard({
       judgeSlot: <div data-testid="judge-panel">Judge score hidden</div>,
     });
-    const judge = rowFor("Judge · Goal completion");
+    const judge = rowFor("Outcome achieved");
     expect(within(judge).getByTestId("judge-panel")).toBeInTheDocument();
   });
 
@@ -361,34 +361,35 @@ describe("TrialScorecard", () => {
 
 describe("summaryLine", () => {
   const base = {
-    gates: { passed: 0, counted: 0 },
-    warn: 0,
-    report: 0,
+    required: { passed: 0, counted: 0 },
+    advisory: 0,
     errors: 0,
     notMeasured: 0,
     pending: 0,
   };
 
-  it("counts gates and names the rest without promoting it", () => {
+  it("counts required rows and names the rest without promoting it", () => {
     expect(
-      summaryLine({ ...base, gates: { passed: 2, counted: 2 }, warn: 1 }),
-    ).toBe("2 of 2 gates passed · 1 warn");
+      summaryLine({ ...base, required: { passed: 2, counted: 2 }, advisory: 1 }),
+    ).toBe("2 of 2 required passed · 1 advisory");
   });
 
-  it("says a case has no gates rather than reporting 0 of 0", () => {
-    expect(summaryLine({ ...base, warn: 1 })).toBe("No gates ran · 1 warn");
-    expect(summaryLine(base)).toBe("No scorers ran");
+  it("says a case has no required rows rather than reporting 0 of 0", () => {
+    expect(summaryLine({ ...base, advisory: 1 })).toBe(
+      "No required assertions ran · 1 advisory",
+    );
+    expect(summaryLine(base)).toBe("No evaluators ran");
   });
 
   it("names an unevaluable scorer as such, not as a failure", () => {
     expect(
-      summaryLine({ ...base, gates: { passed: 0, counted: 1 }, errors: 1 }),
-    ).toBe("0 of 1 gate passed · 1 could not be evaluated");
+      summaryLine({ ...base, required: { passed: 0, counted: 1 }, errors: 1 }),
+    ).toBe("0 of 1 required passed · 1 could not be evaluated");
   });
 
   it("never uses a pass word for a state that is not a pass", () => {
     expect(PASS_WORDS.test(summaryLine(base))).toBe(false);
-    expect(PASS_WORDS.test(summaryLine({ ...base, warn: 2 }))).toBe(false);
+    expect(PASS_WORDS.test(summaryLine({ ...base, advisory: 2 }))).toBe(false);
   });
 });
 
@@ -431,9 +432,36 @@ describe("the chain lives inside the Scorecard", () => {
 });
 
 describe("blind review hides the judge row's own output", () => {
+  const judgeCase = {
+    status: "completed",
+    passed: false,
+    score: 0.2,
+    reason: "Private judge rationale",
+  } as never;
+
   it("withholds the score and the reason", () => {
-    renderCard({ judgeHidden: true });
+    renderCard({ judgeHidden: true, judgeCase });
     expect(screen.getByTestId("judge-result-withheld")).toBeTruthy();
+    expect(screen.queryByText("Private judge rationale")).toBeNull();
+  });
+
+  it("withholds nothing when the judge never graded the trial", () => {
+    // The model call failed, so there is no verdict to leak and no label
+    // control to lift the mask. The stage's own explanation must show.
+    const providerFailed = {
+      status: "verified",
+      stages: [
+        { stage: "connection", state: "passed", reason: "observed" },
+        { stage: "discovery", state: "passed", reason: "observed" },
+        { stage: "selection", state: "passed", reason: "observed" },
+        { stage: "call", state: "passed", reason: "observed" },
+        { stage: "response", state: "notMeasured", reason: "providerError" },
+        { stage: "userValue", state: "notMeasured", reason: "providerError" },
+      ],
+    } as never;
+    renderCard({ chain: providerFailed, judgeHidden: true, judgeCase: null });
+    expect(screen.queryByTestId("judge-result-withheld")).toBeNull();
+    expect(screen.queryByTestId("trial-stage-masked")).toBeNull();
   });
 
   it("shows them once the reviewer has revealed", () => {
@@ -541,5 +569,153 @@ describe("blind review keeps the chain and masks one card", () => {
     renderCard({ chain: judgeDecided, judgeHidden: false, judgeCase });
     expect(screen.queryByTestId("trial-stage-masked")).toBeNull();
     expect(screen.queryByTestId("judge-result-withheld")).toBeNull();
+  });
+});
+
+describe("what the scorecard says about its AI explanations", () => {
+  const verifiedChain = {
+    status: "verified",
+    stages: [
+      { stage: "connection", state: "passed", reason: "observed" },
+      { stage: "discovery", state: "passed", reason: "observed" },
+      { stage: "selection", state: "passed", reason: "observed" },
+      { stage: "call", state: "passed", reason: "observed" },
+      { stage: "response", state: "failed", reason: "toolError" },
+      { stage: "userValue", state: "failed", reason: "predicateFailed" },
+    ],
+  } as never;
+
+  const toolErrorTrace = {
+    messages: [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "create_journey",
+            result: {
+              isError: true,
+              content: [
+                {
+                  type: "text",
+                  text: "VALIDATION_ERROR: A journey must target at least one host",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  it("offers Analyze on a settled iteration with no report", () => {
+    renderCard({ chain: verifiedChain });
+    expect(screen.getByTestId("report-availability")).toHaveTextContent(
+      "Analyze this run to add AI explanations to these rows.",
+    );
+  });
+
+  it("counts the read in progress instead of promising nothing", () => {
+    renderCard({
+      chain: verifiedChain,
+      report: {
+        schemaVersion: 1,
+        iterationId: "it1",
+        runRevision: "r",
+        builtAt: 0,
+        status: "pending",
+        progress: { done: 4, total: 40 },
+        rows: [],
+      } as never,
+    });
+    const line = screen.getByTestId("report-availability");
+    expect(line).toHaveTextContent("Reading iterations 4 of 40…");
+    expect(line).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("names what stopped the analysis, and keeps the recorded page", () => {
+    renderCard({
+      chain: verifiedChain,
+      trace: toolErrorTrace,
+      report: {
+        schemaVersion: 1,
+        iterationId: "it1",
+        runRevision: "r",
+        builtAt: 0,
+        status: "failed",
+        reason: "trace_too_large",
+        rows: [],
+      } as never,
+    });
+    expect(screen.getByTestId("report-availability")).toHaveTextContent(
+      "This iteration's trace was too large to analyze.",
+    );
+    // The deterministic floor does not depend on the model having run.
+    // The tool name renders as code, so assert on the words, not the marks.
+    const floor = screen.getByTestId("stage-floor");
+    expect(within(floor).getByText("create_journey").tagName).toBe("CODE");
+    expect(floor).toHaveTextContent(
+      "returned an error: VALIDATION_ERROR: A journey must target at least one host",
+    );
+  });
+
+  it("quotes the server on a failed stage with no report at all", () => {
+    renderCard({ chain: verifiedChain, trace: toolErrorTrace });
+    expect(screen.getByTestId("stage-floor")).toHaveAttribute(
+      "data-narrative-source",
+      "recorded",
+    );
+  });
+
+  it("yields the stage to an AI explanation rather than saying it twice", () => {
+    renderCard({
+      chain: verifiedChain,
+      trace: toolErrorTrace,
+      report: {
+        schemaVersion: 1,
+        iterationId: "it1",
+        runRevision: "r",
+        builtAt: 0,
+        status: "ready",
+        rows: [],
+        stageNotes: [
+          {
+            stage: "response",
+            actual: "The journey call was rejected for having no host.",
+            citations: ["tc:call-1"],
+          },
+        ],
+      } as never,
+    });
+    expect(screen.queryByTestId("stage-floor")).toBeNull();
+    expect(screen.queryByTestId("report-availability")).toBeNull();
+    expect(
+      screen.getByText("The journey call was rejected for having no host."),
+    ).toBeVisible();
+  });
+
+  it("promises a reviewer nothing while they are labelling blind", () => {
+    renderCard({
+      chain: verifiedChain,
+      trace: toolErrorTrace,
+      judgeHidden: true,
+      judgeCase: {
+        status: "completed",
+        passed: false,
+        score: 0.2,
+      } as never,
+      report: {
+        schemaVersion: 1,
+        iterationId: "it1",
+        runRevision: "r",
+        builtAt: 0,
+        status: "pending",
+        progress: { done: 1, total: 4 },
+        rows: [],
+      } as never,
+    });
+    expect(screen.queryByTestId("report-availability")).toBeNull();
+    expect(screen.queryByTestId("stage-floor")).toBeNull();
   });
 });

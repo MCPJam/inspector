@@ -56,6 +56,7 @@ type Schema = {
   description?: string;
   properties?: Record<string, Schema>;
   oneOf?: Schema[];
+  items?: Schema;
 };
 
 const spec = JSON.parse(readFileSync(SPEC_PATH, "utf8")) as {
@@ -71,6 +72,47 @@ const spec = JSON.parse(readFileSync(SPEC_PATH, "utf8")) as {
  * exact shape of the bug this file was written for.
  */
 const SITES = [
+  { schema: "SwarmJourneyFinding", path: ["chainStage"], vocabulary: "stages" },
+  {
+    schema: "SwarmJourneyFinding",
+    path: ["chainStageState"],
+    vocabulary: "stageStates",
+  },
+  {
+    schema: "SwarmJourneyFinding",
+    path: ["disposition"],
+    vocabulary: "swarmFindingDispositions",
+  },
+  {
+    schema: "SwarmJourneyFinding",
+    path: ["basis"],
+    vocabulary: "swarmFindingBases",
+  },
+  {
+    schema: "SwarmJourneyFinding",
+    path: ["scopeLevel"],
+    vocabulary: "swarmFindingScopeLevels",
+  },
+  {
+    schema: "SwarmJourneyFinding",
+    path: ["coverageNotes", "items"],
+    vocabulary: "swarmFindingCoverageNotes",
+  },
+  {
+    schema: "SwarmJourneyFindings",
+    path: ["summaryKind"],
+    vocabulary: "swarmFindingSummaryKinds",
+  },
+  {
+    schema: "SwarmJourneyFindings",
+    path: ["coverageNotes", "items"],
+    vocabulary: "swarmFindingCoverageNotes",
+  },
+  {
+    schema: "SwarmJourneyFindings",
+    path: ["personas", "items", "disposition"],
+    vocabulary: "swarmFindingDispositions",
+  },
   { schema: "EvalIteration", path: ["firstFailedStage"], vocabulary: "stages" },
   {
     schema: "EvalIteration",
@@ -117,6 +159,25 @@ const SITES = [
     path: ["condition"],
     vocabulary: "suspectedConditions",
   },
+  // Array members. `items` is addressed explicitly because the vocabulary sits
+  // on the element schema, not on the array that holds it.
+  {
+    schema: "EvalVerdictDecision",
+    path: ["reasons", "items"],
+    vocabulary: "verdictDecisionReasons",
+  },
+  // The same vocabulary once more, per case: the run-level list says why the
+  // RUN landed where it did, this one says why a single case did.
+  {
+    schema: "EvalVerdictDecision",
+    path: ["cases", "items", "reason"],
+    vocabulary: "verdictDecisionReasons",
+  },
+  {
+    schema: "SwarmReport",
+    path: ["observations", "items", "stage"],
+    vocabulary: "stages",
+  },
 ] as const satisfies readonly {
   schema: string;
   path: readonly string[];
@@ -141,7 +202,9 @@ function resolveSite(site: (typeof SITES)[number]): Schema {
     if (segment === "oneOf") continue;
     node = /^\d+$/.test(segment)
       ? node?.oneOf?.[Number(segment)]
-      : node?.properties?.[segment];
+      : segment === "items"
+        ? node?.items
+        : node?.properties?.[segment];
     expect(
       node,
       `openapi.json has no ${site.schema}/${site.path.join("/")}`

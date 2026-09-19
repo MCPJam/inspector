@@ -162,6 +162,7 @@ describe("parity corpus manifest", () => {
       "attribution",
       "egressVerified",
       "spanIds",
+      "reasons",
       "toolSignals",
       "toolsTotalBefore",
       "toolsExposed",

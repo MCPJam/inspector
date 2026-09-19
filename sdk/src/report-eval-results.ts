@@ -1,5 +1,17 @@
-import { resolveEvalCiMetadata } from "./eval-ci.js";
+import {
+  reportingRequest,
+  ReportingHttpError,
+  ReportingProtocolError,
+  type ReportingTransportOptions,
+} from "./eval-reporting-transport.js";
+import {
+  prepareReportingConfig,
+  snapshotReportingInput,
+  buildReportingBody,
+  requiresRunMetadataCapability,
+} from "./eval-reporting-config.js";
 import type {
+  EvalReportingWarning,
   EvalResultInput,
   EvalWidgetSnapshotInput,
   ReportEvalResultsInput,
@@ -7,8 +19,15 @@ import type {
 } from "./eval-reporting-types.js";
 import { EvalReportingError } from "./errors.js";
 import { buildAppPermalink } from "./platform/permalinks.js";
-import { isEvalRunVerdict } from "./contract/verdict-policy.js";
-import { resolveServerReplayConfigs } from "./server-replay-configs.js";
+import { writeGithubActionReceipt } from "./github-action-receipt.js";
+import {
+  isEvalRunVerdict,
+  evalVerdictDecisionSchema,
+} from "./contract/verdict-policy.js";
+import {
+  resolveServerNames,
+  resolveServerReplayConfigs,
+} from "./server-replay-configs.js";
 import { addBreadcrumb, captureEvalReportingFailure } from "./sentry.js";
 import {
   buildSdkEvalsWireHostConfig,
@@ -17,12 +36,35 @@ import {
 import { resolveRunLevelHostSnapshot } from "./sdk-evals-host-config-source.js";
 import { redactTelemetryString } from "./telemetry-redaction.js";
 import type { HostJson } from "./host-config/public-types.js";
+import {
+  capabilityAcceptsCanonicalRole,
+  definitionsForDeployment,
+} from "./contract/policy-spelling.js";
+import type { ScorerRole } from "./contract/types.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_RETRY_DELAYS_MS = [250, 750, 1750];
 const CHUNK_SIZE_LIMIT = 200;
 const ONE_SHOT_RESULT_LIMIT = 200;
 const CHUNK_TARGET_BYTES = 1024 * 1024;
+
+/**
+ * Headroom left when weighing one result against {@link CHUNK_TARGET_BYTES}:
+ * the ids and framing a result picks up after the widget-offload decision, plus
+ * a margin so the decision is never a byte away from wrong.
+ */
+const RESULT_ENVELOPE_SLACK = 4096;
+
+/** Hosts that never leave the machine, so plain http to them is not on a wire. */
+function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return (
+    host === "localhost" ||
+    host === "::1" ||
+    host === "0.0.0.0" ||
+    /^127(?:\.\d{1,3}){3}$/.test(host)
+  );
+}
 
 export const DEFAULT_MCPJAM_BASE_URL = "https://app.mcpjam.com";
 
@@ -33,12 +75,20 @@ export const DEFAULT_MCPJAM_BASE_URL = "https://app.mcpjam.com";
  */
 export const DEFAULT_MCPJAM_PROJECT = "default";
 
-type RuntimeConfig = {
+type RuntimeConfig = ReportingTransportOptions & {
+  warnings?: EvalReportingWarning[];
   apiKey: string;
   baseUrl: string;
   project: string;
   timeoutMs: number;
   retryDelaysMs: number[];
+  /**
+   * The target's advertised capabilities, resolved at most once per run by
+   * {@link resolveTargetCapabilities}. `null` records a probe that failed —
+   * distinct from `undefined`, which means "not asked yet" — so a target that
+   * cannot answer is not re-probed once per consumer.
+   */
+  capabilitiesCache?: unknown;
 };
 
 type StartRunResponse = {
@@ -80,7 +130,11 @@ export function projectRunVerdict(
   | "verdictPolicyIntegrityError"
 > {
   return {
-    result: isEvalRunVerdict(run.result) ? run.result : "failed",
+    result: isEvalRunVerdict(run.result)
+      ? run.result
+      : run.result === "pending"
+        ? "pending"
+        : "failed",
     ...(run.verdictPolicyVersion !== undefined
       ? {
           verdictPolicyVersion:
@@ -99,15 +153,6 @@ type AppendIterationsResponse = {
   skipped: number;
   total: number;
 };
-
-type BackendEnvelope<T> = {
-  ok?: boolean;
-  // Legacy ingestion error shape.
-  error?: string;
-  // Canonical v1 error envelope.
-  code?: string;
-  message?: string;
-} & T;
 
 type NormalizedReportingError = {
   message: string;
@@ -183,10 +228,7 @@ export function __resetPrintedRunUrls(): void {
  * project, and then the right suite. One line makes the upload's destination
  * addressable.
  *
- * The route is the UNFLAGGED `/evals/suite/:suiteId/runs/:runId`, not
- * `/ci-evals/…`: the latter sits behind the `evaluate-ci` flag and its
- * redirect drops the run path, so a link there lands flag-less readers on a
- * bare list instead of their run.
+ * Links open the exact uploaded run in the public Evaluate experience.
  *
  * `?project=` prefers the id the BACKEND resolved, falling back to a
  * caller-configured project and omitting the param entirely for the
@@ -195,22 +237,13 @@ export function __resetPrintedRunUrls(): void {
  * active project (see `lib/project-deep-link.ts`), which is the right
  * degradation against a backend that doesn't echo the id yet.
  */
-export function printRunUrl(
-  config: Pick<RuntimeConfig, "baseUrl" | "project">,
-  run: { suiteId?: string; runId?: string; projectId?: string }
-): void {
+export function buildRunUrl(
+  run: { suiteId: string; runId: string; projectId?: string },
+  config: { baseUrl?: string; project?: string } = {}
+): string | undefined {
   const suiteId = run.suiteId?.trim();
   const runId = run.runId?.trim();
-  // The local-fallback result carries empty ids — there is no server-side run
-  // to link to, and a URL with blank segments would 404.
-  if (!suiteId || !runId) return;
-  if (printedRunUrls.has(runId)) return;
-  printedRunUrls.add(runId);
-  if (printedRunUrls.size > PRINTED_RUN_URL_CAP) {
-    const oldest = printedRunUrls.values().next();
-    if (!oldest.done) printedRunUrls.delete(oldest.value);
-  }
-
+  if (!suiteId || !runId) return undefined;
   const projectId =
     run.projectId?.trim() ||
     (config.project && config.project !== DEFAULT_MCPJAM_PROJECT
@@ -221,7 +254,7 @@ export function printRunUrl(
     // `baseUrl` is where CI REPORTS to, and every deployment serves the app
     // from the same origin — so it is the right app origin here. Passed
     // explicitly either way: the builder reads no configuration of its own.
-    const appOrigin = new URL(config.baseUrl).origin;
+    const appOrigin = new URL(config.baseUrl ?? DEFAULT_MCPJAM_BASE_URL).origin;
     url = projectId
       ? buildAppPermalink(
           {
@@ -240,7 +273,7 @@ export function printRunUrl(
         // at all. Built through `URL` rather than concatenation so it stays
         // encoded and stays out of the string-building this module retired.
         new URL(
-          `/evals/suite/${encodeURIComponent(
+          `/evaluate/suite/${encodeURIComponent(
             suiteId
           )}/runs/${encodeURIComponent(runId)}`,
           appOrigin
@@ -250,7 +283,38 @@ export function printRunUrl(
     return;
   }
 
-  console.log(`[mcpjam/sdk] View run: ${url}`);
+  return url;
+}
+
+export function printRunUrl(
+  config: Pick<RuntimeConfig, "baseUrl" | "project">,
+  run: { suiteId?: string; runId?: string; projectId?: string }
+): void {
+  const suiteId = run.suiteId?.trim();
+  const runId = run.runId?.trim();
+  // The local-fallback result carries empty ids — there is no server-side run
+  // to link to, and a URL with blank segments would 404.
+  if (!suiteId || !runId) return;
+  (run as { url?: string }).url = buildRunUrl(
+    { suiteId, runId, projectId: run.projectId },
+    config
+  );
+  if (printedRunUrls.has(runId)) return;
+  printedRunUrls.add(runId);
+  if (printedRunUrls.size > PRINTED_RUN_URL_CAP) {
+    const oldest = printedRunUrls.values().next();
+    if (!oldest.done) printedRunUrls.delete(oldest.value);
+  }
+
+  const url = buildRunUrl({ suiteId, runId, projectId: run.projectId }, config);
+  if (!url) return;
+  (run as { url?: string }).url = url;
+
+  try {
+    console.log(`[mcpjam/sdk] View run: ${url}`);
+  } catch {
+    // Presentation must never turn an acknowledged upload into a failure.
+  }
 }
 
 function getResultCount(
@@ -303,15 +367,6 @@ function getByteLength(value: string): number {
 
 function trimTrailingSlash(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function jitter(base: number): number {
-  const variance = Math.floor(base * 0.2);
-  return base + Math.floor((Math.random() * 2 - 1) * variance);
 }
 
 function isRetryableStatus(status: number): boolean {
@@ -540,38 +595,6 @@ function normalizeReportingErrorMessage(
   };
 }
 
-function isBillingLimitReachedError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  if (error instanceof EvalReportingError && error.isBillingLimitReached) {
-    return true;
-  }
-  return (
-    error.message.startsWith("Eval iteration limit reached.") ||
-    normalizeReportingErrorMessage(error.message).isBillingLimitReached
-  );
-}
-
-/**
- * A rejection no retry can fix. Mirrors {@link isBillingLimitReachedError}: the
- * destination's validator will refuse the identical payload every time, so the
- * three backoff attempts only delay the message the author needs to read.
- */
-function isReportingBackendIncompatibleError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  if (
-    error instanceof EvalReportingError &&
-    error.isReportingBackendIncompatible
-  ) {
-    return true;
-  }
-  return normalizeReportingErrorMessage(error.message)
-    .isReportingBackendIncompatible;
-}
-
 function generateExternalRunId(): string {
   return `sdk-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -634,9 +657,138 @@ function createRuntimeConfig(input: ReportEvalResultsInput): RuntimeConfig {
     apiKey,
     baseUrl: resolveBaseUrl(input),
     project: resolveProject(input),
-    timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+    ...input.transport,
+    timeoutMs: input.transport?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
     retryDelaysMs: DEFAULT_RETRY_DELAYS_MS,
   };
+}
+
+function validateReportingResponse(
+  path: string,
+  body: Record<string, unknown>,
+  request: Record<string, unknown>
+): void {
+  const invalid = () => {
+    throw new ReportingProtocolError("Invalid reporting response for " + path);
+  };
+  const id = (key: string) =>
+    typeof body[key] === "string" && (body[key] as string).trim().length > 0;
+  const count = (value: unknown) =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  if (path.endsWith("runs/evaluations")) {
+    if (
+      body.runId !== request.runId ||
+      !count(body.persistedCases) ||
+      body.persistedCases !== (request.evaluations as unknown[]).length
+    )
+      invalid();
+    return;
+  }
+  if (path.endsWith("/capabilities")) {
+    if (
+      !body.capabilities ||
+      typeof body.capabilities !== "object" ||
+      Array.isArray(body.capabilities)
+    )
+      invalid();
+    return;
+  }
+  if (path.endsWith("artifacts/upload-url")) {
+    if (!id("uploadUrl")) invalid();
+    try {
+      const url = new URL(body.uploadUrl as string);
+      // A widget snapshot is a whole built app, and this URL is now reached
+      // automatically, so it must not carry one in cleartext across a network.
+      // Loopback keeps `npx convex dev` and a self-hosted deployment working,
+      // where the upload URL is http://127.0.0.1 by construction.
+      const cleartextIsLocal =
+        url.protocol === "http:" && isLoopbackHostname(url.hostname);
+      if (
+        (url.protocol !== "https:" && !cleartextIsLocal) ||
+        url.username ||
+        url.password
+      )
+        invalid();
+    } catch {
+      invalid();
+    }
+    return;
+  }
+  if (path.endsWith("runs/iterations")) {
+    if (!count(body.inserted) || !count(body.skipped) || !count(body.total))
+      invalid();
+    if (
+      Number(body.inserted) + Number(body.skipped) !==
+        (request.results as unknown[]).length ||
+      Number(body.total) < Number(body.inserted)
+    )
+      invalid();
+    return;
+  }
+  if (!id("suiteId") || !id("runId")) invalid();
+  if (request.runId !== undefined && body.runId !== request.runId) invalid();
+  if (body.projectId !== undefined && !id("projectId")) invalid();
+  if (body.reused !== undefined && typeof body.reused !== "boolean") invalid();
+  if (
+    body.status !== undefined &&
+    (typeof body.status !== "string" ||
+      ![
+        "pending",
+        "running",
+        "grading",
+        "completed",
+        "failed",
+        "cancelled",
+        "timed_out",
+      ].includes(body.status))
+  )
+    invalid();
+  if (
+    body.result !== undefined &&
+    body.result !== "pending" &&
+    !isEvalRunVerdict(body.result)
+  )
+    invalid();
+  if (
+    body.verdictPolicyVersion !== undefined &&
+    body.verdictPolicyVersion !== 1 &&
+    body.verdictPolicyVersion !== 2
+  )
+    invalid();
+  if (
+    body.verdictSummary !== undefined &&
+    !evalVerdictDecisionSchema.safeParse(body.verdictSummary).success
+  )
+    invalid();
+  if (
+    body.verdictPolicyIntegrityError !== undefined &&
+    typeof body.verdictPolicyIntegrityError !== "string"
+  )
+    invalid();
+  if (body.summary !== undefined) {
+    const summary = body.summary as Record<string, unknown>;
+    if (
+      !summary ||
+      typeof summary !== "object" ||
+      !count(summary.total) ||
+      !count(summary.passed) ||
+      !count(summary.failed) ||
+      Number(summary.passed) + Number(summary.failed) > Number(summary.total) ||
+      typeof summary.passRate !== "number" ||
+      !Number.isFinite(summary.passRate) ||
+      summary.passRate < 0 ||
+      summary.passRate > 1
+    )
+      invalid();
+  }
+  if (!path.endsWith("runs/start")) {
+    if (!body.status || !body.result || !body.summary) invalid();
+    const terminal = ["completed", "failed", "cancelled", "timed_out"].includes(
+      String(body.status)
+    );
+    if (terminal ? !isEvalRunVerdict(body.result) : body.result !== "pending")
+      invalid();
+  }
 }
 
 async function requestWithRetry<T>(
@@ -644,111 +796,74 @@ async function requestWithRetry<T>(
   path: string,
   body: Record<string, unknown>
 ): Promise<T> {
-  const url = `${config.baseUrl}${path}`;
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt <= config.retryDelaysMs.length; attempt++) {
-    const controller = new AbortController();
-    const timeoutHandle = setTimeout(() => {
-      controller.abort();
-    }, config.timeoutMs);
-
-    try {
-      const response = await fetch(url, {
+  if (
+    config.maxRequestBytes !== undefined &&
+    (!Number.isSafeInteger(config.maxRequestBytes) ||
+      config.maxRequestBytes <= 0)
+  )
+    throw new ReportingProtocolError("Invalid reporting maxRequestBytes");
+  const serialized = JSON.stringify(body);
+  if (getByteLength(serialized) > (config.maxRequestBytes ?? 5 * 1024 * 1024))
+    throw new EvalReportingError(
+      "Eval report exceeds the configured request byte limit; split the report into smaller batches",
+      { endpoint: path }
+    );
+  let attemptCount = 0;
+  const normalize = (value: Record<string, unknown>) =>
+    normalizeReportingErrorMessage(
+      typeof value.error === "string"
+        ? value.error
+        : typeof value.message === "string"
+          ? value.message
+          : "Reporting request was rejected"
+    );
+  try {
+    return await reportingRequest(
+      config,
+      `${config.baseUrl}${path}`,
+      {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${config.apiKey}`,
         },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutHandle);
-
-      let responseBody: BackendEnvelope<T> | undefined;
-      try {
-        responseBody = (await response.json()) as BackendEnvelope<T>;
-      } catch {
-        responseBody = undefined;
-      }
-
-      if (response.ok) {
-        if (responseBody && responseBody.ok === false) {
-          const rawMessage =
-            responseBody.error ??
-            responseBody.message ??
-            "Unknown SDK evals error";
-          const {
-            message,
-            isBillingLimitReached,
-            isReportingBackendIncompatible,
-          } = normalizeReportingErrorMessage(rawMessage);
-          throw new EvalReportingError(message, {
-            attemptCount: attempt + 1,
+        body: serialized,
+      },
+      (response) => {
+        if (response.ok === false) {
+          const error = normalize(response);
+          throw new EvalReportingError(error.message, {
             endpoint: path,
-            isBillingLimitReached,
-            isReportingBackendIncompatible,
-            statusCode: response.status,
+            ...error,
           });
         }
-        return (responseBody ?? {}) as T;
+        validateReportingResponse(path, response, body);
+        return response as T;
+      },
+      (error) => {
+        const normalized = normalize(error.body);
+        return (
+          !normalized.isBillingLimitReached &&
+          !normalized.isReportingBackendIncompatible &&
+          isRetryableStatus(error.status)
+        );
+      },
+      (count) => {
+        attemptCount = count;
       }
-
-      const rawMessage =
-        responseBody?.error ??
-        responseBody?.message ??
-        `Request failed with status ${response.status}: ${response.statusText}`;
-      const { message, isBillingLimitReached, isReportingBackendIncompatible } =
-        normalizeReportingErrorMessage(rawMessage);
-      if (
-        !isBillingLimitReached &&
-        !isReportingBackendIncompatible &&
-        isRetryableStatus(response.status) &&
-        attempt < config.retryDelaysMs.length
-      ) {
-        await sleep(jitter(config.retryDelaysMs[attempt]));
-        continue;
-      }
-
-      throw new EvalReportingError(message, {
-        attemptCount: attempt + 1,
+    );
+  } catch (error) {
+    if (error instanceof ReportingHttpError) {
+      const normalized = normalize(error.body);
+      throw new EvalReportingError(normalized.message, {
         endpoint: path,
-        isBillingLimitReached,
-        isReportingBackendIncompatible,
-        statusCode: response.status,
+        attemptCount,
+        statusCode: error.status,
+        ...normalized,
       });
-    } catch (error) {
-      clearTimeout(timeoutHandle);
-      lastError = error;
-
-      const isAbortError =
-        error instanceof Error && error.name === "AbortError";
-      const errorStatusCode =
-        error instanceof EvalReportingError ? error.statusCode : undefined;
-      const shouldRetry =
-        !isBillingLimitReachedError(error) &&
-        !isReportingBackendIncompatibleError(error) &&
-        (isAbortError ||
-          error instanceof TypeError ||
-          (typeof errorStatusCode === "number" &&
-            isRetryableStatus(errorStatusCode)) ||
-          (error instanceof Error &&
-            /network|fetch|timeout|429|5\d\d/i.test(error.message)));
-
-      if (shouldRetry && attempt < config.retryDelaysMs.length) {
-        await sleep(jitter(config.retryDelaysMs[attempt]));
-        continue;
-      }
-
-      throw toEvalReportingError(error, path, attempt + 1, errorStatusCode);
     }
+    throw toEvalReportingError(error, path, attemptCount);
   }
-
-  throw toEvalReportingError(
-    lastError ?? new Error("Failed to send eval report"),
-    path,
-    config.retryDelaysMs.length + 1
-  );
 }
 
 async function startEvalRun(
@@ -765,7 +880,7 @@ async function startEvalRun(
     hostConfigHash?: SdkEvalsWireHostConfig["hostConfigHash"];
   }
 ): Promise<StartRunResponse> {
-  return await requestWithRetry<StartRunResponse>(
+  return await requestStartOrReport<StartRunResponse>(
     config,
     ingestPath(config, "runs/start"),
     payload
@@ -791,6 +906,7 @@ async function finalizeEvalRun(
   payload: {
     runId: string;
     externalRunId: string;
+    terminalStatus?: "cancelled" | "timed_out";
   }
 ): Promise<ReportEvalResultsOutput> {
   return await requestWithRetry<ReportEvalResultsOutput>(
@@ -820,59 +936,29 @@ async function uploadBlobToConvex(
   body: string,
   contentType: string
 ): Promise<string> {
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt <= config.retryDelaysMs.length; attempt++) {
-    try {
-      const response = await fetch(uploadUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": contentType,
-        },
-        body,
-      });
-
-      const responseBody = (await response.json().catch(() => ({}))) as {
-        storageId?: string;
-        error?: string;
-      };
-
-      if (response.ok && responseBody.storageId) {
-        return responseBody.storageId;
-      }
-
-      // Same reasoning as `normalizeReportingErrorMessage`: server-controlled
-      // string, and this one reaches a console.warn in the widget-snapshot path.
-      const message = redactTelemetryString(
-        responseBody.error ??
-          `Artifact upload failed with status ${response.status}: ${response.statusText}`
-      );
-      if (
-        isRetryableStatus(response.status) &&
-        attempt < config.retryDelaysMs.length
-      ) {
-        await sleep(jitter(config.retryDelaysMs[attempt]));
-        continue;
-      }
-
-      throw new Error(message);
-    } catch (error) {
-      lastError = error;
-      const shouldRetry =
-        error instanceof TypeError ||
-        (error instanceof Error &&
-          /network|fetch|timeout|429|5\d\d/i.test(error.message));
-      if (shouldRetry && attempt < config.retryDelaysMs.length) {
-        await sleep(jitter(config.retryDelaysMs[attempt]));
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("Failed to upload eval artifact");
+  if (
+    config.maxArtifactBytes !== undefined &&
+    (!Number.isSafeInteger(config.maxArtifactBytes) ||
+      config.maxArtifactBytes <= 0)
+  )
+    throw new ReportingProtocolError("Invalid reporting maxArtifactBytes");
+  if (getByteLength(body) > (config.maxArtifactBytes ?? 16 * 1024 * 1024))
+    throw new ReportingProtocolError(
+      "Eval artifact exceeds the configured byte limit"
+    );
+  return reportingRequest(
+    config,
+    uploadUrl,
+    { method: "POST", headers: { "Content-Type": contentType }, body },
+    (response) => {
+      if (typeof response.storageId !== "string" || !response.storageId.trim())
+        throw new ReportingProtocolError(
+          "Invalid artifact upload acknowledgment"
+        );
+      return response.storageId;
+    },
+    (error) => isRetryableStatus(error.status)
+  );
 }
 
 function removeInlineWidgetHtml(
@@ -953,6 +1039,56 @@ async function uploadWidgetSnapshots(
   return rewrittenResults;
 }
 
+/**
+ * Send widget HTML to blob storage when leaving it inline would make a single
+ * result too large to upload. Only the results that do not fit are rewritten —
+ * every other snapshot stays inline, in the one request it always did.
+ *
+ * A result is weighed inside the request that will actually carry it: the
+ * reporting envelope around it, plus room for the per-result fields added after
+ * this point (`externalIterationId`), so a result that only just fits here does
+ * not become one that only just fails on the wire.
+ */
+async function offloadOversizedWidgetSnapshots(
+  config: RuntimeConfig,
+  input: ReportEvalResultsInput,
+  results: EvalResultInput[]
+): Promise<EvalResultInput[]> {
+  const envelopeBytes = getByteLength(
+    JSON.stringify({ ...buildReportingBody(input), results: [] })
+  );
+  const budget = CHUNK_TARGET_BYTES - envelopeBytes - RESULT_ENVELOPE_SLACK;
+  const oversized = new Set<number>();
+  results.forEach((result, index) => {
+    if (
+      Array.isArray(result.widgetSnapshots) &&
+      result.widgetSnapshots.length > 0 &&
+      getByteLength(JSON.stringify(result)) > budget
+    ) {
+      oversized.add(index);
+    }
+  });
+  if (oversized.size === 0) {
+    return results;
+  }
+  const rewritten = await uploadWidgetSnapshots(
+    config,
+    results.filter((_result, index) => oversized.has(index))
+  );
+  // Put each rewritten result back at its own index so order is unchanged.
+  // A short list would silently reinstate the oversized result this whole
+  // function exists to remove, so treat it as the contract break it is.
+  if (rewritten.length !== oversized.size) {
+    throw new ReportingProtocolError(
+      "Widget snapshot upload returned a different number of results"
+    );
+  }
+  const queue = [...rewritten];
+  return results.map((result, index) =>
+    oversized.has(index) ? queue.shift()! : result
+  );
+}
+
 function shouldUseOneShotUpload(
   input: ReportEvalResultsInput,
   config: RuntimeConfig
@@ -960,19 +1096,7 @@ function shouldUseOneShotUpload(
   if (input.results.length > ONE_SHOT_RESULT_LIMIT) {
     return false;
   }
-  const body = {
-    suiteName: input.suiteName,
-    suiteDescription: input.suiteDescription,
-    serverNames: input.serverNames,
-    serverReplayConfigs: input.serverReplayConfigs,
-    notes: input.notes,
-    passCriteria: input.passCriteria,
-    externalRunId: input.externalRunId,
-    framework: input.framework,
-    ci: input.ci,
-    tags: input.tags,
-    results: input.results,
-  };
+  const body = { ...buildReportingBody(input), results: input.results };
   const bytes = getByteLength(JSON.stringify(body));
   return bytes <= CHUNK_TARGET_BYTES && config.baseUrl.length >= 0;
 }
@@ -1003,7 +1127,7 @@ function hasAnyHostSnapshotSource(input: ReportEvalResultsInput): boolean {
  * and chunked `/runs/start` bodies, never into `/runs/iterations` or
  * `/runs/finalize`.
  */
-async function resolveWireHostConfigForRun(
+export async function resolveWireHostConfigForRun(
   input: ReportEvalResultsInput
 ): Promise<SdkEvalsWireHostConfig | null> {
   // Nothing to ship: keep callers with no host, no executor, and no
@@ -1045,22 +1169,56 @@ async function reportEvalResultsInternal(
   input: ReportEvalResultsInput
 ): Promise<ReportEvalResultsOutput> {
   // Snapshot once, before any async work, for both upload paths and retries.
-  const ci = resolveEvalCiMetadata(input.ci);
-  input = { ...input, ci: ci ? { ...ci } : undefined };
+  input = snapshotReportingInput(input);
+  const providedIds = new Set<string>();
+  for (const result of input.results ?? []) {
+    if (result.externalIterationId !== undefined) {
+      if (
+        !result.externalIterationId.trim() ||
+        providedIds.has(result.externalIterationId)
+      )
+        throw new TypeError(
+          "externalIterationId must be nonempty and unique within a report"
+        );
+      providedIds.add(result.externalIterationId);
+    }
+  }
+  input = await prepareReportingConfig({
+    ...input,
+    externalRunId: input.externalRunId ?? generateExternalRunId(),
+  });
   if (!input.suiteName || input.suiteName.trim().length === 0) {
     throw new Error("suiteName is required");
   }
-  if (!Array.isArray(input.results) || input.results.length === 0) {
+  if (
+    !Array.isArray(input.results) ||
+    (input.results.length === 0 && !input.terminalStatus)
+  ) {
     throw new Error("results must include at least one eval result");
   }
 
   const config = createRuntimeConfig(input);
-  const uploadedResults = await uploadWidgetSnapshots(config, input.results);
+  await requireReportingCapabilities(config, input);
+  const terminalStatus = await resolveTerminationStatus(config, input);
+  // Backend stores inline widget evidence after content hashing and
+  // authorization, and inline keeps a retry resending identical bytes — so that
+  // stays the default. But widget HTML is a whole built app, and two tool calls
+  // of one can push a single result past the 1MB request-body limit, which
+  // chunking cannot fix because it only splits BETWEEN results. Those offload
+  // to blob storage instead, once, before the retry loop below.
+  const uploadedResults = await offloadOversizedWidgetSnapshots(
+    config,
+    input,
+    input.results
+  );
   const externalRunId = input.externalRunId ?? generateExternalRunId();
   const serverReplayConfigs = resolveServerReplayConfigs(input);
-  const resultsWithIterationIds = withExternalIterationIds(
-    uploadedResults,
-    externalRunId
+  input = {
+    ...input,
+    serverNames: resolveServerNames(input, serverReplayConfigs),
+  };
+  const resultsWithIterationIds = resultsWithFrozenPolicySpelling(
+    withExternalIterationIds(uploadedResults, externalRunId)
   );
 
   // Resolved once per `reportEvalResultsInternal` call so both code paths
@@ -1074,6 +1232,7 @@ async function reportEvalResultsInternal(
     : {};
 
   if (
+    !terminalStatus &&
     shouldUseOneShotUpload(
       {
         ...input,
@@ -1084,52 +1243,26 @@ async function reportEvalResultsInternal(
       config
     )
   ) {
-    const oneShot = await requestWithRetry<ReportEvalResultsOutput>(
+    const oneShot = await requestStartOrReport<ReportEvalResultsOutput>(
       config,
       ingestPath(config, "report"),
       {
-        suiteName: input.suiteName,
-        suiteDescription: input.suiteDescription,
-        serverNames: input.serverNames,
-        serverReplayConfigs,
-        notes: input.notes,
-        passCriteria: input.passCriteria,
+        ...buildReportingBody(input),
         externalRunId,
-        framework: input.framework,
-        ci: input.ci,
-        expectedIterations: input.expectedIterations,
-        tags: input.tags,
-        evaluationConfigHash: input.evaluationConfigHash,
-        // The v2 marker. Sent only when the caller declared a policy, so a
-        // legacy run's body is byte-identical to what it was: this is the field
-        // that decides which aggregation a run is graded under, and a default
-        // would silently re-grade every existing suite.
-        ...(input.verdictPolicy ? { verdictPolicy: input.verdictPolicy } : {}),
+        serverReplayConfigs,
         results: resultsWithIterationIds,
         ...wireHostConfigBody,
       }
     );
     printRunUrl(config, oneShot);
-    return oneShot;
+    return finishReportedRun(config, input, oneShot);
   }
 
   const start = await startEvalRun(config, {
+    ...buildReportingBody(input),
     suiteName: input.suiteName,
-    suiteDescription: input.suiteDescription,
-    serverNames: input.serverNames,
-    serverReplayConfigs,
-    notes: input.notes,
-    passCriteria: input.passCriteria,
     externalRunId,
-    framework: input.framework,
-    ci: input.ci,
-    expectedIterations: input.expectedIterations,
-    tags: input.tags,
-    evaluationConfigHash: input.evaluationConfigHash,
-    // Resolved and FROZEN by the backend at run start — which is why it rides
-    // the start call rather than each chunk. Later chunks carry evidence, not
-    // policy.
-    ...(input.verdictPolicy ? { verdictPolicy: input.verdictPolicy } : {}),
+    serverReplayConfigs,
     ...wireHostConfigBody,
   });
 
@@ -1150,8 +1283,14 @@ async function reportEvalResultsInternal(
       ...projectRunVerdict(start),
       summary: start.summary,
     };
+    for (const chunk of chunkResultsForUpload(resultsWithIterationIds)) {
+      await appendEvalRunIterations(config, {
+        runId: start.runId,
+        results: chunk,
+      });
+    }
     printRunUrl(config, reused);
-    return reused;
+    return finishReportedRun(config, input, reused);
   }
 
   const chunks = chunkResultsForUpload(resultsWithIterationIds);
@@ -1165,9 +1304,10 @@ async function reportEvalResultsInternal(
   const finalized = await finalizeEvalRun(config, {
     runId: start.runId,
     externalRunId,
+    ...(terminalStatus ? { terminalStatus } : {}),
   });
   printRunUrl(config, finalized);
-  return finalized;
+  return finishReportedRun(config, input, finalized);
 }
 
 export async function reportEvalResults(
@@ -1220,3 +1360,306 @@ export {
   uploadWidgetSnapshots,
   withExternalIterationIds,
 };
+
+/**
+ * The target's advertised capabilities, fetched at most ONCE per run.
+ *
+ * Three consumers need them — the run-metadata gate, the run-evaluations gate,
+ * and the policy-role projection below — and each used to probe for itself. One
+ * memoized probe is both cheaper and more honest: two consumers can no longer
+ * disagree about what this deployment supports because their probes landed on
+ * either side of a deploy.
+ *
+ * Never throws for a target that cannot answer: a failed probe caches `null`
+ * and every consumer reads it as "does not advertise", which is the safe
+ * direction for all three. An explicit cancellation still propagates.
+ */
+async function resolveTargetCapabilities(
+  config: RuntimeConfig
+): Promise<unknown> {
+  if (config.capabilitiesCache !== undefined) return config.capabilitiesCache;
+  try {
+    const response = await requestWithRetry<{ capabilities?: unknown }>(
+      config,
+      ingestPath(config, "capabilities"),
+      {}
+    );
+    config.capabilitiesCache = response?.capabilities ?? null;
+  } catch (error) {
+    if (config.signal?.aborted) throw error;
+    config.capabilitiesCache = null;
+  }
+  return config.capabilitiesCache;
+}
+
+/**
+ * Freeze every policy role in the PRIMARY iteration payload at the legacy
+ * spelling.
+ *
+ * `scoreMetadata` embeds each iteration's `evaluationConfig` — definitions and
+ * all — into the results that go to `/report` and `/runs/iterations`. That is
+ * the payload almost every run sends, and a target that has not deployed the
+ * canonical spelling refuses a `required` role there. The refusal does not fail
+ * the upload: it quarantines every iteration of the run as
+ * `score_integrity_invalid`, so the dashboard shows an EMPTY run rather than a
+ * broken one.
+ *
+ * Frozen rather than negotiated, and that is the point. Negotiating would mean
+ * probing `/capabilities` before the first upload of every run, and a run whose
+ * probe was slow, cached, or answered by the wrong deployment would be exactly
+ * the run that got quarantined. The payload needs no canonical word anyway: it
+ * is a STORED contract, the backend keeps what it is given, and a vocabulary-2
+ * reader gets `required` from the read projection regardless. This is the same
+ * promise `hashSpelling` makes for the digest and `legacyRoleSpelling` makes
+ * for the gate report — a stored contract is historical evidence, and the
+ * spelling it was written in does not move.
+ *
+ * The optional `/runs/evaluations` path is the one place that DOES negotiate,
+ * because it already handshakes with the target for its own reasons and its
+ * rows are advisory by construction.
+ *
+ * Returns the input uncopied when nothing moves, so a run whose definitions
+ * carry no canonical role sends the bytes it has always sent.
+ */
+function resultsWithFrozenPolicySpelling(
+  results: EvalResultInput[]
+): EvalResultInput[] {
+  let changed = false;
+  const out = results.map((result) => {
+    const metadata = result.metadata as
+      { evaluationConfig?: { definitions?: unknown } } | undefined;
+    const definitions = metadata?.evaluationConfig?.definitions;
+    if (!Array.isArray(definitions)) return result;
+    // `definitionsForDeployment` with no advertised capability IS the freeze:
+    // one function decides the legacy spelling for both paths, so they cannot
+    // drift apart.
+    const frozen = definitions.map((definition) =>
+      definition == null
+        ? definition
+        : definitionsForDeployment(
+            [definition as { role: ScorerRole }],
+            undefined
+          )[0]
+    );
+    if (frozen.every((definition, index) => definition === definitions[index]))
+      return result;
+    changed = true;
+    return {
+      ...result,
+      metadata: {
+        ...metadata,
+        evaluationConfig: {
+          ...metadata!.evaluationConfig,
+          definitions: [...frozen],
+        },
+      },
+    } as EvalResultInput;
+  });
+  return changed ? out : results;
+}
+
+export async function requireReportingCapabilities(
+  config: RuntimeConfig,
+  input:
+    | ReportEvalResultsInput
+    | import("./eval-reporting-types.js").MCPJamReportingConfig
+): Promise<void> {
+  if (!requiresRunMetadataCapability(input)) return;
+  // Optional compatibility probing cannot discard the core run; the shared
+  // resolver caches a failed probe as `null` and only rethrows an explicit
+  // upload cancellation.
+  const capabilities = (await resolveTargetCapabilities(config)) as
+    { evalsRunMetadata?: number } | null | undefined;
+  if (capabilities?.evalsRunMetadata === 1) return;
+  omitRunMetadata(input);
+  addReportingWarning(config, {
+    code: "RUN_METADATA_OMITTED",
+    message:
+      "Optional run metadata and expanded CI fields were omitted because target support was not confirmed. Core eval results are still reported.",
+  });
+}
+
+async function finishReportedRun(
+  config: RuntimeConfig,
+  input: ReportEvalResultsInput,
+  report: ReportEvalResultsOutput
+): Promise<ReportEvalResultsOutput> {
+  if (input.runEvaluations?.length)
+    await reportCaseRunEvaluations(
+      config,
+      report.runId,
+      input.externalRunId!,
+      input.runEvaluations
+    );
+  const completed = attachReportingWarnings(config, report);
+  await writeGithubActionReceipt(config, input, completed);
+  return completed;
+}
+
+export async function reportCaseRunEvaluations(
+  config: RuntimeConfig,
+  runId: string,
+  externalRunId: string,
+  evaluations: import("./run-evaluators.js").CaseRunEvaluation[]
+): Promise<void> {
+  try {
+    const capabilities = await resolveTargetCapabilities(config);
+    const supported =
+      (capabilities as { evalsRunEvaluations?: number } | null | undefined)
+        ?.evalsRunEvaluations === 1;
+    if (!supported) {
+      addReportingWarning(config, {
+        code: "RUN_EVALUATIONS_OMITTED",
+        message:
+          "Advisory case-run evaluations were not uploaded because target support was not confirmed. Core eval results are persisted.",
+      });
+      return;
+    }
+    await requestWithRetry(config, ingestPath(config, "runs/evaluations"), {
+      runId,
+      externalRunId,
+      // The policy role's spelling is settled HERE, against the handshake this
+      // call already makes, rather than at the dozen builders that mint a
+      // definition. A target that does not advertise `vocabulary.values.role`
+      // has a `validateScorePayload` that refuses `required`, and the refusal
+      // is not a rejected upload — it quarantines every iteration of the run
+      // as `score_integrity_invalid`, so the dashboard shows an empty run
+      // rather than a broken one. Hash-neutral, so the rows file under the
+      // same digests either way.
+      evaluations: evaluationsForDeployment(evaluations, capabilities),
+    });
+  } catch {
+    // The core run has already been acknowledged. Keep that fact even when
+    // optional advisory persistence fails or the caller cancels this last step.
+    addReportingWarning(config, {
+      code: "RUN_EVALUATIONS_NOT_CONFIRMED",
+      message:
+        "Advisory case-run persistence could not be confirmed. Core eval results are persisted; local advisory results remain available.",
+    });
+  }
+}
+
+/**
+ * Put every definition's role into the spelling this target accepts.
+ *
+ * Returns the input unchanged and uncopied when nothing moves, which is both
+ * the common case and the one that matters: a target that speaks the canonical
+ * vocabulary gets a byte-identical body.
+ */
+function evaluationsForDeployment(
+  evaluations: import("./run-evaluators.js").CaseRunEvaluation[],
+  capabilities: unknown
+): import("./run-evaluators.js").CaseRunEvaluation[] {
+  if (capabilityAcceptsCanonicalRole(capabilities)) return evaluations;
+  let changed = false;
+  const out = evaluations.map((envelope) => {
+    const definitions = definitionsForDeployment(
+      envelope.evaluationConfig.definitions,
+      capabilities
+    );
+    if (definitions === envelope.evaluationConfig.definitions) return envelope;
+    changed = true;
+    return {
+      ...envelope,
+      evaluationConfig: {
+        ...envelope.evaluationConfig,
+        definitions: [...definitions],
+      },
+    };
+  });
+  return changed ? out : evaluations;
+}
+
+function addReportingWarning(
+  config: RuntimeConfig,
+  warning: EvalReportingWarning
+): void {
+  config.warnings ??= [];
+  if (config.warnings.some((entry) => entry.code === warning.code)) return;
+  config.warnings.push(warning);
+  try {
+    console.warn(`[mcpjam/sdk] ${warning.message}`);
+  } catch {
+    /* presentation only */
+  }
+}
+
+/** Attach only SDK-produced diagnostics, never raw backend errors or payloads. */
+export function attachReportingWarnings(
+  config: RuntimeConfig,
+  report: ReportEvalResultsOutput
+): ReportEvalResultsOutput {
+  return config.warnings?.length
+    ? { ...report, warnings: structuredClone(config.warnings) }
+    : report;
+}
+
+/** Explicit partial terminalization is a semantic contract, never silently downgraded. */
+export async function resolveTerminationStatus(
+  config: RuntimeConfig,
+  input: import("./eval-reporting-types.js").MCPJamReportingConfig
+): Promise<"cancelled" | "timed_out" | undefined> {
+  if (!input.terminalStatus) return undefined;
+  // Reuse the run's answer when there IS one, but never inherit a failed probe.
+  // `resolveTargetCapabilities` caches a failure as `null` because every other
+  // consumer wants "does not advertise" — here that would turn a transport
+  // error into "your target does not support termination", which is a claim we
+  // have not earned. So a cache miss or a cached failure asks again and lets
+  // the transport error reach the caller as itself.
+  const cached = config.capabilitiesCache;
+  const capabilities =
+    cached && typeof cached === "object"
+      ? (cached as { evalsRunTermination?: number })
+      : (
+          await requestWithRetry<{
+            capabilities: { evalsRunTermination?: number };
+          }>(config, ingestPath(config, "capabilities"), {})
+        ).capabilities;
+  if (capabilities.evalsRunTermination !== 1)
+    throw new EvalReportingError(
+      "SDK_RUN_TERMINATION_UNSUPPORTED: target support is required to explicitly terminate a partial run",
+      { isReportingBackendIncompatible: true }
+    );
+  return input.terminalStatus;
+}
+
+function omitRunMetadata(
+  input: import("./eval-reporting-types.js").MCPJamReportingConfig
+): void {
+  delete input.runName;
+  delete input.runTags;
+  delete input.runMetadata;
+  if (input.ci) {
+    input.ci = { ...input.ci };
+    delete input.ci.dirty;
+    delete input.ci.pullRequestNumber;
+  }
+}
+
+/** A stale capability response must not prevent otherwise valid legacy evidence. */
+async function requestStartOrReport<T>(
+  config: RuntimeConfig,
+  path: string,
+  body: Record<string, unknown>
+): Promise<T> {
+  try {
+    return await requestWithRetry<T>(config, path, body);
+  } catch (error) {
+    if (
+      !(error instanceof EvalReportingError) ||
+      ![400, 422].includes(error.statusCode ?? 0) ||
+      !requiresRunMetadataCapability(body)
+    )
+      throw error;
+    // Retry once, with the SAME external identity and evidence. Policy and
+    // evaluator fields stay intact, so an invalid core report still fails.
+    const legacyBody = { ...body };
+    omitRunMetadata(legacyBody);
+    addReportingWarning(config, {
+      code: "RUN_METADATA_OMITTED",
+      message:
+        "Optional run metadata was omitted after target validation refused the expanded payload. Core evidence and policy were preserved for retry.",
+    });
+    return await requestWithRetry<T>(config, path, legacyBody);
+  }
+}

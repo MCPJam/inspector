@@ -221,7 +221,7 @@ Authenticated HTTP evals can securely persist replay credentials for reruns and 
 
 Prefer passing `agent` or `mcpClientManager` directly. Use `serverReplayConfigs` only when you need a low-level override.
 
-If you also provide `serverNames`, inferred replay configs are filtered to those server IDs before upload. Explicit `serverReplayConfigs` are left unchanged.
+When `serverNames` is not set, the SDK infers it from the unique server IDs in the resolved replay configs. Pass an explicit list to override, or `serverNames: []` to opt out entirely. Explicit `serverReplayConfigs` are left unchanged.
 
 ### Replay metadata for the MCPJam UI
 
@@ -361,7 +361,7 @@ Fields specific to `ReportEvalResultsInput` (everything else comes from [`MCPJam
 | `project` | `string` | No | Project id results are filed under (falls back to `MCPJAM_PROJECT_ID`, then the org's Default project) |
 | `suiteName` | `string` | No | Suite name for the run |
 | `suiteDescription` | `string` | No | Description of the suite |
-| `serverNames` | `string[]` | No | MCP server names being tested |
+| `serverNames` | `string[]` | No | MCP server names to associate with the run. When omitted, the SDK infers names from the server IDs in the resolved replay configs. Pass `[]` to opt out of inference and record no server names. |
 | `serverReplayConfigs` | `MCPServerReplayConfig[]` | No | Advanced override for replay credential capture |
 | `notes` | `string` | No | Free-form notes |
 | `passCriteria` | `{ minimumPassRate: number }` | No | Pass threshold (0-100) |
@@ -459,7 +459,7 @@ Automatically detected when `ci` is omitted for supported CI services. An explic
 
 Predicates add a deterministic, state-based assertion layer on top of tool-call matching. Each predicate is a pure function of the iteration transcript — same transcript, same verdict — which makes it suitable as a CI release gate.
 
-Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** from SDK 3.0 onward by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff every **gating** predicate passes. A predicate authored `role: "advisory"` — which every observation kind must be — is recorded and surfaced, and never fails the case; so is one whose `status` is `"error"`, a check that could not be scored at all. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
+Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** from SDK 3.0 onward by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff every **required** predicate passes. A check's `role` is `"required"` (legacy spelling: `"gating"`) or `"advisory"`; absent means required. A predicate authored `role: "advisory"` — which every observation kind must be — is recorded and surfaced, and never fails the case, including when its `status` is `"error"`. A **required** check that could not be scored is the opposite: it holds the gate shut, because a check that never ran is not a check that passed (see [A predicate never passes by default](#a-predicate-never-passes-by-default)); its `onError` / `onSkipped` policy is what decides, and for a required role both default to `"fail"`. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
 
 <Note>
   Before SDK 3.0 the predicate engine was hosted-only: `EvalResultInput` had no predicate field, and a code-first run could not evaluate them. Code-first predicates now gate the iteration locally **and** report the same verdicts, so a suite reads identically whether it ran from your test file or from the platform.
@@ -486,6 +486,7 @@ The **Measures** column is the link of the [user-value chain](/sdk/concepts/user
 | `firstToolWas` | `toolName` | Selection | The first tool call observed in the transcript was `toolName`. |
 | `responseContains` | `needle`, `caseSensitive?` | User value | The final assistant message contains `needle`. Case-insensitive by default. |
 | `responseMatches` | `pattern` | User value | The final assistant message matches the regular expression `pattern` (regex source string, no flags). |
+| `responseCloseTo` | `reference`, `maxDistance`, optional `caseSensitive`, `normalizeWhitespace` | User value | Normalized Unicode code-point edit distance; budget overflow is unscored, not a mismatch. |
 | `noToolErrors` | — | Response | No tool produced an error (neither MCP `isError: true` nor a JSON-RPC/transport failure). |
 | `finalAssistantMessageNonEmpty` | — | User value | The final assistant message is a non-empty, non-whitespace string. |
 | `tokenBudgetUnder` | `tokens` | User value | Total token usage for the iteration is strictly under `tokens`. Fails when usage was not measured. |
@@ -493,23 +494,23 @@ The **Measures** column is the link of the [user-value chain](/sdk/concepts/user
 | `widgetRenderLatencyUnder` | `ms`, `toolName?` | User value | Every rendered widget observation (narrowed to `toolName` when set) mounted in strictly under `ms` milliseconds. Fails when nothing in scope rendered — an unrendered widget has no latency to check. |
 | `widgetNoConsoleErrors` | `toolName?` | User value | No widget render observation (narrowed to `toolName` when set) captured console errors. Fails when the iteration recorded no render observations in scope. |
 | `turnCountUnder` | `turns` | User value | The iteration used strictly fewer than `turns` user turns. Fails when the transcript carries no turn count. |
-| `noEndingQuestion` | — | User value | **Observation.** The final assistant message's last non-empty line does not end with `?`. Cannot tell an offer ("Would you like a breakdown?") from a request for missing input, so it is Warn/Report only — `role: "advisory"` is required and a gating one is refused. |
+| `noEndingQuestion` | — | User value | **Observation.** The final assistant message's last non-empty line does not end with `?`. Cannot tell an offer ("Would you like a breakdown?") from a request for missing input, so it is Advisory only — `role: "advisory"` is required and a required one is refused. |
 | `toolLatencyUnder` | `ms`, `toolName?` | Response | Every observed call in scope settled in strictly under `ms`. Reports `status: "error"` when the run captured no per-call timing. |
 | `toolResultContains` | `needle`, `caseSensitive?`, `toolName?` | Response | A tool result in scope contains `needle`, searched over the model-visible text and the structured payload. |
 | `toolResultMatchesSchema` | `schema`, `toolName?` | Response | Every tool result in scope validates against the authored JSON Schema. Any JSON root — 2026-07-28 dropped the object-only restriction on `structuredContent`. |
 | `toolResultSizeUnder` | `maxBytes`, `toolName?` | Response | Every tool result in scope is strictly under `maxBytes`, measured on what the server returned and **before** the transcript's own 64 000-character text cap. Bytes, not tokens. |
 | `argumentsMatchToolSchema` | `toolName?` | Tool call | Every call's arguments validate against the tool's declared `inputSchema`, classified as `missing-required`, `wrong-type`, `bad-enum` or `hallucinated-param`. A key merely absent from `properties` is legal and is reported, never failed. Schema validity does not establish that the arguments match the user's intent. |
-| `noRepeatedIdenticalCall` | `toolName?` | Tool call | **Observation.** No call repeated the one immediately before it with equal arguments. A poll loop and a transient retry are the same shape and both correct, so it is Warn/Report only. |
+| `noRepeatedIdenticalCall` | `toolName?` | Tool call | **Observation.** No call repeated the one immediately before it with equal arguments. A poll loop and a transient retry are the same shape and both correct, so it is Advisory only. |
 | `toolCallCountUnder` | `count`, `toolName?` | Selection | Strictly fewer than `count` calls in scope. Total calls, which is not the same as calls before the right tool. |
 | `toolCalledBefore` | `toolName`, `beforeToolName` | Selection | Every call to `beforeToolName` was preceded by a call to `toolName`. Vacuously true when `beforeToolName` never ran. |
-| `noDeprecatedToolCalled` | — | Selection | **Observation.** No called tool's own description marks it deprecated. Anchored to self-deprecation, so "Replaces the deprecated `old_search` tool" does not fire. Warn/Report only. |
+| `noDeprecatedToolCalled` | — | Selection | **Observation.** No called tool's own description marks it deprecated. Anchored to self-deprecation, so "Replaces the deprecated `old_search` tool" does not fire. Advisory only. |
 | `noDestructiveToolCalled` | — | Selection | No called tool declares `annotations.destructiveHint`. Reports `status: "error"` when no tool in the inventory declares annotations at all. |
-| `toolErrorNamesInput` | `toolName?` | Response | **Observation.** Every tool error message names one of that tool's input keys or a value the call sent. It does not measure recovery quality — "Rate limited. Retry in 30 seconds." names nothing and is a good message. Warn/Report only. |
-| `fullPageHasContinuation` | `toolName?` | Response | **Observation.** A page whose length equals its requested limit carries recognized continuation metadata. A full page is not proof that more results exist, so this reports rather than fails. Warn/Report only. |
+| `toolErrorNamesInput` | `toolName?` | Response | **Observation.** Every tool error message names one of that tool's input keys or a value the call sent. It does not measure recovery quality — "Rate limited. Retry in 30 seconds." names nothing and is a good message. Advisory only. |
+| `fullPageHasContinuation` | `toolName?` | Response | **Observation.** A page whose length equals its requested limit carries recognized continuation metadata. A full page is not proof that more results exist, so this reports rather than fails. Advisory only. |
 
 #### Standard checks
 
-Standard checks use the browser-safe `STANDARD_CHECKS` catalog from `@mcpjam/sdk/contract`. Every assertion preset defaults to advisory Warn. UVC reports these evaluator results without turning advisory failures into failed stages. Scored gating discovery failures can fail Discovery; setup failure attribution takes precedence. Empty complete catalogs receive an explicit "no tools advertised" rationale.
+Standard checks use the browser-safe `STANDARD_CHECKS` catalog from `@mcpjam/sdk/contract`. Every assertion preset defaults to Advisory. UVC reports these evaluator results without turning advisory failures into failed stages. Scored **required** discovery failures can fail Discovery; setup failure attribution takes precedence. Empty complete catalogs receive an explicit "no tools advertised" rationale.
 
 Cases can suppress suite check families with `suppressedSuiteStandardCheckIds` (for example, `["response.performance"]`). This filters suite defaults before inherit/extend/replace resolution, preserves explicit case and step assertions, and remains effective after a suite threshold changes. Omitted updates preserve suppression; `[]` clears it. Catalog IDs are authoring references; evaluator reporting keeps its existing content-derived scorer IDs.
 
@@ -530,9 +531,9 @@ A predicate that cannot be evaluated fails the case instead of silently passing.
 
 Some kinds above are marked **Observation**. They are heuristics — a pattern
 that can be right about what it saw and still wrong about what it means — so
-they carry one rule everywhere: `role: "advisory"` is required, a gating one is
-refused by the schema and by the backend, the authoring UI offers Warn and
-Report only, and they never enter `allGatingScorersPassed`.
+they carry one rule everywhere: `role: "advisory"` is required, a required one is
+refused by the schema and by the backend, the authoring UI offers Advisory
+only, and they never enter `allGatingScorersPassed`.
 
 #### Missing evidence is an error, not a failure
 
@@ -671,3 +672,6 @@ It is on by default and there is nothing to configure. Details worth knowing:
 - [Running Evals](/sdk/concepts/running-evals) - Conceptual guide
 - [EvalTest Reference](/sdk/reference/eval-test) - EvalTest API
 - [EvalSuite Reference](/sdk/reference/eval-suite) - EvalSuite API
+
+
+See [Reliable evals in CI](/sdk/concepts/enterprise-evals) for canonical evaluators, reporting receipts, explicit limits, metadata compatibility, and migration guidance.

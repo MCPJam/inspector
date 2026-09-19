@@ -32,11 +32,19 @@ import { cn } from "@/lib/utils";
  * rendering this; an empty checklist behind an "All checked" button would be
  * a control that only ever says nothing.
  *
- * **Optional, and says so before it opens.** The button keeps the short name
- * "What to try"; the count beside it is worded as checkbox state
- * ("2 unchecked") with a checkbox glyph, so it cannot be read as credits or a
- * limit. The popover heading spells the same thing out: "Optional things to
- * try".
+ * **One name, said once.** The button and the popover heading are both "What
+ * to try". They used to disagree — the popover opened on "Optional things to
+ * try" over a footnote leading with "Try any, in any order" — which made the
+ * list sound skippable every single time it was opened. The list being
+ * optional is true and still holds (nothing here gates the composer or reports
+ * completion); it is just not the headline.
+ *
+ * The footnote's other half stayed: "This checklist is only for you" is not
+ * framing, it is the one thing about this control a tester cannot work out by
+ * looking at it.
+ *
+ * The count beside the name stays worded as checkbox state ("2 unchecked")
+ * with a checkbox glyph, so it cannot be read as credits or a limit.
  */
 export function ScenarioTaskChecklist({
   scenarioId,
@@ -91,7 +99,7 @@ export function ScenarioTaskChecklist({
           size="sm"
           className="gap-2"
           data-testid="scenario-tasks-trigger"
-          aria-label={`What to try — optional, ${remainingLabel}`}
+          aria-label={`What to try — ${remainingLabel}`}
         >
           <span className="font-medium">What to try</span>
           <span
@@ -112,7 +120,7 @@ export function ScenarioTaskChecklist({
       </PopoverTrigger>
       <PopoverContent align="end" className="w-70 p-4">
         <p className="text-sm font-semibold text-foreground">
-          Optional things to try
+          What to try
         </p>
         <ul className="mt-2 flex flex-col gap-0.5">
           {tasks.map((task) => {
@@ -168,10 +176,12 @@ export function ScenarioTaskChecklist({
             );
           })}
         </ul>
-        {/* Says the list is not an exam, at the one moment a tester might
-            assume it was. */}
+        {/* What the tester cannot see for themselves: their ticks are local
+            bookkeeping, not something the creator is reading. Kept when "Try
+            any, in any order" was dropped — that sentence was framing, this
+            one is a fact about where the data goes. */}
         <p className="mt-3 text-[11px] leading-snug text-muted-foreground">
-          Try any, in any order. This checklist is only for you.
+          This checklist is only for you.
         </p>
       </PopoverContent>
     </Popover>
