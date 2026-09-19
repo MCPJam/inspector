@@ -605,6 +605,15 @@ export function describeBackendStreamFailure(
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
   if (code === "account_suspended")
     return describeAsSlug("account/suspended", detail);
+  // Ask MCPJam's refusals. Read by status alone these would be badly wrong in
+  // both directions: the 429s would become `provider/quota` (somebody else's
+  // rate limit) and the 403 `provider/auth_error` ("the provider rejected the
+  // key"), when what actually happened is MCPJam's own budget, MCPJam's own
+  // turn cap, and MCPJam's own attestation. The platform-budget slug already
+  // carries the right copy and a `user_config` origin, so none of them pages.
+  if (isAgentRefusalCode(code)) {
+    return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  }
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -655,6 +664,9 @@ export function describeStreamErrorChunkFailure(
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
   if (code === "account_suspended")
     return describeAsSlug("account/suspended", detail);
+  if (isAgentRefusalCode(code)) {
+    return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  }
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -1756,6 +1768,17 @@ export const USER_OWNED_DENIAL_CODES: ReadonlySet<string> = new Set<string>([
   // convex free-allowance model gate — the caller's plan, not our fault; see
   // `describeBackendStreamFailure` for the slug it maps to.
   FREE_TIER_MODEL_RESTRICTED_CODE,
+  // Ask MCPJam's own refusals (convex `stream/agentBilling.ts` +
+  // `generationRateLimit.ts`). "User-owned" here means only "not an outage" —
+  // the boundary this set governs is whether an unrecognized 200-with-a-code is
+  // captured as a FAULT. A spent platform budget, a per-user turn cap and a
+  // claim that did not hold are all a backend working exactly as designed, so
+  // none of them should page. `platform_generation_unavailable` is deliberately
+  // ABSENT: that one IS the guard failing closed, and it arrives as a 5xx we
+  // want counted as ours.
+  "platform_capacity",
+  "agent_turn_limit",
+  "agent_billing_rejected",
 ]);
 
 /** Exported for the capture-policy tests; see {@link USER_OWNED_DENIAL_CODES}. */
@@ -1791,6 +1814,27 @@ const MCPJAM_OWNED_FAILURE_CODES = new Set<string>([
 /** See {@link MCPJAM_OWNED_FAILURE_CODES}. */
 export function isMcpjamOwnedFailureCode(code: string | undefined): boolean {
   return MCPJAM_OWNED_FAILURE_CODES.has(code ?? "");
+}
+
+/**
+ * Ask MCPJam's three refusals: MCPJam's daily budget for the feature, the
+ * per-user turn cap, and a platform-billing claim that did not hold.
+ *
+ * Kept separate from {@link MCPJAM_OWNED_FAILURE_CODES} because these are not
+ * outages — the backend is working correctly and saying no. They share a slug
+ * with the platform-budget refusal, whose copy ("MCPJam's budget for this is
+ * used up, nothing was charged") is the accurate thing to tell a user on a
+ * surface they were told is free.
+ */
+const AGENT_REFUSAL_CODES = new Set<string>([
+  "platform_capacity",
+  "agent_turn_limit",
+  "agent_billing_rejected",
+]);
+
+/** See {@link AGENT_REFUSAL_CODES}. */
+export function isAgentRefusalCode(code: string | undefined): boolean {
+  return AGENT_REFUSAL_CODES.has(code ?? "");
 }
 
 /**
@@ -2998,6 +3042,28 @@ async function processOneStep(
   if (scenarioId && scenarioServiceToken) {
     convexHeaders["x-inspector-service-token"] = scenarioServiceToken;
   }
+  // A platform-billing claim is only ever honoured with this token, and
+  // `guestIpForwardHeaders` only attaches it ALONGSIDE an IP hash — so a turn
+  // with no resolvable client IP would send the claim bare and be refused at
+  // every step. Attach it unconditionally instead.
+  //
+  // Fail loudly rather than sending a claim that cannot be honoured: without
+  // the token the backend answers 403 for every step, which reads to the user
+  // as the agent being broken with no clue why. A deployment that asks for
+  // platform billing and has no service token is misconfigured, and that is
+  // the sentence worth putting in the log.
+  const billingFeature = extraBodyFields?.billingFeature;
+  if (billingFeature !== undefined) {
+    const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
+    if (!serviceToken) {
+      throw new Error(
+        "INSPECTOR_SERVICE_TOKEN is not set, so this server cannot attest an " +
+          "MCPJam-paid agent turn. Set it, or run the agent without " +
+          "billingFeature.",
+      );
+    }
+    convexHeaders["x-inspector-service-token"] = serviceToken;
+  }
   let res: Response;
   // Everything above this line is ours; everything at or below it is the
   // model's turn. Marked HERE, at the handover, not once a response comes
@@ -3058,6 +3124,45 @@ async function processOneStep(
       data: { usingCredits: true },
       transient: true,
     });
+  }
+  // A claimed turn must come back CONFIRMED platform-paid.
+  //
+  // Sending the claim is not the same as having it honoured. A backend that
+  // predates `billingFeature` ignores it as an unknown body field, bills the
+  // customer's org for the turn, and answers 200 — indistinguishable from
+  // success from here. That is a silent charge for a feature the product calls
+  // free, which is the single outcome this feature exists to prevent, so the
+  // absence of the confirmation is a REFUSAL, not a warning: the same call this
+  // file already makes for a missing service token, and the same call the exa
+  // tool makes when it cannot attest.
+  //
+  // Swapping in a synthetic denial rather than hand-rolling the failure here
+  // keeps one failure path: the branch below already writes the spans, fires
+  // `onEngineError` and classifies the code, and `agent_billing_rejected` is
+  // already the code for "the claim did not hold" and already renders as "Ask
+  // MCPJam is temporarily unavailable." The body is cancelled unread — it is a
+  // real model stream, so draining it would only put noise in the log.
+  if (
+    billingFeature !== undefined &&
+    res.ok &&
+    res.headers?.get("x-mcpjam-platform-paid") !== billingFeature
+  ) {
+    try {
+      await res.body?.cancel();
+    } catch {
+      // Already closed or never a real stream; nothing to release.
+    }
+    res = new Response(
+      JSON.stringify({
+        ok: false,
+        code: "agent_billing_rejected",
+        error:
+          "This MCPJam deployment could not confirm that the turn would be " +
+          "billed to MCPJam, so it was stopped rather than charged to your " +
+          "organization. This usually means the backend is still rolling out.",
+      }),
+      { status: 503, headers: { "content-type": "application/json" } },
+    );
   }
   const isJsonDenial =
     res.ok &&

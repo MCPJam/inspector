@@ -144,6 +144,11 @@ import {
   type CreatedResource,
 } from "../agent.js";
 import { isMcpjamToolId } from "../../../utils/built-in-tools/mcpjam.js";
+import {
+  AGENT_MAX_STEPS,
+  MCPJAM_AGENT_BILLING_FEATURE,
+  MCPJAM_AGENT_MODEL,
+} from "../../../../shared/mcpjam-agent-model.js";
 import { resetSlackRateLimitForTests } from "../../../middleware/slack-service-auth.js";
 import {
   callServerToolOperation,
@@ -396,6 +401,41 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
     expect(engineOpts.projectId).toBe("p1");
     expect(engineOpts.streamSink).toBe("none");
     expect(engineOpts.approvalMode).toBe("auto-deny");
+  });
+
+  it("bills the turn to MCPJam on the pinned agent model", async () => {
+    // Slack and Discord are the same agent as the in-app panel, so MCPJam pays
+    // for them the same way. The claim only works for the pinned model, which
+    // is why the two assertions belong together: a model change without the
+    // shared constant would silently put these surfaces back on the customer.
+    await turnRequest(makeApp(), OK_BODY);
+    const engineOpts = runUnifiedAssistantTurnMock.mock.calls[0]![0];
+    expect(engineOpts.runtime.extraBodyFields).toMatchObject({
+      billingFeature: MCPJAM_AGENT_BILLING_FEATURE,
+    });
+    expect(String(engineOpts.modelDefinition.id)).toBe(MCPJAM_AGENT_MODEL);
+    // The step ceiling the backend enforces per attested step.
+    expect(engineOpts.maxSteps).toBe(AGENT_MAX_STEPS);
+  });
+
+  it("keeps whatever else the runtime resolver put on the body", async () => {
+    // The claim is merged in, not substituted for the resolver's own fields.
+    resolveTurnRuntimeMock.mockResolvedValueOnce({
+      runtime: {
+        kind: "hosted",
+        endpointPath: "/stream",
+        extraBodyFields: { providerKey: "pk_test" },
+      },
+      modelSource: "mcpjam",
+      finalizeUsage: async () => undefined,
+      classifyFailure: () => "failed",
+    });
+    await turnRequest(makeApp(), OK_BODY);
+    const engineOpts = runUnifiedAssistantTurnMock.mock.calls[0]![0];
+    expect(engineOpts.runtime.extraBodyFields).toEqual({
+      providerKey: "pk_test",
+      billingFeature: MCPJAM_AGENT_BILLING_FEATURE,
+    });
   });
 
   it("degrades when the docs server is down (turn still runs)", async () => {

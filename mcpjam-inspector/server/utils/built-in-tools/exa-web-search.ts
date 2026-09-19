@@ -34,6 +34,15 @@ export interface ExaWebSearchToolOptions {
   scenarioId?: string;
   /** Mirrors the host's requireToolApproval. See the floor note on the tool. */
   requireToolApproval?: boolean;
+  /**
+   * Ask MCPJam only: asks Convex to bill this search to MCPJam instead of the
+   * customer's credits. Honoured only alongside `x-inspector-service-token`
+   * and only for a signed-in member, so on its own this is a request, not a
+   * decision; Convex refuses rather than silently charging when it does not
+   * hold. Absent everywhere else, which keeps the Playground's search exactly
+   * as it was.
+   */
+  billingFeature?: string;
 }
 
 interface ExaWebSearchResult {
@@ -76,17 +85,38 @@ export function buildExaWebSearchTool(
       if (!convexUrl) {
         return { error: "Web search is not configured." };
       }
+      // Only ever sent with the claim below: the claim is meaningless without
+      // it, and Convex refuses a bare one.
+      const serviceToken = opts.billingFeature
+        ? process.env.INSPECTOR_SERVICE_TOKEN?.trim()
+        : undefined;
+      // FAIL CLOSED. Sending the search without the token would not "degrade
+      // gracefully" — it would go through as an ordinary CUSTOMER-PAID search
+      // and quietly bill a signed-in user's organization for a feature the
+      // product calls free. That is the single outcome this whole change
+      // exists to prevent, and it is what the backend refuses by design
+      // rather than demoting to the customer's wallet. A missing token is a
+      // misconfigured deployment; the honest answer is to say so.
+      if (opts.billingFeature && !serviceToken) {
+        return { error: "Web search is temporarily unavailable." };
+      }
       try {
         const res = await fetch(`${convexUrl}/tools/exa/search`, {
           method: "POST",
           headers: {
             Authorization: opts.authHeader,
             "Content-Type": "application/json",
+            ...(serviceToken
+              ? { "x-inspector-service-token": serviceToken }
+              : {}),
           },
           body: JSON.stringify({
             projectId: opts.projectId,
             chatSessionId: opts.chatSessionId,
             ...(opts.scenarioId ? { scenarioId: opts.scenarioId } : {}),
+            ...(serviceToken && opts.billingFeature
+              ? { billingFeature: opts.billingFeature }
+              : {}),
             toolCallId,
             query,
           }),
@@ -97,6 +127,26 @@ export function buildExaWebSearchTool(
         }
         if (!res.ok) {
           return { error: `Web search failed (${res.status}).` };
+        }
+        // A claimed search must come back CONFIRMED platform-paid.
+        //
+        // Refusing before `fetch` on a missing token (above) only covers OUR
+        // half. A deployment that does not know `billingFeature` ignores it,
+        // runs the search on the CUSTOMER's allowance and answers an ordinary
+        // 200 with results — so without this check the model would get its
+        // answer and the organization would get the bill, for a feature the
+        // product calls free. Same contract the model call enforces via the
+        // same header.
+        //
+        // This cannot un-charge THIS search: by the time a response exists,
+        // the backend has already run and billed it. What it does is stop the
+        // NEXT one and surface the mismatch instead of hiding it, turning an
+        // unbounded silent spend into one search and a visible refusal.
+        if (
+          opts.billingFeature &&
+          res.headers?.get("x-mcpjam-platform-paid") !== opts.billingFeature
+        ) {
+          return { error: "Web search is temporarily unavailable." };
         }
         const data = (await res.json()) as {
           results?: ExaWebSearchResult[];

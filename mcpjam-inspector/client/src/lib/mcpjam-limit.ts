@@ -161,8 +161,29 @@ const findMCPJamRateLimitCode = (
  * dialog, selling credits to an organization that set its own ceiling and
  * cannot spend its way past it.
  */
+/**
+ * Ask MCPJam's refusals, which are about MCPJAM's budget, not the customer's.
+ *
+ * `platform_capacity` is MCPJam's own daily budget for the feature;
+ * `agent_turn_limit` is a per-user COUNT; `agent_billing_rejected` means the
+ * claim did not hold at all. None of them is a wallet the caller can top up,
+ * and all three arrive on a surface the product tells people is free — so
+ * opening the credits dialog for one would sell credits against a refusal
+ * buying credits cannot lift. Listed here, with the other account-state
+ * refusals, so they are also screened at every nesting level: these codes ride
+ * inside `details` and JSON-encoded `message` as readily as at the top.
+ */
+const AGENT_REFUSAL_CODES = new Set([
+  "platform_capacity",
+  "agent_turn_limit",
+  "agent_billing_rejected",
+]);
+
 const isInlineAccountRefusal = (code: unknown): boolean =>
-  code === "platform_free_budget_exhausted" || code === "account_suspended" || isSpendBudgetReachedCode(typeof code === "string" ? code : undefined);
+  code === "platform_free_budget_exhausted" ||
+  code === "account_suspended" ||
+  (typeof code === "string" && AGENT_REFUSAL_CODES.has(code)) ||
+  isSpendBudgetReachedCode(typeof code === "string" ? code : undefined);
 
 const hasNestedSpendBudgetCode = (
   value: unknown,
@@ -396,6 +417,72 @@ const MCPJAM_LIMIT_SLUGS = new Set([
  * backend refused with, which reads as a crash. `null` for anything that
  * isn't a limit error, so callers keep their own message.
  */
+/**
+ * The 503 a refused platform hold answers when MCPJam's own guard failed
+ * closed, as opposed to its budget being spent. Nothing lifts it at midnight,
+ * so it must not be shown as a daily limit.
+ */
+const AGENT_UNAVAILABLE_CODES = new Set([
+  "platform_generation_unavailable",
+  "agent_billing_rejected",
+]);
+
+/** Every code, at any nesting depth, that a refusal body carries. */
+const collectCodes = (
+  value: unknown,
+  out: Set<string>,
+  seen = new WeakSet<object>(),
+): void => {
+  if (typeof value === "string") {
+    for (const parsed of collectJsonCandidates(value)) {
+      collectCodes(parsed, out, seen);
+    }
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  if (seen.has(value)) return;
+  seen.add(value);
+  const code = getStringProperty(value, "code");
+  if (code) out.add(code);
+  for (const item of Array.isArray(value) ? value : Object.values(value)) {
+    collectCodes(item, out, seen);
+  }
+};
+
+/**
+ * One plain sentence for an Ask MCPJam refusal, or `null` when the error is
+ * something else.
+ *
+ * The agent is free, so none of these is a wallet the reader can top up, and
+ * the raw body they arrive as reads as a crash. The two sentences say the only
+ * two things worth saying: come back after the reset, or this is ours and it is
+ * temporary.
+ */
+export function describeAgentRefusalMessage(
+  message: string | null | undefined,
+): string | null {
+  if (!message) return null;
+  const codes = new Set<string>();
+  collectCodes(message, codes);
+  // Unconditional, not a fallback for an unparseable body. `collectCodes` only
+  // records a `code` PROPERTY, so a refusal nested as plain text under some
+  // other envelope — `{"code":"RATE_LIMITED","details":"agent_turn_limit"}` —
+  // leaves a non-empty set that does not contain the code that actually
+  // matters, and gating the scan on `size === 0` would skip it and print the
+  // raw body. These codes are distinctive enough (none is an English word)
+  // that scanning always costs nothing.
+  for (const code of [...AGENT_REFUSAL_CODES, ...AGENT_UNAVAILABLE_CODES]) {
+    if (message.includes(code)) codes.add(code);
+  }
+  for (const code of AGENT_UNAVAILABLE_CODES) {
+    if (codes.has(code)) return "Ask MCPJam is temporarily unavailable.";
+  }
+  if (codes.has("platform_capacity") || codes.has("agent_turn_limit")) {
+    return "Ask MCPJam has reached today's limit. It resets at 00:00 UTC.";
+  }
+  return null;
+}
+
 export function describeMCPJamLimitMessage(
   message: string | null | undefined,
 ): string | null {

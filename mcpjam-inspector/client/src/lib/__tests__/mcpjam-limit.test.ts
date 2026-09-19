@@ -1,6 +1,7 @@
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  describeAgentRefusalMessage,
   describeMCPJamLimitMessage,
   isMCPJamModelLimitError,
   isSpendBudgetReachedCode,
@@ -519,3 +520,86 @@ it.each(["platform_free_budget_exhausted", "account_suspended"])(
     ).toBe(false);
   },
 );
+
+/**
+ * Ask MCPJam is paid by MCPJam, so none of its refusals is a wallet anyone can
+ * top up. Selling credits against one would be wrong twice over: the credits
+ * would not lift the refusal, and the surface was advertised as free.
+ */
+describe("Ask MCPJam refusals", () => {
+  const CODES = [
+    "platform_capacity",
+    "agent_turn_limit",
+    "agent_billing_rejected",
+  ];
+
+  it.each(CODES)("keeps %s out of the credits dialog", (code) => {
+    expect(isMCPJamModelLimitError({ code })).toBe(false);
+    // …and when the same code arrives nested, which is how a refused stream
+    // step reaches the client: the body as a JSON-encoded `message`.
+    expect(
+      isMCPJamModelLimitError({
+        message: JSON.stringify({ code, error: "user_rate_limit" }),
+      }),
+    ).toBe(false);
+    expect(notifyMCPJamLimitError({ code })).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+
+  it.each(["platform_capacity", "agent_turn_limit"])(
+    "describes %s as today's limit, with the reset a reader can act on",
+    (code) => {
+      expect(describeAgentRefusalMessage(JSON.stringify({ code }))).toBe(
+        "Ask MCPJam has reached today's limit. It resets at 00:00 UTC.",
+      );
+    },
+  );
+
+  it.each(["platform_generation_unavailable", "agent_billing_rejected"])(
+    "describes %s as temporary, because no reset time lifts it",
+    (code) => {
+      expect(describeAgentRefusalMessage(JSON.stringify({ code }))).toBe(
+        "Ask MCPJam is temporarily unavailable.",
+      );
+    },
+  );
+
+  it("finds a refusal nested as plain text under another code", () => {
+    // `collectCodes` only records a `code` PROPERTY, so this payload yields
+    // {RATE_LIMITED} — non-empty, but without the code that decides the copy.
+    // Gating the substring scan on an empty set would skip it here and print
+    // the raw body at the user.
+    expect(
+      describeAgentRefusalMessage(
+        JSON.stringify({ code: "RATE_LIMITED", details: "agent_turn_limit" }),
+      ),
+    ).toBe("Ask MCPJam has reached today's limit. It resets at 00:00 UTC.");
+    expect(
+      describeAgentRefusalMessage(
+        JSON.stringify({
+          code: "UPSTREAM",
+          details: { note: "agent_billing_rejected" },
+        }),
+      ),
+    ).toBe("Ask MCPJam is temporarily unavailable.");
+  });
+
+  it("reads the code out of a body that is not JSON at all", () => {
+    // The AI SDK folds a pre-stream refusal into `new Error(await res.text())`,
+    // and a proxy can mangle that text on the way. A distinctive code in a
+    // string is still the truth about what happened.
+    expect(
+      describeAgentRefusalMessage('HTTP 429: ... "code":"agent_turn_limit" ...'),
+    ).toBe("Ask MCPJam has reached today's limit. It resets at 00:00 UTC.");
+  });
+
+  it("leaves anything else to the caller's own message", () => {
+    expect(describeAgentRefusalMessage(null)).toBeNull();
+    expect(
+      describeAgentRefusalMessage("MCP server closed the connection"),
+    ).toBeNull();
+    expect(
+      describeAgentRefusalMessage(JSON.stringify({ code: "user_rate_limit" })),
+    ).toBeNull();
+  });
+});
