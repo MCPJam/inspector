@@ -1,3 +1,5 @@
+import { createElement } from "react";
+import { ModelDisplayNamesContext } from "@/lib/model-display-name";
 import { normalizeGeneratedDraft } from "@/lib/evals/normalize-generated-draft";
 import { evalChatSuiteContext } from "@/lib/mcpjam-agent/eval-chat-context";
 import { syncEvalChatContext } from "@/lib/mcpjam-agent/eval-scope";
@@ -6,29 +8,8 @@ import { EvalAgentWorkspace } from "./evaluate/eval-agent-workspace";
 import type { GenerationOptions } from "@/lib/apis/evals-api";
 import type { CreateEvalTestCaseInput } from "@/lib/evals/generate-and-persist-tests";
 /**
- * Evaluate (New) — the redesigned Evaluate tab, behind `evaluate-enabled`.
- *
- * A DELIBERATE fork of `EvalsTab.tsx`, not a refactor of it. The same redesign
- * has been merged into the live tab and reverted twice (#4319/#4320,
- * #4344/#4363); shipping it as a second tab means a problem here cannot reach
- * anyone who has not opted in. Only the screens the redesign actually rewrote
- * are duplicated (`components/evaluate/`) — the queries, mutations, handlers,
- * run detail, and case editors are still the shared `components/evals/`
- * modules, so eval behaviour cannot drift between the two tabs.
- *
- * Differences from `EvalsTab`:
- * - the landing is a suites table with a Runs view, not a redirect into the
- *   most recently run suite;
- * - create-suite is a full page at `/evaluate/create`, not a dialog;
- * - suite overview is `SuiteDetailOverview` (identity + run history + cases);
- * - there is no Runs lens — the commit-keyed CI review stays on `/evals/runs`.
- *
- * It bridges as `surfaceId: "evals"` on purpose: the two tabs are never mounted
- * at once, so the agent keeps one set of eval tools over one set of suites.
- *
- * When the redesign wins, this file becomes `EvalsTab.tsx` and the original,
- * `components/evaluate/`, and the `suiteDetailOverview` prop on
- * `SuiteIterationsView` all go away together.
+ * Public Evaluate experience. Reuses the shared eval data and mutation layer;
+ * legacy Evaluate remains available separately behind evaluate-enabled.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -67,7 +48,6 @@ import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useEvaluateRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
-import { useEvaluateEnabled } from "@/hooks/useEvaluateEnabled";
 import { useObserveFirstEnabled } from "@/hooks/useObserveFirstEnabled";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
@@ -89,7 +69,7 @@ import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { LaunchedCaseJudge } from "./evaluate/case-scorecard/launched-case-judge";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { SuitesOverview } from "./evaluate/suites-overview";
+import { ConnectedSuitesOverview as SuitesOverview } from "./evaluate/suites-overview";
 import { SuiteListRunReview } from "./evaluate/suite-list-run-review";
 import { ProjectRunsTable } from "./evals/project-runs-table";
 import { stripTimestampSuffix } from "./evals/suite-overview-presentation";
@@ -195,12 +175,8 @@ function EvaluateTabContent({
   // = hostsEnabled && projectId), so it stays auth-gated rather than
   // unconditionally on.
   const hostsEnabled = isAuthenticated;
-  // The canonical run decision summary is part of the Evaluate redesign, so
-  // it rides `evaluate-enabled` rather than a second flag. Resolved HERE and
-  // threaded down: every surface that reads it takes the answer as a prop and
-  // is off by default, so a flag-off render issues zero summary requests even
-  // though those components are shared with `/evals`.
-  const decisionSummaryEnabled = useEvaluateEnabled();
+  // Decision summaries are part of the public Evaluate experience.
+  const decisionSummaryEnabled = true;
   const observeFirstEnabled = useObserveFirstEnabled();
   const route = useEvaluateRouteFromUrl();
   const isDirectGuest = useIsDirectGuest({ projectId });
@@ -522,6 +498,9 @@ function EvaluateTabContent({
         isExcalidrawConnected: connectedServerNames.has(EXCALIDRAW_SERVER_NAME),
         existingQuickstartSuiteId,
         previewedHostId,
+        // Stay in Evaluate. The default lands on `/evals/...`, which dropped
+        // the reader into the shipped tab's copy of the suite they just made.
+        navigate: navigatePlaygroundEvalsRoute,
       });
     } finally {
       setIsQuickstartRunning(false);
@@ -1168,11 +1147,6 @@ function EvaluateTabContent({
 
       if (failedDeletes.length > 0) {
         console.error("Failed to delete some test cases:", failedDeletes);
-        toast.error(
-          `Failed to delete ${failedDeletes.length} test case${
-            failedDeletes.length === 1 ? "" : "s"
-          }.`,
-        );
       }
 
       if (selectedSuiteId && selectedTestId && deletedIds.has(selectedTestId)) {
@@ -1183,6 +1157,18 @@ function EvaluateTabContent({
             view: "test-cases",
           },
           { replace: true },
+        );
+      }
+
+      // Resolving has to mean "every id is gone". Callers report the outcome
+      // — a success toast, closing the confirm, leaving the case editor — and
+      // `allSettled` swallowing the rejection told all of them the delete had
+      // worked while the case was still there.
+      if (failedDeletes.length > 0) {
+        throw new Error(
+          `Failed to delete ${failedDeletes.length} test case${
+            failedDeletes.length === 1 ? "" : "s"
+          }.`,
         );
       }
     },
@@ -1200,6 +1186,15 @@ function EvaluateTabContent({
   const suiteBreadcrumbLabel = selectedSuite
     ? stripTimestampSuffix(selectedSuite.name || "") || "Untitled suite"
     : null;
+  // Breadcrumb for a run: number it like the run list does ("Run #6") when the
+  // run row is loaded, so the crumb and the page heading agree.
+  const runBreadcrumbNumber =
+    route.type === "run-detail"
+      ? (runsForSelectedSuite.find((run) => run._id === route.runId)
+          ?.runNumber ?? null)
+      : null;
+  const runBreadcrumbLabel =
+    runBreadcrumbNumber != null ? `Run #${runBreadcrumbNumber}` : "Run";
   const isNestedDetail =
     route.type === "test-edit" ||
     route.type === "test-detail" ||
@@ -1213,12 +1208,25 @@ function EvaluateTabContent({
             (testCase) => testCase._id === selectedTestId,
           )?.title || "Test case"
       : route.type === "suite-edit"
-        ? "Settings"
+        ? "Test Suite Evaluators"
         : route.type === "run-detail"
-          ? "Run"
+          ? runBreadcrumbLabel
           : null;
 
+  /**
+   * Case generation replaces the suite page WITHOUT changing the route, so
+   * the breadcrumb has to be told. `exit` is how its suite crumb gets back:
+   * navigating to the route we are already on would change nothing.
+   */
+  const [generatingCases, setGeneratingCases] = useState<{
+    exit: () => void;
+    /** Import review borrows this crumb; without it every surface reads
+     * "Generate test cases". */
+    label?: string;
+  } | null>(null);
+
   const renderPlaygroundBreadcrumb = () => {
+    if (generatingCases) return generatingCases.label ?? "Generate test cases";
     if (!hasDetailRoute) return null;
     return isNestedDetail ? nestedPageLabel : suiteBreadcrumbLabel;
   };
@@ -1343,7 +1351,7 @@ function EvaluateTabContent({
           data-testid="evals-runs-landing"
         >
           <ProjectRunsTable
-            metricBars
+            evaluateLayout
             historyMetricsEnabled
             projectId={projectId}
             onSelectRun={handleSelectRunFromAllRuns}
@@ -1394,6 +1402,7 @@ function EvaluateTabContent({
       >
         <div>
           <SuitesOverview
+            projectId={projectId}
             overview={visibleSuites}
             onSelectSuite={handleSelectSuite}
             onRerun={(suite) => {
@@ -1452,9 +1461,7 @@ function EvaluateTabContent({
           onDuplicateSuite={() => handlers.handleDuplicateSuite(selectedSuite)}
           alwaysShowEditIterationRows
           onEditTestCase={(testCaseId) =>
-            playgroundNavigation.toTestEdit(selectedSuite._id, testCaseId, {
-              openCompare: true,
-            })
+            playgroundNavigation.toTestEdit(selectedSuite._id, testCaseId)
           }
           onCreateTestCase={async () =>
             handlers.handleCreateTestCase(selectedSuite._id)
@@ -1493,6 +1500,7 @@ function EvaluateTabContent({
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
           evaluateObserveFirst={observeFirstEnabled}
+          onGeneratingChange={setGeneratingCases}
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
           onRunTestCase={(testCase, opts) => {
@@ -1530,7 +1538,9 @@ function EvaluateTabContent({
 
   const renderPlaygroundBody = () => renderSuitesBrowsePanel();
 
-  return (
+  return createElement(
+    ModelDisplayNamesContext.Provider,
+    { value: availableModels },
     <EvalTabGate
       variant="playground"
       isLoading={isLoading}
@@ -1547,15 +1557,27 @@ function EvaluateTabContent({
               route.type === "list" ? handleOpenCreateSuite : undefined
             }
             detailCrumb={
-              route.type === "test-edit" && route.checks
-                ? { label: "UVC checks" }
-                : undefined
+              route.type === "suite-edit" && route.fromCaseChecks
+                ? { label: "Test Suite Evaluators" }
+                : route.type === "test-edit" && route.checks
+                  ? { label: "Test Case Evaluators" }
+                  : undefined
             }
             onCurrentCrumbClick={
-              route.type === "test-edit" && route.checks
+              route.type === "suite-edit" && route.fromCaseChecks
                 ? () =>
-                    playgroundNavigation.toTestEdit(route.suiteId, route.testId)
-                : undefined
+                    playgroundNavigation.toTestEdit(
+                      route.suiteId,
+                      route.fromCaseChecks!,
+                      { checks: true },
+                    )
+                : route.type === "test-edit" && route.checks
+                  ? () =>
+                      playgroundNavigation.toTestEdit(
+                        route.suiteId,
+                        route.testId,
+                      )
+                  : undefined
             }
             landingView={landingView}
             onLandingViewChange={setLandingView}
@@ -1568,24 +1590,31 @@ function EvaluateTabContent({
                     onClick: () =>
                       handleBackToEvalServer(route.fromEvalServer!),
                   }
-                : isNestedDetail && suiteBreadcrumbLabel && selectedSuiteId
+                : generatingCases && suiteBreadcrumbLabel
                   ? {
                       label: suiteBreadcrumbLabel,
-                      onClick: () =>
-                        playgroundNavigation.toSuiteOverview(selectedSuiteId),
+                      onClick: generatingCases.exit,
                     }
-                  : undefined
+                  : isNestedDetail && suiteBreadcrumbLabel && selectedSuiteId
+                    ? {
+                        label: suiteBreadcrumbLabel,
+                        onClick: () =>
+                          playgroundNavigation.toSuiteOverview(selectedSuiteId),
+                      }
+                    : undefined
             }
           >
-            {route.type === "eval-server"
-              ? evalServer?.name
-              : route.type === "test-edit" && route.fromEvalServer
-                ? (previewCaseTitleFromDraft(
-                    route.fromEvalServer,
-                    route.suiteId,
-                    route.testId,
-                  ) ?? nestedPageLabel)
-                : renderPlaygroundBreadcrumb()}
+            {route.type === "suite-edit" && route.fromCaseChecks
+              ? "Test Case Evaluators"
+              : route.type === "eval-server"
+                ? evalServer?.name
+                : route.type === "test-edit" && route.fromEvalServer
+                  ? (previewCaseTitleFromDraft(
+                      route.fromEvalServer,
+                      route.suiteId,
+                      route.testId,
+                    ) ?? nestedPageLabel)
+                  : renderPlaygroundBreadcrumb()}
           </EvalsHeader>
         )
       }
@@ -1717,6 +1746,6 @@ function EvaluateTabContent({
           onConfirmDeleteTestCase={handlers.confirmDeleteTestCase}
         />
       </EvalAgentWorkspace>
-    </EvalTabGate>
+    </EvalTabGate>,
   );
 }

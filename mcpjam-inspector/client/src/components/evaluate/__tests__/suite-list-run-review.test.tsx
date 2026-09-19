@@ -21,7 +21,7 @@ vi.mock("../suite-run-review", () => ({
     return (
       <>
         <input
-          aria-label="Repetitions"
+          aria-label="Iterations"
           value={repetitions}
           onChange={(event) => setRepetitions(event.target.value)}
         />
@@ -40,11 +40,11 @@ describe("SuiteListRunReview", () => {
       onStart: vi.fn(),
     };
     const { rerender } = render(<SuiteListRunReview {...props} />);
-    const input = screen.getByLabelText("Repetitions");
+    const input = screen.getByLabelText("Iterations");
     fireEvent.change(input, { target: { value: "7" } });
     data.details = { testCases: [{ _id: "case" }] };
     rerender(<SuiteListRunReview {...props} />);
-    expect(screen.getByLabelText("Repetitions")).toBe(input);
+    expect(screen.getByLabelText("Iterations")).toBe(input);
     expect(input).toHaveValue("7");
     expect(screen.getByText("1 loaded cases")).toBeVisible();
   });

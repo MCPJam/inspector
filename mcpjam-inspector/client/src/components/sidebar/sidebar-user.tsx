@@ -82,7 +82,7 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
       void Promise.race([
         Promise.resolve(signOut({ returnTo, navigate: false })),
         new Promise((resolve) =>
-          setTimeout(resolve, SIGN_OUT_REQUEST_TIMEOUT_MS)
+          setTimeout(resolve, SIGN_OUT_REQUEST_TIMEOUT_MS),
         ),
       ])
         // A failed logout request still gets the navigation: the session is
@@ -272,7 +272,7 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
                 ) : null}
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={() => appNavigate("/support")}
+                onClick={() => appNavigate("/settings/support")}
                 className="cursor-pointer"
               >
                 <MessageCircleQuestion className="size-4" />

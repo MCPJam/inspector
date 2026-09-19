@@ -115,7 +115,18 @@ describe("eval run decision summary — golden corpus", () => {
 
   for (const row of corpus.cases) {
     it(`${row.__name}: assembles to the checked-in summary`, () => {
-      expect(assembleEvalRunDecisionSummary(row.input)).toEqual(row.expected);
+      const expected = structuredClone(row.expected);
+      // The immutable golden recorded reader 11. Only the reader capability advances.
+      for (const item of expected.diagnostics.items) {
+        if (
+          item.chain.status === "verified" &&
+          item.chain.analyzerVersionAhead
+        ) {
+          expect(item.chain.analyzerVersionAhead.known).toBe(11);
+          item.chain.analyzerVersionAhead.known = 12;
+        }
+      }
+      expect(assembleEvalRunDecisionSummary(row.input)).toEqual(expected);
     });
 
     it(`${row.__name}: validates against the contract schema`, () => {
@@ -245,8 +256,9 @@ describe("evidence is attached to the claim it supports", () => {
   });
 
   it("withholds the rejected claim from an unverified chain", () => {
-    const [quarantined, ahead] = byName("unverified-and-version-ahead").expected
-      .diagnostics.items;
+    const [quarantined, ahead] = assembleEvalRunDecisionSummary(
+      byName("unverified-and-version-ahead").input
+    ).diagnostics.items;
     expect(quarantined!.chain).toEqual({
       status: "unverified",
       analyzerVersion: 4,
