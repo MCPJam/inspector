@@ -86,10 +86,12 @@ export function appendDetectedLocalOllamaModels(
 ): ModelDefinition[] {
   if (!isOllamaRunning || ollamaModels.length === 0) return models;
   return models.concat(
-    ollamaModels.filter(
-      (ollamaModel) =>
-        !models.some((model) => String(model.id) === String(ollamaModel.id))
-    )
+    ollamaModels
+      .filter(
+        (ollamaModel) =>
+          !models.some((model) => String(model.id) === String(ollamaModel.id))
+      )
+      .map((model) => ({ ...model, hosted: false }))
   );
 }
 

@@ -1,7 +1,31 @@
+import {
+  assertEvalCaptureWithinLimit,
+  DEFAULT_MAX_CAPTURED_BYTES,
+  EvalCaptureLimitError,
+} from "./eval-capture-limit.js";
+import { formatRunSummaryTable } from "./eval-summary.js";
+import {
+  evaluateCaseRun,
+  RunEvaluatorContextError,
+  unavailableCaseRunEvaluation,
+  runEvaluatorContextFromIterations,
+  type RunEvaluator,
+  type CaseRunEvaluation,
+} from "./run-evaluators.js";
+import { prepareReportingConfig } from "./eval-reporting-config.js";
+import {
+  captureReportedMeasurements,
+  evaluateReportedMeasurements,
+  reportedDefinitions,
+  type EvalExecutionContext,
+  type ReportedMeasurement,
+  type ReportedEvidence,
+} from "./eval-reported.js";
 import type { HostExecutor } from "./HostExecutor.js";
 import type { PromptResult } from "./PromptResult.js";
 import type { LatencyBreakdown } from "./types.js";
 import type {
+  EvalReportingReceipt,
   EvalExpectedToolCall,
   EvalResultInput,
   MCPJamReportingConfig,
@@ -47,20 +71,66 @@ import {
   type CaseIntent,
 } from "./contract/stage-intent.js";
 import type { IterationStatus } from "./contract/chain.js";
-import { runScorers, scoresPassed } from "./scorers/run.js";
-import { Semaphore } from "./scorers/concurrency.js";
+import { scoresPassed } from "./scorers/run.js";
+import { runEvaluators } from "./evaluators/run.js";
+import type { AnyEvaluator, AssertionEvaluator } from "./evaluators/types.js";
+import { toEvaluatorResult } from "./contract/evaluator-derive.js";
+import type { EvaluatorResult } from "./contract/evaluator-types.js";
+import { definitionHash, resolveScoreDefinition } from "./contract/derive.js";
 import type { Scorer } from "./scorers/types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import { posthog } from "./telemetry.js";
-import { reportEvalResultsSafely } from "./report-eval-results.js";
+import {
+  captureEvalReporting,
+  notRequestedReceipt,
+} from "./eval-reporting-receipt.js";
 import {
   actualToolCallsFromPrompts,
   iterationsToEvalResultInputs,
   iterationTraceFromPrompts,
   traceMessagesFromPrompts,
+  variantFromExecutor,
 } from "./eval-result-mapping.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
+import { canonicalizeCheckRole } from "./predicates/policy.js";
+
+function snapshotEvaluator<T extends AnyEvaluator>(evaluator: T): T {
+  return {
+    ...evaluator,
+    definition: structuredClone(evaluator.definition),
+    ...("evaluate" in evaluator
+      ? { evaluate: evaluator.evaluate.bind(evaluator) }
+      : { score: evaluator.score.bind(evaluator) }),
+    ...((evaluator as AssertionEvaluator).kind === "assertion"
+      ? { rule: structuredClone((evaluator as AssertionEvaluator).rule) }
+      : {}),
+  };
+}
+
+function snapshotTestConfig(config: EvalTestConfig): EvalTestConfig {
+  return {
+    ...config,
+    expectedToolCalls: structuredClone(config.expectedToolCalls),
+    matchOptions: structuredClone(config.matchOptions),
+    predicates: structuredClone(config.predicates),
+    reported: structuredClone(config.reported),
+    scorers: config.scorers?.map(snapshotEvaluator),
+    ...(config.evaluators && Array.isArray(config.evaluators.list)
+      ? {
+          evaluators: {
+            ...config.evaluators,
+            list: config.evaluators.list.map(snapshotEvaluator),
+          },
+        }
+      : {}),
+    runEvaluators: config.runEvaluators?.map((evaluator) => ({
+      ...evaluator,
+      evaluate: evaluator.evaluate.bind(evaluator),
+      definition: structuredClone(evaluator.definition),
+    })),
+  };
+}
 
 /**
  * Reject predicates a local run can never satisfy.
@@ -250,6 +320,11 @@ function assertSingleCaseIdentity(config: EvalTestConfig): void {
  * `HostExecutor` (implemented by `HostRunner`, `HostRuntime`, and any custom
  * executor that mirrors the interface).
  */
+export type EvaluatorOverride = {
+  mode: "inherit" | "extend" | "replace";
+  list: AnyEvaluator[];
+};
+
 export interface EvalTestConfig {
   /**
    * This case's DECLARED identity. Required.
@@ -269,7 +344,17 @@ export interface EvalTestConfig {
    */
   id: string;
   name: string;
-  test: (executor: HostExecutor) => boolean | Promise<boolean>;
+  test?: (
+    executor: HostExecutor,
+    ctx: EvalExecutionContext
+  ) => boolean | Promise<boolean>;
+  execute?: (
+    executor: HostExecutor,
+    ctx: EvalExecutionContext
+  ) => void | Promise<void>;
+  reported?: ReportedMeasurement[];
+  runEvaluators?: RunEvaluator[];
+  evaluators?: EvaluatorOverride;
   expectedToolCalls?: EvalExpectedToolCall[];
   /** Matcher policy for locally enforcing expectedToolCalls. */
   matchOptions?: EvalMatchOptions;
@@ -349,6 +434,7 @@ export interface EvalTestConfig {
  */
 export interface EvalTestRunOptions {
   iterations: number;
+  summary?: "none" | "table";
   concurrency?: number; // default: 5
   retries?: number; // default: 0
   timeoutMs?: number; // default: 30000
@@ -360,6 +446,14 @@ export interface EvalTestRunOptions {
   scorerConcurrency?: number;
   /** Fallback per-scorer hard timeout. Default 60000. */
   scorerTimeoutMs?: number;
+  evaluatorConcurrency?: number;
+  evaluatorTimeoutMs?: number;
+  /** Cooperative cancellation also bounds SDK queues and evaluator waits. */
+  signal?: AbortSignal;
+  /** Deadline for execution and evaluation across the whole run. */
+  runTimeoutMs?: number;
+  /** Maximum retained evidence bytes per iteration; default 16 MiB. Does not cap executor/custom-code allocation. */
+  maxCapturedBytes?: number;
   /** @internal used by EvalSuite to prevent duplicate per-test uploads */
   __suppressMcpjamAutoSave?: boolean;
 }
@@ -420,12 +514,23 @@ export interface IterationResult {
    * THE verdict source: `passed` is derived from the gating rows here.
    */
   scores?: ScoreResult[];
+  evaluatorResults?: EvaluatorResult[];
+  reportedEvidence?: readonly ReportedEvidence[];
+  captureError?: {
+    code: "SDK_CAPTURE_LIMIT_EXCEEDED";
+    maxCapturedBytes: number;
+  };
 }
 
 /**
  * Result of running an EvalTest
  */
 export interface EvalRunResult {
+  /** Partial means at least one iteration exceeded the SDK capture limit; aggregate usage is incomplete. */
+  captureCompleteness?: "partial";
+  runEvaluation?: CaseRunEvaluation;
+  /** Observer failures never rewrite measured iteration outcomes. */
+  observerErrors?: { callback: "onProgress" | "onFailure"; message: string }[];
   iterations: number;
   successes: number;
   failures: number;
@@ -458,9 +563,6 @@ const ITERATION_ABORT_GRACE_MS = 1000;
 /**
  * Sleep for a given number of milliseconds
  */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function mergeAbortSignals(
   first?: AbortSignal,
@@ -572,12 +674,44 @@ function wrapAgentWithAbortSignal(
  */
 export class EvalTest {
   private config: EvalTestConfig;
+  private lastReportingReceipt: EvalReportingReceipt =
+    notRequestedReceipt("disabled");
+
+  getLastReport() {
+    return structuredClone(this.lastReportingReceipt.report ?? null);
+  }
+
+  getReportingReceipt(): EvalReportingReceipt {
+    return structuredClone(this.lastReportingReceipt);
+  }
+
   private lastRunResult: EvalRunResult | null = null;
   private lastEvaluationConfig: EvaluationConfigSnapshot | null = null;
 
-  constructor(config: EvalTestConfig) {
-    if (!config.test) {
-      throw new Error("Invalid config: must provide 'test' function");
+  private effectiveAssertions: {
+    rule: Predicate;
+    definition: ReturnType<typeof predicateScoreDefinition>;
+  }[] = [];
+  private effectiveEvaluators: AnyEvaluator[] = [];
+  private running = false;
+  private defaultEvaluators: readonly AnyEvaluator[] = [];
+
+  constructor(
+    config: EvalTestConfig,
+    defaults?: { evaluators?: readonly AnyEvaluator[] }
+  ) {
+    if (config.test !== undefined && config.execute !== undefined) {
+      throw new Error(
+        `EvalTest "${config.name}" sets both \`execute\` and its legacy \`test\` alias — set one. They are two spellings of the case's driver; \`execute\` may return nothing and lets the evaluators decide.`
+      );
+    }
+    if (
+      typeof config.test !== "function" &&
+      typeof config.execute !== "function"
+    ) {
+      throw new Error(
+        "Invalid config: must provide 'execute' (or the legacy 'test') function"
+      );
     }
     // Normalize `externalCaseId` ONCE, here, so exactly one value is in play
     // for the rest of this object's life. The hosted key is derived from the
@@ -630,7 +764,87 @@ export class EvalTest {
           `never reads. Drop one of the two.`
       );
     }
-    this.config = config;
+    if (
+      config.runEvaluators?.some(
+        (evaluator) => evaluator.definition.role !== "advisory"
+      )
+    )
+      throw new Error("Run evaluators must be advisory");
+    this.config = snapshotTestConfig(config);
+    this.setDefaultEvaluators(defaults?.evaluators ?? []);
+  }
+
+  /** A fresh case instance with the same authoring and inherited defaults, but no run state. */
+  clone(): EvalTest {
+    return new EvalTest(
+      { ...this.config },
+      { evaluators: this.defaultEvaluators }
+    );
+  }
+
+  /** Apply suite defaults without rewriting the authored case configuration. */
+  setDefaultEvaluators(defaults: readonly AnyEvaluator[]): void {
+    if (this.running)
+      throw new Error("Cannot change evaluator defaults during a run");
+    defaults = defaults.map(snapshotEvaluator);
+    this.defaultEvaluators = defaults;
+    const override = this.config.evaluators;
+    if (
+      override &&
+      (Array.isArray(override) ||
+        !["inherit", "extend", "replace"].includes(override.mode) ||
+        !Array.isArray(override.list))
+    ) {
+      throw new Error(
+        "evaluators must be { mode: inherit | extend | replace, list }"
+      );
+    }
+    const inherited = override?.mode === "replace" ? [] : defaults;
+    const own = override && override.mode !== "inherit" ? override.list : [];
+    const isAssertion = (value: AnyEvaluator): value is AssertionEvaluator =>
+      (value as AssertionEvaluator).kind === "assertion";
+    const assertions = [
+      ...inherited
+        .filter(isAssertion)
+        .map((value) => ({ rule: value.rule as Predicate, id: value.id })),
+      // `config.predicates` is raw author input — unlike an `assertion()`
+      // rule, which canonicalized at construction — and it is uploaded
+      // verbatim as `effectiveAssertions[].rule` on every iteration. So the
+      // storage spelling settles here, before anything reads or ships it.
+      ...(this.config.predicates ?? []).map((rule) => ({
+        rule: canonicalizeCheckRole(rule),
+        id: undefined,
+      })),
+      ...own
+        .filter(isAssertion)
+        .map((value) => ({ rule: value.rule as Predicate, id: value.id })),
+    ];
+    assertLocallyEvaluablePredicates(assertions.map((value) => value.rule));
+    this.effectiveAssertions = assertions.map((value, ordinal) => ({
+      rule: value.rule,
+      definition: predicateScoreDefinition(value.rule, {
+        ordinal,
+        ...(value.id ? { id: value.id } : {}),
+      }),
+    }));
+    this.effectiveEvaluators = [
+      ...(this.config.scorers ?? []),
+      ...inherited.filter((value) => !isAssertion(value)),
+      ...own.filter((value) => !isAssertion(value)),
+    ];
+    // Identity conflicts are rejected before executing user code.
+    this.buildEvaluationConfig();
+    const seen = new Set<string>();
+    this.effectiveAssertions = this.effectiveAssertions.filter((value) => {
+      if (seen.has(value.definition.scorerId)) return false;
+      seen.add(value.definition.scorerId);
+      return true;
+    });
+    this.effectiveEvaluators = this.effectiveEvaluators.filter((value) => {
+      if (seen.has(value.definition.scorerId)) return false;
+      seen.add(value.definition.scorerId);
+      return true;
+    });
   }
 
   /**
@@ -640,205 +854,508 @@ export class EvalTest {
     executor: HostExecutor,
     options: EvalTestRunOptions
   ): Promise<EvalRunResult> {
-    // Internal alias kept short so the iteration loop reads cleanly; the
-    // public-facing parameter name is `executor`.
-    const agent = executor;
-    posthog.capture({
-      distinctId: "anonymous",
-      event: "eval_test_run_triggered",
-      properties: {
-        iterations: options.iterations,
-        concurrency: options.concurrency ?? 5,
-      },
-    });
-    const concurrency = options.concurrency ?? 5;
-    const retries = options.retries ?? 0;
-    const timeoutMs = options.timeoutMs ?? 30000;
-    const onProgress = options.onProgress;
-
-    const semaphore = new Semaphore(concurrency);
-    let completedCount = 0;
-
-    const testFn = this.config.test;
-    const iterationResults: IterationResult[] = [];
-    const total = options.iterations;
-    // One snapshot per run: scorer definitions are configuration, not per-
-    // iteration state, and the hash must be stable across every iteration of
-    // the run so the backend can fold ONE value into the run fingerprint.
-    const evaluationConfig = this.buildEvaluationConfig();
-    this.lastEvaluationConfig = evaluationConfig;
-
-    const runSingleIteration = async (): Promise<IterationResult> => {
-      await semaphore.acquire();
-      try {
-        let lastError: string | undefined;
-        let lastAttemptTimedOut = false;
-        let iterationAgent: HostExecutor | undefined;
-
-        for (let attempt = 0; attempt <= retries; attempt++) {
-          const abortController = new AbortController();
-          const timeoutError = new Error(
-            `Operation timed out after ${timeoutMs}ms`
+    if (this.running)
+      throw new Error("This EvalTest already has a run in progress");
+    const integer = (name: string, value: number, min = 1) => {
+      if (!Number.isSafeInteger(value) || value < min)
+        throw new Error(`${name} must be a safe integer >= ${min}`);
+    };
+    integer("iterations", options.iterations);
+    integer("concurrency", options.concurrency ?? 5);
+    integer("retries", options.retries ?? 0, 0);
+    integer("timeoutMs", options.timeoutMs ?? 30000);
+    integer(
+      "maxCapturedBytes",
+      options.maxCapturedBytes ?? DEFAULT_MAX_CAPTURED_BYTES
+    );
+    for (const [canonical, legacy] of [
+      ["evaluatorConcurrency", "scorerConcurrency"],
+      ["evaluatorTimeoutMs", "scorerTimeoutMs"],
+    ] as const) {
+      if (options[canonical] !== undefined && options[legacy] !== undefined)
+        throw new Error(
+          `Set ${canonical} or its legacy alias ${legacy}, not both.`
+        );
+      const value = options[canonical] ?? options[legacy];
+      if (value !== undefined) integer(canonical, value);
+    }
+    if (options.runTimeoutMs !== undefined)
+      integer("runTimeoutMs", options.runTimeoutMs);
+    for (const evaluator of this.effectiveEvaluators) {
+      if (evaluator.timeoutMs !== undefined)
+        integer("evaluator timeoutMs", evaluator.timeoutMs);
+    }
+    this.running = true;
+    try {
+      if (
+        !options.__suppressMcpjamAutoSave &&
+        options.mcpjam?.enabled !== false
+      ) {
+        if (
+          options.mcpjam?.expectedIterations !== undefined &&
+          options.mcpjam.expectedIterations !== options.iterations
+        ) {
+          throw new Error(
+            "Reporting expectedIterations must match the planned iteration count"
           );
-          let timeoutTriggered = false;
-          let timeoutId: ReturnType<typeof setTimeout> | undefined;
-          let hardTimeoutId: ReturnType<typeof setTimeout> | undefined;
-
-          try {
-            // Create a fresh agent clone for this iteration to avoid race conditions
-            // when multiple iterations run concurrently
-            iterationAgent = wrapAgentWithAbortSignal(
-              agent.withOptions({}),
-              abortController.signal
+        }
+        options = {
+          ...options,
+          mcpjam: await prepareReportingConfig({
+            ...options.mcpjam,
+            apiKey: options.mcpjam?.apiKey ?? process.env.MCPJAM_API_KEY ?? "",
+          }),
+        };
+      }
+      this.lastReportingReceipt = notRequestedReceipt("disabled");
+      const controller = new AbortController();
+      const cancel = () =>
+        controller.abort(
+          externalSignal?.reason ?? new Error("Eval run cancelled")
+        );
+      const externalSignal = options.signal;
+      if (externalSignal?.aborted) cancel();
+      else externalSignal?.addEventListener("abort", cancel, { once: true });
+      const deadline =
+        options.runTimeoutMs === undefined
+          ? undefined
+          : setTimeout(
+              () => controller.abort(new Error("Eval run deadline exceeded")),
+              options.runTimeoutMs
             );
-            const hardTimeoutPromise = new Promise<never>((_, reject) => {
-              timeoutId = setTimeout(() => {
-                timeoutTriggered = true;
-                abortController.abort(timeoutError);
-                hardTimeoutId = setTimeout(
-                  () => reject(timeoutError),
-                  ITERATION_ABORT_GRACE_MS
+      options = { ...options, signal: controller.signal };
+      const observerErrors: NonNullable<EvalRunResult["observerErrors"]> = [];
+      const observe = (
+        callback: "onProgress" | "onFailure",
+        invoke: () => unknown
+      ) => {
+        const recordFailure = () =>
+          observerErrors.push({
+            callback,
+            message: `${callback} callback failed`,
+          });
+        try {
+          const observed = invoke();
+          if (
+            typeof (observed as { then?: unknown } | null)?.then === "function"
+          ) {
+            void Promise.resolve(observed).catch(recordFailure);
+          }
+        } catch {
+          recordFailure();
+        }
+      };
+      this.running = true;
+      try {
+        // Internal alias kept short so the iteration loop reads cleanly; the
+        // public-facing parameter name is `executor`.
+        const agent = executor;
+        posthog.capture({
+          distinctId: "anonymous",
+          event: "eval_test_run_triggered",
+          properties: {
+            iterations: options.iterations,
+            concurrency: options.concurrency ?? 5,
+          },
+        });
+        const concurrency = options.concurrency ?? 5;
+        const retries = options.retries ?? 0;
+        const timeoutMs = options.timeoutMs ?? 30000;
+        const onProgress = options.onProgress;
+
+        let completedCount = 0;
+
+        const testFn =
+          this.config.test ??
+          (async (executor: HostExecutor, ctx: EvalExecutionContext) => {
+            await this.config.execute!(executor, ctx);
+            return true;
+          });
+        const iterationResults: IterationResult[] = [];
+        const total = options.iterations;
+        // One snapshot per run: scorer definitions are configuration, not per-
+        // iteration state, and the hash must be stable across every iteration of
+        // the run so the backend can fold ONE value into the run fingerprint.
+        const evaluationConfig = this.buildEvaluationConfig();
+        this.lastEvaluationConfig = evaluationConfig;
+
+        const runSingleIteration = async (
+          iterationIndex: number
+        ): Promise<IterationResult> => {
+          let captureAttempt = 0;
+          try {
+            let lastError: string | undefined;
+            let lastAttemptTimedOut = false;
+            let iterationAgent: HostExecutor | undefined;
+            let attempts = 0;
+            let reportedEvidence: readonly ReportedEvidence[] = [];
+
+            for (let attempt = 0; attempt <= retries; attempt++) {
+              if (controller.signal.aborted) {
+                lastError = "Eval run cancelled";
+                break;
+              }
+              attempts = attempt;
+              captureAttempt = attempt;
+              const abortController = new AbortController();
+              const timeoutError = new Error(
+                `Operation timed out after ${timeoutMs}ms`
+              );
+              let timeoutTriggered = false;
+              let timeoutId: ReturnType<typeof setTimeout> | undefined;
+              let hardTimeoutId: ReturnType<typeof setTimeout> | undefined;
+              let cancelAttempt: (() => void) | undefined;
+              const capture = captureReportedMeasurements(
+                this.config.reported ?? [],
+                abortController.signal,
+                attempt
+              );
+
+              try {
+                // Create a fresh agent clone for this iteration to avoid race conditions
+                // when multiple iterations run concurrently
+                iterationAgent = wrapAgentWithAbortSignal(
+                  agent.withOptions({}),
+                  abortController.signal
                 );
-              }, timeoutMs);
-            });
-            const passed = await Promise.race([
-              Promise.resolve().then(() => testFn(iterationAgent!)),
-              hardTimeoutPromise,
-            ]);
-            // Disarm BEFORE scoring. The iteration timeout bounds the agent
-            // run; scorers carry their own per-scorer bound. Leaving it armed
-            // meant a slow judge could trip it and stamp "Operation timed out"
-            // on a test that had already finished.
-            if (timeoutId) {
-              clearTimeout(timeoutId);
-              timeoutId = undefined;
+                const hardTimeoutPromise = new Promise<never>((_, reject) => {
+                  timeoutId = setTimeout(() => {
+                    timeoutTriggered = true;
+                    abortController.abort(timeoutError);
+                    hardTimeoutId = setTimeout(
+                      () => reject(timeoutError),
+                      ITERATION_ABORT_GRACE_MS
+                    );
+                  }, timeoutMs);
+                });
+                const cancelled = new Promise<never>((_, reject) => {
+                  cancelAttempt = () => {
+                    abortController.abort(controller.signal.reason);
+                    reject(new Error("Eval run cancelled"));
+                  };
+                  controller.signal.addEventListener("abort", cancelAttempt, {
+                    once: true,
+                  });
+                  if (controller.signal.aborted) cancelAttempt();
+                });
+                const passed = await Promise.race([
+                  Promise.resolve().then(() =>
+                    testFn(iterationAgent!, capture.context)
+                  ),
+                  hardTimeoutPromise,
+                  cancelled,
+                ]);
+                // Disarm BEFORE scoring. The iteration timeout bounds the agent
+                // run; scorers carry their own per-scorer bound. Leaving it armed
+                // meant a slow judge could trip it and stamp "Operation timed out"
+                // on a test that had already finished.
+                if (timeoutId) {
+                  clearTimeout(timeoutId);
+                  timeoutId = undefined;
+                }
+                reportedEvidence = capture.close();
+                const promptResults = iterationAgent.getPromptHistory();
+                assertEvalCaptureWithinLimit(
+                  {
+                    prompts: promptResults,
+                    reportedEvidence,
+                    hostSnapshot: iterationAgent.getHostSnapshot?.(),
+                  },
+                  options.maxCapturedBytes ?? DEFAULT_MAX_CAPTURED_BYTES
+                );
+                const promptMetrics = collectPromptMetrics(promptResults);
+                const predicates = this.effectiveAssertions.map(
+                  (value) => value.rule
+                );
+                const graded = await this.scoreIteration({
+                  iterationIndex,
+                  promptResults,
+                  tokens: promptMetrics.tokens,
+                  legacy: { kind: "returned", passed },
+                  reportedEvidence,
+                  evaluationConfig,
+                  options,
+                });
+                // Per-iteration host snapshot: for HostRuntime this captures
+                // the live Host state at iteration end, so the metadata
+                // stamp reflects what THIS iteration ran with — not the
+                // global state at upload time, which can drift if the user
+                // mutates the bound Host between iterations.
+                const iterationHostSnapshot =
+                  iterationAgent.getHostSnapshot?.();
+                assertEvalCaptureWithinLimit(
+                  {
+                    prompts: promptResults,
+                    reportedEvidence,
+                    hostSnapshot: iterationHostSnapshot,
+                    tokens: promptMetrics.tokens,
+                    latencies: promptMetrics.latencies,
+                  },
+                  options.maxCapturedBytes ?? DEFAULT_MAX_CAPTURED_BYTES
+                );
+
+                return {
+                  // Derived exclusively from the gating scores. The legacy
+                  // expression `passed && predicatePassed && toolMatch.passed` is
+                  // now one projection among several rather than the verdict — and
+                  // it is equivalent by construction for gating checks, because
+                  // `test()`, `expectedToolCalls` and each gating predicate each
+                  // contribute one gating score of exactly that value. Advisory
+                  // predicates contribute an advisory row and never fail the trial.
+                  passed: !controller.signal.aborted && graded.passed,
+                  // The iteration RAN. `graded.passed === false` is the server
+                  // under test failing its task, which is not an execution
+                  // failure — only the timeout stopped execution short. Bound to
+                  // the same condition that stamps the timeout error, so a test
+                  // that finished DESPITE a fired abort is not retroactively
+                  // reclassified as stopped.
+                  status: controller.signal.aborted
+                    ? "cancelled"
+                    : timeoutTriggered && !passed
+                      ? "timed_out"
+                      : "completed",
+                  ...promptMetrics,
+                  ...(timeoutTriggered && !passed
+                    ? { error: timeoutError.message }
+                    : {}),
+                  retryCount: attempt,
+                  ...(reportedEvidence.length ? { reportedEvidence } : {}),
+                  hostSnapshot: iterationHostSnapshot,
+                  ...(predicates.length > 0
+                    ? { predicateResults: graded.predicateResults }
+                    : {}),
+                  ...(graded.toolMatch ? { toolMatch: graded.toolMatch } : {}),
+                  scores: graded.scores,
+                  evaluatorResults: graded.scores.map(toEvaluatorResult),
+                };
+              } catch (error) {
+                reportedEvidence = capture.close();
+                if (error instanceof EvalCaptureLimitError) throw error;
+                assertEvalCaptureWithinLimit(
+                  {
+                    prompts: iterationAgent?.getPromptHistory() ?? [],
+                    reportedEvidence,
+                    hostSnapshot: iterationAgent?.getHostSnapshot?.(),
+                  },
+                  options.maxCapturedBytes ?? DEFAULT_MAX_CAPTURED_BYTES
+                );
+                lastError =
+                  error instanceof Error ? error.message : String(error);
+                lastAttemptTimedOut = timeoutTriggered;
+
+                if (controller.signal.aborted) break;
+                if (attempt < retries) {
+                  await new Promise<void>((resolve) => {
+                    const finish = () => {
+                      clearTimeout(timer);
+                      controller.signal.removeEventListener("abort", finish);
+                      resolve();
+                    };
+                    const timer = setTimeout(
+                      finish,
+                      Math.min(30000, 100 * Math.pow(2, attempt))
+                    );
+                    controller.signal.addEventListener("abort", finish, {
+                      once: true,
+                    });
+                    if (controller.signal.aborted) finish();
+                  });
+                }
+              } finally {
+                capture.close();
+                if (cancelAttempt)
+                  controller.signal.removeEventListener("abort", cancelAttempt);
+                if (timeoutId) {
+                  clearTimeout(timeoutId);
+                }
+                if (hardTimeoutId) {
+                  clearTimeout(hardTimeoutId);
+                }
+              }
             }
-            const promptResults = iterationAgent.getPromptHistory();
-            const promptMetrics = collectPromptMetrics(promptResults);
-            const predicates = this.config.predicates ?? [];
+
+            const failedPromptResults =
+              iterationAgent?.getPromptHistory() ?? [];
+            assertEvalCaptureWithinLimit(
+              {
+                prompts: failedPromptResults,
+                reportedEvidence,
+                hostSnapshot: iterationAgent?.getHostSnapshot?.(),
+              },
+              options.maxCapturedBytes ?? DEFAULT_MAX_CAPTURED_BYTES
+            );
+            const promptMetrics = collectPromptMetrics(failedPromptResults);
+            const iterationHostSnapshot = iterationAgent?.getHostSnapshot?.();
+            assertEvalCaptureWithinLimit(
+              {
+                prompts: failedPromptResults,
+                reportedEvidence,
+                hostSnapshot: iterationHostSnapshot,
+                tokens: promptMetrics.tokens,
+                latencies: promptMetrics.latencies,
+              },
+              options.maxCapturedBytes ?? DEFAULT_MAX_CAPTURED_BYTES
+            );
+            // Evaluate against what the iteration ACTUALLY did before it failed,
+            // not an empty transcript. A retry-exhausted iteration may well have
+            // called tools, and reporting fabricated verdicts against zeroed
+            // signals would put wrong reasons on the dashboard's check chips.
+            //
+            // Deterministic scorers still say something true about that partial
+            // transcript; non-deterministic ones are SKIPPED, because a judge's
+            // number over a truncated run means nothing. A gating judge skipped
+            // here fails closed by default, which is the correct reading of "the
+            // gate never ran".
             const graded = await this.scoreIteration({
-              promptResults,
+              iterationIndex,
+              promptResults: failedPromptResults,
               tokens: promptMetrics.tokens,
-              legacy: { kind: "returned", passed },
+              legacy: { kind: "threw", error: lastError ?? "iteration failed" },
+              reportedEvidence,
               evaluationConfig,
               options,
+              skipNonDeterministic: "iteration errored before scoring",
             });
-            // Per-iteration host snapshot: for HostRuntime this captures
-            // the live Host state at iteration end, so the metadata
-            // stamp reflects what THIS iteration ran with — not the
-            // global state at upload time, which can drift if the user
-            // mutates the bound Host between iterations.
-            const iterationHostSnapshot = iterationAgent.getHostSnapshot?.();
 
             return {
-              // Derived exclusively from the gating scores. The legacy
-              // expression `passed && predicatePassed && toolMatch.passed` is
-              // now one projection among several rather than the verdict — and
-              // it is equivalent by construction for gating checks, because
-              // `test()`, `expectedToolCalls` and each gating predicate each
-              // contribute one gating score of exactly that value. Advisory
-              // predicates contribute an advisory row and never fail the trial.
-              passed: graded.passed,
-              // The iteration RAN. `graded.passed === false` is the server
-              // under test failing its task, which is not an execution
-              // failure — only the timeout stopped execution short. Bound to
-              // the same condition that stamps the timeout error, so a test
-              // that finished DESPITE a fired abort is not retroactively
-              // reclassified as stopped.
-              status: timeoutTriggered && !passed ? "timed_out" : "completed",
+              passed: false,
+              // Retries are exhausted: the EXECUTION failed rather than the task
+              // being graded down. `timed_out` when the last attempt was stopped by
+              // the iteration budget — the same distinction the run-level verdict
+              // policy draws when it decides which trials it could measure.
+              status: controller.signal.aborted
+                ? "cancelled"
+                : lastAttemptTimedOut
+                  ? "timed_out"
+                  : "failed",
               ...promptMetrics,
-              ...(timeoutTriggered && !passed
-                ? { error: timeoutError.message }
-                : {}),
-              retryCount: attempt,
+              error: lastError,
+              retryCount: attempts,
+              ...(reportedEvidence.length ? { reportedEvidence } : {}),
               hostSnapshot: iterationHostSnapshot,
-              ...(predicates.length > 0
+              ...(graded.predicateResults.length > 0
                 ? { predicateResults: graded.predicateResults }
                 : {}),
               ...(graded.toolMatch ? { toolMatch: graded.toolMatch } : {}),
               scores: graded.scores,
+              evaluatorResults: graded.scores.map(toEvaluatorResult),
             };
           } catch (error) {
-            lastError = error instanceof Error ? error.message : String(error);
-            lastAttemptTimedOut = timeoutTriggered;
-
-            if (attempt < retries) {
-              await sleep(100 * Math.pow(2, attempt));
-            }
+            if (!(error instanceof EvalCaptureLimitError)) throw error;
+            const scores = evaluationConfig.definitions.map((definition) =>
+              errorScoreResult(definition, error)
+            );
+            return {
+              passed: false,
+              status: "failed",
+              error: error.message,
+              captureError: {
+                code: error.code,
+                maxCapturedBytes: error.maxCapturedBytes,
+              },
+              retryCount: captureAttempt,
+              prompts: [],
+              latencies: [],
+              tokens: { total: 0, input: 0, output: 0 },
+              scores,
+              evaluatorResults: scores.map(toEvaluatorResult),
+            };
           } finally {
-            if (timeoutId) {
-              clearTimeout(timeoutId);
+            const completed = ++completedCount;
+            if (onProgress) {
+              observe("onProgress", () => onProgress(completed, total));
             }
-            if (hardTimeoutId) {
-              clearTimeout(hardTimeoutId);
+          }
+        };
+
+        // Only active workers allocate promises; queued iterations never clone an executor.
+        const results = new Array<IterationResult>(total);
+        let next = 0;
+        await Promise.all(
+          Array.from({ length: Math.min(concurrency, total) }, async () => {
+            while (next < total) {
+              const index = next++;
+              results[index] = await runSingleIteration(index);
+            }
+          })
+        );
+        iterationResults.push(...results);
+
+        const runResult = this.aggregateResults(
+          iterationResults,
+          evaluationConfig
+        );
+        if (this.config.runEvaluators?.length) {
+          let context:
+            ReturnType<typeof runEvaluatorContextFromIterations> | undefined;
+          const identity = {
+            caseId: this.config.id,
+            externalRunId: options.mcpjam?.externalRunId,
+            sourceConfigHash: evaluationConfig.hash,
+          };
+          try {
+            context = runEvaluatorContextFromIterations({
+              ...identity,
+              iterations: iterationResults,
+            });
+          } catch (error) {
+            if (!(error instanceof RunEvaluatorContextError)) throw error;
+            runResult.runEvaluation = unavailableCaseRunEvaluation(
+              this.config.runEvaluators,
+              {
+                ...identity,
+                iterationIds: iterationResults.map(
+                  (_iteration, index) => `${this.config.id}:${index}`
+                ),
+              }
+            );
+          }
+          if (context)
+            runResult.runEvaluation = await evaluateCaseRun(
+              this.config.runEvaluators,
+              context,
+              {
+                signal: options.signal,
+                concurrency:
+                  options.evaluatorConcurrency ?? options.scorerConcurrency,
+                timeoutMs:
+                  options.evaluatorTimeoutMs ?? options.scorerTimeoutMs,
+              }
+            );
+        }
+
+        // Call onFailure callback if there are any failures
+        if (options.onFailure && runResult.failures > 0) {
+          observe("onFailure", () =>
+            options.onFailure!(this.getFailureReport())
+          );
+        }
+
+        if (options.onProgress || options.onFailure)
+          runResult.observerErrors = observerErrors;
+        try {
+          await this.autoSaveRunIfConfigured(runResult, options, agent);
+        } finally {
+          if (options.summary === "table") {
+            try {
+              console.log(
+                formatRunSummaryTable(runResult, this.lastReportingReceipt)
+              );
+            } catch {
+              /* Presentation cannot replace the result. */
             }
           }
         }
 
-        const failedPromptResults = iterationAgent?.getPromptHistory() ?? [];
-        const promptMetrics = collectPromptMetrics(failedPromptResults);
-        const iterationHostSnapshot = iterationAgent?.getHostSnapshot?.();
-        // Evaluate against what the iteration ACTUALLY did before it failed,
-        // not an empty transcript. A retry-exhausted iteration may well have
-        // called tools, and reporting fabricated verdicts against zeroed
-        // signals would put wrong reasons on the dashboard's check chips.
-        //
-        // Deterministic scorers still say something true about that partial
-        // transcript; non-deterministic ones are SKIPPED, because a judge's
-        // number over a truncated run means nothing. A gating judge skipped
-        // here fails closed by default, which is the correct reading of "the
-        // gate never ran".
-        const graded = await this.scoreIteration({
-          promptResults: failedPromptResults,
-          tokens: promptMetrics.tokens,
-          legacy: { kind: "threw", error: lastError ?? "iteration failed" },
-          evaluationConfig,
-          options,
-          skipNonDeterministic: "iteration errored before scoring",
-        });
-
-        return {
-          passed: false,
-          // Retries are exhausted: the EXECUTION failed rather than the task
-          // being graded down. `timed_out` when the last attempt was stopped by
-          // the iteration budget — the same distinction the run-level verdict
-          // policy draws when it decides which trials it could measure.
-          status: lastAttemptTimedOut ? "timed_out" : "failed",
-          ...promptMetrics,
-          error: lastError,
-          retryCount: retries,
-          hostSnapshot: iterationHostSnapshot,
-          ...(graded.predicateResults.length > 0
-            ? { predicateResults: graded.predicateResults }
-            : {}),
-          ...(graded.toolMatch ? { toolMatch: graded.toolMatch } : {}),
-          scores: graded.scores,
-        };
+        return runResult;
       } finally {
-        semaphore.release();
-        const completed = ++completedCount;
-        if (onProgress) {
-          onProgress(completed, total);
-        }
+        this.running = false;
+        if (deadline) clearTimeout(deadline);
+        externalSignal?.removeEventListener("abort", cancel);
       }
-    };
-
-    const promises = Array.from({ length: options.iterations }, () =>
-      runSingleIteration()
-    );
-    const results = await Promise.all(promises);
-    iterationResults.push(...results);
-
-    const runResult = this.aggregateResults(iterationResults, evaluationConfig);
-
-    // Call onFailure callback if there are any failures
-    if (options.onFailure && runResult.failures > 0) {
-      options.onFailure(this.getFailureReport());
+    } finally {
+      this.running = false;
     }
-
-    await this.autoSaveRunIfConfigured(runResult, options, agent);
-
-    return runResult;
   }
 
   private async autoSaveRunIfConfigured(
@@ -857,7 +1374,20 @@ export class EvalTest {
     }
 
     const apiKey = config?.apiKey ?? process.env.MCPJAM_API_KEY;
-    if (!apiKey) {
+    if (!apiKey?.trim()) {
+      if (config?.strict) {
+        const error = new Error("Strict eval reporting requires an API key");
+        this.lastReportingReceipt = {
+          schemaVersion: 1,
+          state: "failed",
+          acceptedIterations: runResult.iterations,
+          acknowledgedIterations: 0,
+          pendingIterations: runResult.iterations,
+          error: { code: "MISSING_API_KEY", message: error.message },
+        };
+        throw error;
+      }
+      this.lastReportingReceipt = notRequestedReceipt("missing_api_key");
       return;
     }
 
@@ -870,13 +1400,36 @@ export class EvalTest {
     const results = this.buildEvalResultInputs(
       runResult.iterationDetails,
       config,
-      hostExtras
+      hostExtras,
+      variantFromExecutor(executor)
     );
+    if (runResult.runEvaluation) {
+      results.forEach((result, index) => {
+        result.externalIterationId = `${this.config.id}:${index}`;
+      });
+    }
     if (results.length === 0) {
       return;
     }
 
-    await reportEvalResultsSafely({
+    this.lastReportingReceipt = {
+      schemaVersion: 1,
+      state: "pending",
+      acceptedIterations: results.length,
+      acknowledgedIterations: 0,
+      pendingIterations: results.length,
+    };
+    const reporting = await captureEvalReporting({
+      ...config,
+      executor,
+      runEvaluations: runResult.runEvaluation
+        ? [runResult.runEvaluation]
+        : undefined,
+      transport: {
+        ...config?.transport,
+        signal: config?.transport?.signal,
+      },
+      expectedIterations: config?.expectedIterations ?? options.iterations,
       suiteName: config?.suiteName ?? `EvalTest: ${this.getName()}`,
       suiteDescription: config?.suiteDescription,
       serverNames: config?.serverNames,
@@ -900,6 +1453,9 @@ export class EvalTest {
         : {}),
       results,
     });
+    this.lastReportingReceipt = reporting.receipt;
+    if (reporting.receipt.state === "failed" && config?.strict)
+      throw reporting.error;
   }
 
   /**
@@ -921,7 +1477,21 @@ export class EvalTest {
       outputTokens: tokens.output,
       totalTokens: tokens.total,
     };
+    const recordedContext = promptResults
+      .map((result) => result.recordedContext)
+      .filter((record) => record !== undefined);
     return {
+      recordedContext,
+      ...(recordedContext.length
+        ? {
+            toolDefinitions: recordedContext.map(
+              (record) => record.toolDefinitions
+            ),
+          }
+        : {}),
+      evidenceUnavailable: recordedContext.flatMap(
+        (record) => record.unavailable ?? []
+      ),
       version: 1,
       scenario: {
         title: this.getName(),
@@ -935,6 +1505,9 @@ export class EvalTest {
         usage,
       }),
       trace: {
+        widgetSnapshots: promptResults.flatMap((result) =>
+          result.getWidgetSnapshots()
+        ),
         messages: traceMessages,
         // `iterationTraceFromPrompts` returns the widest wire shape (a string
         // and a bare message array are both legal traces); only the object form
@@ -968,7 +1541,7 @@ export class EvalTest {
   private evaluateIterationPredicates(
     context: ScorerContextV1
   ): PredicateResult[] {
-    const predicates = this.config.predicates ?? [];
+    const predicates = this.effectiveAssertions.map((value) => value.rule);
     if (predicates.length === 0) return [];
     return evaluatePredicates(context.transcript, predicates);
   }
@@ -1041,22 +1614,32 @@ export class EvalTest {
         matchOptions: resolveMatchOptions(this.config.matchOptions),
         isNegativeTest: this.config.isNegativeTest,
       }).scorerId,
-      ...(this.config.predicates ?? []).map(
-        (predicate, index) =>
-          predicateScoreDefinition(predicate, { ordinal: index }).scorerId
-      ),
+      ...this.effectiveAssertions
+        .filter((value) => value.definition.idSource === "generated")
+        .map((value) => value.definition.scorerId),
     ]);
-    for (const scorer of this.config.scorers ?? []) {
-      if (reserved.has(scorer.definition.scorerId)) {
+    for (const evaluator of [
+      ...this.effectiveEvaluators,
+      ...reportedDefinitions(this.config.reported ?? []).map((definition) => ({
+        definition,
+      })),
+    ]) {
+      if (reserved.has(evaluator.definition.scorerId)) {
         throw new Error(
-          `Scorer id "${scorer.definition.scorerId}" is already used by this ` +
-            `test's built-in scorers (test(), expectedToolCalls, and each ` +
-            `predicate each contribute one). Give the custom scorer a ` +
-            `different id.`
+          `Scorer id "${evaluator.definition.scorerId}" is already used by this test's built-in scorers; give the evaluator a different id.`
         );
       }
     }
-
+    for (const assertion of this.effectiveAssertions) {
+      if (
+        assertion.definition.idSource === "explicit" &&
+        reserved.has(assertion.definition.scorerId)
+      ) {
+        throw new Error(
+          `Evaluator id "${assertion.definition.scorerId}" is already used by this test's built-in scorers.`
+        );
+      }
+    }
     const definitions = [
       legacyTestScoreDefinition(),
       toolMatchScoreDefinition({
@@ -1064,11 +1647,23 @@ export class EvalTest {
         matchOptions: resolveMatchOptions(this.config.matchOptions),
         isNegativeTest: this.config.isNegativeTest,
       }),
-      ...(this.config.predicates ?? []).map((predicate, index) =>
-        predicateScoreDefinition(predicate, { ordinal: index })
-      ),
-      ...(this.config.scorers ?? []).map((scorer) => scorer.definition),
+      ...this.effectiveAssertions.map((value) => value.definition),
+      ...this.effectiveEvaluators.map((value) => value.definition),
+      ...reportedDefinitions(this.config.reported ?? []),
     ];
+    const ids = new Map<string, string>();
+    for (const definition of definitions) {
+      const hash = definitionHash(resolveScoreDefinition(definition));
+      if (
+        ids.has(definition.scorerId) &&
+        ids.get(definition.scorerId) !== hash
+      ) {
+        throw new Error(
+          `EvalTest "${this.config.name}": duplicate evaluator id "${definition.scorerId}" on two different definitions. One id cannot mean two evaluations — rename one, or use mode "replace" to drop the suite's.`
+        );
+      }
+      ids.set(definition.scorerId, hash);
+    }
     return buildEvaluationConfigSnapshot(definitions);
   }
 
@@ -1080,14 +1675,15 @@ export class EvalTest {
    * reads the way the test does.
    */
   private async scoreIteration(params: {
+    iterationIndex: number;
     promptResults: PromptResult[];
     tokens: { input: number; output: number; total: number };
     legacy:
-      | { kind: "returned"; passed: boolean }
-      | { kind: "threw"; error: unknown };
+      { kind: "returned"; passed: boolean } | { kind: "threw"; error: unknown };
     evaluationConfig: EvaluationConfigSnapshot;
     options: EvalTestRunOptions;
     skipNonDeterministic?: string;
+    reportedEvidence?: readonly ReportedEvidence[];
   }): Promise<{
     scores: ScoreResult[];
     predicateResults: PredicateResult[];
@@ -1098,6 +1694,8 @@ export class EvalTest {
       params.promptResults,
       params.tokens
     );
+    context.gradingKey = `${this.config.id}#${params.iterationIndex + 1}`;
+    context.scenario.scenarioKey = this.config.id;
     const definitions = params.evaluationConfig.definitions;
     const byId = new Map(
       definitions.map((definition) => [definition.scorerId, definition])
@@ -1148,31 +1746,40 @@ export class EvalTest {
     // 3. predicates — ONE evaluation, two projections.
     const predicateResults = this.evaluateIterationPredicates(context);
     predicateResults.forEach((result, index) => {
-      const predicate = (this.config.predicates ?? [])[index];
+      const predicate = this.effectiveAssertions[index];
       if (!predicate) return;
       scores.push(
         scoreResultFromPredicateResult(
-          definitionFor(
-            predicateScoreDefinition(predicate, { ordinal: index }).scorerId
-          ),
+          definitionFor(predicate.definition.scorerId),
           result
         )
       );
     });
 
     // 4. custom scorers, under the runner's bounds.
-    const custom = this.config.scorers ?? [];
+    const custom = this.effectiveEvaluators;
     if (custom.length > 0) {
       scores.push(
-        ...(await runScorers(custom, context, {
-          concurrency: params.options.scorerConcurrency,
-          timeoutMs: params.options.scorerTimeoutMs,
+        ...(await runEvaluators(custom, context, {
+          concurrency:
+            params.options.evaluatorConcurrency ??
+            params.options.scorerConcurrency,
+          timeoutMs:
+            params.options.evaluatorTimeoutMs ?? params.options.scorerTimeoutMs,
+          signal: params.options.signal,
           ...(params.skipNonDeterministic
             ? { skipNonDeterministicReason: params.skipNonDeterministic }
             : {}),
         }))
       );
     }
+
+    scores.push(
+      ...evaluateReportedMeasurements(
+        reportedDefinitions(this.config.reported ?? []),
+        params.reportedEvidence ?? []
+      )
+    );
 
     return {
       scores,
@@ -1185,7 +1792,8 @@ export class EvalTest {
   private buildEvalResultInputs(
     iterations: IterationResult[],
     reporting?: MCPJamReportingConfig,
-    hostExtras?: Record<string, string | number | boolean>
+    hostExtras?: Record<string, string | number | boolean>,
+    variant?: { provider?: string; model?: string }
   ): EvalResultInput[] {
     return iterationsToEvalResultInputs(
       this.getName(),
@@ -1215,7 +1823,8 @@ export class EvalTest {
         ...(this.config.expectedOutput !== undefined
           ? { expectedOutput: this.config.expectedOutput }
           : {}),
-      }
+      },
+      variant
     );
   }
 
@@ -1243,6 +1852,9 @@ export class EvalTest {
     const failures = iterations.filter((r) => !r.passed).length;
 
     this.lastRunResult = {
+      ...(iterations.some((iteration) => iteration.captureError)
+        ? { captureCompleteness: "partial" as const }
+        : {}),
       iterations: iterations.length,
       successes,
       failures,
@@ -1427,7 +2039,7 @@ export class EvalTest {
    * Get the configuration of this test
    */
   getConfig(): EvalTestConfig {
-    return this.config;
+    return snapshotTestConfig(this.config);
   }
 
   /** @internal Apply a suite-level matcher default without overriding a case. */
@@ -1436,7 +2048,10 @@ export class EvalTest {
       return;
     }
     assertValidMatchOptions(matchOptions);
-    this.config = { ...this.config, matchOptions };
+    this.config = {
+      ...this.config,
+      matchOptions: structuredClone(matchOptions),
+    };
   }
 
   /**

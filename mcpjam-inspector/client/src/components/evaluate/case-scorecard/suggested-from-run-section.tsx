@@ -46,7 +46,7 @@ function trialHasGate(iteration: EvalIteration): boolean {
   });
   return card.groups.some((group) =>
     group.rows.some((row) =>
-      row.role === "gate" &&
+      row.role === "required" &&
       row.provenance !== "judge" &&
       (row.provenance !== "route" ||
         row.route?.kind === "tools" ||
@@ -214,10 +214,11 @@ export function SuggestedFromRunSection({
       unread: read.failed,
       capped: read.capped,
       tier2: read.failed === 0,
+      // Two buckets since Warn and Report collapsed into Advisory. A `warn`
+      // key here would now be structurally always zero.
       by_role: {
-        gate: visible.filter((s) => s.role === "gate").length,
-        warn: visible.filter((s) => s.role === "warn").length,
-        report: visible.filter((s) => s.role === "report").length,
+        required: visible.filter((s) => s.role === "required").length,
+        advisory: visible.filter((s) => s.role === "advisory").length,
       },
       diagnosis: output.diagnosis !== null,
       batch_trigger: batch ? caseRunBatchTrigger(batch) : undefined,

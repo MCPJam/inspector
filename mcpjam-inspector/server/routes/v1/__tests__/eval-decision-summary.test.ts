@@ -206,7 +206,15 @@ describe("GET …/eval-runs/:runId/decision-summary", () => {
       expect(res.status).toBe(200);
       // Equal to the SAME object the SDK assembler is asserted to produce in
       // sdk/tests/eval-run-decision-summary.test.ts. That is the parity claim.
-      expect(await res.json()).toEqual(row.expected);
+      const expected = structuredClone(row.expected);
+      // The golden recorded reader 11; preserve it while asserting reader 12.
+      for (const item of expected.diagnostics.items) {
+        if (item.chain.status === "verified" && item.chain.analyzerVersionAhead) {
+          expect(item.chain.analyzerVersionAhead.known).toBe(11);
+          item.chain.analyzerVersionAhead.known = 12;
+        }
+      }
+      expect(await res.json()).toEqual(expected);
     });
   }
 

@@ -86,10 +86,34 @@ const PAIRS: Readonly<Record<string, string>> = {
   EvalSuiteSchedule: "PlatformEvalSuiteSchedule",
   EvalSuiteComputerEnvironment: "PlatformEvalSuiteComputerEnvironment",
   EvalSuiteDetail: "PlatformEvalSuiteDetail",
+  // The grading configuration, extracted out of `EvalSuiteDetail.settings`
+  // into a named schema so this ratchet can reach it at all. It could not
+  // before: `settings` was an inline object, and this file pairs SCHEMAS. The
+  // extraction immediately found the gap it exists to find —
+  // `settings.qualityGate` has been on `PlatformEvalSuiteSettings` and
+  // undocumented in the spec since B2.
+  //
+  // `SuiteGatePolicyV1` is documented as its own schema and deliberately NOT
+  // paired: its SDK twin is a zod-inferred type in
+  // `sdk/src/contract/suite-gate.ts`, and this parser reads interfaces out of
+  // `platform/types.ts`. Pairing it would need a second extraction path for
+  // one schema; the `$ref` check skips an unpaired target rather than
+  // reporting a false mismatch.
+  EvalSuiteSettings: "PlatformEvalSuiteSettings",
+  EvalSuiteSettingsV2: "PlatformEvalSuiteSettingsV2",
   EvalSuiteRevision: "PlatformEvalSuiteRevision",
   EvalSuiteFromFileSynced: "PlatformFileOwnedEvalSuiteSynced",
   EvalIteration: "PlatformEvalIteration",
   EvalCase: "PlatformEvalCase",
+  // The vocabulary-2 twins: what a client constructed with `evalVocabulary: 2`
+  // reads back. Paired so the canonical spellings the route projects and the
+  // ones the SDK types cannot drift apart without a red test.
+  EvalCaseV2: "PlatformEvalCaseV2",
+  EvalSuiteDetailV2: "PlatformEvalSuiteDetailV2",
+  // The policy `role` lives on this schema, and it is the one field the
+  // vocabulary negotiation projects. Pinned so the published enum and the one
+  // the boundary serves cannot drift apart without a red test.
+  ResolvedScoreDefinition: "PlatformResolvedScoreDefinition",
   EvalDeleted: "PlatformEvalSuiteDeleted",
   Client: "PlatformClient",
   ClientDetail: "PlatformClientDetail",

@@ -1,3 +1,4 @@
+import posthog from "posthog-js";
 import { saveMarkdownCases } from "@/lib/apis/markdown-case-import-api";
 import type {
   MarkdownDraft,
@@ -8,7 +9,19 @@ import { deriveQuery, deriveExpectedToolCalls } from "@/shared/steps";
 import { create } from "zustand";
 import type { GenerationOptions } from "@/lib/apis/evals-api";
 import { generateId } from "ai";
-import { mintCaseId, stepsSchema, type TestStep } from "@mcpjam/sdk/contract";
+import {
+  mintCaseId,
+  stepsSchema,
+  authoredEvalCaseSchema,
+  authoredCaseBlockedReason,
+  type EvalAuthoringDraft,
+  type TestStep,
+} from "@mcpjam/sdk/contract";
+import {
+  authoringRequest,
+  AuthoringRequestError,
+  readAuthoringJob,
+} from "@/lib/apis/eval-authoring-api";
 import type { EvalAgentScope } from "@/shared/eval-agent-scope";
 import type { CreateEvalTestCaseInput } from "@/lib/evals/generate-and-persist-tests";
 
@@ -189,6 +202,10 @@ export function parseDraftPatch(
   return patch;
 }
 export interface GeneratedDraft {
+  authoring?: EvalAuthoringDraft;
+  authoringPrepared?: boolean;
+  issueResolutions?: Record<string, string>;
+  acceptedAdditionIds?: string[];
   markdownImport?: {
     source: MarkdownDraft["source"];
     issues: MarkdownDraft["issues"];
@@ -202,6 +219,14 @@ export interface GeneratedDraft {
   error?: string;
 }
 export interface GenerationState {
+  availableTools?: Array<{
+    name: string;
+    description?: string;
+    inputSchema?: unknown;
+    serverId?: string;
+  }>;
+  suiteServers?: string[];
+  authoringJobId?: string;
   reviewRequestId?: string;
   status: "running" | "ready" | "error";
   error?: string;
@@ -299,12 +324,73 @@ export function stageMarkdownDrafts(
     ...state,
     drafts: [...state.drafts, ...staged],
     reviewRequestId: generateId(),
+    // Generation and import share one per-suite store. A failed generation
+    // left its error here, and the import surface then rendered it above
+    // drafts that had just succeeded — telling the reader to change a tool
+    // coverage setting import does not even offer.
+    error: undefined,
   }));
+}
+
+/**
+ * Short label for the draft card's badge.
+ *
+ * `importedDraftBlockedReason` stays a full sentence because it is also thrown
+ * as an error message on save. A pill needs the problem NAMED instead: the
+ * sentence listed all three fields whichever one was missing, and sat in grey
+ * body copy where it read as a hint rather than the reason Add was refused.
+ */
+export function importedDraftBlockedBadge(
+  draft: GeneratedDraft,
+): string | undefined {
+  if (!importedDraftBlockedReason(draft)) return undefined;
+  const missing = [
+    !draft.input.title?.trim() && "title",
+    !draft.input.query?.trim() && "prompt",
+    !draft.input.expectedOutput?.trim() && "expected outcome",
+  ].filter((field): field is string => typeof field === "string");
+  return missing.length ? `Missing ${missing.join(", ")}` : "Can't be added";
 }
 
 export function importedDraftBlockedReason(
   draft: GeneratedDraft,
 ): string | undefined {
+  if (draft.authoring) {
+    const parsed = authoredEvalCaseSchema.safeParse({
+      ...draft.authoring.case,
+      title: draft.input.title,
+      steps: draft.input.steps,
+      expectedOutput: draft.input.expectedOutput,
+      runs: draft.input.runs,
+      models: draft.input.models,
+      isNegativeTest: draft.input.isNegativeTest,
+      checks: draft.input.predicates ?? undefined,
+      matchOptions: draft.input.matchOptions ?? undefined,
+    });
+    if (!parsed.success) return "Complete the case steps and settings.";
+    const blocked = authoredCaseBlockedReason(parsed.data);
+    if (blocked) return blocked;
+    if (!draft.authoringPrepared) {
+      const unresolved = draft.authoring.issues.some(
+        (issue, index) =>
+          issue.blocking &&
+          !issue.resolution &&
+          (issue.origin === "validation"
+            ? JSON.stringify(parsed.data) ===
+                JSON.stringify(draft.authoring!.case) &&
+              (draft.issueResolutions?.[index]?.trim().length ?? 0) < 10
+            : (draft.issueResolutions?.[index]?.trim().length ?? 0) < 10),
+      );
+      if (unresolved) return "Resolve the blocking issues before adding.";
+    }
+    if (
+      draft.authoring.additions.some(
+        (addition) => !draft.acceptedAdditionIds?.includes(addition.id),
+      )
+    )
+      return "Review each proposed addition before adding.";
+    return;
+  }
   const imported = draft.markdownImport;
   if (!imported || imported.prepared) return;
   if (
@@ -333,6 +419,32 @@ export function startEvalGeneration(
       "Generation is already running. Read context for progress; do not start another job.",
     );
   updateGeneration(key, (s) => ({ ...s, status: "running", error: undefined }));
+  if (posthog.isFeatureEnabled("eval-authoring-generation-v1")) {
+    void authoringRequest({
+      operation: "start",
+      input: {
+        projectId: scope.projectId,
+        suiteId: scope.suiteId,
+        source: "generation",
+        requestKey: crypto.randomUUID(),
+        instructions:
+          instructions.trim() || "Generate eval cases for the suite's tools.",
+        options,
+      },
+    })
+      .then(({ jobId }) => followAuthoringJob(scope, jobId))
+      .catch((error) =>
+        updateGeneration(key, (state) => ({
+          ...state,
+          status: "error",
+          error: error instanceof Error ? error.message : String(error),
+        })),
+      );
+    return {
+      status: "generation_started",
+      note: "Drafts will appear for review. Read ui_eval_context for progress.",
+    };
+  }
   void bridge
     .generate(
       instructions,
@@ -369,7 +481,12 @@ export function editGeneratedDraft(
   patch: Partial<EvalDraft> &
     Pick<
       Partial<CreateEvalTestCaseInput>,
-      "expectedOutput" | "matchOptions" | "predicates"
+      | "expectedOutput"
+      | "matchOptions"
+      | "predicates"
+      | "runs"
+      | "models"
+      | "isNegativeTest"
     >,
 ) {
   const key = evalSuiteKey(scope);
@@ -380,7 +497,8 @@ export function editGeneratedDraft(
     !current ||
     current.revision !== revision ||
     current.saving ||
-    current.markdownImport?.prepared
+    current.markdownImport?.prepared ||
+    current.authoringPrepared
   )
     throw new Error(
       "Generated draft changed or is unavailable. Read context before retrying.",
@@ -393,6 +511,7 @@ export function editGeneratedDraft(
         ? {
             ...d,
             revision: nextRevision,
+            ...(d.authoring ? { acceptedAdditionIds: [] } : {}),
             input: {
               ...d.input,
               ...patch,
@@ -452,7 +571,78 @@ export async function saveGeneratedDraft(scope: EvalAgentScope, id: string) {
     )
       throw new Error("Complete the case steps before saving.");
     stepsSchema.parse(current.input.steps);
-    if (current.markdownImport) {
+    if (current.authoring) {
+      const blocked = importedDraftBlockedReason(current);
+      if (blocked) throw new Error(blocked);
+      const authored = authoredEvalCaseSchema.parse({
+        ...current.authoring.case,
+        title: current.input.title,
+        steps: current.input.steps,
+        expectedOutput: current.input.expectedOutput,
+        runs: current.input.runs,
+        models: current.input.models,
+        isNegativeTest: current.input.isNegativeTest,
+        checks: current.input.predicates ?? undefined,
+        matchOptions: current.input.matchOptions ?? undefined,
+      });
+      let revision = current.authoring.revision;
+      if (
+        !current.authoringPrepared &&
+        (JSON.stringify(authored) !== JSON.stringify(current.authoring.case) ||
+          Object.keys(current.issueResolutions ?? {}).length)
+      ) {
+        const edited = await authoringRequest({
+          operation: "edit",
+          draftId: current.authoring.draftId,
+          revision,
+          case: authored,
+          resolutions: current.issueResolutions,
+        });
+        revision = edited.revision;
+        updateGeneration(key, (state) => ({
+          ...state,
+          drafts: state.drafts.map((draft) =>
+            draft.id === id
+              ? {
+                  ...draft,
+                  issueResolutions: {},
+                  authoring: edited.draft,
+                }
+              : draft,
+          ),
+        }));
+      }
+      await authoringRequest({
+        operation: "accept",
+        draftId: current.authoring.draftId,
+        revision,
+        acceptedAdditionIds: current.acceptedAdditionIds ?? [],
+      });
+      updateGeneration(key, (state) => ({
+        ...state,
+        drafts: state.drafts.map((draft) =>
+          draft.id === id ? { ...draft, authoringPrepared: true } : draft,
+        ),
+      }));
+      const result = await authoringRequest({
+        operation: "commit",
+        suiteId: scope.suiteId,
+        draftId: current.authoring.draftId,
+        revision,
+        caseId: current.input.caseId,
+      });
+      if (result.failed?.length) {
+        updateGeneration(key, (state) => ({
+          ...state,
+          drafts: state.drafts.map((draft) =>
+            draft.id === id ? { ...draft, authoringPrepared: false } : draft,
+          ),
+        }));
+        throw new Error(result.failed[0].message);
+      }
+      if (result.committed?.length !== 1)
+        throw new Error("Save outcome is unknown. Retry to confirm.");
+    } else if (current.markdownImport) {
       const blocked = importedDraftBlockedReason(current);
       if (blocked) throw new Error(blocked);
       const request = current.markdownImport.prepared ?? {
@@ -527,6 +717,129 @@ export async function saveGeneratedDraft(scope: EvalAgentScope, id: string) {
 }
 
 const startingRuns = new Set<string>();
+const authoringPolls = new Set<string>();
+/** Resume polling persisted jobs after reload; disconnecting never cancels work. */
+export async function followAuthoringJob(
+  scope: Pick<EvalAgentScope, "projectId" | "suiteId">,
+  jobId: string,
+) {
+  if (authoringPolls.has(jobId)) return;
+  authoringPolls.add(jobId);
+  const key = evalSuiteKey(scope);
+  updateGeneration(key, (state) => ({
+    ...state,
+    authoringJobId: jobId,
+    status: "running",
+  }));
+  try {
+    let failures = 0;
+    for (;;) {
+      let status;
+      try {
+        status = await readAuthoringJob(jobId);
+        failures = 0;
+      } catch (error) {
+        if (
+          error instanceof AuthoringRequestError &&
+          error.status < 500 &&
+          ![408, 429].includes(error.status)
+        )
+          throw error;
+        if (++failures > 3) throw error;
+        updateGeneration(key, (state) => ({
+          ...state,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Could not read authoring job.",
+        }));
+        await new Promise((resolve) =>
+          setTimeout(resolve, 1000 * 2 ** (failures - 1)),
+        );
+        continue;
+      }
+      updateGeneration(key, (state) => {
+        const known = new Set(state.drafts.map((d) => d.authoring?.draftId));
+        const staged: GeneratedDraft[] = status.drafts
+          .filter((draft) => !known.has(draft.draftId))
+          .map((draft) => ({
+            id: `authoring-${draft.draftId}`,
+            revision: generateId(),
+            authoring: draft,
+            acceptedAdditionIds: [],
+            input: {
+              suiteId: scope.suiteId!,
+              caseId: mintCaseId(),
+              title: draft.case.title,
+              steps: draft.case.steps,
+              query: deriveQuery(draft.case.steps),
+              expectedToolCalls: deriveExpectedToolCalls(draft.case.steps),
+              expectedOutput: draft.case.expectedOutput,
+              models: draft.case.models,
+              runs: draft.case.runs,
+              isNegativeTest: draft.case.isNegativeTest,
+              scenario: draft.case.scenario,
+              predicates: draft.case
+                .checks as CreateEvalTestCaseInput["predicates"],
+              matchOptions: draft.case
+                .matchOptions as CreateEvalTestCaseInput["matchOptions"],
+            },
+          }));
+        return {
+          ...state,
+          drafts: [...state.drafts, ...staged],
+          availableTools: status.availableTools,
+          suiteServers: status.suiteServers,
+          reviewRequestId: staged.length ? generateId() : state.reviewRequestId,
+          status:
+            status.status === "pending"
+              ? "running"
+              : status.status === "completed"
+                ? "ready"
+                : "error",
+          error: status.error ?? undefined,
+          authoringJobId:
+            status.status === "pending" || status.status === "failed"
+              ? jobId
+              : undefined,
+        };
+      });
+      if (status.status !== "pending") break;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  } catch (error) {
+    updateGeneration(key, (state) => ({
+      ...state,
+      status: "error",
+      error:
+        error instanceof Error
+          ? error.message
+          : "Could not read authoring job. Reload to reconnect.",
+    }));
+  } finally {
+    authoringPolls.delete(jobId);
+  }
+}
+export function acceptAuthoringAddition(
+  scope: Pick<EvalAgentScope, "projectId" | "suiteId">,
+  draftId: string,
+  additionId: string,
+  accepted: boolean,
+) {
+  updateGeneration(evalSuiteKey(scope), (state) => ({
+    ...state,
+    drafts: state.drafts.map((draft) =>
+      draft.id === draftId
+        ? {
+            ...draft,
+            acceptedAdditionIds: accepted
+              ? [...new Set([...(draft.acceptedAdditionIds ?? []), additionId])]
+              : draft.acceptedAdditionIds?.filter((id) => id !== additionId),
+          }
+        : draft,
+    ),
+  }));
+}
 export async function runScopedEvalSuite(scope: EvalAgentScope) {
   const key = evalSuiteKey(scope);
   const run = getEvalSuite(scope).run;
@@ -538,5 +851,45 @@ export async function runScopedEvalSuite(scope: EvalAgentScope) {
     return await run();
   } finally {
     startingRuns.delete(key);
+  }
+}
+
+export function resolveAuthoringIssue(
+  scope: Pick<EvalAgentScope, "projectId" | "suiteId">,
+  id: string,
+  index: number,
+  resolution: string,
+) {
+  updateGeneration(evalSuiteKey(scope), (state) => ({
+    ...state,
+    drafts: state.drafts.map((draft) =>
+      draft.id === id
+        ? {
+            ...draft,
+            issueResolutions: {
+              ...draft.issueResolutions,
+              [index]: resolution,
+            },
+          }
+        : draft,
+    ),
+  }));
+}
+
+export async function controlAuthoringJob(
+  scope: EvalAgentScope,
+  operation: "cancel" | "retry",
+) {
+  const key = evalSuiteKey(scope);
+  const jobId = useEvalGeneration.getState().suites[key]?.authoringJobId;
+  if (!jobId) return;
+  try {
+    await authoringRequest({ operation, jobId });
+    if (operation === "retry") await followAuthoringJob(scope, jobId);
+  } catch (error) {
+    updateGeneration(key, (state) => ({
+      ...state,
+      error: error instanceof Error ? error.message : String(error),
+    }));
   }
 }

@@ -96,6 +96,12 @@ describe("Thread", () => {
     toolServerMap: {},
   };
 
+  it("aligns an empty-stream indicator without adding transcript vertical padding", () => {
+    render(<Thread {...defaultProps} isLoading />);
+    expect(screen.getByTestId("thinking-indicator").parentElement).toHaveClass("max-w-4xl", "mx-auto", "px-4");
+    expect(screen.getByTestId("thinking-indicator").parentElement).not.toHaveClass("pt-8", "pb-16");
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     useWidgetSurfaceStore.setState({

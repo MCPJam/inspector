@@ -210,8 +210,36 @@ function ProviderIntentControlledModelSelector({
 
 describe("ModelSelector", () => {
   beforeEach(() => {
-    useModelPickerIntentStore.setState({ openProvidersTabNonce: 0 });
+    useModelPickerIntentStore.setState({
+      openProvidersTabNonce: 0,
+      providersTabResponderCount: 0,
+    });
     localStorage.clear();
+  });
+
+  it("registers as a providers-tab responder only while opted in", () => {
+    // The out-of-credits dialog reads this count to decide between opening
+    // the picker in place and navigating to the org's AI providers page, so
+    // dropping the prop must show up here rather than as a silent no-op.
+    const opted = render(<ProviderIntentControlledModelSelector />);
+    expect(
+      useModelPickerIntentStore.getState().providersTabResponderCount
+    ).toBe(1);
+    opted.unmount();
+    expect(
+      useModelPickerIntentStore.getState().providersTabResponderCount
+    ).toBe(0);
+
+    render(
+      <ModelSelector
+        currentModel={models[0]!}
+        availableModels={models}
+        onModelChange={vi.fn()}
+      />
+    );
+    expect(
+      useModelPickerIntentStore.getState().providersTabResponderCount
+    ).toBe(0);
   });
 
   it("keeps the popover open when multiple models are enabled", async () => {
@@ -752,4 +780,37 @@ describe("modelFilter", () => {
   it("preserves cmdk's ranking for the matches it keeps", () => {
     expect(modelFilter(opus, "opus")).toBe(defaultFilter(opus, "opus"));
   });
+});
+
+describe("model routing selection", () => {
+  it.each(["openai", "openrouter"])(
+    "switches a hosted id to the %s BYOK row",
+    async (provider) => {
+      const user = userEvent.setup();
+      const hosted: ModelDefinition = {
+        id: "openai/gpt-5-nano",
+        name: "Hosted GPT",
+        provider: "openai",
+        hosted: true,
+      };
+      const byok: ModelDefinition = {
+        ...hosted,
+        name: "Own GPT",
+        provider,
+        hosted: false,
+      };
+      const onModelChange = vi.fn();
+      render(
+        <ModelSelector
+          currentModel={hosted}
+          availableModels={[hosted, byok]}
+          onModelChange={onModelChange}
+        />,
+      );
+      await user.click(screen.getByTestId("model-selector-trigger"));
+      await user.click(await screen.findByText("Your providers"));
+      await user.click(await screen.findByText("Own GPT"));
+      expect(onModelChange).toHaveBeenCalledWith(byok, { userInitiated: true });
+    },
+  );
 });
