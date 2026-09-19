@@ -85,7 +85,7 @@ function Body({
       return (
         <>
           <span className="text-xs text-muted-foreground">
-            The judge could not grade this trial
+            The judge could not grade this iteration
           </span>
           {onRetry ? <RetryButton onRetry={onRetry} /> : null}
         </>
@@ -109,7 +109,7 @@ function Body({
           {threshold.toFixed(2)}
         </span>
         <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-          {gating ? "Gate" : "Advisory — does not change the result"}
+          {gating ? "Required" : "Advisory — does not change the result"}
         </span>
       </>
     );
@@ -121,7 +121,7 @@ function Body({
     return (
       <>
         <span className="text-xs text-muted-foreground">
-          The judge could not grade this trial
+          The judge could not grade this iteration
         </span>
         {onRetry ? <RetryButton onRetry={onRetry} /> : null}
       </>
@@ -170,7 +170,7 @@ function Body({
   }
   return (
     <span className="text-xs text-muted-foreground">
-      Not run for this trial
+      Not run for this iteration
     </span>
   );
 }
@@ -209,7 +209,10 @@ export function judgeAnswerState(input: {
 }): JudgeAnswerState {
   // Fails closed and FIRST: a label recorded as blind beside a visible
   // verdict is not calibration data, and calibration gates other builds.
-  if (input.hidden) return { kind: "withheld" };
+  // Only a verdict is withheld: every later state reads `judgeCase` alone,
+  // and without one there is nothing to leak and no label control to lift
+  // the mask, so "hidden until you label" would never clear.
+  if (input.hidden && input.judgeCase) return { kind: "withheld" };
   if (input.skippedForCase) return { kind: "skipped" };
   if (!input.judgeEnabledOnSuite) return { kind: "suiteOff" };
   if (input.isQuickRun) return { kind: "quickRun" };

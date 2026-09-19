@@ -63,9 +63,14 @@ describe("authFetch bearer on the eval chain routes", () => {
     // stage rows. MOVED here from the negative list below — it was correctly
     // pinned as unreachable until a reader needed it, and the entry it now
     // requires is the one that would otherwise 401 as "could not be loaded".
+    "/api/v1/projects/proj_1/eval-runs/run_1/backtest",
     "/api/v1/projects/proj_1/eval-runs/run_1/iterations",
     // What changed since the previous run.
     "/api/v1/projects/proj_1/eval-runs/run_1/compare",
+    // Stopping a run — the one WRITE in this list. Without the grant the
+    // cancel ships no bearer and the user watches a run they stopped keep
+    // spending.
+    "/api/v1/projects/proj_1/eval-runs/run_1/cancel",
     "/api/v1/projects/proj_1/eval-description-experiments/exp_1",
     "/api/v1/projects/proj_1/eval-runs/run_1/description-experiments",
     "/api/v1/projects/proj_1/eval-description-experiments/exp_1/start",
@@ -109,12 +114,15 @@ describe("authFetch bearer on the eval chain routes", () => {
     // trace is a transcript and steps are authored results; both are read by
     // other paths with their own auth, and a pattern that swallowed them
     // would be the blanket prefix these tests exist to catch.
+    "/api/v1/projects/proj_1/eval-runs/run_1/backtest/other",
     "/api/v1/projects/proj_1/eval-runs/run_1/iterations/iter_1/trace",
     "/api/v1/projects/proj_1/eval-runs/run_1/iterations/iter_1",
     "/api/v1/projects/proj_1/eval-runs/run_1/steps",
     // Same narrowness for the compare read: the literal segment only.
     "/api/v1/projects/proj_1/eval-runs/run_1/compare-export",
     "/api/v1/projects/proj_1/eval-runs/run_1/compare/cases",
+    // And for cancel: one segment, nothing beneath it.
+    "/api/v1/projects/proj_1/eval-runs/run_1/cancel/all",
     // The suite's revision history is an AGENT read. The app reads the same
     // history through Convex (`testSuites:listSuiteRevisions`), so allowlisting
     // this route would widen the UI bearer's reach for nothing the app uses.

@@ -40,8 +40,16 @@ import {
 export function ExplanatoryFlowOptIn({
   scope,
   stageTitles,
-  /** What the reader is being asked to spend on, in their own terms. */
-  costLabel = "Reading these traces costs credits.",
+  /**
+   * What the reader is agreeing to, in their own terms.
+   *
+   * The default no longer names a price, because there is not one: reading
+   * these traces is platform-paid. It still asks first — the analysis is a
+   * model pass over the reader's session traces, and it draws on a bounded
+   * daily quota, so a panel that subscribed on mount would consume somebody
+   * else's quota for a tab they merely opened.
+   */
+  costLabel = "Included with MCPJam: no credits are consumed.",
   className,
 }: {
   /**
@@ -84,7 +92,7 @@ export function ExplanatoryFlowOptIn({
         <div className="space-y-2 px-4 py-3">
           <p className="text-[11px] text-muted-foreground">
             The chain above is measured from verdicts we already have. This
-            diagram is a model&apos;s reading of the same traces — what was
+            diagram is a model&apos;s reading of the same traces: what was
             attempted, how it turned out, how it read. {costLabel} Nothing it
             produces feeds a score.
           </p>
@@ -144,7 +152,7 @@ function FlowBody({
   /**
    * Fire once, and only into an un-analyzed cohort.
    *
-   * `latestRun` is the analysis state for every scope (the benchmark scope's
+   * `analysis` is the analysis state for every scope (the benchmark scope's
    * `inferredExperience` is adapted to it in `useUsageInsights`). A non-null
    * one means a pass is already running or its result is already here, and
    * re-running it would be a second charge for something the visitor can
@@ -154,7 +162,7 @@ function FlowBody({
   useEffect(() => {
     if (!autoStart || started.current) return;
     if (breakdown === undefined) return;
-    if (breakdown?.latestRun) {
+    if (breakdown?.analysis) {
       // Already analyzed or in flight: nothing to buy. Do not arm again.
       started.current = true;
       return;

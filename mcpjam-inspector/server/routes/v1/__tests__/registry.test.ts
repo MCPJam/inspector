@@ -51,7 +51,7 @@ vi.mock("convex/browser", () => ({
 
 import v1Routes from "../index.js";
 import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
-import { looksLikeConvexId } from "../registry.js";
+import { looksLikeConvexId } from "../convex-id-param.js";
 
 function makeApp(): Hono {
   const app = new Hono();

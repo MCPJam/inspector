@@ -132,13 +132,18 @@ function lastDrilldownCall() {
  * keep asserting the swarm surface's wiring rather than the shared body's
  * defaults.
  */
-function renderSwarmWorkbench(props: {
-  projectId: string | null;
-  journeyRunIds?: string[];
-  urlSelection?: ReadonlyArray<{ dimension: string; clusterId: string }> | null;
-  onSelectionChange?: (themes: unknown) => void;
-  bodyLayout?: "fill" | "scroll";
-} = { projectId: "proj-1" }) {
+function renderSwarmWorkbench(
+  props: {
+    projectId: string | null;
+    journeyRunIds?: string[];
+    urlSelection?: ReadonlyArray<{
+      dimension: string;
+      clusterId: string;
+    }> | null;
+    onSelectionChange?: (themes: unknown) => void;
+    bodyLayout?: "fill" | "scroll";
+  } = { projectId: "proj-1" },
+) {
   const { projectId, journeyRunIds, ...rest } = props;
   return render(
     <InsightsWorkbench
@@ -152,7 +157,6 @@ function renderSwarmWorkbench(props: {
           : null
       }
       cohortKey={`${projectId ?? ""}\0${(journeyRunIds ?? []).join("\0")}`}
-      autoBackfillTopicMap
       emptyState={<div>Sign in to view swarm insights.</div>}
       testIdPrefix="swarm-insights"
       {...(rest as Record<string, unknown>)}
@@ -227,7 +231,10 @@ describe("InsightsWorkbench", () => {
   });
 
   it("forwards journeyRunIds onto the swarm scope for a wave-scoped Sankey", () => {
-    renderSwarmWorkbench({ projectId: "proj-1", journeyRunIds: ["run-a", "run-b"] });
+    renderSwarmWorkbench({
+      projectId: "proj-1",
+      journeyRunIds: ["run-a", "run-b"],
+    });
     expect(lastInsightsCall().scope).toEqual({
       kind: "swarm",
       projectId: "proj-1",
@@ -238,7 +245,9 @@ describe("InsightsWorkbench", () => {
   it("a flow click narrows the drill-down but not the breakdown that draws the flow", async () => {
     const user = userEvent.setup();
     renderSwarmWorkbench({ projectId: "proj-1", journeyRunIds: ["run-a"] });
-    await user.click(screen.getByRole("button", { name: "pick journey theme" }));
+    await user.click(
+      screen.getByRole("button", { name: "pick journey theme" }),
+    );
 
     // Drill-down: swarm scope, filter carrying the selection's cluster chip.
     const drilldown = lastDrilldownCall();
@@ -255,14 +264,19 @@ describe("InsightsWorkbench", () => {
   });
 
   it("restores a URL selection and keeps it beside the Sankey", async () => {
-    renderSwarmWorkbench({ projectId: "proj-1", urlSelection: [{ dimension: "goal", clusterId: "journey-1" }] });
+    renderSwarmWorkbench({
+      projectId: "proj-1",
+      urlSelection: [{ dimension: "goal", clusterId: "journey-1" }],
+    });
 
     await waitFor(() =>
       expect(screen.getByTestId("selected-themes")).toHaveTextContent(
         "journey-1",
       ),
     );
-    expect(screen.getByTestId("swarm-insights-drill-panel")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("swarm-insights-drill-panel"),
+    ).toBeInTheDocument();
     expect(lastDrilldownCall().enabled !== false).toBe(true);
   });
 
@@ -271,7 +285,9 @@ describe("InsightsWorkbench", () => {
     const onSelectionChange = vi.fn();
     renderSwarmWorkbench({ projectId: "proj-1", onSelectionChange });
 
-    await user.click(screen.getByRole("button", { name: "pick journey theme" }));
+    await user.click(
+      screen.getByRole("button", { name: "pick journey theme" }),
+    );
     expect(onSelectionChange).toHaveBeenLastCalledWith([
       { dimension: "goal", clusterId: "journey-1", label: "Draw a diagram" },
     ]);
@@ -294,8 +310,12 @@ describe("InsightsWorkbench", () => {
     expect(screen.queryByTestId("swarm-insights-statline")).toBeNull();
     expect(screen.queryByTestId("swarm-insights-rail")).toBeNull();
     expect(screen.getByTestId("goal-header")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "pick journey theme" }));
-    expect(screen.getByTestId("swarm-insights-drill-panel")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "pick journey theme" }),
+    );
+    expect(
+      screen.getByTestId("swarm-insights-drill-panel"),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("goal-header")).toBeInTheDocument();
     expect(lastDrilldownCall().enabled !== false).toBe(true);
   });
@@ -330,7 +350,9 @@ describe("InsightsWorkbench", () => {
     renderSwarmWorkbench({ projectId: "proj-1" });
 
     totalSessions = 0;
-    await user.click(screen.getByRole("button", { name: "pick journey theme" }));
+    await user.click(
+      screen.getByRole("button", { name: "pick journey theme" }),
+    );
 
     expect(screen.queryByText(/sign in/i)).toBeNull();
     expect(screen.queryByTestId("swarm-insights-statline")).toBeNull();
@@ -344,7 +366,9 @@ describe("InsightsWorkbench", () => {
     // including on a shared `?view=clusters&sel=…` link.
     const user = userEvent.setup();
     renderSwarmWorkbench({ projectId: "proj-1" });
-    await user.click(screen.getByRole("button", { name: "pick journey theme" }));
+    await user.click(
+      screen.getByRole("button", { name: "pick journey theme" }),
+    );
     await user.click(screen.getByRole("button", { name: "Clusters" }));
 
     expect(screen.getByTestId("topic-map-panel")).toHaveAttribute(
@@ -355,7 +379,10 @@ describe("InsightsWorkbench", () => {
 
   it("toggles between Session flow and Clusters", async () => {
     const user = userEvent.setup();
-    renderSwarmWorkbench({ projectId: "proj-1", journeyRunIds: ["run-a", "run-b"] });
+    renderSwarmWorkbench({
+      projectId: "proj-1",
+      journeyRunIds: ["run-a", "run-b"],
+    });
     expect(screen.getByTestId("goal-header")).toBeInTheDocument();
     expect(screen.queryByTestId("topic-map-panel")).toBeNull();
 
@@ -372,7 +399,7 @@ describe("InsightsWorkbench", () => {
     expect(screen.queryByTestId("topic-map-panel")).toBeNull();
   });
 
-  it("silently backfills once when Clusters opens and the done run has no map blob", async () => {
+  it("does not schedule analysis when Clusters opens without a map", async () => {
     const user = userEvent.setup();
     const rebuild = vi.fn().mockResolvedValue({
       runId: "run-2",
@@ -401,13 +428,13 @@ describe("InsightsWorkbench", () => {
     expect(rebuild).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Clusters" }));
-    await waitFor(() => expect(rebuild).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(rebuild).not.toHaveBeenCalled());
     expect(toastMock.success).not.toHaveBeenCalled();
     expect(toastMock.info).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Session flow" }));
     await user.click(screen.getByRole("button", { name: "Clusters" }));
-    await waitFor(() => expect(rebuild).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(rebuild).not.toHaveBeenCalled());
   });
 
   it("does not auto-backfill when the map blob is already ready", async () => {

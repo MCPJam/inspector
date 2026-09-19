@@ -52,15 +52,15 @@ export function nextQuestionFor(state: NextQuestionState): NextQuestion {
 
   if (state.judgedPass && state.trials <= 1) {
     return {
-      copy: "It worked once. Run 3 trials to see if it is consistent.",
+      copy: "It worked once. Run 3 iterations to see if it is consistent.",
       action: "trials",
-      actionLabel: "Run 3 trials",
+      actionLabel: "Run 3 iterations",
     };
   }
 
   if (state.hasSuggestions && !state.hasChecks) {
     return {
-      copy: "Harden it — the checks below held in every trial.",
+      copy: "Harden it — the assertions below held in every iteration.",
       action: "harden",
       actionLabel: "Review the suggestions",
     };

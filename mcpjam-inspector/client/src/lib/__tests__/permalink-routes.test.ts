@@ -149,9 +149,9 @@ describe("the SDK permalink registry ↔ the app route table", () => {
       { appOrigin: APP_ORIGIN },
     );
     const url = new URL(permalink.url);
-    expect(url.pathname).toBe("/evals/suite/s_1/runs/run_1");
+    expect(url.pathname).toBe("/evaluate/suite/s_1/runs/run_1");
     expect(url.search).toBe(`?iteration=it_1&project=${PROJECT}`);
-    expect(parseEvalRouteFromUrl("/evals", url.pathname, url.search)).toEqual({
+    expect(parseEvalRouteFromUrl("/evaluate", url.pathname, url.search)).toEqual({
       type: "run-detail",
       suiteId: "s_1",
       runId: "run_1",

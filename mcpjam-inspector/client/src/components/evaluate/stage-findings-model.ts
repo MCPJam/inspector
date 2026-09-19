@@ -122,9 +122,9 @@ export interface StageFindingGroup {
 export interface StageFindings {
   stage: UserValueStage;
   groups: StageFindingGroup[];
-  /** "Response failed in 2 of 3 measured trials." Population before anything. */
+  /** "Response failed in 2 of 3 measured iterations." Population first. */
   headline: string;
-  /** "over all 7 scanned trials" / "over the first 20 … not the complete set". */
+  /** "over all 7 scanned iterations" / "over the first 20 … not complete". */
   scopeLine: string;
   /**
    * Stage failures the tally counted that no diagnostic here explains.
@@ -150,7 +150,7 @@ export interface StageFindings {
 /** One non-passing trial that no stage row accounts for. */
 export interface RunLevelFinding {
   count: number;
-  /** "3 non-passing trials are not attributable to a stage." */
+  /** "3 non-passing iterations are not attributable to a stage." */
   line: string;
 }
 
