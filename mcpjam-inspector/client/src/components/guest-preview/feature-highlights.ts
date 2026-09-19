@@ -1,3 +1,5 @@
+import { swarmsCreatePath, userTestingCreatePath } from "@/lib/app-navigation";
+
 /**
  * Every word a signed-out visitor reads on Swarms or User Testing (REEV-11).
  *
@@ -104,6 +106,10 @@ export type GatedFeatureSample =
 export interface GatedFeatureCopy {
   /** Sidebar and tab wording. Swarms' own h1 is the singular "Swarm". */
   readonly navLabel: string;
+  /** The single button on the preview that opens the nudge. */
+  readonly ctaLabel: string;
+  /** Where sign-in/up returns to: the creation flow the visitor asked for. */
+  readonly createPath: string;
   /**
    * NO HEADLINE OR BODY LIVE HERE ANY MORE.
    *
@@ -129,6 +135,8 @@ export interface GatedFeatureCopy {
 export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
   swarms: {
     navLabel: "Swarms",
+    ctaLabel: "Create new swarm",
+    createPath: swarmsCreatePath,
     sampleLabel: "What a swarm looks like",
     sample: {
       kind: "findings",
@@ -176,6 +184,8 @@ export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
   },
   "user-testing": {
     navLabel: "User Testing",
+    ctaLabel: "Create new study",
+    createPath: userTestingCreatePath,
     sampleLabel: "What a study looks like",
     sample: {
       kind: "flow",

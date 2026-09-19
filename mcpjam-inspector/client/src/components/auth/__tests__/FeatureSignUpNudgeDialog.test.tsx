@@ -44,13 +44,13 @@ describe("FeatureSignUpNudgeDialog", () => {
     expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
   });
 
-  it("shows the jam artwork for Swarms only", () => {
+  it("shows the jam artwork for both features", () => {
     const { rerender } = render(
       <FeatureSignUpNudgeDialog feature="swarms" isOpen onClose={vi.fn()} />,
     );
     expect(
       document.querySelector('img[src="/guest-credit-wall.png"]'),
-    ).not.toBeNull();
+    ).toBeInTheDocument();
 
     rerender(
       <FeatureSignUpNudgeDialog
@@ -61,7 +61,7 @@ describe("FeatureSignUpNudgeDialog", () => {
     );
     expect(
       document.querySelector('img[src="/guest-credit-wall.png"]'),
-    ).toBeNull();
+    ).toBeInTheDocument();
   });
 
   // The bullets are gone, and this is what stops them coming back by habit.
@@ -122,16 +122,14 @@ describe("FeatureSignUpNudgeDialog", () => {
     screen.getByRole("button", { name: "Create free account" }).click();
 
     expect(signUpMock).toHaveBeenCalledTimes(1);
-    // Captured on the click, before WorkOS navigates away — this is what puts
-    // the user back on the tab they were reading rather than the front door.
-    expect(readAppSignInReturnPath()).toBe("/swarms");
+    expect(readAppSignInReturnPath()).toBe("/swarms/new");
     expect(track).toHaveBeenCalledWith(
       "sign_up_button_clicked",
       expect.objectContaining({ location: "swarms_guest_preview" }),
     );
   });
 
-  it("the existing-account path returns to the same tab", () => {
+  it("the existing-account path returns to the swarm creation flow", () => {
     render(
       <FeatureSignUpNudgeDialog feature="swarms" isOpen onClose={vi.fn()} />,
     );
@@ -139,7 +137,7 @@ describe("FeatureSignUpNudgeDialog", () => {
     screen.getByRole("button", { name: "Sign in" }).click();
 
     expect(signInMock).toHaveBeenCalledTimes(1);
-    expect(readAppSignInReturnPath()).toBe("/swarms");
+    expect(readAppSignInReturnPath()).toBe("/swarms/new");
     expect(track).toHaveBeenCalledWith(
       "login_button_clicked",
       expect.objectContaining({ location: "swarms_guest_preview" }),
@@ -183,7 +181,7 @@ describe("FeatureSignUpNudgeDialog", () => {
 
     screen.getByRole("button", { name: "Create free account" }).click();
 
-    expect(readAppSignInReturnPath()).toBe("/user-testing");
+    expect(readAppSignInReturnPath()).toBe("/user-testing/new");
     expect(track).toHaveBeenCalledWith(
       "sign_up_button_clicked",
       expect.objectContaining({ location: "user_testing_guest_preview" }),

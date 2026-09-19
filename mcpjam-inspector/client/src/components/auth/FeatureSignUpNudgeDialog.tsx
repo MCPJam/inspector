@@ -6,16 +6,16 @@
  * generalisation of it. That one exists to reopen the invite dialog after the
  * WorkOS round trip, so it plants `markPendingInviteDialog()` and the sidebar
  * consumes the marker on return. A gated tab needs no marker: the return path
- * IS the tab, and `captureAppSignInReturnPath()` already carries it. Folding
- * both into one component would mean a "should I leave a marker" flag whose
- * two settings have nothing else in common.
+ * is the creation flow named by its CTA. Folding both into one component
+ * would mean a "should I leave a marker" flag whose two settings have
+ * nothing else in common.
  *
  * What it does share is the ordering that matters on every button:
- *   1. captureAppSignInReturnPath() — remember the page, in sessionStorage,
- *      before WorkOS navigates away;
+ *   1. writeAppSignInReturnPath(copy.createPath) — remember the creation flow,
+ *      in sessionStorage, before WorkOS navigates away;
  *   2. signUp/signIn(permalinkSignInOptions()) — the navigation itself.
  * Get those backwards and the user lands on the app's front door instead of
- * the tab they were reading about.
+ * the creation flow named by the CTA.
  *
  * "Create free account" is primary because the whole surface exists to convert
  * a visitor with no account; "Sign in" stays for someone signed in on another
@@ -39,7 +39,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { JamIllustration } from "@/components/billing/JamIllustration";
 import { track } from "@/lib/analytics";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
-import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
+import { writeAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import {
   GATED_FEATURE_COPY,
   type GatedFeatureId,
@@ -79,13 +79,13 @@ export function FeatureSignUpNudgeDialog({
 
   const handleSignUp = () => {
     track("sign_up_button_clicked", { location });
-    captureAppSignInReturnPath();
+    writeAppSignInReturnPath(copy.createPath);
     signUp(permalinkSignInOptions());
   };
 
   const handleSignIn = () => {
     track("login_button_clicked", { location });
-    captureAppSignInReturnPath();
+    writeAppSignInReturnPath(copy.createPath);
     signIn(permalinkSignInOptions());
   };
 
@@ -97,7 +97,7 @@ export function FeatureSignUpNudgeDialog({
       }}
     >
       <DialogContent className="sm:max-w-md">
-        {feature === "swarms" && <JamIllustration />}
+        <JamIllustration />
         {/* No bullet list. It once carried three sell lines including "run
             your first swarm on us, no card needed", a pricing promise nobody
             had made. The title and one sentence about what the run teaches
