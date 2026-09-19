@@ -24,15 +24,15 @@ Four of the six. Every [predicate](/sdk/reference/eval-reporting#predicate-gate)
 | Link | Checks you can author |
 |------|-----------------------|
 | Connection | none |
-| Discovery | none |
+| Discovery | `toolDescriptionsPresent`, `toolAnnotationsPresent`, `toolNamesUnique`, `noDeprecatedToolExposed`, `toolInputSchemasWellFormed`, `toolOutputSchemasPresent` |
 | Selection | 9 |
 | Tool call | 2 |
 | Response | 7 |
 | User value | 9 |
 
-**Connection and Discovery have no authorable checks, and this is deliberate.** The runner decides both before your case runs, from what it observed setting the run up: whether `initialize` completed, whether `tools/list` answered, and — when a connection failed — whether an egress canary proves the network path out of the runner works at all. That last one is why there is nothing to author. From inside the runner, "their server is down" and "our egress is broken" look identical, and a check you wrote could not tell them apart. Absent positive evidence that our own side worked, the honest answer is that the link was not measured, not that the server failed.
+**Connection is measured by the runner. Discovery also supports catalog assertions.** The runner records initialize and tools/list outcomes and preserves their setup attribution. Six optional discovery assertions inspect complete raw per-server catalogs before deduplication. Missing or partial catalog capture reports an evaluator error, not a pass. Scored gating catalog failures can fail Discovery; advisory failures remain visible evaluator results without failing the stage. A description-based deprecation check is advisory only.
 
-So a suite with checks on every kind still measures Connection and Discovery exactly as much as a suite with none.
+Connection remains measured from setup evidence whether or not a suite authors assertions. Discovery reports both runner evidence and configured catalog checks.
 
 ## The stage is where the evidence is filed
 
@@ -61,9 +61,9 @@ A **gating** `toolCalledWith` is promoted into the matcher's expectations and gr
 
 Coverage is the question the six links exist to answer, and it is easy to write a plausible-looking suite that leaves most of the chain untouched.
 
-A case with `toolCalledWith`, `noToolErrors` and `responseContains` measures Selection, Response and User value. It says nothing about Tool call — whether the arguments the model sent were valid against the tool's own schema — and nothing about Connection or Discovery, which no check can reach.
+A case with `toolCalledWith`, `noToolErrors` and `responseContains` measures Selection, Response and User value. It says nothing about Tool call — whether the arguments the model sent were valid against the tool's own schema — and has no authored Discovery assertions. Connection still reports runner evidence.
 
-To cover Tool call, add `argumentsMatchToolSchema`. To read Connection and Discovery, read the run's chain rather than authoring anything: the stage rows report what the runner observed.
+To cover Tool call, add `argumentsMatchToolSchema`. Read Connection in the run’s chain. To inspect catalog metadata, configure Discovery assertions and read their evaluator rows alongside the runner’s discovery measurement.
 
 Two habits keep coverage honest:
 
@@ -74,7 +74,7 @@ Two habits keep coverage honest:
 
 Five kinds are marked **Observation** in the reference tables: `noEndingQuestion`, `noRepeatedIdenticalCall`, `noDeprecatedToolCalled`, `toolErrorNamesInput` and `fullPageHasContinuation`.
 
-Each is a heuristic that can be right about what it saw and wrong about what it means. A poll loop and a wasteful retry are the same shape; a full page is not proof that more results exist; "Rate limited. Retry in 30 seconds." names no input key and is a good error message. So they carry one rule everywhere: `role: "advisory"` is required, a gating one is refused when written, and they are recorded beside a verdict without changing it.
+Each is a heuristic that can be right about what it saw and wrong about what it means. A poll loop and a wasteful retry are the same shape; a full page is not proof that more results exist; "Rate limited. Retry in 30 seconds." names no input key and is a good error message. So they carry one rule everywhere: `role: "advisory"` is required, a required one is refused when written, and they are recorded beside a verdict without changing it.
 
 They still file at a link, which is what places them in the right group when you are reading what a suite measures. They do not make that link pass or fail.
 

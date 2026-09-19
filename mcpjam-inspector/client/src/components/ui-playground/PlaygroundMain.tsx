@@ -1,7 +1,6 @@
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
-import { resolveLocalBrowserTools } from "@/shared/local-browser-settings";
 /**
  * PlaygroundMain
  *
@@ -50,6 +49,7 @@ import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
 import { ChatInput } from "@/components/chat-v2/chat-input";
+import { collectInputHistory } from "@/components/chat-v2/chat-input/input-history";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import {
@@ -172,6 +172,7 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
+import { usePlaygroundBrowserToolSlots } from "@/hooks/use-playground-browser-tool-slots";
 import { clientDisplayName } from "@/lib/client-display-name";
 import {
   loadSelectedHostIds,
@@ -728,6 +729,22 @@ export function PlaygroundMain({
     Record<string, { version: number; messages: UIMessage[] }>
   >({});
   const compareTranscriptsRef = useRef<Record<string, UIMessage[]>>({});
+  /**
+   * Prompts sent from the composer WHILE IN COMPARE MODE, oldest first.
+   *
+   * Compare sends never reach root `messages`: they are broadcast to each
+   * card's own session, whose transcript lives in `compareTranscriptsRef`
+   * (a ref, so cards re-render without the parent) and is only replayed into
+   * the single-pane thread when compare ends. So the conversation — this
+   * feature's whole history source — has a hole in it for exactly the mode
+   * people iterate hardest in.
+   *
+   * State, not a ref, because the composer's history has to re-derive when it
+   * grows. Cleared in `clearMultiModelUiState`, which runs at the same
+   * transitions that hand the lead transcript back to the thread, so the two
+   * sources never both hold the same prompt.
+   */
+  const [compareSentPrompts, setCompareSentPrompts] = useState<string[]>([]);
   // Three-state compare mode tracked across renders so transition effects
   // can tell "off → multi-host" from "multi-model → multi-host" (the
   // latter needs cross-mode transcript handoff). Refs are mode-neutral
@@ -940,6 +957,7 @@ export function PlaygroundMain({
   const effectiveBuiltInToolIds = useBrowserToolIds(
     previewedHostId ? previewedHost?.config : projectDefaultHostConfig,
     playgroundBrowserEngine.engine,
+    { projectId: convexProjectId, hostId: previewedHostId },
   );
   // A newly selected host is unknown for one render while its config loads.
   // Fail closed in that gap: it may resolve to Codex or Claude Code, whose
@@ -1674,7 +1692,7 @@ export function PlaygroundMain({
       createPlaygroundHost({
         projectId: seedProjectId,
         name: "MCPJam",
-        // Pin a cheap default model — see HostOverlayBar's seed for why a
+        // Pin a cheap default model — see ClientSelectionSync's seed for why a
         // modelless default host breaks synthetic/swarm runs.
         input: emptyHostConfigInputV2({
           modelId: DEFAULT_SEEDED_HOST_MODEL_ID,
@@ -2062,6 +2080,20 @@ export function PlaygroundMain({
     requireToolApproval,
   ]);
 
+  // What each column's host actually attaches, resolved by the SAME hook the
+  // single pane uses (`effectiveBuiltInToolIds` above). The grid used to
+  // inline its own copy of that logic, which read neither the member's saved
+  // Browser setting nor its loading state — see
+  // `usePlaygroundBrowserToolSlots`.
+  const columnBuiltInToolIds = usePlaygroundBrowserToolSlots(
+    multiHostColumns.map((column) => ({
+      hostId: column.compareId,
+      config: column.hostConfig,
+    })),
+    playgroundBrowserEngine.engine,
+    convexProjectId,
+  );
+
   // ── The same question, asked once per COLUMN ─────────────────────────────
   //
   // `localHarnessExecutionOption` above answers for the PREVIEWED host, which
@@ -2116,6 +2148,9 @@ export function PlaygroundMain({
   );
 
   const clearMultiModelUiState = useCallback(() => {
+    // The lead transcript is replayed into the thread by the same transitions
+    // that call this, so the thread becomes the single source again.
+    setCompareSentPrompts([]);
     setBroadcastRequest(null);
     setDeterministicExecutionRequest(null);
     setStopBroadcastRequestId(0);
@@ -4384,6 +4419,11 @@ export function PlaygroundMain({
         prependMessages,
         widgetModelContext: modelContextQueue,
       });
+      // The composer's own record of this send — root `messages` will not see
+      // it until compare ends (see `compareSentPrompts`).
+      if (composerText.trim()) {
+        setCompareSentPrompts((prev) => [...prev, composerText]);
+      }
       setModelContextQueue([]);
     } else {
       trackSendMessage({ single_model_send: true });
@@ -4869,9 +4909,24 @@ export function PlaygroundMain({
       : undefined;
 
   // Shared chat input props
+  /**
+   * Up/Down through this thread's own user messages (BB-183). Same derivation
+   * as `ChatTabV2` — the Playground mirrors that component rather than reusing
+   * it, so the wiring has to be made twice; the walk itself does not.
+   */
+  const chatInputHistory = useMemo(() => {
+    const fromThread = collectInputHistory(messages);
+    if (compareSentPrompts.length === 0) return fromThread;
+    // Newest first, like the thread's own, and joined with the same
+    // adjacent-duplicate rule across the seam.
+    const merged = [...compareSentPrompts].reverse().concat(fromThread);
+    return merged.filter((entry, index) => merged[index - 1] !== entry);
+  }, [messages, compareSentPrompts]);
+
   const sharedChatInputProps = {
     value: composer.input,
     onChange: composer.handleInputChange,
+    inputHistory: chatInputHistory,
     onSubmit,
     stop: stopActiveChat,
     disabled: composerDisabled,
@@ -5663,11 +5718,12 @@ export function PlaygroundMain({
                           stopRequestId={stopBroadcastRequestId}
                           executionConfig={{
                             ...column.executionConfig,
-                            builtInToolIds: resolveLocalBrowserTools(
-                              column.hostConfig.builtInToolIds,
-                              column.hostConfig.localBrowserEnabled,
-                              !HOSTED_MODE && playgroundBrowserEngine.engine === "local",
-                            ),
+                            // Undefined is a real answer — "this turn states
+                            // nothing", which lets the server fall back to the
+                            // host's own config. Exactly what the single pane
+                            // sends, rather than substituting the raw host
+                            // list and pre-empting the loading guard.
+                            builtInToolIds: columnBuiltInToolIds[columnIndex],
                           }}
                           hostedContext={{
                             projectId: convexProjectId,
@@ -5788,6 +5844,14 @@ export function PlaygroundMain({
                                 ? { hostId: previewedHostId }
                                 : {}),
                             }}
+                            // The same org provider config the tab root and
+                            // the multi-host columns get. Each column builds
+                            // its own model list from this, so without it a
+                            // "Your providers" model is missing from the
+                            // column's list, its provider gets guessed from
+                            // the bare id (which reads as Ollama), and the
+                            // turn fails.
+                            hostedOrgModelConfig={hostedOrgModelConfig}
                             personalBrowserEngine={personalBrowserEngineOption}
                             personalComputerEngine={
                               personalComputerEngineOption

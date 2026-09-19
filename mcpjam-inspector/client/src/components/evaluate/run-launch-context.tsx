@@ -13,6 +13,7 @@ import { HostChip } from "@/components/hosts/host-chip";
 import {
   runEnvironmentRef,
   runHostLabel,
+  runClientLogo,
   runRevisionLabel,
 } from "../evals/helpers";
 import { EnvironmentChip } from "../evals/run-context-chip";
@@ -98,6 +99,7 @@ export function RunLaunchContext({
         <Fact label="Client">
           <HostChip
             name={client}
+            logoSrc={runClientLogo(run)}
             hostId={run.namedHostId}
             className="gap-1 px-0 py-0 text-[12.5px] shadow-none"
           />

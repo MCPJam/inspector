@@ -59,6 +59,7 @@ import {
   parsePaneCommand,
 } from "../../services/browserd/daemon/pane-command.js";
 import { supportsPane } from "../../services/browserd/pane-client.js";
+import { isBrowserCommandCorrelation } from "../../services/browserd/protocol.js";
 import {
   ensureLocalBrowserSession,
   findLocalBrowserSession,
@@ -1248,24 +1249,6 @@ computers.post("/local-browser/page-tools/invoke", async (c) => {
  * and the actor is composed from the authenticated context here.
  * ---------------------------------------------------------------------- */
 
-/**
- * A correlation object, or nothing.
- *
- * Echoed onto the ledger row and never interpreted, so the only question is
- * whether it is a flat string map — a nested object here would be an
- * unbounded blob riding into every row.
- */
-function isCorrelation(value: unknown): value is Record<string, string> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const entries = Object.entries(value as Record<string, unknown>);
-  return (
-    entries.length <= 10 &&
-    entries.every(([, v]) => typeof v === "string" && v.length <= 200)
-  );
-}
-
 /** The authenticated identity behind an agent command, or `anonymous`. */
 function agentUserId(c: { get(key: string): unknown }): string | undefined {
   const candidates = ["mcpjamUserId", "workosUserId", "guestId"];
@@ -1689,7 +1672,7 @@ computers.post("/local-browser/command", async (c) => {
       ? { commandId: body.commandId }
       : {}),
     ...(typeof body?.tabId === "string" ? { tabId: body.tabId } : {}),
-    ...(isCorrelation(body?.correlation)
+    ...(isBrowserCommandCorrelation(body?.correlation)
       ? { correlation: body.correlation }
       : {}),
   });

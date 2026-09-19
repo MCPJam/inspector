@@ -13,9 +13,9 @@ const assertOrgModelAllowedMock = vi.fn();
 const buildOrgModelFromResolvedConfigMock = vi.fn();
 
 vi.mock("../org-model-config.js", async () => {
-  const actual = await vi.importActual<
-    typeof import("../org-model-config.js")
-  >("../org-model-config.js");
+  const actual = await vi.importActual<typeof import("../org-model-config.js")>(
+    "../org-model-config.js",
+  );
   return {
     ...actual,
     resolveSyntheticModelSource: (...args: unknown[]) =>
@@ -251,7 +251,9 @@ describe("resolveTurnRuntime — runtime shape", () => {
       orgRuntime: { runtimeLocation: "local", provider },
     });
 
-    const rt = await resolveTurnRuntime(baseArgs({ modelDefinition: LOCAL_MODEL }));
+    const rt = await resolveTurnRuntime(
+      baseArgs({ modelDefinition: LOCAL_MODEL }),
+    );
 
     expect(rt.modelSource).toBe("local_byok");
     expect(assertOrgModelAllowedMock).toHaveBeenCalledWith(provider, "llama3");
@@ -415,6 +417,16 @@ describe("classifyTurnFailure (exported single source of truth)", () => {
     expect(classifyTurnFailure("rate capacity exceeded")).toBe("failed");
     expect(classifyTurnFailure("here is a recap of the run")).toBe("failed");
     expect(classifyTurnFailure("attempting to escape")).toBe("failed");
+  });
+
+  it("never reads an empty model response as a rate limit", () => {
+    // Verbatim from a staging swarm: gemini-3.5-flash spent its output tokens
+    // on hidden reasoning. "budget" in the explanation is tokens, not spend.
+    expect(
+      classifyTurnFailure(
+        "Backend step returned no content (stream error or empty response) — the model emitted no text, no reasoning and no tool call (finishReason: length). The model reached its output-token limit (2871 output tokens) before producing anything visible, which usually means the budget went to reasoning the provider does not stream back. (provider_empty_response)",
+      ),
+    ).toBe("failed");
   });
 
   it("maps everything else to failed", () => {
