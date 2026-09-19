@@ -1,3 +1,5 @@
+// Must stay the first import; see the module comment.
+import "./lib/install-failed-request-tracker";
 import { StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { AppRouterProvider } from "./router";
@@ -9,6 +11,7 @@ import { AuthKitProvider } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { captureSentryException, initSentry } from "./lib/sentry.js";
+import { installTranslatedPageDomGuard } from "./lib/translated-page-dom-guard";
 import { reportCaught } from "./lib/error-reporting";
 import { handleWorkosRefreshFailure } from "./lib/auth/workos-refresh-failure";
 import { ErrorBoundary } from "./components/ui/error-boundary";
@@ -65,6 +68,9 @@ import {
 
 // Initialize Sentry before React mounts
 initSentry();
+
+// Stop browser page translation from crashing React; see the module comment.
+installTranslatedPageDomGuard();
 
 // The invariant a browser can actually decide. Its reasoning, and the half
 // that had to move to the server, live in `lib/sandbox-origin-fault.ts`.

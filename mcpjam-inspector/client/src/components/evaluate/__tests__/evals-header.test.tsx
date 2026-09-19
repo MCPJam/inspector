@@ -24,14 +24,16 @@ describe("EvalsHeader", () => {
     );
     await user.click(screen.getByRole("menuitem", { name: "Create suite" }));
     expect(create).toHaveBeenCalledOnce();
+    // A case belongs to a suite, and the runs list names none.
     await user.click(
       screen.getByRole("button", { name: "More evaluate actions" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Add test case" }));
-    expect(add).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByRole("menuitem", { name: "Add test case" }),
+    ).toBeNull();
   });
 
-  it("defaults to Create suite on Suites with secondary run and case actions", async () => {
+  it("defaults to Create suite on Suites, with the case action beside it", async () => {
     const user = userEvent.setup();
     const create = vi.fn(),
       setup = vi.fn(),
@@ -49,21 +51,19 @@ describe("EvalsHeader", () => {
     await user.click(
       screen.getByRole("button", { name: "More evaluate actions" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Setup run" }));
-    expect(setup).toHaveBeenCalledOnce();
-    await user.click(
-      screen.getByRole("button", { name: "More evaluate actions" }),
-    );
+    // Setting up a run is the Runs landing's job, not a second offer here.
+    expect(screen.queryByRole("menuitem", { name: "Setup run" })).toBeNull();
     await user.click(screen.getByRole("menuitem", { name: "Add test case" }));
     expect(add).toHaveBeenCalledOnce();
+    expect(setup).not.toHaveBeenCalled();
   });
 
-  it("links back to the case from the UVC checks breadcrumb", () => {
+  it("links back to the case from the Test Case Evaluators breadcrumb", () => {
     const back = vi.fn();
     render(
       <EvalsHeader
         parentCrumb={{ label: "Suite", onClick: vi.fn() }}
-        detailCrumb={{ label: "UVC checks" }}
+        detailCrumb={{ label: "Test Case Evaluators" }}
         onCurrentCrumbClick={back}
       >
         Case title
@@ -74,7 +74,10 @@ describe("EvalsHeader", () => {
     fireEvent.click(caseLink);
     expect(back).toHaveBeenCalledOnce();
     expect(
-      screen.getByRole("link", { name: "UVC checks", current: "page" }),
+      screen.getByRole("link", {
+        name: "Test Case Evaluators",
+        current: "page",
+      }),
     ).toBeInTheDocument();
   });
 
@@ -112,7 +115,7 @@ describe("EvalsHeader", () => {
 
     const row = screen.getByTestId("evals-header-title-row");
     const suites = screen.getByRole("button", { name: /^suites$/i });
-    const runs = screen.getByRole("button", { name: /^runs$/i });
+    const runs = screen.getByRole("button", { name: /^overview$/i });
     expect(row).toContainElement(
       screen.getByRole("heading", { name: "Evaluate" }),
     );
@@ -157,7 +160,7 @@ describe("EvalsHeader", () => {
       name: "checkout-flow",
       current: "page",
     });
-    expect(current.className).toMatch(/font-semibold/);
+    expect(current.className).toMatch(/font-normal/);
     expect(
       screen.queryByRole("button", { name: /^create suite$/i }),
     ).toBeNull();

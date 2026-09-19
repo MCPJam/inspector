@@ -127,6 +127,17 @@ const DEFAULT_MAX_LIFETIME_MS = 60 * 60_000;
 const DEFAULT_SWEEP_INTERVAL_MS = 30_000;
 
 /**
+ * How long one "I am looking at this" ping counts for.
+ *
+ * The pane pings every 30s (`FRAME_WS_PING_MS`), so this is two intervals plus
+ * slack: one dropped ping must not read as somebody leaving, and a pane that
+ * really has gone must stop counting within about a minute — comfortably
+ * inside the 90s grace the control plane gives a browser box before reclaiming
+ * it.
+ */
+const WATCHED_TTL_MS = 75_000;
+
+/**
  * A held capacity slot. The id is registry-issued and checked against a live
  * set, so a forged `{ active: true }` cannot drive the counter negative.
  */
@@ -402,6 +413,35 @@ export class WebMcpSessionRegistry {
   /** Push the idle deadline out. Called by API traffic AND browser activity. */
   touch(runtime: WebMcpSessionRuntime): void {
     runtime.expiresAt = this.now() + this.idleTimeoutMs;
+  }
+
+  /**
+   * "Somebody has their eyes on this session right now."
+   *
+   * Distinct from `hasSubscribers`, which only says a stream is ATTACHED — and
+   * a stream stays attached from a background tab, a minimised window, and a
+   * pane behind another tab. That distinction is free locally (the session
+   * lives in this process either way) but not for a HOSTED session, where the
+   * same signal is what keeps a metered desktop box awake: reporting presence
+   * for an attached-but-unwatched stream held a box awake for the full 2-hour
+   * ceiling for a picture nobody had on screen.
+   *
+   * Set by the frame socket's ping, which the client sends only while its pane
+   * is the visible tab AND the document is visible. It EXPIRES rather than
+   * being cleared on close, so losing a socket without a clean close stops the
+   * evidence within one interval rather than never.
+   */
+  markWatched(sessionId: string): void {
+    const runtime = this.sessions.get(sessionId);
+    if (!runtime) return;
+    runtime.watchedUntil = this.now() + WATCHED_TTL_MS;
+    this.touch(runtime);
+  }
+
+  /** Has a viewer said they are looking at this session recently? */
+  isWatched(sessionId: string): boolean {
+    const runtime = this.sessions.get(sessionId);
+    return !!runtime && runtime.watchedUntil > this.now();
   }
 
   async close(

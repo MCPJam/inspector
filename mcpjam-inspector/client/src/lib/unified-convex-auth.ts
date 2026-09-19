@@ -8,6 +8,7 @@ import {
   getCachedGuestSession,
   getOrCreateGuestSession,
   markGuestActivated,
+  getGuestSessionRefusal,
 } from "@/lib/guest-session";
 
 /**
@@ -68,6 +69,13 @@ async function fetchTokenWithRetry(
   opts: {
     source: string;
     isTerminalError?: (error: unknown) => boolean;
+    /**
+     * A null token that will stay null for the rest of the window (the
+     * server refused to create a guest). Stops the retry ladder without
+     * reporting and without the "session expired" banner — the refusal has
+     * its own banner.
+     */
+    isTerminalNull?: () => boolean;
   },
 ): Promise<string | null> {
   let lastError: unknown;
@@ -84,6 +92,7 @@ async function fetchTokenWithRetry(
         useSessionRefreshStore.getState().clear();
         return token;
       }
+      if (opts.isTerminalNull?.()) return null;
       lastError = undefined;
     } catch (error) {
       if (opts.isTerminalError?.(error)) {
@@ -171,6 +180,15 @@ export function useUnifiedConvexAuth() {
           return;
         }
 
+        // A refused creation (per-IP daily cap) is deterministic for the rest
+        // of its window: retrying cannot succeed and is not an error worth
+        // paging on. The banner offers sign-in instead.
+        if (getGuestSessionRefusal()) {
+          setGuestToken(null);
+          setGuestLoading(false);
+          return;
+        }
+
         if (attempt === GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length) {
           reportCaught(
             new Error("Guest session bootstrap exhausted without a token"),
@@ -239,7 +257,10 @@ export function useUnifiedConvexAuth() {
         if (opts?.forceRefreshToken) {
           const refreshed = await fetchTokenWithRetry(
             () => forceRefreshGuestSession(),
-            { source: "guest_token_refresh" },
+            {
+              source: "guest_token_refresh",
+              isTerminalNull: () => getGuestSessionRefusal() !== null,
+            },
           );
           setGuestToken(refreshed);
           return activate(refreshed);
@@ -259,7 +280,10 @@ export function useUnifiedConvexAuth() {
         // arguments and so never sets `forceRefreshToken`.
         const minted = await fetchTokenWithRetry(
           () => getOrCreateGuestSession().then((s) => s?.token ?? null),
-          { source: "guest_token_refresh" },
+          {
+            source: "guest_token_refresh",
+            isTerminalNull: () => getGuestSessionRefusal() !== null,
+          },
         );
         setGuestToken(minted);
         return activate(minted);

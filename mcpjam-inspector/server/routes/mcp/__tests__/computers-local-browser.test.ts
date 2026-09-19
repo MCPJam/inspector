@@ -75,10 +75,11 @@ vi.mock("../../../config.js", async () => {
 const chromiumState = vi.hoisted(() => ({
   installed: false,
   installs: 0,
+  install: { status: "idle" } as Record<string, unknown>,
 }));
 vi.mock("../../../utils/browser-rendering-setup.js", () => ({
   isChromiumInstalled: async () => chromiumState.installed,
-  getChromiumInstallState: () => ({ status: "idle" as const }),
+  getChromiumInstallState: () => chromiumState.install,
   startChromiumInstall: async () => {
     chromiumState.installs += 1;
     return { status: "installing" as const, percent: 0 };
@@ -533,6 +534,27 @@ describe("GET /local-browser/status", () => {
       running: false,
       leaseHeld: false,
     });
+  });
+
+  it("passes a failure through whole: reason, details, and the next retry", async () => {
+    // The pane shows all three; a route that re-derived the state would
+    // have to know the shape, and would drop whatever it did not know.
+    chromiumState.install = {
+      status: "failed",
+      error: "Download failed: server returned code 403",
+      details:
+        "Failed to install browsers\nDownload failed: server returned code 403",
+      retryAt: 1_700_000_000_000,
+      attempts: 1,
+    };
+    try {
+      expect(await (await status()).json()).toMatchObject({
+        installed: false,
+        install: chromiumState.install,
+      });
+    } finally {
+      chromiumState.install = { status: "idle" };
+    }
   });
 
   it("answers without consent, so the consent screen can describe itself", async () => {

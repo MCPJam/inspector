@@ -407,7 +407,9 @@ function FlatToolList({
   // state must account for both, or it reports the wrong reason for a list
   // that is not actually empty.
   const hasBuiltin =
-    builtinTools.length > 0 || (browserTools?.tools.length ?? 0) > 0;
+    builtinTools.length > 0 ||
+    (browserTools?.tools.length ?? 0) > 0 ||
+    Boolean(browserTools?.localConsent || browserTools?.catalogError);
   const uniqueServerIds = [...new Set(entries.map((entry) => entry.serverId))];
   const showServerBadge = uniqueServerIds.length > 1;
   const serversChip =
@@ -451,6 +453,9 @@ function FlatToolList({
                 searchQuery={searchQuery}
                 selectedKey={selectedBrowserKey}
                 onSelect={onSelectBrowser}
+                localConsent={browserTools.localConsent}
+                catalogError={browserTools.catalogError}
+                onRetryCatalog={browserTools.refreshPage}
               />
             ) : null}
             {entries.length > 0 ? (
@@ -510,8 +515,7 @@ function FlatToolList({
                         {(() => {
                           const visibility = getToolVisibility(
                             entry.tool._meta as
-                              | Record<string, unknown>
-                              | undefined,
+                              Record<string, unknown> | undefined,
                           );
                           const visibilityLabel = `[${visibility
                             .map((v) => `"${v}"`)

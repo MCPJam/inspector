@@ -1,20 +1,19 @@
 /**
  * Raw trace panel — single JsonEditor with bordered chrome around the tree.
- * When `requestPayloadHistory` is provided (live chat or rehydrated session), Raw shows the resolved
- * model request payload (`system`, `tools`, `messages`) from the last entry. For live chat that's the
- * latest `request_payload` SSE event; for rehydrated sessions, `useChatSession` synthesizes a single
- * entry from the current `systemPrompt`, currently-resolved tool schemas, and the converted thread —
- * so tool schemas reflect what would be sent next, not a historical snapshot. `messages` are merged
- * with `trace.messages` from the live envelope when that snapshot is ahead of the last captured
- * request. If both `entries` and `traceTranscriptFromUi` are empty (e.g. no servers connected on
- * rehydration), we fall back to the `trace` blob below. Otherwise shows the stored trace blob
- * (evals / offline).
+ *
+ * With `requestPayloadHistory` (live chat, a reopened session, or a saved
+ * session's persisted requests) Raw shows the resolved model request
+ * (`system`, `tools`, `messages`) from the last entry, with `messages` merged
+ * from the trace envelope when it is ahead of that request — so the reply to
+ * the last request is visible, exactly as in the Playground. Otherwise it
+ * shows the stored trace blob.
  */
 
 import { Copy, Loader2, ScanSearch } from "lucide-react";
 import type { ModelMessage } from "ai";
 import { toast } from "@/lib/toast";
 import { track } from "@/lib/analytics";
+import { cn } from "@/lib/utils";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -51,6 +50,7 @@ function getTraceEnvelopeMessages(
 /**
  * Last `request_payload` reflects the outgoing API call (no assistant text for the current turn yet).
  * `trace_snapshot` appends the assistant to the live envelope — merge so Raw stays in sync with Chat/Trace.
+ * A saved session's envelope is its full transcript, so the same merge shows the final reply there too.
  */
 function mergeLiveRequestPayloadWithTraceSnapshot(
   payload: ResolvedModelRequestPayload,
@@ -100,11 +100,30 @@ export function TraceRawView({
   requestPayloadHistory,
   growWithContent = false,
   harnessBuiltinTools,
+  fadeScrollEdges = false,
 }: {
   trace: TraceEnvelope | TraceMessage | TraceMessage[] | null;
   requestPayloadHistory?: TraceRawRequestPayloadHistory | null;
   /** Parent owns scroll (e.g. StickToBottom); JSON height grows with payload. */
   growWithContent?: boolean;
+  /**
+   * Soften this view's top and bottom edges as it scrolls (`scroll-fade-y`),
+   * so a cut-off line reads as "there is more" rather than as a pane that
+   * stops mid-token.
+   *
+   * OPT-IN. Raw is rendered on every surface that shows a trace — eval runs,
+   * the Playground's trace pane, a swarm session — and the surface that asked
+   * for this is the session detail. Turning it on everywhere else is a call
+   * their owners should make.
+   *
+   * Applies to the SCROLLING element, not the wrapper around it: the fade is a
+   * scroll-driven animation reading `scroll(self y)`, so on a container that
+   * never scrolls it would simply never animate.
+   *
+   * `growWithContent` branches take no fade — they have no scrollport of their
+   * own, the page around them scrolls instead.
+   */
+  fadeScrollEdges?: boolean;
   /**
    * Harness native built-in tools. When set (a harness host), Raw annotates the
    * request: the harness builds its OWN model request inside the sandbox, so the
@@ -115,6 +134,10 @@ export function TraceRawView({
   harnessBuiltinTools?: HarnessBuiltinToolInfo[];
 }) {
   const jsonHeight = growWithContent ? "auto" : "100%";
+  const scrollerClass = cn(
+    "flex-1 min-h-0 overflow-auto",
+    fadeScrollEdges && "scroll-fade-y",
+  );
   const requestPayloadEntries = requestPayloadHistory?.entries ?? [];
   const hasUiMessages = requestPayloadHistory?.hasUiMessages ?? false;
   const orderedEntries = requestPayloadEntries;
@@ -130,8 +153,8 @@ export function TraceRawView({
           <span className="font-medium text-foreground">
             inside the sandbox
           </span>
-          , so the <code className="font-mono">tools</code> above are empty here.
-          Its native built-in tools (see the Trace tab for live calls):
+          , so the <code className="font-mono">tools</code> above are empty
+          here. Its native built-in tools (see the Trace tab for live calls):
         </p>
         <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
           {harnessBuiltinTools.map((t) => (
@@ -150,14 +173,28 @@ export function TraceRawView({
     ) : null;
 
   if (requestPayloadHistory) {
-    const hasLiveRequestLine =
-      hasUiMessages && orderedEntries.length > 0 && latestEntry != null;
+    const hasLiveRequestLine = orderedEntries.length > 0 && latestEntry != null;
 
     if (hasLiveRequestLine && latestEntry) {
-      const displayPayload = mergeLiveRequestPayloadWithTraceSnapshot(
+      const merged = mergeLiveRequestPayloadWithTraceSnapshot(
         latestEntry.payload,
         trace,
       );
+      // A capped saved request lost its own copy of `messages`. When the
+      // transcript stood in for it, the conversation shown is complete; when
+      // it did not, say how many there were rather than show an empty list.
+      const messagesDropped =
+        latestEntry.messageCount !== undefined &&
+        merged.messages === latestEntry.payload.messages;
+      const { messages, ...requestConfig } = merged;
+      const displayPayload = {
+        ...requestConfig,
+        ...(messagesDropped ? {} : { messages }),
+        ...(orderedEntries.some((entry) => entry.truncated)
+          ? { truncated: true }
+          : {}),
+        ...(messagesDropped ? { messageCount: latestEntry.messageCount } : {}),
+      };
 
       if (growWithContent) {
         return (
@@ -184,7 +221,7 @@ export function TraceRawView({
           className="flex min-h-0 flex-1 flex-col overflow-hidden w-full"
           data-testid="trace-raw-view"
         >
-          <div className="flex-1 min-h-0 overflow-auto">
+          <div className={scrollerClass}>
             <div className="min-h-0 rounded-lg border border-border bg-muted/20">
               <JsonEditor
                 height={jsonHeight}
@@ -261,12 +298,36 @@ export function TraceRawView({
     </div>
   );
 
+  // What this fallback can honestly say about the requests it is NOT showing.
+  // A failed read is not "none were saved", and a read still in flight is
+  // neither — so loading says nothing, and failure says it failed.
+  const envelope =
+    !Array.isArray(trace) && typeof trace === "object"
+      ? (trace as TraceEnvelope)
+      : null;
+  const recordedContextNote = envelope?.requestPayloadsError ? (
+    <p
+      className="px-3 py-2 text-xs text-warning-foreground"
+      data-testid="trace-raw-request-error"
+    >
+      {envelope.requestPayloadsError}; showing saved session evidence.
+    </p>
+  ) : envelope?.recordedContext && !envelope.requestPayloadsPending ? (
+    <p
+      className="px-3 py-2 text-xs text-muted-foreground"
+      data-testid="trace-raw-recorded-context"
+    >
+      Saved session evidence; exact model requests are unavailable.
+    </p>
+  ) : null;
+
   if (growWithContent) {
     return (
       <div
         className="relative min-h-0 w-full min-w-0 flex-1"
         data-testid="trace-raw-view"
       >
+        {recordedContextNote}
         {copyTraceBtn}
         <JsonEditor
           height={jsonHeight}
@@ -284,7 +345,8 @@ export function TraceRawView({
       className="flex min-h-0 flex-1 flex-col overflow-hidden w-full"
       data-testid="trace-raw-view"
     >
-      <div className="flex-1 min-h-0 overflow-auto">
+      {recordedContextNote}
+      <div className={scrollerClass}>
         <div className="relative min-h-0 rounded-lg border border-border bg-muted/20">
           {copyTraceBtn}
           <JsonEditor
