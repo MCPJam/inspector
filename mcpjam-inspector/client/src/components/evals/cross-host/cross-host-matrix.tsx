@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { Trash2 } from "lucide-react";
 import { HostChip } from "@/components/hosts/host-chip";
+import { findHostStyle } from "@/lib/client-styles";
+import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import { cn } from "@/lib/utils";
 import { usePersistedState } from "../use-persisted-state";
 import {
@@ -131,7 +133,8 @@ function HostColumnHeader({
     >
       <HostChip
         name={displayName}
-        hostId={col.hostId}
+        hostId={col.namedHostId}
+        logoSrc={col.hostStyle && findHostStyle(col.hostStyle) ? getScenarioHostLogo(col.hostStyle) : undefined}
         layout="stack"
         size="sm"
       />

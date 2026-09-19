@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import type { Context } from "hono";
 import { getConnInfo } from "@hono/node-server/conninfo";
 
@@ -54,9 +55,11 @@ const TRUSTED_CLIENT_IP_HEADER_ENV = "MCPJAM_TRUSTED_CLIENT_IP_HEADER";
 //
 // Attested here means "an ingress we trust wrote it, and a client's own copy
 // could not have survived":
-// - cf-connecting-ip, which Cloudflare rewrites on every hop (the hosted edge;
-//   see routes/web/guest-token.ts for the same reliance).
-// - Whatever header an operator names in MCPJAM_TRUSTED_CLIENT_IP_HEADER, for
+// - Once an edge secret is configured, cf-connecting-ip requires a matching
+//   secret. Current and previous secrets allow rotation. Unknown callers
+//   cannot select their own bucket.
+// - Without an edge secret, preserve the existing Cloudflare/trusted proxy
+//   behavior. The header named in MCPJAM_TRUSTED_CLIENT_IP_HEADER is for
 //   a deployment that terminates somewhere other than Cloudflare.
 // - The TCP peer, but ONLY with no forwarding header in sight. Behind a proxy
 //   the peer IS the proxy, so trusting it there would put every caller in one
@@ -65,9 +68,25 @@ const TRUSTED_CLIENT_IP_HEADER_ENV = "MCPJAM_TRUSTED_CLIENT_IP_HEADER";
 // Returns null when nothing can be vouched for. A caller must then pool those
 // requests into ONE shared bucket rather than keying on the claim — see
 // routes/web/bench.ts.
+export function edgeAttestationConfigured(): boolean {
+  return !!(process.env.MCPJAM_EDGE_SECRET || process.env.MCPJAM_EDGE_SECRET_PREVIOUS);
+}
+
+// Preserve existing deployments until their operator opts into attestation.
+export function getSpendClientIp(c: Context): string | null {
+  return edgeAttestationConfigured() ? getAttestedClientIp(c) : getClientIp(c);
+}
+
 export function getAttestedClientIp(c: Context): string | null {
   const cfConnectingIp = c.req.header("cf-connecting-ip")?.trim();
-  if (cfConnectingIp) return cfConnectingIp;
+  const presented = c.req.header("x-mcpjam-edge-secret");
+  const attested = !!presented && [process.env.MCPJAM_EDGE_SECRET, process.env.MCPJAM_EDGE_SECRET_PREVIOUS].some(secret => {
+    if (!secret) return false;
+    const a = Buffer.from(presented), b = Buffer.from(secret);
+    return a.length === b.length && timingSafeEqual(a, b);
+  });
+  if (cfConnectingIp && (attested || !edgeAttestationConfigured())) return cfConnectingIp;
+  if (edgeAttestationConfigured()) return null;
 
   const trustedHeader =
     process.env[TRUSTED_CLIENT_IP_HEADER_ENV]?.trim().toLowerCase();

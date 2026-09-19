@@ -17,7 +17,7 @@
  * replayed against a DIFFERENT boot is rejected (`unknown_boot`) rather than
  * re-run; the caller learns the current bootId from every response and stores it.
  */
-import type { BrowserCommand } from "./protocol";
+import { BROWSERD_PROTOCOL_VERSION, type BrowserCommand } from "./protocol";
 import {
   decodePaneCommand,
   decodePaneState,
@@ -338,14 +338,32 @@ export class BrowserdClient {
   async sendCommand(
     command: BrowserCommand,
     expectedBootId?: string,
-    options?: { timeoutMs?: number; signal?: AbortSignal },
+    options?: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      /**
+       * Values for the command's `{{secret:NAME}}` placeholders. Not a command
+       * field, so the ledger, trace and mirror writers never see them.
+       */
+      secrets?: ReadonlyArray<{ name: string; value: string }>;
+    },
   ): Promise<BrowserdCommandResponse> {
     const res = await this.request(
       "/v1/commands",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ command, expectedBootId }),
+        body: JSON.stringify({
+          // Stamped once here for every caller. `??` rather than a spread
+          // default, so an explicit `undefined` cannot erase the stamp while a
+          // test can still pin an old version.
+          command: {
+            ...command,
+            protocolVersion: command.protocolVersion ?? BROWSERD_PROTOCOL_VERSION,
+          },
+          expectedBootId,
+          ...(options?.secrets?.length ? { secrets: options.secrets } : {}),
+        }),
       },
       true,
       options?.timeoutMs,

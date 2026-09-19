@@ -28,7 +28,7 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { Label } from "@mcpjam/design-system/label";
-import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import { useSwarmDefaultTarget } from "@/components/swarms/use-swarm-default-target";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { joinLabels } from "@/lib/cloud-server-readiness";
@@ -328,6 +328,13 @@ export function GenerateSwarmDialog({
       );
       onOpenChange(false);
     } catch (error) {
+      // A model limit is owned by its dialog, which carries the same sentence
+      // plus the actions that clear it. Condition on the FLAG, not the class:
+      // this catch also sees persona-cap and goal-write failures whose
+      // messages must keep rendering.
+      if (error instanceof SwarmGenerateError && error.limitDialogRaised) {
+        return;
+      }
       // 429 (quota/wallet) and other 4xx carry backend copy worth showing
       // inline rather than as a transient toast.
       setErrorMessage(
@@ -367,9 +374,9 @@ export function GenerateSwarmDialog({
         </DialogHeader>
         <div className="flex flex-col gap-3 py-1">
           <div className="flex flex-col gap-1.5">
-            <Label>Servers</Label>
+            <Label htmlFor="generate-swarm-server">Servers</Label>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <ServerGroupPicker
+              <ServerPicker
                 projectId={projectId}
                 value={targetState.stack.serverAttachmentId}
                 onChange={(serverAttachmentId) =>
@@ -379,6 +386,10 @@ export function GenerateSwarmDialog({
                     customized: true,
                   }))
                 }
+                // Seeded on open, so the X is the only way back to the
+                // client's own servers — what the empty label promises. It can
+                // leave the dialog blocked (`noServers` below says so and how
+                // to fix it), which beats a choice with no way out.
                 onClearSelection={() =>
                   setTargetState((prev) => ({
                     ...prev,
@@ -386,17 +397,22 @@ export function GenerateSwarmDialog({
                     customized: true,
                   }))
                 }
-                emptyTriggerLabel="Server group · client default"
-                infoText="Generation reads these servers' tools to write the goals."
-                triggerTestId="generate-server-group-picker"
+                // BB-3: lead with "server", not "group" — the project
+                // environment editor's exact label.
+                emptyTriggerLabel="Client default · pick a server or group"
+                triggerTestId="generate-server-picker"
+                triggerId="generate-swarm-server"
                 inModal
               />
             </div>
-            {hosts.length === 0 ? (
-              <p className="text-[11px] leading-snug text-muted-foreground">
-                Connect a client before generating.
-              </p>
-            ) : null}
+            {/* The picker this field used to render took this line as an
+                `infoText` prop; the new trigger is a chip with no room, and
+                the explanation is the field's anyway. Yields to the blocker. */}
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              {hosts.length === 0
+                ? "Connect a client before generating."
+                : "Generation reads the tools on these servers to write the goals."}
+            </p>
           </div>
 
           {noServers ? (
@@ -404,8 +420,8 @@ export function GenerateSwarmDialog({
               role="alert"
               className="rounded-md bg-destructive/10 px-2.5 py-2 text-xs leading-snug text-destructive"
             >
-              {joinLabels(noServers.labels)} has no servers assigned. Turn on
-              Auto-connect on the{" "}
+              {joinLabels(noServers.labels)} has no servers assigned. Pick a
+              server or group above, or add servers on the{" "}
               <button
                 type="button"
                 className="underline underline-offset-2 hover:text-foreground"
@@ -416,7 +432,7 @@ export function GenerateSwarmDialog({
               >
                 Servers tab
               </button>
-              , or pick a server group above.
+              .
             </p>
           ) : null}
 

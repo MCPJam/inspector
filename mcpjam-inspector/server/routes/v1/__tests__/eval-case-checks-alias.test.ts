@@ -81,6 +81,28 @@ describe("the spec documents both spellings", () => {
     });
   }
 
+  for (const schemaName of [
+    "EvalCaseV2",
+    "EvalCaseCreateRequestV2",
+    "EvalCaseUpdateRequestV2",
+  ]) {
+    it(`names \`assertions\` on ${schemaName} (vocabulary 2) and deprecates the rest`, () => {
+      // Under `x-mcpjam-eval-vocabulary: 2` the survivor is `assertions`; on
+      // the request bodies `checks` and `predicates` are accepted and marked
+      // as the spellings to leave, and the response carries only `assertions`.
+      const props = spec.components.schemas[schemaName]?.properties ?? {};
+      expect(props.assertions).toBeDefined();
+      expect(props.assertions?.deprecated).toBeUndefined();
+      if (schemaName.endsWith("RequestV2")) {
+        expect(props.checks?.deprecated).toBe(true);
+        expect(props.predicates?.deprecated).toBe(true);
+      } else {
+        expect(props.checks).toBeUndefined();
+        expect(props.predicates).toBeUndefined();
+      }
+    });
+  }
+
   it("says why `steps[].assertion` is NOT renamed to a check", () => {
     // The name is earned: the field is `WidgetAssertion | Predicate`, and only
     // the Predicate half can be re-derived from a persisted transcript.

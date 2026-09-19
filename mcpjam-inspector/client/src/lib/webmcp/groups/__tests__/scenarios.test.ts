@@ -65,6 +65,25 @@ describe("buildScenariosUiTools", () => {
     }
   });
 
+  it("tells a BROWSER agent that publishing is consequential", () => {
+    // The two hints answer different questions. `destructiveHint` stays false
+    // above — publishing destroys nothing and re-publishing converges, so Ask
+    // MCPJam's approval behaviour is unchanged. But `access: "link_guests"`
+    // opens the scenario to signed-out visitors funded by this organization,
+    // which is exactly the kind of commitment Chrome's `consequentialHint`
+    // exists to put a confirmation in front of.
+    expect(getTool("ui_publish_scenario").nativePublication).toEqual({
+      kind: "publish",
+      untrustedContent: false,
+      consequential: true,
+    });
+    // Deleting is destructive, so it derives consequential without saying so.
+    expect(getTool("ui_delete_scenario").nativePublication).toEqual({
+      kind: "publish",
+      untrustedContent: false,
+    });
+  });
+
   it("gates exactly delete behind the destructive approval pill", () => {
     const destructive = buildScenariosUiTools()
       .filter((tool) => tool.annotations?.destructiveHint === true)
