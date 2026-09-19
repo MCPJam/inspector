@@ -4,7 +4,7 @@ import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 
 // Hosts don't persist the catalog template they came from, so both single-select
 // client pickers infer the logo from the display name. They used to do it two
-// different ways — an exact style-name match (HostOverlayBar) and a regex hint
+// different ways — an exact style-name match (HostCanvasSelector) and a regex hint
 // table (HostCanvasSelector) — which made the same custom client render a
 // different mark in each. This helper is the one resolver both now share.
 describe("resolveHostLogoByName", () => {

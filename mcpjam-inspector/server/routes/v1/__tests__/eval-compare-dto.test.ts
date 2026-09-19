@@ -71,6 +71,13 @@ describe("eval compare fixture parity", () => {
 });
 
 describe("toRunCompareDto — leak gate", () => {
+  it("preserves the compared client label and case model attribution only", () => {
+    const value = toRunCompareDto({ ...fixture.expectedDiff,
+      baseRun: { id: "base", client: { name: "Claude", hostConfigId: "private" }, modelSource: "case" },
+    }, BASELINE);
+    expect(value.baseRun).toMatchObject({ client: { name: "Claude" }, modelSource: "case" });
+    expect(value.baseRun).not.toHaveProperty("client.hostConfigId");
+  });
   it("drops traceBlobIds and every _storage id", () => {
     const serialized = JSON.stringify(dto());
 

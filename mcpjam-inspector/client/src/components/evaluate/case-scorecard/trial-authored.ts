@@ -115,6 +115,7 @@ export function authoredForTrial(input: {
       predicates: resolveCasePredicates(
         input.draft.suiteDefaultPredicates,
         input.draft.predicates,
+        input.draft.suppressedSuiteStandardCheckIds,
       ),
       matchOptions: input.draft.matchOptions,
       expectedOutput: input.draft.expectedOutput,

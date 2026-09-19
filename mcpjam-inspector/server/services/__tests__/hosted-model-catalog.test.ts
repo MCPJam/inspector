@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  isHostedModelDefinition,
   __resetHostedModelCatalogForTests,
   __setHostedCatalogForTests,
   ingestHostedCatalogIds,
@@ -37,6 +38,51 @@ beforeEach(() => {
 afterEach(() => {
   __resetHostedModelCatalogForTests();
   vi.restoreAllMocks();
+});
+
+describe("isHostedModelDefinition — the picker's own-provider opt-out", () => {
+  // `claude-fable-5` is a bare BYOK static whose provider-canonical form,
+  // `anthropic/claude-fable-5`, is a seed member. `(id, provider)` alone reads
+  // as hosted — deliberately, for legacy bare host pins.
+  it("reads a bare id + provider as hosted when the picker said nothing", () => {
+    expect(
+      isHostedModelDefinition({ id: "claude-fable-5", provider: "anthropic" }),
+    ).toBe(true);
+    expect(
+      isHostedModelDefinition({
+        id: "gpt-5-nano",
+        provider: "openai",
+        hosted: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("honours an explicit hosted: false — the user's own key, not MCPJam credits", () => {
+    expect(
+      isHostedModelDefinition({
+        id: "claude-fable-5",
+        provider: "anthropic",
+        hosted: false,
+      }),
+    ).toBe(false);
+    // Even a prefixed seed id: the opt-out only ever moves billing OFF MCPJam.
+    expect(
+      isHostedModelDefinition({
+        id: SEED_MODEL,
+        provider: "openai",
+        hosted: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("cannot opt INTO hosted billing: true/absent fall through to the id check", () => {
+    expect(
+      isHostedModelDefinition({ id: BYOK_MODEL, provider: "openai", hosted: true }),
+    ).toBe(false);
+    expect(isHostedModelDefinition({ id: BYOK_MODEL, provider: "openai" })).toBe(
+      false,
+    );
+  });
 });
 
 describe("isHostedCatalogModel — billing classification", () => {

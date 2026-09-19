@@ -1,3 +1,4 @@
+import { swarmVerdictLabel } from "@mcpjam/sdk/contract";
 import type { Command } from "commander";
 import {
   launchJourneyRunOperation,
@@ -280,7 +281,12 @@ export function registerJourneysCommands(program: Command): Command {
             { client, signal }
           )
       );
-      writeResult(result, globalOptions.format);
+      writeResult(
+        globalOptions.format === "human"
+          ? { ...result, items: result.items.map(row => ({ ...row, goalResult: swarmVerdictLabel(row.verdict) })) }
+          : result,
+        globalOptions.format
+      );
     }
   );
 

@@ -1,7 +1,7 @@
+import { useAppNavigate, buildOrganizationPath } from "@/lib/app-navigation";
 import { useState, useMemo, useEffect } from "react";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import {
-  Building2,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -9,7 +9,6 @@ import {
   LogIn,
   Plus,
   Settings,
-  Trash2,
 } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
 import {
@@ -40,17 +39,8 @@ import { useProjectMembers } from "@/hooks/useProjects";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { useConvexAuth } from "convex/react";
 import type { Project } from "@/state/app-types";
-import { resolveProjectIcon } from "@/components/project/ProjectEmojiPicker";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@mcpjam/design-system/alert-dialog";
+import { OrgIconBadge, ProjectIconBadge } from "./context-icon-badges";
+
 import { CreateOrganizationDialog } from "@/components/organization/CreateOrganizationDialog";
 import { CreateProjectDialog } from "@/components/project/CreateProjectDialog";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
@@ -80,47 +70,6 @@ interface SidebarContextSwitcherProps {
   onSwitchOrganization?: (organizationId: string) => void;
 }
 
-interface ProjectDeleteState {
-  canDelete: boolean;
-  reason: string;
-}
-
-function getProjectDeleteState({
-  project,
-  isAuthenticated,
-}: {
-  project: Project;
-  isAuthenticated: boolean;
-}): ProjectDeleteState {
-  if (!isAuthenticated || !project.sharedProjectId) {
-    return { canDelete: true, reason: "Delete project" };
-  }
-  if (project.canDeleteProject !== false) {
-    return { canDelete: true, reason: "Delete project" };
-  }
-  return {
-    canDelete: false,
-    reason: "Only project admins can delete this project",
-  };
-}
-
-const ORG_TINTS: Array<{ bg: string; fg: string }> = [
-  { bg: "bg-blue-500/15", fg: "text-blue-700 dark:text-blue-300" },
-  { bg: "bg-violet-500/15", fg: "text-violet-700 dark:text-violet-300" },
-  { bg: "bg-emerald-500/15", fg: "text-emerald-700 dark:text-emerald-300" },
-  { bg: "bg-amber-500/15", fg: "text-amber-700 dark:text-amber-300" },
-  { bg: "bg-rose-500/15", fg: "text-rose-700 dark:text-rose-300" },
-  { bg: "bg-cyan-500/15", fg: "text-cyan-700 dark:text-cyan-300" },
-];
-
-function getOrgTint(orgId: string): { bg: string; fg: string } {
-  let hash = 0;
-  for (let i = 0; i < orgId.length; i++) {
-    hash = (hash * 31 + orgId.charCodeAt(i)) | 0;
-  }
-  return ORG_TINTS[Math.abs(hash) % ORG_TINTS.length];
-}
-
 /**
  * The organization and project picker.
  *
@@ -139,7 +88,6 @@ export function SidebarContextSwitcher({
   projects,
   onSwitchProject,
   onCreateProject,
-  onDeleteProject,
   isLoading,
   onNavigateToSettings,
   isCreateDisabled = false,
@@ -151,8 +99,9 @@ export function SidebarContextSwitcher({
   const { isMobile } = useSidebar();
   const { isAuthenticated } = useConvexAuth();
   const { user, signIn } = useAuth();
+  const navigate = useAppNavigate();
   const { sortedOrganizations, canCreateOrganization } = useOrganizationQueries(
-    { isAuthenticated }
+    { isAuthenticated },
   );
   const showSignInChip = !user;
 
@@ -163,8 +112,6 @@ export function SidebarContextSwitcher({
   // Deleting a project takes everything in it. The switcher used to do that
   // on a single click of a button revealed by hover — the easiest possible
   // gesture for the least reversible action here.
-  const [pendingDeleteProject, setPendingDeleteProject] =
-    useState<Project | null>(null);
 
   // Switching orgs is rare; start every menu open on the common case (projects).
   useEffect(() => {
@@ -175,7 +122,7 @@ export function SidebarContextSwitcher({
 
   const activeOrg = useMemo(
     () => sortedOrganizations.find((o) => o._id === activeOrganizationId),
-    [sortedOrganizations, activeOrganizationId]
+    [sortedOrganizations, activeOrganizationId],
   );
 
   if (isLoading) {
@@ -234,7 +181,7 @@ export function SidebarContextSwitcher({
       (org.myRole === undefined ||
         org.myRole === "owner" ||
         org.myRole === "admin" ||
-        org.myRole === "member")
+        org.myRole === "member"),
   );
 
   // Never default the dialog to an organization it will not offer: the Select
@@ -242,7 +189,7 @@ export function SidebarContextSwitcher({
   // id. `isCreateDisabled` normally closes this off before the dialog opens,
   // but it resolves a render behind the membership list.
   const defaultCreateOrganizationId = creatableOrganizations.some(
-    (org) => org._id === activeOrganizationId
+    (org) => org._id === activeOrganizationId,
   )
     ? activeOrganizationId
     : creatableOrganizations[0]?._id;
@@ -349,7 +296,7 @@ export function SidebarContextSwitcher({
 
   const projectsView = (
     <>
-      <div className="px-1.5 pt-1.5 pb-1">
+      <div className="flex items-center gap-1 px-1.5 pt-1.5 pb-1">
         {showSignInChip ? (
           <button
             type="button"
@@ -429,7 +376,6 @@ export function SidebarContextSwitcher({
                       }
                     : undefined
                 }
-                onRequestDelete={setPendingDeleteProject}
               />
             ))
           )}
@@ -441,13 +387,13 @@ export function SidebarContextSwitcher({
 
   const organizationsView = (
     <>
-      <div className="px-1.5 pt-1.5 pb-1">
+      <div className="flex items-center gap-1 px-1.5 pt-1.5 pb-1">
         <button
           type="button"
           data-testid="org-list-back-button"
           aria-label="Back to projects"
           onClick={() => setView("projects")}
-          className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-accent transition-colors"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-accent transition-colors"
         >
           <ChevronLeft
             aria-hidden="true"
@@ -490,13 +436,13 @@ export function SidebarContextSwitcher({
                   }
                 }}
                 className={cn(
-                  "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px]",
+                  "group/org flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px]",
                   isSeatPending
                     ? "cursor-not-allowed opacity-50"
                     : "cursor-pointer",
                   isActive
                     ? "bg-accent"
-                    : !isSeatPending && "hover:bg-accent/60"
+                    : !isSeatPending && "hover:bg-accent/60",
                 )}
               >
                 <OrgIconBadge org={org} size={5} />
@@ -508,6 +454,22 @@ export function SidebarContextSwitcher({
                     className="size-3.5 shrink-0 text-muted-foreground"
                   />
                 ) : null}
+                {!isSeatPending && (
+                  <button
+                    type="button"
+                    aria-label={`Open ${org.name} settings`}
+                    title="Organization general settings"
+                    className="invisible group-hover/org:visible group-focus-within/org:visible [@media(hover:none)]:visible shrink-0 rounded p-0.5 text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors"
+                    onKeyDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setMenuOpen(false);
+                      navigate(buildOrganizationPath(org._id, "overview"));
+                    }}
+                  >
+                    <Settings aria-hidden="true" className="size-3.5" />
+                  </button>
+                )}
               </div>
             );
 
@@ -570,36 +532,6 @@ export function SidebarContextSwitcher({
         defaultName={defaultProjectName}
         onCreate={onCreateProject}
       />
-      <AlertDialog
-        open={pendingDeleteProject !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingDeleteProject(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete project?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete &ldquo;{pendingDeleteProject?.name}
-              &rdquo; and all its servers. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                if (pendingDeleteProject) {
-                  onDeleteProject(pendingDeleteProject.id);
-                }
-                setPendingDeleteProject(null);
-              }}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </>
   );
 }
@@ -610,14 +542,12 @@ function ProjectRow({
   isAuthenticated,
   onClick,
   onOpenSettings,
-  onRequestDelete,
 }: {
   project: Project;
   isActive: boolean;
   isAuthenticated: boolean;
   onClick: () => void;
   onOpenSettings?: () => void;
-  onRequestDelete: (project: Project) => void;
 }) {
   return (
     <div
@@ -635,7 +565,7 @@ function ProjectRow({
       }}
       className={cn(
         "group/proj flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] cursor-pointer",
-        isActive ? "bg-accent" : "hover:bg-accent/60"
+        isActive ? "bg-accent" : "hover:bg-accent/60",
       )}
     >
       <ProjectIconBadge
@@ -670,13 +600,6 @@ function ProjectRow({
           >
             <Settings className="size-3.5" />
           </button>
-        ) : null}
-        {!project.isDefault ? (
-          <ProjectDeleteButton
-            project={project}
-            deleteState={getProjectDeleteState({ project, isAuthenticated })}
-            onRequestDelete={onRequestDelete}
-          />
         ) : null}
       </div>
     </div>
@@ -719,116 +642,8 @@ function ProjectRowMembers({
   );
 }
 
-function ProjectDeleteButton({
-  project,
-  deleteState,
-  onRequestDelete,
-}: {
-  project: Project;
-  deleteState: ProjectDeleteState;
-  onRequestDelete: (project: Project) => void;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          className="flex"
-          onClick={(e) => {
-            e.stopPropagation();
-            e.preventDefault();
-          }}
-        >
-          <button
-            type="button"
-            disabled={!deleteState.canDelete}
-            aria-label={`Delete project ${project.name}`}
-            title={deleteState.reason}
-            onClick={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              if (!deleteState.canDelete) return;
-              onRequestDelete(project);
-            }}
-            className={cn(
-              "p-0.5 rounded transition-colors",
-              deleteState.canDelete
-                ? "text-muted-foreground/70 hover:text-destructive hover:bg-destructive/10"
-                : "cursor-not-allowed text-muted-foreground/40"
-            )}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        </span>
-      </TooltipTrigger>
-      <TooltipContent side="right">{deleteState.reason}</TooltipContent>
-    </Tooltip>
-  );
-}
-
 /**
  * An organization's tinted initial, or a neutral building for the guest /
  * no-organization case. One component so the trigger, the header row and the
  * organization list all read as the same object at three sizes.
  */
-function OrgIconBadge({
-  org,
-  size,
-}: {
-  org?: { _id: string; name: string };
-  size: 5 | 6 | 8;
-}) {
-  const sizeClass =
-    size === 8
-      ? "size-8 rounded-lg"
-      : size === 6
-        ? "size-6 rounded-md"
-        : "size-5 rounded";
-  const textClass =
-    size === 8 ? "text-sm" : size === 6 ? "text-[11px]" : "text-[10px]";
-  const iconClass = size === 8 ? "size-4" : "size-3.5";
-  if (!org) {
-    return (
-      <div
-        className={cn(
-          "flex items-center justify-center bg-muted text-muted-foreground shrink-0",
-          sizeClass
-        )}
-      >
-        <Building2 className={iconClass} />
-      </div>
-    );
-  }
-  const tint = getOrgTint(org._id);
-  return (
-    <div
-      className={cn(
-        "flex items-center justify-center font-semibold shrink-0",
-        sizeClass,
-        textClass,
-        tint.bg,
-        tint.fg
-      )}
-    >
-      {org.name.charAt(0).toUpperCase()}
-    </div>
-  );
-}
-
-function ProjectIconBadge({
-  icon,
-  fallback,
-}: {
-  icon?: string;
-  fallback: string;
-}) {
-  const IconComponent = icon ? resolveProjectIcon(icon) : null;
-  return (
-    <div className="flex size-6 items-center justify-center rounded bg-primary/10 text-[11px] font-semibold text-primary shrink-0">
-      {IconComponent ? (
-        <IconComponent className="h-3.5 w-3.5" strokeWidth={1.5} />
-      ) : (
-        fallback
-      )}
-    </div>
-  );
-}

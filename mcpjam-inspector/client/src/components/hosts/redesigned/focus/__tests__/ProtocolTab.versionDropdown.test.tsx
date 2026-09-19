@@ -406,7 +406,7 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     ).toBeInTheDocument();
   });
 
-  it("does not warn on an advertised or stateless pin", () => {
+  it("warns about stateless fallback without incorrectly promising a save failure", () => {
     // Advertised pin: fine.
     const { unmount } = render(
       <Harness initial={withAdvertised(["2025-11-25"], "2025-11-25")} />,
@@ -414,13 +414,14 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     expect(screen.queryByText(/does not advertise/)).toBeNull();
     unmount();
 
-    // A stateless pin skips `initialize`, so it never has to appear in that
-    // accept-list — both canonicalizers save this shape. Warning here would
-    // promise a failure that never comes.
+    // Stateless pins save successfully, but a legacy server cannot connect.
     const second = render(
       <Harness initial={withAdvertised(["2025-11-25"], "2026-07-28")} />,
     );
-    expect(screen.queryByText(/does not advertise/)).toBeNull();
+    expect(screen.getByText(/does not advertise/)).toHaveTextContent(
+      "no legacy fallback",
+    );
+    expect(screen.queryByText(/Saving will fail/)).toBeNull();
     second.unmount();
 
     // A stateful pin outside the list still throws at Save, so it still warns.

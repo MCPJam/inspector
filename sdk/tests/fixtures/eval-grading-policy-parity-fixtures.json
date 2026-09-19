@@ -1,0 +1,4205 @@
+{
+  "__readme": "Shared parity fixtures for the ONE grading policy: the canonical resolved model in sdk/src/contract/grading-policy.ts, the normalization adapters that read it out of every contract that has expressed one, and the write adapter that turns an edit against it back into the PATCH settings the hosted API already accepts. Loaded by sdk/tests/contract-grading-policy.test.ts through sdk/tests/support/eval-grading-policy-fixtures.ts. It is written to be copied VERBATIM into mcpjam-backend as the G0b mirror corpus, exactly as eval-verdict-policy-parity-fixtures.json and score-contract-parity-fixtures.json already are: the backend cannot import @mcpjam/sdk into convex/ default-runtime code, so a shared fixture file is the only common ground truth. Copy it byte for byte; do not re-author it. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator; they are fixture annotations (__label, __why) and every object in this contract is closed, so a payload still carrying them would be rejected for the wrong reason - turning an accept row into a false failure and, worse, a reject row into a false success. WHAT THIS CORPUS IS FOR. minimumAccuracy and passThreshold are NOT one number in two units: they differ in scope as well as units, so dividing a percent by 100 moves the bar for every suite with more than one case. The `scope` cohort is the proof (ten cases, nine always passing, one always failing: 90% suite-wide passes, 0.9 per-case fails), and every other cohort exists to stop some normalization from quietly picking one side of a divergence. THERE IS NO SINGLE LEGACY PRODUCER. Three shipped ones disagree in ways that decide runs: convex/testSuites.ts run finalization measures ITERATIONS and rates an empty run 1; convex/sdkEvals.ts computeEvalRunSummaryFromIterations measures CASES (variant-collapsed, absent cases dropped) and rates an empty run 0; sdk/src/eval-run-reporter.ts buildLocalFallbackResult measures the results it was handed and also rates an empty run 0. The `historicalSummaries` cohort pins all three against the same runs so that unifying the vocabulary cannot unify the arithmetic. COHORTS. `normalization`: an input contract plus the resolved policy it must produce; `input.source` is 'suiteFile', 'hostedSuite' or 'runReporting' and selects the adapter. `reject`: inputs that must be refused - `kind` is 'hostedSuite' (the adapter throws) or 'policy' (evalGradingPolicySchema refuses). `iterationResolution`: a rule, the per-case and per-run arguments, and the count resolveEvalGradingIterations must return. `thresholdConversion`: the only sanctioned fraction/percent conversion, pinned in both directions so IEEE-754 noise (0.07 * 100 = 7.000000000000001) never reaches the wire. `scope`: one run described as iteration rows, and what each criterion concludes about it. `historicalSummaries`: the same runs (by key into `runs`) under each of the three legacy producers, with the exact summary each must keep producing. `edits`: a policy (resolved from `policy`, the same shape as a normalization input), an edit, and the write plan planEvalGradingPolicyEdit must return. `rejectedEdits`: a policy and an edit the planner must THROW on. That is a different outcome from an ok:false refusal, and the split is deliberate: a refusal means this policy cannot express that operation, which a caller renders to a user, while a throw means the edit itself is malformed - an out-of-range number, a percent where a fraction belongs, an unknown field. EvalGradingPolicyEdit is a TypeScript type and TypeScript is not present at runtime, so a JavaScript caller, a CLI flag or an MCP argument can hand the planner anything; without the bound, passThreshold 90 plans minimumAccuracy 9000 on a suite-wide policy and reports success. ITERATION ROWS use testIteration.result's real vocabulary - pending, passed, failed, cancelled, timed_out - and nothing else. There is no evaluator-error result: a required scorer that errored lands as result: failed, and `evaluatorError: true` is a separate annotation that only the per-case contract's validity phase reads. That asymmetry is the point of the eight_evaluator_errors rows. THE THREE PROPERTIES THE `edits` COHORT EXISTS FOR. (1) The scope survives: a threshold edit writes minimumAccuracy on a suite-wide policy and passThreshold on a per-case one, and never the repetitions+passThreshold pair that applyVerdictPolicySettings reads as an upgrade. (2) An unchanged edit writes NOTHING: suite configRevision is a digest over the stored policy objects, so a read-edit-write round trip that re-sent them would rotate every suite's revision and invalidate its parity comparisons. (3) A refusal never degrades into a partial write: an edit carrying one unrepresentable field is refused whole, so a caller can never believe it set a count it did not set. NOT PINNED HERE: the per-case aggregation arithmetic and the inconclusive outcomes it produces, which eval-verdict-policy-parity-fixtures.json already owns. This corpus names per-case outcomes only where it contrasts them with a suite-wide one.",
+  "normalization": [
+    {
+      "__label": "suite file, omitted validity members",
+      "__why": "A file's defaults are already canonical: a per-case FRACTION and a default count a case overrides. Omitted validity members resolve to the documented defaults, and the authored block stays empty so a write-back cannot materialize them.",
+      "input": {
+        "source": "suiteFile",
+        "value": {
+          "defaults": {
+            "iterations": 3,
+            "passThreshold": 0.9,
+            "validity": {}
+          }
+        }
+      },
+      "expected": {
+        "passCriterion": {
+          "scope": "perCase",
+          "threshold": 0.9
+        },
+        "iterationRule": {
+          "kind": "defaultCount",
+          "iterations": 3
+        },
+        "validity": {
+          "enforced": true,
+          "declared": {},
+          "resolved": {
+            "coverage": {
+              "kind": "allConfiguredTrialsAttempted",
+              "minGradeableTrials": 1
+            },
+            "minCompletionRate": 0.8,
+            "maxEvaluatorErrorRate": 0.1
+          }
+        },
+        "caseOverrides": [],
+        "origin": "suiteFile"
+      }
+    },
+    {
+      "__label": "suite file, explicit minEligibleTrials replaces the coverage rule",
+      "__why": "An explicit N is a WEAKER rule than omission: it tolerates unattempted trials. The resolved coverage therefore changes shape rather than gaining a number.",
+      "input": {
+        "source": "suiteFile",
+        "value": {
+          "defaults": {
+            "iterations": 10,
+            "passThreshold": 0.8,
+            "validity": {
+              "minEligibleTrials": 3
+            }
+          }
+        }
+      },
+      "expected": {
+        "passCriterion": {
+          "scope": "perCase",
+          "threshold": 0.8
+        },
+        "iterationRule": {
+          "kind": "defaultCount",
+          "iterations": 10
+        },
+        "validity": {
+          "enforced": true,
+          "declared": {
+            "minEligibleTrials": 3
+          },
+          "resolved": {
+            "coverage": {
+              "kind": "minEligibleTrials",
+              "minEligibleTrials": 3
+            },
+            "minCompletionRate": 0.8,
+            "maxEvaluatorErrorRate": 0.1
+          }
+        },
+        "caseOverrides": [],
+        "origin": "suiteFile"
+      }
+    },
+    {
+      "__label": "suite file, explicit zero rates are not omissions",
+      "__why": "`minCompletionRate: 0` asks for no completion floor; omitting it asks for 0.8. A `??` chain that treated 0 as absent would silently re-impose the default on a suite that opted out of it.",
+      "input": {
+        "source": "suiteFile",
+        "value": {
+          "defaults": {
+            "iterations": 2,
+            "passThreshold": 1,
+            "validity": {
+              "minCompletionRate": 0,
+              "maxEvaluatorErrorRate": 0
+            }
+          }
+        }
+      },
+      "expected": {
+        "passCriterion": {
+          "scope": "perCase",
+          "threshold": 1
+        },
+        "iterationRule": {
+          "kind": "defaultCount",
+          "iterations": 2
+        },
+        "validity": {
+          "enforced": true,
+          "declared": {
+            "minCompletionRate": 0,
+            "maxEvaluatorErrorRate": 0
+          },
+          "resolved": {
+            "coverage": {
+              "kind": "allConfiguredTrialsAttempted",
+              "minGradeableTrials": 1
+            },
+            "minCompletionRate": 0,
+            "maxEvaluatorErrorRate": 0
+          }
+        },
+        "caseOverrides": [],
+        "origin": "suiteFile"
+      }
+    },
+    {
+      "__label": "suite file, unequal case counts and per-case thresholds",
+      "__why": "Overrides survive with the case identity they were authored under; a case that overrides neither contributes no row, so an unchanged file cannot grow overrides by being read.",
+      "input": {
+        "source": "suiteFile",
+        "value": {
+          "defaults": {
+            "iterations": 5,
+            "passThreshold": 0.9,
+            "validity": {}
+          },
+          "cases": [
+            {
+              "id": "case_slow",
+              "iterations": 20
+            },
+            {
+              "id": "case_strict",
+              "passThreshold": 1
+            },
+            {
+              "id": "case_both",
+              "iterations": 2,
+              "passThreshold": 0.5
+            },
+            {
+              "id": "case_plain"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "passCriterion": {
+          "scope": "perCase",
+          "threshold": 0.9
+        },
+        "iterationRule": {
+          "kind": "defaultCount",
+          "iterations": 5
+        },
+        "validity": {
+          "enforced": true,
+          "declared": {},
+          "resolved": {
+            "coverage": {
+              "kind": "allConfiguredTrialsAttempted",
+              "minGradeableTrials": 1
+            },
+            "minCompletionRate": 0.8,
+            "maxEvaluatorErrorRate": 0.1
+          }
+        },
+        "caseOverrides": [
+          {
+            "caseRef": "case_slow",
+            "iterations": 20
+          },
+          {
+            "caseRef": "case_strict",
+            "passThreshold": 1
+          },
+          {
+            "caseRef": "case_both",
+            "iterations": 2,
+            "passThreshold": 0.5
+          }
+        ],
+        "origin": "suiteFile"
+      }
+    },
+    {
+      "__label": "hosted suite, per-case storage",
+      "__why": "`verdictPolicyVersion: 2` plus `verdictPolicyDefaults` is the per-case policy. The stored `repetitions` is a DEFAULT, so a case override replaces it and may be lower.",
+      "input": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          },
+          "minIterations": 3,
+          "defaultPassCriteria": {
+            "minimumPassRate": 70
+          },
+          "cases": [
+            {
+              "id": "k1",
+              "repetitions": 2,
+              "runs": 9
+            },
+            {
+              "id": "k2",
+              "passThreshold": 1
+            }
+          ]
+        }
+      },
+      "expected": {
+        "passCriterion": {
+          "scope": "perCase",
+          "threshold": 0.8
+        },
+        "iterationRule": {
+          "kind": "defaultCount",
+          "iterations": 5
+        },
+        "validity": {
+          "enforced": true,
+          "declared": {},
+          "resolved": {
+            "coverage": {
+              "kind": "allConfiguredTrialsAttempted",
+              "minGradeableTrials": 1
+            },
+            "minCompletionRate": 0.8,
+            "maxEvaluatorErrorRate": 0.1
+          }
+        },
+        "caseOverrides": [
+          {
+            "caseRef": "k1",
+            "iterations": 2
+          },
+          {
+            "caseRef": "k2",
+            "passThreshold": 1
+          }
+        ],
+        "origin": "hostedPerCase"
+      }
+    },
+    {
+      "__label": "hosted suite, per-case storage, stale legacy columns are not read",
+      "__why": "An upgrade leaves `defaultPassCriteria` and `minIterations` behind and nothing reads them. Projecting either into the policy would put a dead percent and a dead floor beside the live rule; the read DTO already reports `minimumAccuracy: null` for exactly this reason.",
+      "input": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 4,
+            "passThreshold": 0.75
+          },
+          "minIterations": 10,
+          "defaultPassCriteria": {
+            "minimumPassRate": 100
+          }
+        }
+      },
+      "expected": {
+        "passCriterion": {
+          "scope": "perCase",
+          "threshold": 0.75
+        },
+        "iterationRule": {
+          "kind": "defaultCount",
+          "iterations": 4
+        },
+        "validity": {
+          "enforced": true,
+          "declared": {},
+          "resolved": {
+            "coverage": {
+              "kind": "allConfiguredTrialsAttempted",
+              "minGradeableTrials": 1
+            },
+            "minCompletionRate": 0.8,
+            "maxEvaluatorErrorRate": 0.1
+          }
+        },
+        "caseOverrides": [],
+        "origin": "hostedPerCase"
+      }
+    },
+    {
+      "__label": "hosted suite, per-case storage, empty stored validity reads as omitted",
+      "__why": "`validity: {}` and an absent `validity` declare the same policy. They are kept DISTINCT in storage (the run snapshot writes the key only when the object is present) and the write adapter never turns one into the other, because an edit that changes nothing writes nothing.",
+      "input": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 3,
+            "passThreshold": 0.9,
+            "validity": {}
+          }
+        }
+      },
+      "expected": {
+        "passCriterion": {
+          "scope": "perCase",
+          "threshold": 0.9
+        },
+        "iterationRule": {
+          "kind": "defaultCount",
+          "iterations": 3
+        },
+        "validity": {
+          "enforced": true,
+          "declared": {},
+          "resolved": {
+            "coverage": {
+              "kind": "allConfiguredTrialsAttempted",
+              "minGradeableTrials": 1
+            },
+            "minCompletionRate": 0.8,
+            "maxEvaluatorErrorRate": 0.1
+          }
+        },
+        "caseOverrides": [],
+        "origin": "hostedPerCase"
+      }
+    },
+    {
+      "__label": "hosted suite, suite-wide storage",
+      "__why": "The percent stays a percent, the floor stays a floor, and validity is NOT enforced: a suite-wide run is passed or failed and never inconclusive on evidence grounds.",
+      "input": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3,
+          "cases": [
+            {
+              "id": "k1",
+              "runs": 7
+            },
+            {
+              "id": "k2"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "passCriterion": {
+          "scope": "suiteWide",
+          "thresholdPercent": 90,
+          "population": "iterations",
+          "emptyPopulationRate": 1
+        },
+        "iterationRule": {
+          "kind": "caseCountWithFloor",
+          "minimumIterations": 3
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [
+          {
+            "caseRef": "k1",
+            "iterations": 7
+          }
+        ],
+        "origin": "hostedSuiteWide"
+      }
+    },
+    {
+      "__label": "hosted suite, suite-wide storage with no declared threshold",
+      "__why": "Every legacy producer spells the fallback `run.passCriteria?.minimumPassRate ?? 100`. It is a producer fallback, not a stored value, so reading it here changes no storage.",
+      "input": {
+        "source": "hostedSuite",
+        "value": {}
+      },
+      "expected": {
+        "passCriterion": {
+          "scope": "suiteWide",
+          "thresholdPercent": 100,
+          "population": "iterations",
+          "emptyPopulationRate": 1
+        },
+        "iterationRule": {
+          "kind": "caseCountWithFloor",
+          "minimumIterations": null
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [],
+        "origin": "hostedSuiteWide"
+      }
+    },
+    {
+      "__label": "hosted suite, suite-wide storage, floor clamped high",
+      "__why": "`max(1, min(10, floor(value)))` is what `updateTestSuite`, `startTestSuiteRun` and the credit estimator all apply. Reporting the raw 42 would describe a floor no run uses.",
+      "input": {
+        "source": "hostedSuite",
+        "value": {
+          "minIterations": 42
+        }
+      },
+      "expected": {
+        "passCriterion": {
+          "scope": "suiteWide",
+          "thresholdPercent": 100,
+          "population": "iterations",
+          "emptyPopulationRate": 1
+        },
+        "iterationRule": {
+          "kind": "caseCountWithFloor",
+          "minimumIterations": 10
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [],
+        "origin": "hostedSuiteWide"
+      }
+    },
+    {
+      "__label": "hosted suite, suite-wide storage, floor clamped low",
+      "__why": "A stored 0 clamps to 1, which is the same as no floor in effect but is NOT `null`: the suite has a floor recorded, and an edit that clears it is a different write from one that leaves it alone.",
+      "input": {
+        "source": "hostedSuite",
+        "value": {
+          "minIterations": 0
+        }
+      },
+      "expected": {
+        "passCriterion": {
+          "scope": "suiteWide",
+          "thresholdPercent": 100,
+          "population": "iterations",
+          "emptyPopulationRate": 1
+        },
+        "iterationRule": {
+          "kind": "caseCountWithFloor",
+          "minimumIterations": 1
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [],
+        "origin": "hostedSuiteWide"
+      }
+    },
+    {
+      "__label": "run reporting, hosted ingestion",
+      "__why": "An SDK run finalized by `sdkEvals.internalFinalizeSdkRun` is decided over CASES, with a fan-out run's provider/model rows collapsed into one bucket, and an empty population rated 0.",
+      "input": {
+        "source": "runReporting",
+        "value": {
+          "minimumPassRate": 80,
+          "producer": "hosted"
+        }
+      },
+      "expected": {
+        "passCriterion": {
+          "scope": "suiteWide",
+          "thresholdPercent": 80,
+          "population": "casesIgnoringExecutionVariant",
+          "emptyPopulationRate": 0
+        },
+        "iterationRule": {
+          "kind": "caseCountWithFloor",
+          "minimumIterations": null
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [],
+        "origin": "runReporting"
+      }
+    },
+    {
+      "__label": "run reporting, local fallback",
+      "__why": "`EvalRunReporter`'s own summary counts the results it was handed, one per ITERATION. Same threshold, different denominator from the hosted ingestion above — which is why one member could not describe both.",
+      "input": {
+        "source": "runReporting",
+        "value": {
+          "minimumPassRate": 80,
+          "producer": "localFallback"
+        }
+      },
+      "expected": {
+        "passCriterion": {
+          "scope": "suiteWide",
+          "thresholdPercent": 80,
+          "population": "iterations",
+          "emptyPopulationRate": 0
+        },
+        "iterationRule": {
+          "kind": "caseCountWithFloor",
+          "minimumIterations": null
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [],
+        "origin": "runReporting"
+      }
+    },
+    {
+      "__label": "run reporting, no declared threshold",
+      "__why": "Same `?? 100` producer fallback as a suite with no `defaultPassCriteria`.",
+      "input": {
+        "source": "runReporting",
+        "value": {
+          "producer": "localFallback"
+        }
+      },
+      "expected": {
+        "passCriterion": {
+          "scope": "suiteWide",
+          "thresholdPercent": 100,
+          "population": "iterations",
+          "emptyPopulationRate": 0
+        },
+        "iterationRule": {
+          "kind": "caseCountWithFloor",
+          "minimumIterations": null
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [],
+        "origin": "runReporting"
+      }
+    }
+  ],
+  "reject": [
+    {
+      "__label": "per-case version with no stored defaults",
+      "__why": "The backend refuses to even estimate such a run (EVAL_VERDICT_POLICY_INCOMPLETE). Reading it as the suite-wide policy would decide its runs under semantics it never opted into, so the adapter throws instead of downgrading.",
+      "kind": "hostedSuite",
+      "value": {
+        "verdictPolicyVersion": 2
+      }
+    },
+    {
+      "__label": "per-case version with a suite-wide threshold and no defaults",
+      "__why": "The presence of a legacy percent is not permission to fall back to it.",
+      "kind": "hostedSuite",
+      "value": {
+        "verdictPolicyVersion": 2,
+        "defaultPassCriteria": {
+          "minimumPassRate": 90
+        }
+      }
+    },
+    {
+      "__label": "a suite-wide criterion carrying a per-case threshold override",
+      "__why": "Nothing reads a per-case threshold when the rate is measured once over the whole run, and the hosted API refuses to store one. Carrying it would render a bar that decides nothing.",
+      "kind": "policy",
+      "value": {
+        "passCriterion": {
+          "scope": "suiteWide",
+          "thresholdPercent": 90,
+          "population": "iterations",
+          "emptyPopulationRate": 1
+        },
+        "iterationRule": {
+          "kind": "caseCountWithFloor",
+          "minimumIterations": null
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [
+          {
+            "caseRef": "k1",
+            "passThreshold": 0.9
+          }
+        ],
+        "origin": "hostedSuiteWide"
+      }
+    },
+    {
+      "__label": "a per-case criterion carrying a percent",
+      "__why": "thresholdPercent is not a key of the per-case member. A single object with both fields is how a fraction and a percent end up one refactor apart.",
+      "kind": "policy",
+      "value": {
+        "passCriterion": {
+          "scope": "perCase",
+          "threshold": 0.9,
+          "thresholdPercent": 90
+        },
+        "iterationRule": {
+          "kind": "defaultCount",
+          "iterations": 3
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [],
+        "origin": "hostedPerCase"
+      }
+    },
+    {
+      "__label": "a per-case threshold expressed as a percent",
+      "__why": "90 is out of [0,1]. The bound rejects the unit confusion structurally rather than in a refinement, so the failure names the field.",
+      "kind": "policy",
+      "value": {
+        "passCriterion": {
+          "scope": "perCase",
+          "threshold": 90
+        },
+        "iterationRule": {
+          "kind": "defaultCount",
+          "iterations": 3
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [],
+        "origin": "hostedPerCase"
+      }
+    },
+    {
+      "__label": "a suite-wide threshold expressed as a fraction",
+      "__why": "0.9 is a legal percent (0.9%), so this one cannot be caught by a bound - which is exactly why the scope travels with the number instead of a caller guessing the unit. Rejected here only because emptyPopulationRate is missing.",
+      "kind": "policy",
+      "value": {
+        "passCriterion": {
+          "scope": "suiteWide",
+          "thresholdPercent": 0.9,
+          "population": "iterations"
+        },
+        "iterationRule": {
+          "kind": "caseCountWithFloor",
+          "minimumIterations": null
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [],
+        "origin": "hostedSuiteWide"
+      }
+    },
+    {
+      "__label": "a floor above the platform clamp",
+      "__why": "11 is past the 1..10 range updateTestSuite enforces, so the model cannot describe a floor no run would apply.",
+      "kind": "policy",
+      "value": {
+        "passCriterion": {
+          "scope": "suiteWide",
+          "thresholdPercent": 90,
+          "population": "iterations",
+          "emptyPopulationRate": 1
+        },
+        "iterationRule": {
+          "kind": "caseCountWithFloor",
+          "minimumIterations": 11
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [],
+        "origin": "hostedSuiteWide"
+      }
+    },
+    {
+      "__label": "a default count of zero",
+      "__why": "1 is the floor of the portable range; a case that runs zero times is not a configuration.",
+      "kind": "policy",
+      "value": {
+        "passCriterion": {
+          "scope": "perCase",
+          "threshold": 0.9
+        },
+        "iterationRule": {
+          "kind": "defaultCount",
+          "iterations": 0
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [],
+        "origin": "hostedPerCase"
+      }
+    },
+    {
+      "__label": "enforced validity with no policy",
+      "__why": "enforced: true without declared and resolved is a claim with nothing behind it.",
+      "kind": "policy",
+      "value": {
+        "passCriterion": {
+          "scope": "perCase",
+          "threshold": 0.9
+        },
+        "iterationRule": {
+          "kind": "defaultCount",
+          "iterations": 3
+        },
+        "validity": {
+          "enforced": true
+        },
+        "caseOverrides": [],
+        "origin": "hostedPerCase"
+      }
+    },
+    {
+      "__label": "not-enforced validity carrying a policy",
+      "__why": "A suite with no validity phase cannot also declare one. This is the shape that would render an active 80% completion floor beside a legacy suite.",
+      "kind": "policy",
+      "value": {
+        "passCriterion": {
+          "scope": "perCase",
+          "threshold": 0.9
+        },
+        "iterationRule": {
+          "kind": "defaultCount",
+          "iterations": 3
+        },
+        "validity": {
+          "enforced": false,
+          "resolved": {
+            "coverage": {
+              "kind": "allConfiguredTrialsAttempted",
+              "minGradeableTrials": 1
+            },
+            "minCompletionRate": 0.8,
+            "maxEvaluatorErrorRate": 0.1
+          }
+        },
+        "caseOverrides": [],
+        "origin": "hostedPerCase"
+      }
+    },
+    {
+      "__label": "an empty-population rate that is neither 0 nor 1",
+      "__why": "The two shipped producers report exactly those two numbers. A third value would be a rule nobody implements.",
+      "kind": "policy",
+      "value": {
+        "passCriterion": {
+          "scope": "suiteWide",
+          "thresholdPercent": 90,
+          "population": "iterations",
+          "emptyPopulationRate": 0.5
+        },
+        "iterationRule": {
+          "kind": "caseCountWithFloor",
+          "minimumIterations": null
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [],
+        "origin": "hostedSuiteWide"
+      }
+    },
+    {
+      "__label": "an unknown suite-wide population",
+      "__why": "The two names are the two shipped denominators. A new one is a new producer, not a spelling.",
+      "kind": "policy",
+      "value": {
+        "passCriterion": {
+          "scope": "suiteWide",
+          "thresholdPercent": 90,
+          "population": "cases",
+          "emptyPopulationRate": 1
+        },
+        "iterationRule": {
+          "kind": "caseCountWithFloor",
+          "minimumIterations": null
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [],
+        "origin": "hostedSuiteWide"
+      }
+    },
+    {
+      "__label": "an unknown origin",
+      "__why": "Origin is boundary metadata over a closed set of contracts, and a write adapter dispatches on it.",
+      "kind": "policy",
+      "value": {
+        "passCriterion": {
+          "scope": "perCase",
+          "threshold": 0.9
+        },
+        "iterationRule": {
+          "kind": "defaultCount",
+          "iterations": 3
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [],
+        "origin": "legacy"
+      }
+    },
+    {
+      "__label": "an unknown top-level key",
+      "__why": "Every object here is strict, matching the Convex v.object the backend mirror uses.",
+      "kind": "policy",
+      "value": {
+        "passCriterion": {
+          "scope": "perCase",
+          "threshold": 0.9
+        },
+        "iterationRule": {
+          "kind": "defaultCount",
+          "iterations": 3
+        },
+        "validity": {
+          "enforced": false
+        },
+        "caseOverrides": [],
+        "origin": "hostedPerCase",
+        "verdictPolicyVersion": 2
+      }
+    }
+  ],
+  "iterationResolution": [
+    {
+      "__label": "default count, no case override",
+      "__why": "The suite default is what a case runs.",
+      "rule": {
+        "kind": "defaultCount",
+        "iterations": 5
+      },
+      "args": {},
+      "expected": 5
+    },
+    {
+      "__label": "default count, case override replaces it - downward",
+      "__why": "A default is REPLACED, not raised: the case runs 2, below the suite's 5. This is the half of the rule a floor does not have.",
+      "rule": {
+        "kind": "defaultCount",
+        "iterations": 5
+      },
+      "args": {
+        "caseIterations": 2
+      },
+      "expected": 2
+    },
+    {
+      "__label": "default count, run override wins outright",
+      "__why": "A transient per-run override beats both.",
+      "rule": {
+        "kind": "defaultCount",
+        "iterations": 5
+      },
+      "args": {
+        "caseIterations": 2,
+        "runOverride": 1
+      },
+      "expected": 1
+    },
+    {
+      "__label": "floor raises a smaller case count",
+      "__why": "max(case.runs, minIterations) - the case asked for 1 and runs 3.",
+      "rule": {
+        "kind": "caseCountWithFloor",
+        "minimumIterations": 3
+      },
+      "args": {
+        "caseIterations": 1
+      },
+      "expected": 3
+    },
+    {
+      "__label": "floor never lowers a larger case count",
+      "__why": "The case asked for 7 and runs 7. Relabelling this floor a default count would silently cut the case to 3 - which is why an `iterations` edit against a floor rule is refused rather than written.",
+      "rule": {
+        "kind": "caseCountWithFloor",
+        "minimumIterations": 3
+      },
+      "args": {
+        "caseIterations": 7
+      },
+      "expected": 7
+    },
+    {
+      "__label": "default count, case override replaces it - upward",
+      "__why": "A default is replaced in both directions: a case that asks for 7 gets 7, not the suite's 3. Nothing about a default count is a floor.",
+      "rule": {
+        "kind": "defaultCount",
+        "iterations": 3
+      },
+      "args": {
+        "caseIterations": 7
+      },
+      "expected": 7
+    },
+    {
+      "__label": "the contrast: a legacy case at runs 7 under a floor of 3",
+      "__why": "Pair one of two. The case's own count under a floor rule is testCase.runs, and the floor raises it: 7.",
+      "rule": {
+        "kind": "caseCountWithFloor",
+        "minimumIterations": 3
+      },
+      "args": {
+        "caseIterations": 7
+      },
+      "expected": 7
+    },
+    {
+      "__label": "the contrast: the same legacy case under a default count of 3",
+      "__why": "Pair two of two, and the reason converting a floor into a default count is a policy change rather than a relabelling. A per-case rule reads testCase.REPETITIONS, a different column, which a legacy case does not have - so the same case resolves to the suite default 3 and loses four of its seven iterations. The two rules are not two spellings of one number.",
+      "rule": {
+        "kind": "defaultCount",
+        "iterations": 3
+      },
+      "args": {},
+      "expected": 3
+    },
+    {
+      "__label": "floor with no case count",
+      "__why": "A missing case count is 1 before the floor applies, matching Math.max(1, Math.floor(runs ?? 1)).",
+      "rule": {
+        "kind": "caseCountWithFloor",
+        "minimumIterations": 3
+      },
+      "args": {},
+      "expected": 3
+    },
+    {
+      "__label": "no floor",
+      "__why": "null is no floor at all; the case count stands.",
+      "rule": {
+        "kind": "caseCountWithFloor",
+        "minimumIterations": null
+      },
+      "args": {
+        "caseIterations": 7
+      },
+      "expected": 7
+    },
+    {
+      "__label": "no floor and no case count",
+      "__why": "Both absent still resolves to the producer's 1.",
+      "rule": {
+        "kind": "caseCountWithFloor",
+        "minimumIterations": null
+      },
+      "args": {},
+      "expected": 1
+    },
+    {
+      "__label": "replay skips the floor",
+      "__why": "A replay re-executes its source run's snapshotted counts (!useSnapshotTests && ...), so a floor added after that run does not retroactively raise it.",
+      "rule": {
+        "kind": "caseCountWithFloor",
+        "minimumIterations": 3
+      },
+      "args": {
+        "caseIterations": 1,
+        "replay": true
+      },
+      "expected": 1
+    },
+    {
+      "__label": "replay still honours a run override",
+      "__why": "The override is computed before the replay branch and wins either way.",
+      "rule": {
+        "kind": "caseCountWithFloor",
+        "minimumIterations": 3
+      },
+      "args": {
+        "caseIterations": 1,
+        "replay": true,
+        "runOverride": 9
+      },
+      "expected": 9
+    },
+    {
+      "__label": "replay is a no-op under a default count",
+      "__why": "A per-case run freezes its expected trial identities into the verdict-policy snapshot at run start, so there is no floor for a replay to skip.",
+      "rule": {
+        "kind": "defaultCount",
+        "iterations": 5
+      },
+      "args": {
+        "caseIterations": 2,
+        "replay": true
+      },
+      "expected": 2
+    },
+    {
+      "__label": "floor and case count both at the cap",
+      "__why": "10 is the clamp ceiling for the floor; a case may configure more and keeps it.",
+      "rule": {
+        "kind": "caseCountWithFloor",
+        "minimumIterations": 10
+      },
+      "args": {
+        "caseIterations": 10
+      },
+      "expected": 10
+    }
+  ],
+  "thresholdConversion": [
+    {
+      "fraction": 0,
+      "percent": 0
+    },
+    {
+      "fraction": 1,
+      "percent": 100
+    },
+    {
+      "fraction": 0.07,
+      "percent": 7
+    },
+    {
+      "fraction": 0.9,
+      "percent": 90
+    },
+    {
+      "fraction": 0.905,
+      "percent": 90.5
+    },
+    {
+      "fraction": 0.8,
+      "percent": 80
+    },
+    {
+      "fraction": 0.001,
+      "percent": 0.1
+    },
+    {
+      "fraction": 0.3333333333333333,
+      "percent": 33.3333333333
+    },
+    {
+      "fraction": 0.29,
+      "percent": 29
+    },
+    {
+      "fraction": 0.07,
+      "percent": 7
+    }
+  ],
+  "scope": [
+    {
+      "__label": "ten cases, nine always passing, one always failing",
+      "__why": "THE counterexample. A 90% suite-wide threshold passes this run; a 0.9 per-case threshold fails it, because case_10 passes 0 of its 1 iteration. Dividing 90 by 100 does not preserve the policy - it moves the bar for every suite with more than one case.",
+      "run": {
+        "iterations": [
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_2",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_3",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_4",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_5",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_6",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_7",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_8",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_9",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_10",
+            "result": "failed"
+          }
+        ]
+      },
+      "checks": [
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 90,
+            "population": "iterations",
+            "emptyPopulationRate": 1
+          },
+          "expectedRate": 0.9,
+          "expected": "passed"
+        },
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 90,
+            "population": "casesIgnoringExecutionVariant",
+            "emptyPopulationRate": 0
+          },
+          "expectedRate": 0.9,
+          "expected": "passed"
+        },
+        {
+          "criterion": {
+            "scope": "perCase",
+            "threshold": 0.9
+          },
+          "expected": "failed",
+          "expectedFailingCases": [
+            {
+              "caseRef": "case_10"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__label": "the same shape with three iterations per case",
+      "__why": "27 of 30 iterations and 9 of 10 cases both come to 0.9, so the two suite-wide populations agree here and still disagree with per-case. Equal case sizes are what make the two populations coincide; the next row removes that.",
+      "run": {
+        "iterations": [
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_2",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_2",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_2",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_3",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_3",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_3",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_4",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_4",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_4",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_5",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_5",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_5",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_6",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_6",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_6",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_7",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_7",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_7",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_8",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_8",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_8",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_9",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_9",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_9",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_10",
+            "result": "failed"
+          },
+          {
+            "caseRef": "case_10",
+            "result": "failed"
+          },
+          {
+            "caseRef": "case_10",
+            "result": "failed"
+          }
+        ]
+      },
+      "checks": [
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 90,
+            "population": "iterations",
+            "emptyPopulationRate": 1
+          },
+          "expectedRate": 0.9,
+          "expected": "passed"
+        },
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 90,
+            "population": "casesIgnoringExecutionVariant",
+            "emptyPopulationRate": 0
+          },
+          "expectedRate": 0.9,
+          "expected": "passed"
+        },
+        {
+          "criterion": {
+            "scope": "perCase",
+            "threshold": 0.9
+          },
+          "expected": "failed",
+          "expectedFailingCases": [
+            {
+              "caseRef": "case_10"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__label": "unequal case sizes split the two suite-wide populations",
+      "__why": "One passing iteration out of ten is 10%; one passing case out of two is 50%. At a 50% threshold the ITERATION population fails this run and the CASE population passes it - the same stored percent, two shipped producers, opposite answers.",
+      "run": {
+        "iterations": [
+          {
+            "caseRef": "case_small",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_big",
+            "result": "failed"
+          },
+          {
+            "caseRef": "case_big",
+            "result": "failed"
+          },
+          {
+            "caseRef": "case_big",
+            "result": "failed"
+          },
+          {
+            "caseRef": "case_big",
+            "result": "failed"
+          },
+          {
+            "caseRef": "case_big",
+            "result": "failed"
+          },
+          {
+            "caseRef": "case_big",
+            "result": "failed"
+          },
+          {
+            "caseRef": "case_big",
+            "result": "failed"
+          },
+          {
+            "caseRef": "case_big",
+            "result": "failed"
+          },
+          {
+            "caseRef": "case_big",
+            "result": "failed"
+          }
+        ]
+      },
+      "checks": [
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 50,
+            "population": "iterations",
+            "emptyPopulationRate": 1
+          },
+          "expectedRate": 0.1,
+          "expected": "failed"
+        },
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 50,
+            "population": "casesIgnoringExecutionVariant",
+            "emptyPopulationRate": 0
+          },
+          "expectedRate": 0.5,
+          "expected": "passed"
+        },
+        {
+          "criterion": {
+            "scope": "perCase",
+            "threshold": 0.5
+          },
+          "expected": "failed",
+          "expectedFailingCases": [
+            {
+              "caseRef": "case_big"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__label": "one case fanned across two models",
+      "__why": "iterationGroupKeyForSummary does not key on the execution variant, so both models collapse into ONE case bucket and a single failure fails it: 0 of 1 case, against 3 of 6 iterations. The per-case contract keys a case aggregate on (caseId, executionVariant) and reports the two models separately, which is the third answer.",
+      "run": {
+        "iterations": [
+          {
+            "caseRef": "case_fan",
+            "result": "passed",
+            "executionVariant": {
+              "model": "gpt-x"
+            }
+          },
+          {
+            "caseRef": "case_fan",
+            "result": "passed",
+            "executionVariant": {
+              "model": "gpt-x"
+            }
+          },
+          {
+            "caseRef": "case_fan",
+            "result": "passed",
+            "executionVariant": {
+              "model": "gpt-x"
+            }
+          },
+          {
+            "caseRef": "case_fan",
+            "result": "failed",
+            "executionVariant": {
+              "model": "claude-y"
+            }
+          },
+          {
+            "caseRef": "case_fan",
+            "result": "failed",
+            "executionVariant": {
+              "model": "claude-y"
+            }
+          },
+          {
+            "caseRef": "case_fan",
+            "result": "failed",
+            "executionVariant": {
+              "model": "claude-y"
+            }
+          }
+        ]
+      },
+      "checks": [
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 50,
+            "population": "iterations",
+            "emptyPopulationRate": 1
+          },
+          "expectedRate": 0.5,
+          "expected": "passed"
+        },
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 50,
+            "population": "casesIgnoringExecutionVariant",
+            "emptyPopulationRate": 0
+          },
+          "expectedRate": 0.0,
+          "expected": "failed"
+        },
+        {
+          "criterion": {
+            "scope": "perCase",
+            "threshold": 0.5
+          },
+          "expected": "failed",
+          "expectedFailingCases": [
+            {
+              "caseRef": "case_fan",
+              "executionVariant": {
+                "model": "claude-y"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__label": "a held iteration is in the iteration denominator and absent from the case one",
+      "__why": "A pending row (a run still held in grading) lowers the iteration rate to 0.9 and drops out of the case population entirely, because a case with no terminal iteration is `absent` and is never counted. The same run is 90% to one producer and 100% to the other.",
+      "run": {
+        "iterations": [
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "pending"
+          }
+        ]
+      },
+      "checks": [
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 95,
+            "population": "iterations",
+            "emptyPopulationRate": 1
+          },
+          "expectedRate": 0.9,
+          "expected": "failed"
+        },
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 95,
+            "population": "casesIgnoringExecutionVariant",
+            "emptyPopulationRate": 0
+          },
+          "expectedRate": 1.0,
+          "expected": "passed"
+        }
+      ]
+    },
+    {
+      "__label": "a cancelled iteration stays in the iteration denominator",
+      "__why": "Cancellation is NOT withdrawn from a suite-wide denominator the way the per-case contract withdraws it: the row is still one of ten iterations. Under the case population case_2 has no terminal iteration and is dropped instead.",
+      "run": {
+        "iterations": [
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_2",
+            "result": "cancelled"
+          }
+        ]
+      },
+      "checks": [
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 95,
+            "population": "iterations",
+            "emptyPopulationRate": 1
+          },
+          "expectedRate": 0.9,
+          "expected": "failed"
+        },
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 95,
+            "population": "casesIgnoringExecutionVariant",
+            "emptyPopulationRate": 0
+          },
+          "expectedRate": 1.0,
+          "expected": "passed"
+        }
+      ]
+    },
+    {
+      "__label": "a timed-out iteration is a FAILURE under both suite-wide producers",
+      "__why": "result === 'failed' || result === 'timed_out' is the shipped failure test, so a timeout counts against the run rather than dropping out of it. This is the one non-passing lifecycle outcome the two populations agree on.",
+      "run": {
+        "iterations": [
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_2",
+            "result": "timed_out"
+          }
+        ]
+      },
+      "checks": [
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 95,
+            "population": "iterations",
+            "emptyPopulationRate": 1
+          },
+          "expectedRate": 0.9,
+          "expected": "failed"
+        },
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 95,
+            "population": "casesIgnoringExecutionVariant",
+            "emptyPopulationRate": 0
+          },
+          "expectedRate": 0.5,
+          "expected": "failed"
+        }
+      ]
+    },
+    {
+      "__label": "no iterations at all",
+      "__why": "The empty-population rate is the whole difference: the hosted finalizer rates an empty run 1 and passes it at any threshold; the SDK ingestion and local fallback rate it 0 and fail it at every threshold above 0.",
+      "run": {
+        "iterations": []
+      },
+      "checks": [
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 100,
+            "population": "iterations",
+            "emptyPopulationRate": 1
+          },
+          "expectedRate": 1.0,
+          "expected": "passed"
+        },
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 100,
+            "population": "iterations",
+            "emptyPopulationRate": 0
+          },
+          "expectedRate": 0.0,
+          "expected": "failed"
+        },
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 0,
+            "population": "iterations",
+            "emptyPopulationRate": 0
+          },
+          "expectedRate": 0.0,
+          "expected": "passed"
+        }
+      ]
+    },
+    {
+      "__label": "eight evaluator errors and two passes",
+      "__why": "Eight iterations whose REQUIRED evaluator errored. testIteration.result has no evaluator-error member, so a failing required scorer lands as result: failed and every suite-wide producer reads it as the server failing: the rate is 0.2 and the run FAILS. Under the per-case policy the same run is INCONCLUSIVE - an 0.8 evaluator-error rate is over the 0.1 ceiling, read from metadata the suite-wide producers never consult - and that outcome is unreachable for a suite-wide suite, which has no validity phase at all.",
+      "run": {
+        "iterations": [
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "passed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "failed",
+            "evaluatorError": true
+          },
+          {
+            "caseRef": "case_1",
+            "result": "failed",
+            "evaluatorError": true
+          },
+          {
+            "caseRef": "case_1",
+            "result": "failed",
+            "evaluatorError": true
+          },
+          {
+            "caseRef": "case_1",
+            "result": "failed",
+            "evaluatorError": true
+          },
+          {
+            "caseRef": "case_1",
+            "result": "failed",
+            "evaluatorError": true
+          },
+          {
+            "caseRef": "case_1",
+            "result": "failed",
+            "evaluatorError": true
+          },
+          {
+            "caseRef": "case_1",
+            "result": "failed",
+            "evaluatorError": true
+          },
+          {
+            "caseRef": "case_1",
+            "result": "failed",
+            "evaluatorError": true
+          }
+        ]
+      },
+      "checks": [
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 90,
+            "population": "iterations",
+            "emptyPopulationRate": 1
+          },
+          "expectedRate": 0.2,
+          "expected": "failed"
+        },
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 90,
+            "population": "casesIgnoringExecutionVariant",
+            "emptyPopulationRate": 0
+          },
+          "expectedRate": 0.0,
+          "expected": "failed"
+        }
+      ],
+      "perCaseNote": "inconclusive: evaluatorErrorRate 8/10 = 0.8 exceeds the resolved 0.1 ceiling, so validity does not hold and no task verdict is reached. The per-case arithmetic is pinned in eval-verdict-policy-parity-fixtures.json; it is named here only to contrast the two scopes."
+    },
+    {
+      "__label": "a measured assertion failure is not an evaluator error",
+      "__why": "Three iterations the grader judged and found wanting. Every suite-wide producer reads them as failures, and the per-case policy reads them as a measured 0.0 pass rate rather than as missing evidence: validity holds and the case FAILS. An evaluator that errored on the same three would produce no task verdict at all.",
+      "run": {
+        "iterations": [
+          {
+            "caseRef": "case_1",
+            "result": "failed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "failed"
+          },
+          {
+            "caseRef": "case_1",
+            "result": "failed"
+          }
+        ]
+      },
+      "checks": [
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 1,
+            "population": "iterations",
+            "emptyPopulationRate": 1
+          },
+          "expectedRate": 0.0,
+          "expected": "failed"
+        },
+        {
+          "criterion": {
+            "scope": "suiteWide",
+            "thresholdPercent": 1,
+            "population": "casesIgnoringExecutionVariant",
+            "emptyPopulationRate": 0
+          },
+          "expectedRate": 0.0,
+          "expected": "failed"
+        },
+        {
+          "criterion": {
+            "scope": "perCase",
+            "threshold": 0.5
+          },
+          "expected": "failed",
+          "expectedFailingCases": [
+            {
+              "caseRef": "case_1"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "runs": {
+    "nine_of_ten_single_iteration": [
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_2",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_3",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_4",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_5",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_6",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_7",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_8",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_9",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_10",
+        "result": "failed"
+      }
+    ],
+    "nine_of_ten_three_iterations": [
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_2",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_2",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_2",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_3",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_3",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_3",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_4",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_4",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_4",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_5",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_5",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_5",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_6",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_6",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_6",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_7",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_7",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_7",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_8",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_8",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_8",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_9",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_9",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_9",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_10",
+        "result": "failed"
+      },
+      {
+        "caseRef": "case_10",
+        "result": "failed"
+      },
+      {
+        "caseRef": "case_10",
+        "result": "failed"
+      }
+    ],
+    "unequal_case_sizes": [
+      {
+        "caseRef": "case_small",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_big",
+        "result": "failed"
+      },
+      {
+        "caseRef": "case_big",
+        "result": "failed"
+      },
+      {
+        "caseRef": "case_big",
+        "result": "failed"
+      },
+      {
+        "caseRef": "case_big",
+        "result": "failed"
+      },
+      {
+        "caseRef": "case_big",
+        "result": "failed"
+      },
+      {
+        "caseRef": "case_big",
+        "result": "failed"
+      },
+      {
+        "caseRef": "case_big",
+        "result": "failed"
+      },
+      {
+        "caseRef": "case_big",
+        "result": "failed"
+      },
+      {
+        "caseRef": "case_big",
+        "result": "failed"
+      }
+    ],
+    "fan_out_two_models": [
+      {
+        "caseRef": "case_fan",
+        "result": "passed",
+        "executionVariant": {
+          "model": "gpt-x"
+        }
+      },
+      {
+        "caseRef": "case_fan",
+        "result": "passed",
+        "executionVariant": {
+          "model": "gpt-x"
+        }
+      },
+      {
+        "caseRef": "case_fan",
+        "result": "passed",
+        "executionVariant": {
+          "model": "gpt-x"
+        }
+      },
+      {
+        "caseRef": "case_fan",
+        "result": "failed",
+        "executionVariant": {
+          "model": "claude-y"
+        }
+      },
+      {
+        "caseRef": "case_fan",
+        "result": "failed",
+        "executionVariant": {
+          "model": "claude-y"
+        }
+      },
+      {
+        "caseRef": "case_fan",
+        "result": "failed",
+        "executionVariant": {
+          "model": "claude-y"
+        }
+      }
+    ],
+    "one_held_iteration": [
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "pending"
+      }
+    ],
+    "one_cancelled_iteration": [
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_2",
+        "result": "cancelled"
+      }
+    ],
+    "one_timed_out_iteration": [
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_2",
+        "result": "timed_out"
+      }
+    ],
+    "no_iterations": [],
+    "eight_evaluator_errors": [
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "passed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "failed",
+        "evaluatorError": true
+      },
+      {
+        "caseRef": "case_1",
+        "result": "failed",
+        "evaluatorError": true
+      },
+      {
+        "caseRef": "case_1",
+        "result": "failed",
+        "evaluatorError": true
+      },
+      {
+        "caseRef": "case_1",
+        "result": "failed",
+        "evaluatorError": true
+      },
+      {
+        "caseRef": "case_1",
+        "result": "failed",
+        "evaluatorError": true
+      },
+      {
+        "caseRef": "case_1",
+        "result": "failed",
+        "evaluatorError": true
+      },
+      {
+        "caseRef": "case_1",
+        "result": "failed",
+        "evaluatorError": true
+      },
+      {
+        "caseRef": "case_1",
+        "result": "failed",
+        "evaluatorError": true
+      }
+    ],
+    "all_failed": [
+      {
+        "caseRef": "case_1",
+        "result": "failed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "failed"
+      },
+      {
+        "caseRef": "case_1",
+        "result": "failed"
+      }
+    ]
+  },
+  "historicalSummaries": [
+    {
+      "__label": "nine_of_ten_single_iteration at 100%",
+      "__why": "The counterexample run. All three producers agree at 90 because every case is one iteration and every case is terminal.",
+      "run": "nine_of_ten_single_iteration",
+      "minimumPassRate": 100,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "failed"
+        },
+        "sdkIngestion": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "nine_of_ten_single_iteration at 90%",
+      "__why": "The counterexample run. All three producers agree at 90 because every case is one iteration and every case is terminal.",
+      "run": "nine_of_ten_single_iteration",
+      "minimumPassRate": 90,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "nine_of_ten_single_iteration at 50%",
+      "__why": "The counterexample run. All three producers agree at 90 because every case is one iteration and every case is terminal.",
+      "run": "nine_of_ten_single_iteration",
+      "minimumPassRate": 50,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "nine_of_ten_single_iteration at 0%",
+      "__why": "The counterexample run. All three producers agree at 90 because every case is one iteration and every case is terminal.",
+      "run": "nine_of_ten_single_iteration",
+      "minimumPassRate": 0,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "nine_of_ten_three_iterations at 100%",
+      "__why": "Equal case sizes keep the iteration and case denominators proportional, so the two hosted producers still agree.",
+      "run": "nine_of_ten_three_iterations",
+      "minimumPassRate": 100,
+      "expected": {
+        "hostedFinalization": {
+          "total": 30,
+          "passed": 27,
+          "failed": 3,
+          "passRate": 0.9,
+          "result": "failed"
+        },
+        "sdkIngestion": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 30,
+          "passed": 27,
+          "failed": 3,
+          "passRate": 0.9,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "nine_of_ten_three_iterations at 90%",
+      "__why": "Equal case sizes keep the iteration and case denominators proportional, so the two hosted producers still agree.",
+      "run": "nine_of_ten_three_iterations",
+      "minimumPassRate": 90,
+      "expected": {
+        "hostedFinalization": {
+          "total": 30,
+          "passed": 27,
+          "failed": 3,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 30,
+          "passed": 27,
+          "failed": 3,
+          "passRate": 0.9,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "nine_of_ten_three_iterations at 50%",
+      "__why": "Equal case sizes keep the iteration and case denominators proportional, so the two hosted producers still agree.",
+      "run": "nine_of_ten_three_iterations",
+      "minimumPassRate": 50,
+      "expected": {
+        "hostedFinalization": {
+          "total": 30,
+          "passed": 27,
+          "failed": 3,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 30,
+          "passed": 27,
+          "failed": 3,
+          "passRate": 0.9,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "nine_of_ten_three_iterations at 0%",
+      "__why": "Equal case sizes keep the iteration and case denominators proportional, so the two hosted producers still agree.",
+      "run": "nine_of_ten_three_iterations",
+      "minimumPassRate": 0,
+      "expected": {
+        "hostedFinalization": {
+          "total": 30,
+          "passed": 27,
+          "failed": 3,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 30,
+          "passed": 27,
+          "failed": 3,
+          "passRate": 0.9,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "unequal_case_sizes at 100%",
+      "__why": "10% by iteration, 50% by case. The same stored 50 decides this run differently depending on which producer finalized it, and no normalization can merge the two without changing one of them.",
+      "run": "unequal_case_sizes",
+      "minimumPassRate": 100,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 1,
+          "failed": 9,
+          "passRate": 0.1,
+          "result": "failed"
+        },
+        "sdkIngestion": {
+          "total": 2,
+          "passed": 1,
+          "failed": 1,
+          "passRate": 0.5,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 1,
+          "failed": 9,
+          "passRate": 0.1,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "unequal_case_sizes at 90%",
+      "__why": "10% by iteration, 50% by case. The same stored 50 decides this run differently depending on which producer finalized it, and no normalization can merge the two without changing one of them.",
+      "run": "unequal_case_sizes",
+      "minimumPassRate": 90,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 1,
+          "failed": 9,
+          "passRate": 0.1,
+          "result": "failed"
+        },
+        "sdkIngestion": {
+          "total": 2,
+          "passed": 1,
+          "failed": 1,
+          "passRate": 0.5,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 1,
+          "failed": 9,
+          "passRate": 0.1,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "unequal_case_sizes at 50%",
+      "__why": "10% by iteration, 50% by case. The same stored 50 decides this run differently depending on which producer finalized it, and no normalization can merge the two without changing one of them.",
+      "run": "unequal_case_sizes",
+      "minimumPassRate": 50,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 1,
+          "failed": 9,
+          "passRate": 0.1,
+          "result": "failed"
+        },
+        "sdkIngestion": {
+          "total": 2,
+          "passed": 1,
+          "failed": 1,
+          "passRate": 0.5,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 1,
+          "failed": 9,
+          "passRate": 0.1,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "unequal_case_sizes at 0%",
+      "__why": "10% by iteration, 50% by case. The same stored 50 decides this run differently depending on which producer finalized it, and no normalization can merge the two without changing one of them.",
+      "run": "unequal_case_sizes",
+      "minimumPassRate": 0,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 1,
+          "failed": 9,
+          "passRate": 0.1,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 2,
+          "passed": 1,
+          "failed": 1,
+          "passRate": 0.5,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 1,
+          "failed": 9,
+          "passRate": 0.1,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "fan_out_two_models at 100%",
+      "__why": "The case producer collapses the two models into one bucket and fails it; the iteration producer reports 3 of 6. A fan-out run is where the case denominator is least like the per-case contract's, which keys on (caseId, executionVariant).",
+      "run": "fan_out_two_models",
+      "minimumPassRate": 100,
+      "expected": {
+        "hostedFinalization": {
+          "total": 6,
+          "passed": 3,
+          "failed": 3,
+          "passRate": 0.5,
+          "result": "failed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 0,
+          "failed": 1,
+          "passRate": 0.0,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 6,
+          "passed": 3,
+          "failed": 3,
+          "passRate": 0.5,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "fan_out_two_models at 90%",
+      "__why": "The case producer collapses the two models into one bucket and fails it; the iteration producer reports 3 of 6. A fan-out run is where the case denominator is least like the per-case contract's, which keys on (caseId, executionVariant).",
+      "run": "fan_out_two_models",
+      "minimumPassRate": 90,
+      "expected": {
+        "hostedFinalization": {
+          "total": 6,
+          "passed": 3,
+          "failed": 3,
+          "passRate": 0.5,
+          "result": "failed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 0,
+          "failed": 1,
+          "passRate": 0.0,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 6,
+          "passed": 3,
+          "failed": 3,
+          "passRate": 0.5,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "fan_out_two_models at 50%",
+      "__why": "The case producer collapses the two models into one bucket and fails it; the iteration producer reports 3 of 6. A fan-out run is where the case denominator is least like the per-case contract's, which keys on (caseId, executionVariant).",
+      "run": "fan_out_two_models",
+      "minimumPassRate": 50,
+      "expected": {
+        "hostedFinalization": {
+          "total": 6,
+          "passed": 3,
+          "failed": 3,
+          "passRate": 0.5,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 0,
+          "failed": 1,
+          "passRate": 0.0,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 6,
+          "passed": 3,
+          "failed": 3,
+          "passRate": 0.5,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "fan_out_two_models at 0%",
+      "__why": "The case producer collapses the two models into one bucket and fails it; the iteration producer reports 3 of 6. A fan-out run is where the case denominator is least like the per-case contract's, which keys on (caseId, executionVariant).",
+      "run": "fan_out_two_models",
+      "minimumPassRate": 0,
+      "expected": {
+        "hostedFinalization": {
+          "total": 6,
+          "passed": 3,
+          "failed": 3,
+          "passRate": 0.5,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 0,
+          "failed": 1,
+          "passRate": 0.0,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 6,
+          "passed": 3,
+          "failed": 3,
+          "passRate": 0.5,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "one_held_iteration at 100%",
+      "__why": "A pending row is one of ten iterations and is absent from the case population. 0.9 against 1.0 on the same run.",
+      "run": "one_held_iteration",
+      "minimumPassRate": 100,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 9,
+          "failed": 0,
+          "passRate": 0.9,
+          "result": "failed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "passRate": 1.0,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "one_held_iteration at 90%",
+      "__why": "A pending row is one of ten iterations and is absent from the case population. 0.9 against 1.0 on the same run.",
+      "run": "one_held_iteration",
+      "minimumPassRate": 90,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 9,
+          "failed": 0,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "passRate": 1.0,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "one_held_iteration at 50%",
+      "__why": "A pending row is one of ten iterations and is absent from the case population. 0.9 against 1.0 on the same run.",
+      "run": "one_held_iteration",
+      "minimumPassRate": 50,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 9,
+          "failed": 0,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "passRate": 1.0,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "one_held_iteration at 0%",
+      "__why": "A pending row is one of ten iterations and is absent from the case population. 0.9 against 1.0 on the same run.",
+      "run": "one_held_iteration",
+      "minimumPassRate": 0,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 9,
+          "failed": 0,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "passRate": 1.0,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "one_cancelled_iteration at 100%",
+      "__why": "Cancellation is not withdrawn from the iteration denominator here, unlike the per-case contract's attemptedTrials rule.",
+      "run": "one_cancelled_iteration",
+      "minimumPassRate": 100,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 9,
+          "failed": 0,
+          "passRate": 0.9,
+          "result": "failed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "passRate": 1.0,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "one_cancelled_iteration at 90%",
+      "__why": "Cancellation is not withdrawn from the iteration denominator here, unlike the per-case contract's attemptedTrials rule.",
+      "run": "one_cancelled_iteration",
+      "minimumPassRate": 90,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 9,
+          "failed": 0,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "passRate": 1.0,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "one_cancelled_iteration at 50%",
+      "__why": "Cancellation is not withdrawn from the iteration denominator here, unlike the per-case contract's attemptedTrials rule.",
+      "run": "one_cancelled_iteration",
+      "minimumPassRate": 50,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 9,
+          "failed": 0,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "passRate": 1.0,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "one_cancelled_iteration at 0%",
+      "__why": "Cancellation is not withdrawn from the iteration denominator here, unlike the per-case contract's attemptedTrials rule.",
+      "run": "one_cancelled_iteration",
+      "minimumPassRate": 0,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 9,
+          "failed": 0,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "passRate": 1.0,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "one_timed_out_iteration at 100%",
+      "__why": "A timeout is a failure to every producer: counted in `failed` by the iteration producer and failing its case in the case producer.",
+      "run": "one_timed_out_iteration",
+      "minimumPassRate": 100,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "failed"
+        },
+        "sdkIngestion": {
+          "total": 2,
+          "passed": 1,
+          "failed": 1,
+          "passRate": 0.5,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "one_timed_out_iteration at 90%",
+      "__why": "A timeout is a failure to every producer: counted in `failed` by the iteration producer and failing its case in the case producer.",
+      "run": "one_timed_out_iteration",
+      "minimumPassRate": 90,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 2,
+          "passed": 1,
+          "failed": 1,
+          "passRate": 0.5,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "one_timed_out_iteration at 50%",
+      "__why": "A timeout is a failure to every producer: counted in `failed` by the iteration producer and failing its case in the case producer.",
+      "run": "one_timed_out_iteration",
+      "minimumPassRate": 50,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 2,
+          "passed": 1,
+          "failed": 1,
+          "passRate": 0.5,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "one_timed_out_iteration at 0%",
+      "__why": "A timeout is a failure to every producer: counted in `failed` by the iteration producer and failing its case in the case producer.",
+      "run": "one_timed_out_iteration",
+      "minimumPassRate": 0,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 2,
+          "passed": 1,
+          "failed": 1,
+          "passRate": 0.5,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 9,
+          "failed": 1,
+          "passRate": 0.9,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "no_iterations at 100%",
+      "__why": "The empty-population divergence, at a threshold of 100: vacuously passed by the hosted finalizer, failed by both SDK producers. Nothing may quietly pick one.",
+      "run": "no_iterations",
+      "minimumPassRate": 100,
+      "expected": {
+        "hostedFinalization": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0,
+          "passRate": 1,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0,
+          "passRate": 0,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0,
+          "passRate": 0,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "no_iterations at 90%",
+      "__why": "The empty-population divergence, at a threshold of 100: vacuously passed by the hosted finalizer, failed by both SDK producers. Nothing may quietly pick one.",
+      "run": "no_iterations",
+      "minimumPassRate": 90,
+      "expected": {
+        "hostedFinalization": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0,
+          "passRate": 1,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0,
+          "passRate": 0,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0,
+          "passRate": 0,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "no_iterations at 50%",
+      "__why": "The empty-population divergence, at a threshold of 100: vacuously passed by the hosted finalizer, failed by both SDK producers. Nothing may quietly pick one.",
+      "run": "no_iterations",
+      "minimumPassRate": 50,
+      "expected": {
+        "hostedFinalization": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0,
+          "passRate": 1,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0,
+          "passRate": 0,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0,
+          "passRate": 0,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "no_iterations at 0%",
+      "__why": "The empty-population divergence, at a threshold of 100: vacuously passed by the hosted finalizer, failed by both SDK producers. Nothing may quietly pick one.",
+      "run": "no_iterations",
+      "minimumPassRate": 0,
+      "expected": {
+        "hostedFinalization": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0,
+          "passRate": 1,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0,
+          "passRate": 0,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0,
+          "passRate": 0,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "eight_evaluator_errors at 100%",
+      "__why": "A broken required evaluator lands as result: failed, because testIteration.result has no evaluator-error member. Every suite-wide producer therefore reads a broken grader as a failing server - which is why the per-case policy carries a separate evaluator-error ceiling read from iteration metadata.",
+      "run": "eight_evaluator_errors",
+      "minimumPassRate": 100,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 2,
+          "failed": 8,
+          "passRate": 0.2,
+          "result": "failed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 0,
+          "failed": 1,
+          "passRate": 0.0,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 2,
+          "failed": 8,
+          "passRate": 0.2,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "eight_evaluator_errors at 90%",
+      "__why": "A broken required evaluator lands as result: failed, because testIteration.result has no evaluator-error member. Every suite-wide producer therefore reads a broken grader as a failing server - which is why the per-case policy carries a separate evaluator-error ceiling read from iteration metadata.",
+      "run": "eight_evaluator_errors",
+      "minimumPassRate": 90,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 2,
+          "failed": 8,
+          "passRate": 0.2,
+          "result": "failed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 0,
+          "failed": 1,
+          "passRate": 0.0,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 2,
+          "failed": 8,
+          "passRate": 0.2,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "eight_evaluator_errors at 50%",
+      "__why": "A broken required evaluator lands as result: failed, because testIteration.result has no evaluator-error member. Every suite-wide producer therefore reads a broken grader as a failing server - which is why the per-case policy carries a separate evaluator-error ceiling read from iteration metadata.",
+      "run": "eight_evaluator_errors",
+      "minimumPassRate": 50,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 2,
+          "failed": 8,
+          "passRate": 0.2,
+          "result": "failed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 0,
+          "failed": 1,
+          "passRate": 0.0,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 2,
+          "failed": 8,
+          "passRate": 0.2,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "eight_evaluator_errors at 0%",
+      "__why": "A broken required evaluator lands as result: failed, because testIteration.result has no evaluator-error member. Every suite-wide producer therefore reads a broken grader as a failing server - which is why the per-case policy carries a separate evaluator-error ceiling read from iteration metadata.",
+      "run": "eight_evaluator_errors",
+      "minimumPassRate": 0,
+      "expected": {
+        "hostedFinalization": {
+          "total": 10,
+          "passed": 2,
+          "failed": 8,
+          "passRate": 0.2,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 0,
+          "failed": 1,
+          "passRate": 0.0,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 10,
+          "passed": 2,
+          "failed": 8,
+          "passRate": 0.2,
+          "result": "passed"
+        }
+      }
+    },
+    {
+      "__label": "all_failed at 100%",
+      "__why": "Measured failures. Zero pass rate under every producer, and `failed` rather than inconclusive - there is no validity phase to reach.",
+      "run": "all_failed",
+      "minimumPassRate": 100,
+      "expected": {
+        "hostedFinalization": {
+          "total": 3,
+          "passed": 0,
+          "failed": 3,
+          "passRate": 0.0,
+          "result": "failed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 0,
+          "failed": 1,
+          "passRate": 0.0,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 3,
+          "passed": 0,
+          "failed": 3,
+          "passRate": 0.0,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "all_failed at 90%",
+      "__why": "Measured failures. Zero pass rate under every producer, and `failed` rather than inconclusive - there is no validity phase to reach.",
+      "run": "all_failed",
+      "minimumPassRate": 90,
+      "expected": {
+        "hostedFinalization": {
+          "total": 3,
+          "passed": 0,
+          "failed": 3,
+          "passRate": 0.0,
+          "result": "failed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 0,
+          "failed": 1,
+          "passRate": 0.0,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 3,
+          "passed": 0,
+          "failed": 3,
+          "passRate": 0.0,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "all_failed at 50%",
+      "__why": "Measured failures. Zero pass rate under every producer, and `failed` rather than inconclusive - there is no validity phase to reach.",
+      "run": "all_failed",
+      "minimumPassRate": 50,
+      "expected": {
+        "hostedFinalization": {
+          "total": 3,
+          "passed": 0,
+          "failed": 3,
+          "passRate": 0.0,
+          "result": "failed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 0,
+          "failed": 1,
+          "passRate": 0.0,
+          "result": "failed"
+        },
+        "localFallback": {
+          "total": 3,
+          "passed": 0,
+          "failed": 3,
+          "passRate": 0.0,
+          "result": "failed"
+        }
+      }
+    },
+    {
+      "__label": "all_failed at 0%",
+      "__why": "Measured failures. Zero pass rate under every producer, and `failed` rather than inconclusive - there is no validity phase to reach.",
+      "run": "all_failed",
+      "minimumPassRate": 0,
+      "expected": {
+        "hostedFinalization": {
+          "total": 3,
+          "passed": 0,
+          "failed": 3,
+          "passRate": 0.0,
+          "result": "passed"
+        },
+        "sdkIngestion": {
+          "total": 1,
+          "passed": 0,
+          "failed": 1,
+          "passRate": 0.0,
+          "result": "passed"
+        },
+        "localFallback": {
+          "total": 3,
+          "passed": 0,
+          "failed": 3,
+          "passRate": 0.0,
+          "result": "passed"
+        }
+      }
+    }
+  ],
+  "edits": [
+    {
+      "__label": "per-case: a threshold edit writes passThreshold",
+      "__why": "The fraction goes to the fraction field. minimumAccuracy is never written on a per-case suite - the route refuses it outright, and converting it would be a percent no run uses.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "passThreshold": 0.9
+      },
+      "expected": {
+        "ok": true,
+        "settings": {
+          "passThreshold": 0.9
+        },
+        "changed": [
+          "passThreshold"
+        ]
+      }
+    },
+    {
+      "__label": "suite-wide: a threshold edit writes minimumAccuracy",
+      "__why": "Same canonical fraction, converted at the boundary to the percent this suite's producer reads, over the population it already measured. passThreshold is NOT written, and neither is repetitions - which is what stops a threshold edit from migrating the suite.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3
+        }
+      },
+      "edit": {
+        "passThreshold": 0.95
+      },
+      "expected": {
+        "ok": true,
+        "settings": {
+          "minimumAccuracy": 95
+        },
+        "changed": [
+          "passThreshold"
+        ]
+      }
+    },
+    {
+      "__label": "suite-wide: a threshold edit restating the stored value writes nothing",
+      "__why": "0.9 is the stored 90. An unchanged edit produces an EMPTY patch, so a read-edit-write round trip sends no policy field and cannot rotate the suite's configRevision.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3
+        }
+      },
+      "edit": {
+        "passThreshold": 0.9
+      },
+      "expected": {
+        "ok": true,
+        "settings": {},
+        "changed": []
+      }
+    },
+    {
+      "__label": "per-case: a threshold edit restating the stored value writes nothing",
+      "__why": "The same property on the fraction side.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "passThreshold": 0.8
+      },
+      "expected": {
+        "ok": true,
+        "settings": {},
+        "changed": []
+      }
+    },
+    {
+      "__label": "per-case: an iteration-count edit writes repetitions",
+      "__why": "A default count is a real field on this policy, so the canonical count edit is representable.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "iterations": 7
+      },
+      "expected": {
+        "ok": true,
+        "settings": {
+          "repetitions": 7
+        },
+        "changed": [
+          "iterations"
+        ]
+      }
+    },
+    {
+      "__label": "per-case: an iteration-count edit restating the stored value writes nothing",
+      "__why": "Unchanged is unchanged on the count side too.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "iterations": 5
+      },
+      "expected": {
+        "ok": true,
+        "settings": {},
+        "changed": []
+      }
+    },
+    {
+      "__label": "suite-wide: an iteration-count edit is REFUSED",
+      "__why": "There is no suite default count under a floor rule. Writing 7 as minimumIterations would raise every case that configured less and lower nothing - a different policy from the one asked for - so the edit is refused and names settings.minimumIterations as the operation that does exist.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3
+        }
+      },
+      "edit": {
+        "iterations": 7
+      },
+      "expected": {
+        "ok": false,
+        "refusal": "iterationsNotRepresentable"
+      }
+    },
+    {
+      "__label": "suite-wide: a threshold AND count edit is refused WHOLE",
+      "__why": "The anti-migration row. Dropping the unrepresentable count and writing the threshold would look like a success; sending repetitions with passThreshold is exactly the pair applyVerdictPolicySettings reads as an upgrade. Neither happens: the plan carries no settings at all.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3
+        }
+      },
+      "edit": {
+        "passThreshold": 0.95,
+        "iterations": 7
+      },
+      "expected": {
+        "ok": false,
+        "refusal": "iterationsNotRepresentable"
+      }
+    },
+    {
+      "__label": "per-case: a floor edit is REFUSED",
+      "__why": "A per-case suite has no iteration minimum. Writing minimumIterations onto it would store a floor the per-case resolver never reads, leaving a number in the settings sheet that decides nothing.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "minimumIterations": 3
+      },
+      "expected": {
+        "ok": false,
+        "refusal": "minimumIterationsNotRepresentable"
+      }
+    },
+    {
+      "__label": "suite-wide: setting a floor where there was none",
+      "__why": "null to 3 is a change, and it writes the field the platform already has.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          }
+        }
+      },
+      "edit": {
+        "minimumIterations": 3
+      },
+      "expected": {
+        "ok": true,
+        "settings": {
+          "minimumIterations": 3
+        },
+        "changed": [
+          "minimumIterations"
+        ]
+      }
+    },
+    {
+      "__label": "suite-wide: clearing a floor",
+      "__why": "null is forwarded verbatim because the platform reads null as clear and undefined as leave-alone; collapsing them would turn every attempt to remove the floor into a silent no-op.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3
+        }
+      },
+      "edit": {
+        "minimumIterations": null
+      },
+      "expected": {
+        "ok": true,
+        "settings": {
+          "minimumIterations": null
+        },
+        "changed": [
+          "minimumIterations"
+        ]
+      }
+    },
+    {
+      "__label": "suite-wide: a floor edit restating the stored value writes nothing",
+      "__why": "3 is already stored.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3
+        }
+      },
+      "edit": {
+        "minimumIterations": 3
+      },
+      "expected": {
+        "ok": true,
+        "settings": {},
+        "changed": []
+      }
+    },
+    {
+      "__label": "suite-wide: a floor edit matching the CLAMPED stored value writes nothing",
+      "__why": "Storage holds 42, which the platform clamps to 10, so the floor in effect is 10 and an edit to 10 changes nothing. The comparison is against the resolved (clamped) value, not the raw column, so a suite whose stored floor predates the route's bound does not rotate its revision on a no-op edit.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "minIterations": 42
+        }
+      },
+      "edit": {
+        "minimumIterations": 10
+      },
+      "expected": {
+        "ok": true,
+        "settings": {},
+        "changed": []
+      }
+    },
+    {
+      "__label": "suite-wide: a validity edit is REFUSED",
+      "__why": "This suite has no validity phase: its runs cannot be inconclusive. Turning that on changes what a run may conclude, so it is a reviewed grading-policy change and not a settings edit - and sending validity alone to the route would be rejected anyway, with a message about repetitions and passThreshold that does not describe what was asked.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3
+        }
+      },
+      "edit": {
+        "validity": {
+          "minCompletionRate": 0.9
+        }
+      },
+      "expected": {
+        "ok": false,
+        "refusal": "validityNotEnforced"
+      }
+    },
+    {
+      "__label": "per-case: a validity edit writes the declared change",
+      "__why": "Merge semantics, matching the route: the caller adjusting one ceiling did not ask to clear the others.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8,
+            "validity": {
+              "minCompletionRate": 0.9
+            }
+          }
+        }
+      },
+      "edit": {
+        "validity": {
+          "maxEvaluatorErrorRate": 0.05
+        }
+      },
+      "expected": {
+        "ok": true,
+        "settings": {
+          "validity": {
+            "maxEvaluatorErrorRate": 0.05
+          }
+        },
+        "changed": [
+          "validity"
+        ]
+      }
+    },
+    {
+      "__label": "per-case: a validity edit restating the declared value writes nothing",
+      "__why": "0.9 is already declared.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8,
+            "validity": {
+              "minCompletionRate": 0.9
+            }
+          }
+        }
+      },
+      "edit": {
+        "validity": {
+          "minCompletionRate": 0.9
+        }
+      },
+      "expected": {
+        "ok": true,
+        "settings": {},
+        "changed": []
+      }
+    },
+    {
+      "__label": "per-case: declaring minEligibleTrials where it was omitted IS a change",
+      "__why": "Omission selects the stricter all-configured-attempted rule; an explicit 1 selects the eligible-count rule instead. The two resolve to different coverage kinds, so comparing the declared blocks is the only comparison that sees it - a resolved-policy comparison would call this a no-op and drop the write.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "validity": {
+          "minEligibleTrials": 1
+        }
+      },
+      "expected": {
+        "ok": true,
+        "settings": {
+          "validity": {
+            "minEligibleTrials": 1
+          }
+        },
+        "changed": [
+          "validity"
+        ]
+      }
+    },
+    {
+      "__label": "per-case: declaring the resolved default rate IS a change",
+      "__why": "An omitted minCompletionRate resolves to 0.8, but declaring 0.8 pins it against a future default change. The declared block is what round-trips, so the write happens.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "validity": {
+          "minCompletionRate": 0.8
+        }
+      },
+      "expected": {
+        "ok": true,
+        "settings": {
+          "validity": {
+            "minCompletionRate": 0.8
+          }
+        },
+        "changed": [
+          "validity"
+        ]
+      }
+    },
+    {
+      "__label": "an empty edit writes nothing, per-case",
+      "__why": "No field mentioned, no field written.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {},
+      "expected": {
+        "ok": true,
+        "settings": {},
+        "changed": []
+      }
+    },
+    {
+      "__label": "an empty edit writes nothing, suite-wide",
+      "__why": "The same on the other side.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3
+        }
+      },
+      "edit": {},
+      "expected": {
+        "ok": true,
+        "settings": {},
+        "changed": []
+      }
+    },
+    {
+      "__label": "a reported run's policy refuses every edit",
+      "__why": "passCriteria travelled with one run and has no settings write path. Refusing names the suite as the thing to edit instead of writing a percent onto a run that is already decided.",
+      "policy": {
+        "source": "runReporting",
+        "value": {
+          "minimumPassRate": 80,
+          "producer": "hosted"
+        }
+      },
+      "edit": {
+        "passThreshold": 0.9
+      },
+      "expected": {
+        "ok": false,
+        "refusal": "readOnlyPolicy"
+      }
+    },
+    {
+      "__label": "suite-wide: float noise never reaches the wire",
+      "__why": "0.07 * 100 is 7.000000000000001 in IEEE-754. Writing that would render as 7.000000000000001% and would make the next unchanged comparison report a change forever.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 50
+          }
+        }
+      },
+      "edit": {
+        "passThreshold": 0.07
+      },
+      "expected": {
+        "ok": true,
+        "settings": {
+          "minimumAccuracy": 7
+        },
+        "changed": [
+          "passThreshold"
+        ]
+      }
+    },
+    {
+      "__label": "suite-wide: a fractional percent survives",
+      "__why": "90.5% is a legal stored percent and 0.905 is its fraction. The conversion is exact in both directions, so this edit is a no-op against a suite already at 90.5.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90.5
+          }
+        }
+      },
+      "edit": {
+        "passThreshold": 0.905
+      },
+      "expected": {
+        "ok": true,
+        "settings": {},
+        "changed": []
+      }
+    }
+  ],
+  "rejectedEdits": [
+    {
+      "__label": "a percent where a fraction belongs, suite-wide",
+      "__why": "passThreshold is ALWAYS a fraction on this API; the adapter converts to the stored percent. Accepting 90 would plan minimumAccuracy: 9000, which the route rejects - a successful plan the API then refuses.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3
+        }
+      },
+      "edit": {
+        "passThreshold": 90
+      }
+    },
+    {
+      "__label": "a percent where a fraction belongs, per-case",
+      "__why": "The same input on the other scope plans passThreshold: 90, out of the route's [0,1].",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "passThreshold": 90
+      }
+    },
+    {
+      "__label": "a negative threshold",
+      "__why": "Below the fraction range.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "passThreshold": -0.1
+      }
+    },
+    {
+      "__label": "a floor above the platform range",
+      "__why": "The route bounds minimumIterations to 1..10. Silently clamping 42 to 10 would report an edit as applied that was not the edit asked for, so it is refused instead.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3
+        }
+      },
+      "edit": {
+        "minimumIterations": 42
+      }
+    },
+    {
+      "__label": "a floor below the platform range",
+      "__why": "0 is not 'no floor' - null is. The route refuses 0 and so does the planner.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3
+        }
+      },
+      "edit": {
+        "minimumIterations": 0
+      }
+    },
+    {
+      "__label": "a fractional floor",
+      "__why": "The floor is an integer count of iterations.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3
+        }
+      },
+      "edit": {
+        "minimumIterations": 2.5
+      }
+    },
+    {
+      "__label": "a default count above the portable maximum",
+      "__why": "MAX_REPETITIONS bounds the count in the suite file, the route and the contract alike.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "iterations": 999
+      }
+    },
+    {
+      "__label": "a default count of zero",
+      "__why": "A case that runs zero times is not a configuration.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "iterations": 0
+      }
+    },
+    {
+      "__label": "a fractional default count",
+      "__why": "The count is an integer.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "iterations": 2.5
+      }
+    },
+    {
+      "__label": "a validity rate out of range",
+      "__why": "minCompletionRate is a fraction like every other rate in this contract.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8,
+            "validity": {
+              "minCompletionRate": 0.9
+            }
+          }
+        }
+      },
+      "edit": {
+        "validity": {
+          "minCompletionRate": 80
+        }
+      }
+    },
+    {
+      "__label": "a validity eligible-count of zero",
+      "__why": "An explicit floor of 0 would be 'no coverage requirement', which omission does NOT mean and the schema does not allow.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8,
+            "validity": {
+              "minCompletionRate": 0.9
+            }
+          }
+        }
+      },
+      "edit": {
+        "validity": {
+          "minEligibleTrials": 0
+        }
+      }
+    },
+    {
+      "__label": "an unknown edit field",
+      "__why": "The edit shape is strict: a misspelled field silently doing nothing is how a caller believes it set something it did not.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "passThresholds": 0.9
+      }
+    }
+  ]
+}

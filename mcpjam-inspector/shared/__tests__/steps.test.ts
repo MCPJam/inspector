@@ -76,7 +76,7 @@ describe("TestStep schema", () => {
         kind: "prompt",
         prompt: "hi",
         retries: 3,
-      }).success
+      }).success,
     ).toBe(false);
     expect(
       testStepSchema.safeParse({
@@ -87,7 +87,7 @@ describe("TestStep schema", () => {
           kind: "click",
           target: { testId: "confirm", xpath: "//button[1]" },
         },
-      }).success
+      }).success,
     ).toBe(false);
     expect(
       testStepSchema.safeParse({
@@ -99,7 +99,7 @@ describe("TestStep schema", () => {
           text: "y",
           negate: true,
         },
-      }).success
+      }).success,
     ).toBe(false);
   });
 
@@ -267,10 +267,11 @@ describe("TestStep schema", () => {
     // to the union's field TYPES, not to its unknown-key policy, so it is not
     // made as a side effect of closing the objects.
     expect(
-      testStepSchema.safeParse({ id: "x", kind: "prompt", prompt: "" }).success
+      testStepSchema.safeParse({ id: "x", kind: "prompt", prompt: "" }).success,
     ).toBe(true);
     expect(
-      testStepSchema.safeParse({ id: "", kind: "prompt", prompt: "hi" }).success
+      testStepSchema.safeParse({ id: "", kind: "prompt", prompt: "hi" })
+        .success,
     ).toBe(true);
   });
 
@@ -288,7 +289,7 @@ describe("TestStep schema", () => {
           toolName: "t",
           somethingThePredicateContractDoesNotDeclare: true,
         },
-      }).success
+      }).success,
     ).toBe(true);
   });
 
@@ -302,7 +303,7 @@ describe("TestStep schema", () => {
         serverName: "s",
         toolName: "t",
         arguments: { anythingTheServerDeclares: true, nested: { ok: 1 } },
-      }).success
+      }).success,
     ).toBe(true);
   });
 
@@ -323,16 +324,16 @@ describe("TestStep schema", () => {
           toolName: "t",
           text: "Refunded",
         },
-      }).success
+      }).success,
     ).toBe(false);
   });
 
   it("discriminates WidgetAssertion (kind) from Predicate (type)", () => {
     expect(
-      isWidgetAssertion({ kind: "textVisible", toolName: "t", text: "x" })
+      isWidgetAssertion({ kind: "textVisible", toolName: "t", text: "x" }),
     ).toBe(true);
     expect(isWidgetAssertion({ type: "widgetRendered", toolName: "t" })).toBe(
-      false
+      false,
     );
   });
 });
@@ -440,7 +441,7 @@ describe("normalize", () => {
         },
         { id: "3", kind: "prompt" },
         { id: "4", kind: "prompt", prompt: "kept", stray: 1 },
-      ]).map((s) => s.id)
+      ]).map((s) => s.id),
     ).toEqual(["4"]);
   });
 
@@ -470,11 +471,14 @@ describe("normalize", () => {
     });
   });
 
-  it("ACCEPTS a predicate carrying an undeclared field", () => {
+  it("ACCEPTS a predicate carrying an undeclared field, and KEEPS it", () => {
     // Predicates are the stated exception: the step PARSES rather than
-    // failing, so it survives whole. The stray key itself is dropped by zod's
-    // ordinary strip on a non-strict object — which is what this normalizer
-    // has always returned, and is unchanged by closing the step objects.
+    // failing, so it survives whole. The stray key survives with it — the
+    // non-widget branch carries `.catchall(z.unknown())` so the generated
+    // authoring JSON Schema says `additionalProperties: {}` there, which is
+    // what lets a drafting model emit a predicate's own fields. Stripping the
+    // key here would have made this normalizer disagree with the schema the
+    // backend validates against.
     const [step] = normalizeSteps([
       {
         id: "1",
@@ -485,7 +489,7 @@ describe("normalize", () => {
     expect(step).toEqual({
       id: "1",
       kind: "assert",
-      assertion: { type: "widgetRendered", toolName: "t" },
+      assertion: { type: "widgetRendered", toolName: "t", extra: true },
     });
   });
 
@@ -721,7 +725,7 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
     ]);
     // Idempotent: a second pass keeps the same order (no snap-back).
     expect(
-      promptTurnsToSteps(stepsToPromptTurns(back)).map((s) => s.kind)
+      promptTurnsToSteps(stepsToPromptTurns(back)).map((s) => s.kind),
     ).toEqual(back.map((s) => s.kind));
   });
 
@@ -783,7 +787,7 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
       { toolName: "view-cart", arguments: {} },
     ]);
     expect(
-      promptTurnsToSteps(stepsToPromptTurns(steps)).map((s) => s.kind)
+      promptTurnsToSteps(stepsToPromptTurns(steps)).map((s) => s.kind),
     ).toEqual(["prompt", "assert", "interact"]);
   });
 });

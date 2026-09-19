@@ -5359,6 +5359,10 @@ export function useServerState({
             type: "CONNECT_FAILURE",
             name: serverName,
             error: authResult.error,
+            // Carry the orchestrator's typed block through. The reducer
+            // prefers it over re-describing the message, which is what keeps
+            // this state off `internal/unknown`.
+            normalized: authResult.normalized,
             oauthTrace: authResult.oauthTrace,
           });
           reportError(authResult.error);
