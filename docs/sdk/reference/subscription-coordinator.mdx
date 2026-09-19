@@ -1,0 +1,378 @@
+---
+title: "SubscriptionCoordinator"
+description: "API reference for the era-neutral subscription coordinator"
+icon: "book"
+---
+
+Use `SubscriptionCoordinator` to manage MCP subscription streams in a way that works with both legacy (2025-era) and modern (2026-07-28 `subscriptions/listen`) servers. It tracks desired interests, opens and closes streams, and delivers notifications — all through a single API regardless of which protocol era the connected server uses.
+
+## Import
+
+```typescript
+import {
+  SubscriptionCoordinator,
+  resolveRequestedFilter,
+  diffAcknowledgement,
+  DEFAULT_SUBSCRIPTION_RECONNECT_POLICY,
+  SUBSCRIPTION_ID_META_KEY,
+  SubscriptionsAcknowledgedNotificationMethod,
+  ToolListChangedNotificationMethod,
+} from "@mcpjam/sdk";
+```
+
+## Constructor
+
+```typescript
+new SubscriptionCoordinator(options: SubscriptionCoordinatorOptions)
+```
+
+### Options
+
+<ParamField path="client" type="SubscriptionClientPort" required>
+  The connected client. `ManagedMcpClient` satisfies this interface structurally.
+</ParamField>
+
+<ParamField path="onNotification" type="(event: DeliveredSubscriptionNotification) => void">
+  Called for every accepted notification, attributed to a stream.
+</ParamField>
+
+<ParamField path="onStale" type="(event: DeliveredSubscriptionNotification) => void">
+  Called after `onNotification` for the same event. Use this to trigger a data refresh. Always fires after `onNotification`, never instead of it.
+</ParamField>
+
+<ParamField path="onStreamChange" type="(stream: SubscriptionStreamRecord) => void">
+  Called whenever a stream's state changes (opened, acknowledged, closed, reconnected).
+</ParamField>
+
+<ParamField path="onRejectedNotification" type="(event: RejectedSubscriptionNotification) => void">
+  Called for notifications the coordinator refused to deliver (wrong type, unknown stream, pre-ack arrival).
+</ParamField>
+
+<ParamField path="era" type='"legacy" | "modern"'>
+  Override the protocol era. When omitted, the coordinator asks the client via `getProtocolEra()`, defaulting to `"legacy"` if the client cannot say.
+</ParamField>
+
+<ParamField path="reconnect" type="Partial<SubscriptionReconnectPolicy>">
+  Override the reconnect policy. Defaults to `DEFAULT_SUBSCRIPTION_RECONNECT_POLICY`.
+</ParamField>
+
+### Example
+
+```typescript
+import { SubscriptionCoordinator } from "@mcpjam/sdk";
+
+const coord = new SubscriptionCoordinator({
+  client: managedClient,
+  onNotification: (event) => {
+    console.log("notification", event.kind, event.localSubscriptionId);
+  },
+  onStale: (event) => {
+    // Refresh your local cache after a list-changed notification
+    if (event.kind === "tools-list-changed") refreshTools();
+  },
+  onStreamChange: (stream) => {
+    console.log("stream", stream.status, stream.closeReason);
+  },
+});
+```
+
+---
+
+## Methods
+
+### setDesiredInterests()
+
+Declares what the user wants to observe. Idempotent: an unchanged effective filter leaves the live stream alone. A changed filter closes the current stream and opens a new one (a listen filter is immutable for the life of a subscription).
+
+```typescript
+setDesiredInterests(desired: DesiredSubscriptionInterests): Promise<void>
+```
+
+#### Parameters
+
+<ParamField path="desired.toolsListChanged" type="boolean">
+  Subscribe to `notifications/tools/list_changed`.
+</ParamField>
+
+<ParamField path="desired.promptsListChanged" type="boolean">
+  Subscribe to `notifications/prompts/list_changed`.
+</ParamField>
+
+<ParamField path="desired.resourcesListChanged" type="boolean">
+  Subscribe to `notifications/resources/list_changed`.
+</ParamField>
+
+<ParamField path="desired.resourceUris" type="readonly string[]">
+  Resource URIs to watch for `notifications/resources/updated`.
+</ParamField>
+
+#### Example
+
+```typescript
+await coord.setDesiredInterests({
+  toolsListChanged: true,
+  resourceUris: ["file:///a", "file:///b"],
+});
+```
+
+---
+
+### cancel()
+
+Closes the current stream as `cancelled` and clears desired interests. Does not dispose the coordinator — you can call `setDesiredInterests()` again afterwards.
+
+```typescript
+cancel(): Promise<void>
+```
+
+---
+
+### dispose()
+
+Terminal teardown. Closes the current stream and prevents any further reconnects. Call this when the connection is being torn down.
+
+```typescript
+dispose(): Promise<void>
+```
+
+---
+
+### getDesiredInterests()
+
+Returns a copy of the current desired interests.
+
+```typescript
+getDesiredInterests(): DesiredSubscriptionInterests
+```
+
+---
+
+### getStreams()
+
+Returns all streams this coordinator has opened, oldest first. Closed streams are retained so the full lifecycle is visible.
+
+```typescript
+getStreams(): SubscriptionStreamRecord[]
+```
+
+---
+
+### getActiveStream()
+
+Returns the currently active stream, or `undefined` if no stream is active.
+
+```typescript
+getActiveStream(): SubscriptionStreamRecord | undefined
+```
+
+---
+
+### getRejectedNotifications()
+
+Returns all notifications the coordinator refused to deliver.
+
+```typescript
+getRejectedNotifications(): RejectedSubscriptionNotification[]
+```
+
+---
+
+## Types
+
+### DesiredSubscriptionInterests
+
+Era-neutral statement of what the user wants to observe.
+
+```typescript
+interface DesiredSubscriptionInterests {
+  toolsListChanged?: boolean;
+  promptsListChanged?: boolean;
+  resourcesListChanged?: boolean;
+  resourceUris?: readonly string[];
+}
+```
+
+---
+
+### SubscriptionStreamRecord
+
+One long-lived notification stream. Both legacy and modern eras produce records of this shape.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `localId` | `string` | MCPJam-local identity, stable for the record's lifetime. |
+| `era` | `"legacy" \| "modern"` | Which protocol era opened this stream. |
+| `mcpSubscriptionId` | `string \| undefined` | The MCP subscription id. Undefined on legacy streams and on modern streams before the id is observed. |
+| `idBinding` | `"reported" \| "observed" \| undefined` | How `mcpSubscriptionId` became known. |
+| `requestedFilter` | `SubscriptionFilterShape` | The filter sent to the server. |
+| `acknowledgedFilter` | `SubscriptionFilterShape \| undefined` | The subset the server agreed to honor. Never inferred — only set once the acknowledgement is observed. |
+| `rejectedInterests` | `SubscriptionInterestRejection[]` | Selections dropped by capability gating or absent from the acknowledgement. |
+| `status` | `SubscriptionStreamStatus` | Current stream status. |
+| `closeReason` | `SubscriptionCloseReason \| undefined` | Why the stream ended. |
+| `openedAt` | `number` | Timestamp when the stream was opened. |
+| `acknowledgedAt` | `number \| undefined` | Timestamp when the acknowledgement was observed. |
+| `closedAt` | `number \| undefined` | Timestamp when the stream closed. |
+| `reconnectAttempt` | `number` | How many re-listens have been attempted after a remote loss. |
+
+---
+
+### SubscriptionStreamStatus
+
+```typescript
+type SubscriptionStreamStatus =
+  | "opening"       // listen sent; waiting for acknowledgement
+  | "active"        // acknowledged; delivering notifications
+  | "graceful-closed" // server completed the subscription intentionally
+  | "remote-closed" // unexpected transport loss; eligible for re-listen
+  | "cancelled"     // closed locally (filter change, cancel(), dispose())
+  | "error";        // open failed before acknowledgement
+```
+
+---
+
+### SubscriptionCloseReason
+
+```typescript
+type SubscriptionCloseReason =
+  | "graceful"     // server completed intentionally; no reconnect
+  | "remote"       // unexpected loss; re-listen attempted up to maxAttempts
+  | "local-abort"  // closed by the client
+  | "error";       // open failed
+```
+
+---
+
+### DeliveredSubscriptionNotification
+
+A notification the coordinator accepted and attributed to a stream.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `method` | `string` | The notification method. |
+| `kind` | `SubscriptionNotificationKind` | Normalized kind. |
+| `params` | `Record<string, unknown> \| undefined` | Raw notification params. |
+| `uri` | `string \| undefined` | Resource URI for `resource-updated` notifications. |
+| `subscriptionId` | `string \| undefined` | MCP subscription id, when stamped on the notification. |
+| `localSubscriptionId` | `string` | MCPJam-local stream id. |
+| `at` | `number` | Timestamp. |
+
+---
+
+### SubscriptionNotificationKind
+
+```typescript
+type SubscriptionNotificationKind =
+  | "tools-list-changed"
+  | "prompts-list-changed"
+  | "resources-list-changed"
+  | "resource-updated";
+```
+
+---
+
+### SubscriptionInterestRejection
+
+A selection the server does not advertise or did not acknowledge.
+
+```typescript
+interface SubscriptionInterestRejection {
+  interest: SubscriptionNotificationKind;
+  uri?: string; // present for resource-updated rejections
+  reason: "capability-not-advertised" | "not-acknowledged-by-server";
+}
+```
+
+---
+
+### SubscriptionReconnectPolicy
+
+Controls bounded re-listen after an unexpected remote loss. Re-listen opens a new stream; it never resumes (there is no replay for listen streams).
+
+```typescript
+interface SubscriptionReconnectPolicy {
+  maxAttempts: number;    // max re-listens after remote loss; 0 disables
+  initialDelayMs: number;
+  factor: number;         // exponential backoff multiplier
+  maxDelayMs: number;
+}
+```
+
+The default policy is exported as `DEFAULT_SUBSCRIPTION_RECONNECT_POLICY`:
+
+```typescript
+{
+  maxAttempts: 3,
+  initialDelayMs: 500,
+  factor: 2,
+  maxDelayMs: 5_000,
+}
+```
+
+---
+
+## Helper functions
+
+### resolveRequestedFilter()
+
+Splits desired interests into the filter to request and the selections the server does not advertise. Unadvertised selections are recorded as `capability-not-advertised` rather than silently dropped.
+
+```typescript
+resolveRequestedFilter(
+  desired: DesiredSubscriptionInterests,
+  capabilities: ServerCapabilities | undefined
+): {
+  requested: SubscriptionFilterShape;
+  rejected: SubscriptionInterestRejection[];
+}
+```
+
+#### Example
+
+```typescript
+const { requested, rejected } = resolveRequestedFilter(
+  { toolsListChanged: true, resourceUris: ["file:///a"] },
+  client.getServerCapabilities()
+);
+// requested: { toolsListChanged: true, resourceSubscriptions: ["file:///a"] }
+// rejected: [] (if the server advertises both capabilities)
+```
+
+---
+
+### diffAcknowledgement()
+
+Returns the selections that were requested but absent from the server's acknowledgement. The server is allowed to honor a subset; the difference is surfaced as `not-acknowledged-by-server` rather than silently ignored.
+
+```typescript
+diffAcknowledgement(
+  requested: SubscriptionFilterShape,
+  acknowledged: SubscriptionFilterShape
+): SubscriptionInterestRejection[]
+```
+
+---
+
+## Constants
+
+| Constant | Value |
+|----------|-------|
+| `SUBSCRIPTION_ID_META_KEY` | `"io.modelcontextprotocol/subscriptionId"` |
+| `SubscriptionsAcknowledgedNotificationMethod` | `"notifications/subscriptions/acknowledged"` |
+| `ToolListChangedNotificationMethod` | `"notifications/tools/list_changed"` |
+
+---
+
+## Era behavior
+
+The coordinator automatically selects an adapter based on the negotiated protocol era.
+
+**Modern era (2026-07-28):** Opens an explicit `client.listen(filter)` stream. The stream stays `opening` until the server sends `notifications/subscriptions/acknowledged`; notifications arriving before that are refused. A filter change closes the current stream and opens a new one. An unexpected remote loss triggers a bounded re-listen (up to `reconnect.maxAttempts`). Graceful server completion does not trigger a re-listen.
+
+**Legacy era (2025 and earlier):** Uses `notifications/*/list_changed` handlers plus per-URI `resources/subscribe` / `resources/unsubscribe` RPCs. These are modelled as a single synthetic stream so the same `onNotification` / `onStreamChange` callbacks work without changes.
+
+---
+
+## Related
+
+- [MCPClientManager Reference](/sdk/reference/mcp-client-manager) — connecting to servers
+- [Connecting to Servers](/sdk/concepts/connecting-servers) — conceptual guide
