@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import audioTranscriptions from "../audio-transcriptions.js";
 import { hashGuestSpendIp } from "../../../utils/guest-spend-ip.js";
 
-vi.mock("../../../utils/guest-spend-ip.js", () => ({
+vi.mock("../../../utils/guest-spend-ip.js", async (importActual) => ({
+  ...(await importActual<typeof import("../../../utils/guest-spend-ip.js")>()),
   hashGuestSpendIp: vi.fn().mockResolvedValue("guest-ip-hash"),
 }));
 
@@ -326,6 +327,8 @@ describe("audio transcriptions route", () => {
 
   it("forwards the caller's own bearer and never substitutes one", async () => {
     process.env.CONVEX_HTTP_URL = "https://convex.example";
+    // The IP hash only goes out with the service token that proves it.
+    process.env.INSPECTOR_SERVICE_TOKEN = "inspector-secret";
     vi.mocked(fetch).mockImplementation(async (url, init) => {
       expect(String(url)).toBe("https://convex.example/audio/transcriptions");
       expect(new Headers(init?.headers).get("authorization")).toBe(

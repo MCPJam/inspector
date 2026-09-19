@@ -34,50 +34,14 @@ import type {
 } from "./user-value-chain-types";
 
 /**
- * The User Testing funnel for one scenario.
+ * There is no per-scenario funnel here any more.
  *
- * Its population is the scenario's REAL sessions — the backend excludes
- * synthetic ones, so a rehearsal cannot move a number that describes people.
+ * User Testing's Sessions tab used to open with one over the scenario's real
+ * sessions. It was never part of that screen's design, and it is gone with its
+ * only caller rather than left exported for someone to re-mount by accident.
+ * The funnel itself is untouched and still serves Swarms and Evals below;
+ * putting it back on a scenario is remounting a component, not rewriting one.
  */
-export function ScenarioStageFunnelPanel({
-  scenarioId,
-  className,
-}: {
-  scenarioId: string | undefined;
-  className?: string;
-}) {
-  return (
-    <ErrorBoundary fallback={null}>
-      <ScenarioStageFunnel scenarioId={scenarioId} className={className} />
-    </ErrorBoundary>
-  );
-}
-
-function ScenarioStageFunnel({
-  scenarioId,
-  className,
-}: {
-  scenarioId: string | undefined;
-  className?: string;
-}) {
-  const summary = useQuery(
-    "chatSessionStageDerivation:getScenarioStageFunnel" as never,
-    (scenarioId ? { scenarioId } : "skip") as never,
-  ) as ChatSessionStageFunnel | null | undefined;
-
-  // `undefined` is still loading and `null` is a scenario we cannot read.
-  // Neither is "no sessions", which the funnel itself renders as notMeasured.
-  if (!summary) return null;
-
-  return (
-    <StageFunnel
-      summary={summary}
-      title="User value chain"
-      populationLabel="Real User Testing sessions"
-      className={className}
-    />
-  );
-}
 
 /**
  * One funnel per swarm run.
@@ -281,7 +245,7 @@ function SuiteRunStageFunnel({
     <StageFunnel
       summary={toChatSessionFunnel(funnel)}
       title="User value chain"
-      populationLabel="Trials in this run"
+      populationLabel="Iterations in this run"
       className={className}
     />
   );

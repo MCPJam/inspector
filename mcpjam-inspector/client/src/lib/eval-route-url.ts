@@ -18,7 +18,7 @@ export type EvalRoutePrefix = "/evals" | "/evals/runs" | "/evaluate";
 export function parseEvalRouteFromUrl(
   prefix: EvalRoutePrefix,
   pathname: string,
-  search = ""
+  search = "",
 ): EvalRoute | null {
   // Eval routes are project-owned, so the live pathname is
   // `/p/<projectId>/evals/...`. The project comes off before matching: these
@@ -36,7 +36,7 @@ export function parseEvalRouteFromUrl(
   }
 
   const params = new URLSearchParams(
-    search.startsWith("?") ? search : search ? `?${search}` : ""
+    search.startsWith("?") ? search : search ? `?${search}` : "",
   );
   const segments = normalizedPathname.replace(/^\/+/, "").split("/");
   const prefixSegments = prefix.replace(/^\/+/, "").split("/");
@@ -57,11 +57,7 @@ export function parseEvalRouteFromUrl(
   }
 
   // Evaluate (New) only. The v1 `/evals` tab has no first-run preview.
-  if (
-    prefix === "/evaluate" &&
-    tail[0] === "eval-server" &&
-    tail[1]
-  ) {
+  if (prefix === "/evaluate" && tail[0] === "eval-server" && tail[1]) {
     return {
       type: "eval-server",
       serverId: decodePathSegment(tail[1]),
@@ -96,10 +92,20 @@ export function parseEvalRouteFromUrl(
   }
 
   if (rest.length === 1 && rest[0] === "edit") {
-    return { type: "suite-edit", suiteId };
+    return {
+      type: "suite-edit",
+      suiteId,
+      ...(params.get("fromCaseChecks")
+        ? { fromCaseChecks: params.get("fromCaseChecks")! }
+        : {}),
+    };
   }
 
-  if ((rest.length === 2 || (rest.length === 3 && rest[2] === "compare")) && rest[0] === "runs" && rest[1]) {
+  if (
+    (rest.length === 2 || (rest.length === 3 && rest[2] === "compare")) &&
+    rest[0] === "runs" &&
+    rest[1]
+  ) {
     const insightsFocus = parseTruthyParam(params.get("insights"));
     return {
       type: "run-detail",
@@ -158,7 +164,7 @@ export function useEvalRouteFromUrl(prefix: EvalRoutePrefix): EvalRoute {
 
   return useMemo(
     () => parseEvalRouteFromUrl(prefix, pathname, search) ?? { type: "list" },
-    [prefix, pathname, search]
+    [prefix, pathname, search],
   );
 }
 

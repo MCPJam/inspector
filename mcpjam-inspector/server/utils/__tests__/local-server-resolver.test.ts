@@ -1387,6 +1387,7 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
       process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
     }
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   function localBatchResponse(serverConfig: Record<string, unknown>) {
@@ -1475,6 +1476,7 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
   // the reveal must run and its env must land on the SDK config, carrying
   // the same scope fields the hosted mint path would send.
   it("reveals deferred secrets (hasEnv with empty env) with the caller's scope", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
     let revealInit: RequestInit | undefined;
     const fetchMock = vi.fn(async (input: any, init?: RequestInit) => {
       const url = String(input);
@@ -1520,6 +1522,9 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
       accessScope: "chat_v2",
       scenarioId: "scenario-1",
       accessVersion: 7,
+    });
+    expect(revealInit?.headers).toMatchObject({
+      "x-inspector-service-token": "service-token",
     });
   });
 

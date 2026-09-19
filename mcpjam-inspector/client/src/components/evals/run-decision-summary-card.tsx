@@ -256,7 +256,7 @@ function DecisionSummaryBody({
         <p className="text-[11px] text-muted-foreground">
           counted in {unit}
           {summary.verdictSource === "legacy"
-            ? " — a legacy percent-threshold run, so these are iterations, not cases"
+            ? " — decided by the suite accuracy threshold, so these are iterations, not cases"
             : ""}
         </p>
       ) : null}

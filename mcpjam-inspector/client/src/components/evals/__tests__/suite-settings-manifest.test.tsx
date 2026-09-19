@@ -103,7 +103,9 @@ vi.mock("../suite-header", () => ({
 }));
 
 vi.mock("@/components/evals/suite-clients-settings", () => ({
-  SuiteClientsSettings: () => <div data-testid="suite-clients-table">Client table</div>,
+  SuiteClientsSettings: () => (
+    <div data-testid="suite-clients-table">Client table</div>
+  ),
 }));
 vi.mock("@/components/evals/suite-environment-composer-bar", () => ({
   SuiteEnvironmentComposerBar: () => (
@@ -282,10 +284,7 @@ describe("eval suite settings manifest — render parity", () => {
     // rather than announcing `aria-expanded="false"` at a reader who just
     // asked for it.
     const { container } = renderSettingsSheet();
-    for (const key of [
-      "policy",
-      "environments",
-    ] as const) {
+    for (const key of ["policy", "environments"] as const) {
       showSettingsKey(container, key);
       const row = container.querySelector(`[data-setting-key="${key}"]`);
       expect(row, key).toBeTruthy();
@@ -373,20 +372,20 @@ describe("eval suite settings manifest — render parity", () => {
     expect(v2.has("validity")).toBe(true);
     expect(v2.has("minimumAccuracy")).toBe(false);
     expect(v2.has("minimumIterations")).toBe(false);
-    expect(v2.has("qualityGateBaseline")).toBe(true);
-    // Stored on `v2Suite`, so the simplified page lists it read-only. A
-    // condition the page cannot edit is still a condition the run enforces.
+    expect(v2.has("qualityGateBaseline")).toBe(false);
     expect(v2.has("qualityGateNoGatingScoreErrors")).toBe(true);
   });
 
   it("shows quality-gate rows on a legacy suite as well", () => {
     const { container } = renderSettingsSheet();
     const legacy = new Set(collectAllSettingKeys(container));
-    expect(legacy.has("qualityGateBaseline")).toBe(true);
-    expect(legacy.has("qualityGateAllowedDrop")).toBe(true);
+    expect(legacy.has("qualityGateNoGatingScoreErrors")).toBe(true);
+    // Baseline comparison left the page; nothing stored on this suite means
+    // there is no read-only row for it either.
+    expect(legacy.has("qualityGateBaseline")).toBe(false);
+    expect(legacy.has("qualityGateAllowedDrop")).toBe(false);
     expect(legacy.has("qualityGateNoDeterministicRegressions")).toBe(false);
     expect(legacy.has("qualityGateMaximumP95LatencyIncreaseMs")).toBe(false);
-    expect(legacy.has("qualityGateNoGatingScoreErrors")).toBe(false);
     expect(legacy.has("validity")).toBe(false);
   });
 
@@ -428,7 +427,9 @@ describe("eval suite settings manifest — render parity", () => {
     );
     const { container } = renderSettingsSheet();
     expect(container.querySelector('[data-setting-key="schedule"]')).toBeNull();
-    expect(container.querySelector('nav[aria-label="Settings sections"]')?.textContent).not.toContain("Triggers");
+    expect(
+      container.querySelector('nav[aria-label="Settings sections"]'),
+    ).toBeNull();
   });
 
   it("behaves exactly as before when capabilities are unavailable", () => {

@@ -31,7 +31,7 @@ describe("TrialChainPanel detail", () => {
   it("renders no coverage line when the caller passes none", () => {
     const { container } = render(<TrialChainPanel chain={chain} />);
     expect(container.textContent).not.toContain("Observed by the runner ·");
-    expect(container.textContent).not.toContain("Nothing checks this");
+    expect(container.textContent).not.toContain("No assertion here");
   });
 
   it("renders the line the caller supplies, on that card only", () => {
@@ -52,13 +52,13 @@ describe("TrialChainPanel detail", () => {
         chain={chain}
         detailByStage={{
           userValue: {
-            label: "Nothing checks this · 2 suggested",
+            label: "No assertion here · 2 suggested",
             toneClass: "x",
           },
         }}
       />,
     );
-    expect(screen.getByText("Nothing checks this · 2 suggested")).toBeTruthy();
+    expect(screen.getByText("No assertion here · 2 suggested")).toBeTruthy();
   });
 
   it("renders a footer inside the stage the reader selected", async () => {
