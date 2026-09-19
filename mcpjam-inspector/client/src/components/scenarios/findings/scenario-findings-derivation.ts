@@ -192,6 +192,7 @@ function buildGoals(
       runId: clusterId,
       title: clusterSessions[0]?.themeClusterLabel ?? "Unlabeled goal",
       sessions: clusterSessions.length,
+      notRun: false,
       sentiment: goalSentiment(clusterSessions.map((s) => s.outcome)),
       stages: emptyStages(),
       diagnosisStage: null,
@@ -265,6 +266,8 @@ export function deriveScenarioFindingsModel(args: {
 
   return {
     personas,
+    // User Testing observes existing sessions; it has no launch attempts.
+    launch: { total: 0, succeeded: 0, failed: 0, rateLimited: 0 },
     personaSentiments: built.map((row) => row.sentiment),
     sessionCount: total,
     // SENTIMENT_ORDER is worst-first, so the first tab is already the one worth

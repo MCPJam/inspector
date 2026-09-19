@@ -1,3 +1,4 @@
+import { ScenarioSignInGate } from "./ScenarioSignInGate";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
@@ -29,7 +30,10 @@ import type {
   HostedAccessErrorDetail,
   HostedAccessRecoveryResult,
 } from "@/lib/hosted-runtime-context";
-import { navigateApp } from "@/lib/app-navigation";
+import {
+  buildUserTestingScenarioPath,
+  navigateApp,
+} from "@/lib/app-navigation";
 import {
   isEmbeddedPreview,
   syncScenarioBootstrapHash,
@@ -62,6 +66,7 @@ import {
   getScenarioShellStyle,
 } from "@/lib/scenario-client-style";
 import { DEFAULT_HOST_STYLE } from "@/lib/client-styles";
+import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 
 interface ScenarioChatPageProps {
   pathToken?: string | null;
@@ -76,6 +81,7 @@ interface ScenarioRouteError {
 }
 
 type ScenarioErrorKind =
+  | "sign_in_required"
   | "access_denied"
   | "guest_blocked"
   | "invalid_link"
@@ -111,7 +117,10 @@ const UNEXPECTED_SCENARIO_ERROR_MESSAGE =
 
 type ScenarioBootstrapAuthMode = "workos" | "guest";
 type ScenarioLandingState =
-  "resolvingAuth" | "bootstrapping" | "ready" | "denied";
+  | "resolvingAuth"
+  | "bootstrapping"
+  | "ready"
+  | "denied";
 
 function sanitizeScenarioRouteErrorMessage(message: string): string {
   const normalized = message.replace(/\s+/g, " ").trim();
@@ -165,8 +174,8 @@ async function readRouteError(response: Response): Promise<ScenarioRouteError> {
       typeof domainCode === "string" && domainCode
         ? domainCode
         : typeof body?.code === "string"
-          ? body.code
-          : undefined;
+        ? body.code
+        : undefined;
     message =
       body?.message ||
       body?.error ||
@@ -203,6 +212,14 @@ function getScenarioDisplayError(
     };
   }
 
+  if (error.code === "SCENARIO_SIGN_IN_REQUIRED" || error.status === 401) {
+    return {
+      kind: "sign_in_required",
+      title: "Sign in to preview this scenario",
+      message:
+        "Sign in or create an account to preview and test this scenario.",
+    };
+  }
   const normalizedMessage = error.message.toLowerCase();
   const requiresSignIn = normalizedMessage.includes(
     "sign in to access this scenario",
@@ -211,6 +228,8 @@ function getScenarioDisplayError(
   // stay as the deploy-skew fallback for servers that predate the code.
   const isAccessDenied =
     error.code === "SCENARIO_ACCESS_DENIED" ||
+    error.code === "SCENARIO_INVITE_ONLY" ||
+    error.code === "SCENARIO_MEMBERS_ONLY" ||
     normalizedMessage.includes("don't have access");
   const isGuestBlocked =
     normalizedMessage.includes("guests cannot access") ||
@@ -294,13 +313,37 @@ async function redeemScenarioToken(
      * `share_link` on the request wire.
      */
     surface?: ScenarioSession["surface"];
+    authenticatedUserId?: string;
+    getAccountToken?: () => Promise<string | undefined>;
   },
 ): Promise<ScenarioSession> {
-  const redeemResponse = await authFetch("/api/web/scenarios/redeem", {
+  const init: RequestInit = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ scenarioToken: token }),
-  });
+  };
+  // The backend requires a bearer before it evaluates scenario policy. Use
+  // the existing guest session for signed-out visitors; restricted scenarios
+  // return SCENARIO_SIGN_IN_REQUIRED without configuration or a grant.
+  if (options?.getAccountToken) {
+    let bearer: string | undefined;
+    try {
+      bearer = await options.getAccountToken();
+    } catch {
+      /* expired account */
+    }
+    if (!bearer)
+      throw createScenarioRouteError(
+        401,
+        "Sign in to preview this scenario",
+        "SCENARIO_SIGN_IN_REQUIRED",
+      );
+    init.headers = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bearer}`,
+    };
+  }
+  const redeemResponse = await authFetch("/api/web/scenarios/redeem", init);
 
   if (!redeemResponse.ok) {
     throw await readRouteError(redeemResponse);
@@ -325,6 +368,7 @@ async function redeemScenarioToken(
     // Stamped so recovery has a way back to a grant after the post-redeem
     // strip removes the token from the URL.
     shareToken: token,
+    authenticatedUserId: options?.authenticatedUserId,
   });
 
   if (!nextSession) {
@@ -354,6 +398,8 @@ export function ScenarioChatPage({
   const {
     getAccessToken,
     signIn,
+    signUp,
+    signOut,
     user: workOsUser,
     isLoading: isWorkOsLoading,
   } = useAuth();
@@ -386,6 +432,14 @@ export function ScenarioChatPage({
    * resume for a scenario this visitor can no longer reach. Takes the scenario
    * id explicitly because the session it belongs to is being torn down in the
    * same breath.
+   *
+   * Every exit path that drops the session goes through here, because this is
+   * the one place that knows the embed rule: inside the same-origin Preview
+   * iframe, never touch sessionStorage — it belongs to the host tab, and
+   * clearing it would wipe the outer dashboard's own scenario session. The
+   * rule is only safe because the embed never runs the post-redeem URL strip
+   * (see `readCurrentSession` above): its URL keeps the share token, so
+   * skipping the clear leaves nothing stale behind and a reload re-redeems.
    */
   const clearCurrentSession = useCallback((scenarioId?: string | null) => {
     if (isEmbeddedPreview()) {
@@ -398,9 +452,30 @@ export function ScenarioChatPage({
     clearScenarioSession();
   }, []);
 
-  const [session, setSession] = useState<ScenarioSession | null>(() =>
+  const [cachedSession, setSession] = useState<ScenarioSession | null>(() =>
     readCurrentSession(),
   );
+  const validatedIdentityRef = useRef<string | null>(null);
+  const currentIdentityRef = useRef(workOsUser?.id);
+  currentIdentityRef.current = workOsUser?.id;
+  const session =
+    cachedSession?.payload.requiresSignIn &&
+    (!workOsUser ||
+      validatedIdentityRef.current !== workOsUser.id ||
+      cachedSession.authenticatedUserId !== workOsUser.id)
+      ? null
+      : cachedSession;
+  const retainedTokenRef = useRef(cachedSession?.shareToken ?? null);
+  const retainedSurfaceRef = useRef(
+    cachedSession?.surface ??
+      readScenarioSurfaceFromUrl(window.location.search),
+  );
+  if (pathToken && pathToken !== retainedTokenRef.current) {
+    retainedTokenRef.current = pathToken;
+    retainedSurfaceRef.current = readScenarioSurfaceFromUrl(
+      window.location.search,
+    );
+  }
   const [isBootstrapping, setIsBootstrapping] = useState(Boolean(pathToken));
   const [routeError, setRouteError] = useState<ScenarioRouteError | null>(null);
   const interactiveSignInEventKeyRef = useRef<string | null>(null);
@@ -435,11 +510,13 @@ export function ScenarioChatPage({
   // precisely what keeps the staleness guards below from discarding every
   // refresh forever; navigating to a DIFFERENT scenario still trips them.
   const resolveShareToken = useCallback(
-    () => tokenFromPathRef.current ?? sessionRef.current?.shareToken ?? null,
+    () =>
+      tokenFromPathRef.current ??
+      sessionRef.current?.shareToken ??
+      retainedTokenRef.current,
     [],
   );
-  const isAuthSettling =
-    Boolean(tokenFromPath) && (isWorkOsLoading || isAuthLoading);
+  const isAuthSettling = isWorkOsLoading || isAuthLoading;
 
   const sessionServersRequired = useMemo(
     () => session?.payload.servers.filter((s) => !s.optional) ?? [],
@@ -624,7 +701,30 @@ export function ScenarioChatPage({
     let cancelled = false;
 
     const resolve = async () => {
-      if (tokenFromPath) {
+      const tokenToRedeem = tokenFromPath ?? retainedTokenRef.current;
+      if (tokenToRedeem) {
+        if (
+          cachedSession?.payload.requiresSignIn &&
+          cachedSession.authenticatedUserId !== workOsUser?.id
+        ) {
+          clearCurrentSession(cachedSession.scenarioId);
+        }
+        setSession(null);
+        if (
+          cachedSession?.shareToken === tokenToRedeem &&
+          cachedSession.payload.requiresSignIn &&
+          !workOsUser
+        ) {
+          setRouteError(
+            createScenarioRouteError(
+              401,
+              "Sign in to preview this scenario",
+              "SCENARIO_SIGN_IN_REQUIRED",
+            ),
+          );
+          setIsBootstrapping(false);
+          return;
+        }
         const authMode = getScenarioBootstrapAuthMode(isAuthenticated);
         setIsBootstrapping(true);
         setRouteError(null);
@@ -635,9 +735,14 @@ export function ScenarioChatPage({
           status: "started",
         });
         try {
-          const nextSession = await redeemScenarioToken(tokenFromPath);
+          const nextSession = await redeemScenarioToken(tokenToRedeem, {
+            surface: retainedSurfaceRef.current,
+            authenticatedUserId: workOsUser?.id,
+            getAccountToken: workOsUser ? getAccessToken : undefined,
+          });
           if (cancelled) return;
 
+          validatedIdentityRef.current = workOsUser?.id ?? null;
           writeCurrentSession(nextSession);
           setSession(nextSession);
           setRouteError(null);
@@ -652,7 +757,9 @@ export function ScenarioChatPage({
         } catch (error) {
           if (cancelled) return;
           setSession(null);
-          clearCurrentSession(sessionRef.current?.scenarioId ?? null);
+          clearCurrentSession(
+            cachedSession?.scenarioId ?? sessionRef.current?.scenarioId ?? null,
+          );
 
           const nextError = isScenarioRouteError(error)
             ? error
@@ -669,7 +776,6 @@ export function ScenarioChatPage({
               status: nextError.status,
               code: nextError.code,
               message: nextError.message,
-              rawMessage: nextError.rawMessage,
             });
           }
 
@@ -712,6 +818,7 @@ export function ScenarioChatPage({
   }, [
     clearCurrentSession,
     isAuthenticated,
+    workOsUser?.id,
     isAuthSettling,
     readCurrentSession,
     tokenFromPath,
@@ -739,6 +846,7 @@ export function ScenarioChatPage({
   // in flight would strand the capture hook's queued stale snapshot.
   const refreshInFlightRef = useRef<{
     token: string;
+    identity?: string;
     promise: Promise<HostedAccessRecoveryResult>;
   } | null>(null);
   const refreshAccessSession =
@@ -748,13 +856,19 @@ export function ScenarioChatPage({
         return { ok: false, reason: "no_token" };
       }
       const inFlight = refreshInFlightRef.current;
-      if (inFlight && inFlight.token === token) {
+      if (
+        inFlight &&
+        inFlight.token === token &&
+        inFlight.identity === workOsUser?.id
+      ) {
         return inFlight.promise;
       }
 
       const promise = (async (): Promise<HostedAccessRecoveryResult> => {
         try {
           const nextSession = await redeemScenarioToken(token, {
+            authenticatedUserId: workOsUser?.id,
+            getAccountToken: workOsUser ? getAccessToken : undefined,
             surface: sessionRef.current?.surface,
           });
           // Guards before mutating shared session state: a navigation to a
@@ -763,7 +877,11 @@ export function ScenarioChatPage({
           // (the visitor left the page, or the exit path just CLEARED the
           // stored session) must not resurrect a session the page no longer
           // owns — sessionStorage outlives this component.
-          if (!isMountedRef.current || resolveShareToken() !== token) {
+          if (
+            !isMountedRef.current ||
+            resolveShareToken() !== token ||
+            currentIdentityRef.current !== workOsUser?.id
+          ) {
             return { ok: false, reason: "transient" };
           }
           writeCurrentSession(nextSession);
@@ -792,6 +910,13 @@ export function ScenarioChatPage({
             routeError.status === 403 ||
             routeError.status === 404 ||
             routeError.status === 410;
+          if (
+            !isMountedRef.current ||
+            resolveShareToken() !== token ||
+            currentIdentityRef.current !== workOsUser?.id
+          ) {
+            return { ok: false, reason: "transient" };
+          }
           if (!isDefinitive) {
             console.warn(
               "[ScenarioChatPage] Scenario re-redeem failed transiently",
@@ -805,21 +930,41 @@ export function ScenarioChatPage({
           // Only clear the latch if we're still the active in-flight
           // refresh. A newer token's refresh may have already overwritten
           // it; don't stomp on that one.
-          if (refreshInFlightRef.current?.token === token) {
+          if (
+            refreshInFlightRef.current?.token === token &&
+            refreshInFlightRef.current.identity === workOsUser?.id
+          ) {
             refreshInFlightRef.current = null;
           }
         }
       })();
 
-      refreshInFlightRef.current = { token, promise };
+      refreshInFlightRef.current = { token, identity: workOsUser?.id, promise };
       return promise;
-    }, [resolveShareToken, writeCurrentSession]);
+    }, [
+      resolveShareToken,
+      writeCurrentSession,
+      workOsUser?.id,
+      getAccessToken,
+    ]);
 
   // Fire-and-forget wrapper kept for `useSharedChatWidgetCapture`, whose
   // contract is a void call it never awaits.
   const requestRefreshAccessVersion = useCallback(() => {
-    void refreshAccessSession();
-  }, [refreshAccessSession]);
+    void refreshAccessSession().then((result) => {
+      if (!result.ok && result.reason === "denied" && result.error) {
+        clearCurrentSession(sessionRef.current?.scenarioId);
+        setSession(null);
+        setRouteError(
+          createScenarioRouteError(
+            result.error.status,
+            result.error.message,
+            result.error.code,
+          ),
+        );
+      }
+    });
+  }, [refreshAccessSession, clearCurrentSession]);
 
   // Terminal access loss: recovery ran and this visitor still cannot reach
   // the scenario. Drop the session so `landingState` computes "denied" and
@@ -836,6 +981,26 @@ export function ScenarioChatPage({
     [clearCurrentSession],
   );
 
+  // A scenario still open to guests can run a frontier model the guest is
+  // refused. Send that visitor to the sign-in gate, not the Playground's
+  // "choose a standard model" dialog: the scenario owner picked the model.
+  const isSignedOutVisitor = !workOsUser && !isWorkOsLoading;
+  useEffect(() => {
+    if (!isSignedOutVisitor || isEmbeddedPreview()) return;
+    const override = () =>
+      handleHostedAccessRevoked({
+        status: 401,
+        code: "SCENARIO_SIGN_IN_REQUIRED",
+        message: "Sign in to preview this scenario",
+      });
+    useFrontierSignInDialogStore.getState().setOverride(override);
+    return () => {
+      if (useFrontierSignInDialogStore.getState().override === override) {
+        useFrontierSignInDialogStore.getState().setOverride(null);
+      }
+    };
+  }, [isSignedOutVisitor, handleHostedAccessRevoked]);
+
   const displayError = useMemo(
     () => getScenarioDisplayError(routeError),
     [routeError],
@@ -843,10 +1008,10 @@ export function ScenarioChatPage({
   const landingState: ScenarioLandingState = isAuthSettling
     ? "resolvingAuth"
     : isBootstrapping
-      ? "bootstrapping"
-      : session
-        ? "ready"
-        : "denied";
+    ? "bootstrapping"
+    : session
+    ? "ready"
+    : "denied";
 
   useEffect(() => {
     if (
@@ -920,23 +1085,57 @@ export function ScenarioChatPage({
     }
   }, [session, shareableToken]);
 
-  const handleOpenMcpJam = useCallback(() => {
-    clearScenarioSession();
-    // Route via the navigation API so React Router's `useLocation`
-    // (consumed by App's pathname-sync effect) sees the new pathname.
-    // A bare `window.history.replaceState` would leave `locationForRoute`
-    // stale on `/scenario/...`, and the sync effect would then redirect
-    // back to `/servers` before the hash-migration shim could pivot.
-    navigateApp("/scenarios", {
-      replace: isEmbeddedPreview() ? true : true,
-    });
-    onExitScenarioChat?.();
-  }, [onExitScenarioChat]);
+  const leaveScenario = useCallback(
+    (to: string) => {
+      clearCurrentSession();
+      navigateApp(to, { replace: true });
+      onExitScenarioChat?.();
+    },
+    [clearCurrentSession, onExitScenarioChat],
+  );
 
+  const handleOpenMcpJam = useCallback(() => {
+    leaveScenario("/scenarios");
+  }, [leaveScenario]);
+
+  const isPreviewSurface = session?.surface === "preview";
+  const previewScenarioId = session?.scenarioId ?? null;
+
+  const handleReturnToStudy = useCallback(() => {
+    leaveScenario(
+      previewScenarioId
+        ? buildUserTestingScenarioPath(previewScenarioId)
+        : "/scenarios",
+    );
+  }, [leaveScenario, previewScenarioId]);
+
+  const rememberReturnPath = useCallback(() => {
+    const token = resolveShareToken();
+    if (!token) return;
+    // A generic slug avoids retaining scenario details at the sign-in gate.
+    const target = new URL(
+      buildScenarioLink(token, "scenario"),
+      window.location.origin,
+    );
+    const surface = sessionRef.current?.surface ?? retainedSurfaceRef.current;
+    target.search = surface === "preview" ? "?surface=preview" : "";
+    writeScenarioSignInReturnPath(target.pathname + target.search);
+    return target.toString();
+  }, [resolveShareToken]);
   const handleSignIn = useCallback(() => {
-    writeScenarioSignInReturnPath(window.location.pathname);
-    signIn();
-  }, [signIn]);
+    rememberReturnPath();
+    void signIn();
+  }, [signIn, rememberReturnPath]);
+  const handleSignUp = useCallback(() => {
+    rememberReturnPath();
+    void signUp();
+  }, [signUp, rememberReturnPath]);
+  const handleSwitchAccount = useCallback(() => {
+    const returnTo = rememberReturnPath() ?? window.location.origin;
+    clearCurrentSession(sessionRef.current?.scenarioId);
+    setSession(null);
+    void signOut({ returnTo });
+  }, [rememberReturnPath, clearCurrentSession, signOut]);
 
   const handleOAuthRequired = useCallback(
     (details?: HostedOAuthRequiredDetails) => {
@@ -1018,6 +1217,16 @@ export function ScenarioChatPage({
       );
     }
 
+    if (
+      landingState === "denied" &&
+      displayError.kind === "sign_in_required" &&
+      !isEmbeddedPreview()
+    ) {
+      return (
+        <ScenarioSignInGate onSignIn={handleSignIn} onSignUp={handleSignUp} />
+      );
+    }
+
     if (landingState === "denied") {
       const isAccessDenied = displayError.kind === "access_denied";
       const guestBlocked = displayError.kind === "guest_blocked";
@@ -1049,6 +1258,11 @@ export function ScenarioChatPage({
               (isAccessDenied || guestBlocked) &&
               !isEmbeddedPreview() ? (
                 <Button onClick={handleSignIn}>Sign in</Button>
+              ) : null}
+              {workOsUser &&
+              (isAccessDenied || guestBlocked) &&
+              !isEmbeddedPreview() ? (
+                <Button onClick={handleSwitchAccount}>Switch accounts</Button>
               ) : null}
               <Button variant="outline" onClick={handleOpenMcpJam}>
                 Open in App
@@ -1139,7 +1353,9 @@ export function ScenarioChatPage({
           showConsent={introGate.showConsent}
           hasTasks={hasScenarioTasks}
           onAcceptConsent={introGate.acceptConsent}
-          onDeclineConsent={introGate.declineConsent}
+          onDeclineConsent={
+            isPreviewSurface ? handleReturnToStudy : introGate.declineConsent
+          }
           showAuthPanel={introGate.showAuthPanel}
           pendingOAuthServers={pendingOAuthServers}
           authorizeServer={authorizeServer}
@@ -1229,6 +1445,17 @@ export function ScenarioChatPage({
                           />
                         </button>
                         <div className="flex flex-1 items-center justify-end gap-1.5">
+                          {sessionForCurrentLink && isPreviewSurface ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-muted-foreground"
+                              onClick={handleReturnToStudy}
+                              data-testid="scenario-preview-back-to-study"
+                            >
+                              Back to study
+                            </Button>
+                          ) : null}
                           {session && shareableToken ? (
                             <Button
                               variant="ghost"
