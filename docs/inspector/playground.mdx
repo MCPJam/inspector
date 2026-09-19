@@ -107,7 +107,15 @@ The picker opens on the tab that matches your currently selected model. When you
 
 When your MCPJam credit balance reaches zero, free models are grayed out in the picker with a tooltip explaining the limit. Models from your own providers remain enabled — switching to one is the fastest way to keep working. Paid top-up credits (if you have any) keep free models available even after your daily free allowance is exhausted.
 
-If the out-of-credits dialog appears, clicking **Bring your own key** closes the dialog and opens the model picker directly on the **Your providers** tab so you can switch to an own-key model without leaving the chat.
+If the out-of-credits dialog appears, the actions available depend on your plan:
+
+- **Free plan** — The dialog shows **Explore plans** (opens your organization's Plans settings) and **Learn more about BYOK** (opens the BYOK and credits explainer under Usage & billing).
+- **Paid plan (owner or admin)** — The dialog shows **Buy credits** to top up directly, and **Learn more about BYOK** to open the BYOK explainer.
+- **Members who cannot manage billing** — The dialog shows a link to email an organization owner.
+
+### Frontier models and sign-in
+
+Some frontier models require a signed-in account. If you select a frontier model as a guest, a sign-in prompt appears showing the supported providers. You can sign in to get access, or choose **Not now** to continue with a standard model. This prompt does not affect your credit balance.
 
 ## Multi-Model Compare
 
@@ -367,6 +375,13 @@ Others never pause even when it is on: read-only lookups of your own project, th
 
 Two things sit just outside those lists. An **unattended run** (an eval, a swarm) has nobody to ask, so its browser tools follow the `toolPolicy` it declared up front instead of pausing. And **loading a skill that an MCP server provided** is always tagged as third-party content and always bound to the manifest digest you were shown — but whether it pauses follows the switch.
 
+**Message history**
+Press **Up** in the composer to recall your last sent message. Press **Up** again to step further back through your previous messages, and **Down** to walk forward. Past the newest entry, **Down** returns the draft you had started before the walk began.
+
+The history is the conversation itself — the user messages already on screen — so it cannot drift from what you see, and a session reopened from the Sessions rail brings its history along automatically. A fresh thread starts with empty history.
+
+Arrow keys only reach history at the edge of the draft: inside a multi-line message they move the caret as usual. Modifier keys (`Shift`, `Alt`, `Ctrl`, `Cmd`) are never intercepted — `Shift+Up` still selects text.
+
 **Voice input**
 Click the mic button (right side of the input) to record your voice. The audio is transcribed using Whisper and the resulting text is appended to whatever you've already typed in the composer. Recording stops automatically after 3 minutes. The mic is disabled when your daily voice budget is exhausted; a warning appears in the composer when the remaining budget is low. While a recording is in progress, pressing Enter does not submit the draft — use the stop button (arrow-up) to finish recording first, or the ✕ button to cancel without transcribing.
 
@@ -407,7 +422,7 @@ When you are signed in as a project member, the Playground gives the model a set
 
 Servers are identified by name or ID as saved in the project. Stdio servers are not supported for live operations — the model will receive a clear error rather than a connection failure.
 
-When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, `read_server_resource`, `start_claude_readiness_run`, and `start_openai_readiness_run` so you can approve or deny each one — these open a connection to one of your servers or spend credits. Read-only listing and polling tools never require approval, on any model. `cancel_readiness_run` is also direct — it stops traffic rather than starting it.
+When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, `read_server_resource`, `start_claude_readiness_run`, and `start_openai_readiness_run` so you can approve or deny each one — these open a connection to one of your servers. (The readiness starts consume no credits; the approval is about dialling somebody else's server, not about money.) Read-only listing and polling tools never require approval, on any model. `cancel_readiness_run` is also direct — it stops traffic rather than starting it.
 
 <Note>
   These tools are only available when you are signed in as a project member.

@@ -30,6 +30,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1Resource } from "./envelope.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { resolveAgentSurface } from "../../utils/agent-attribution.js";
+import { EVAL_VOCABULARY_CAPABILITY } from "./eval-vocabulary.js";
 
 const capabilities = new Hono();
 
@@ -277,6 +278,14 @@ capabilities.get("/projects/:projectId/capabilities", async (c) => {
       },
     },
     plan: row.plan,
+    /**
+     * The eval vocabulary this deployment understands — the spellings a
+     * `x-mcpjam-eval-vocabulary: 2` body may use. Deployment-level, not
+     * per-suite: the REST wire's acceptance is decided by this server's own
+     * request schemas, and the block is built from the same alias tables
+     * they are. A client reads this; it never infers support from a field.
+     */
+    vocabulary: EVAL_VOCABULARY_CAPABILITY,
     can: deriveCapabilities(row),
   });
 });

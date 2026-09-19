@@ -4,7 +4,9 @@ import {
   fetchPinnedSkill,
   PinnedSkillIntegrityError,
   reportAttempt,
+  heartbeatJourneyRun,
 } from "../swarm-agent.js";
+import { runnerCapabilities } from "../evals/runner-capabilities.js";
 
 /**
  * CONTRACT-LEVEL tests for the inspector→backend journey-execution boundary.
@@ -18,6 +20,47 @@ import {
  */
 
 const CONVEX_HTTP_URL = "https://test-deployment.convex.site";
+
+describe("swarm-agent heartbeat — backend lifecycle response", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each([
+    "running",
+    "failed",
+    "completed",
+    "partial",
+    "rate_limited",
+    "missing",
+    undefined,
+  ])(
+    "preserves status %s so the runner can stop when Convex ends the run",
+    async (status) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(Response.json({ ok: true, status })),
+      );
+      expect(
+        await heartbeatJourneyRun(CONVEX_HTTP_URL, "token", {
+          projectId: "proj-1",
+          runId: "run-1",
+        }),
+      ).toBe(status);
+    },
+  );
+
+  it("rejects an unrecognized status instead of stopping a healthy run", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ ok: true, status: "unexpected" })),
+    );
+    await expect(
+      heartbeatJourneyRun(CONVEX_HTTP_URL, "token", {
+        projectId: "proj-1",
+        runId: "run-1",
+      }),
+    ).rejects.toThrow("Invalid run status");
+  });
+});
 
 function okCreateResponse() {
   return {
@@ -75,6 +118,14 @@ describe("swarm-agent createJourneyRun — request-body contract", () => {
       journeyRefId: "journey-1",
       launchKey: "lk-1",
       maxHosts: 1,
+      kind: "swarm",
+      // ASSERTED BY THIS PROCESS, never taken from the caller's args above: we
+      // are the runner, so we are the only honest source for what we can
+      // execute. The backend reads it to decide whether an environment's
+      // materialized secrets make this wave unrunnable.
+      // The swarm path appends its own: the backend reads it to know this
+      // runner grades standard checks itself.
+      runnerCapabilities: [...runnerCapabilities(), "swarm-standard-checks-v1"],
     });
     // projectId is the field whose omission would produce the guaranteed 400.
     expect(body.projectId).toBe("proj-1");
@@ -82,6 +133,34 @@ describe("swarm-agent createJourneyRun — request-body contract", () => {
     // And the bearer is forwarded as a JWT for the JWT-only Convex HTTP action.
     const headers = (init as RequestInit).headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer bearer-token");
+  });
+  it("serializes an explicit standalone run kind", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(okCreateResponse())),
+    );
+    await createJourneyRun(CONVEX_HTTP_URL, "token", {
+      projectId: "proj-1",
+      journeyRefId: "journey-1",
+      launchKey: "lk-2",
+      kind: "user_testing",
+    });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).kind).toBe(
+      "user_testing",
+    );
+  });
+  it("serializes a per-run iterations override", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(okCreateResponse())),
+    );
+    await createJourneyRun(CONVEX_HTTP_URL, "token", {
+      projectId: "proj-1",
+      journeyRefId: "journey-1",
+      launchKey: "lk-3",
+      sessionsPerTarget: 1,
+    });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).sessionsPerTarget).toBe(
+      1,
+    );
   });
 });
 

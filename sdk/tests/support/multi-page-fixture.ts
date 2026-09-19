@@ -61,6 +61,9 @@ export const FIXTURE_PAGE_SIZE = 4;
 export const FIXTURE_TOTAL_ITEMS = FIXTURE_PAGE_SIZE * 3;
 
 export interface MultiPageFixtureOptions {
+  /** Keep duplicate raw names to test capture before name-keyed conversion. */
+  duplicateToolName?: boolean;
+  declareOutputSchema?: boolean;
   /**
    * Which capabilities to advertise. A key set to `false` is OMITTED from
    * the server's declared capabilities entirely (not just emptied) — this
@@ -219,6 +222,8 @@ export function buildMultiPageFixtureServer(
   });
 
   const { tools, prompts, resources, resourceTemplates } = buildItems();
+  if (options.duplicateToolName) tools[1].name = tools[0].name;
+  if (options.declareOutputSchema) Object.assign(tools[0], { outputSchema: { type: "object", properties: { value: { type: "string" } } } });
 
   if (caps.tools) {
     const baseTools = options.listSlowTool
