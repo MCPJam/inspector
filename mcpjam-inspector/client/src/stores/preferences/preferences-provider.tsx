@@ -1,4 +1,6 @@
-import { createContext, useContext, useRef } from "react";
+import { getInitialThemePreference, updateThemeMode } from "@/lib/theme-utils";
+import { resolveThemeMode } from "@/lib/theme-mode";
+import { createContext, useContext, useEffect, useRef } from "react";
 
 import { useStore, type StoreApi } from "zustand";
 
@@ -22,9 +24,35 @@ export const PreferencesStoreProvider = ({
 
   storeRef.current ??= createPreferencesStore({
     themeMode,
+    themePreference:
+      getInitialThemePreference() === "system" ? "system" : themeMode,
     themePreset,
     hostStyle,
   });
+
+  useEffect(() => {
+    const store = storeRef.current!;
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const apply = () => {
+      const preference = store.getState().themePreference;
+      const mode = resolveThemeMode(preference);
+      if (store.getState().themeMode !== mode)
+        store.setState({ themeMode: mode });
+      updateThemeMode(mode);
+    };
+    apply();
+    const unsubscribe = store.subscribe((state, previous) => {
+      if (state.themePreference !== previous.themePreference) apply();
+    });
+    const onSystemChange = () => {
+      if (store.getState().themePreference === "system") apply();
+    };
+    media?.addEventListener("change", onSystemChange);
+    return () => {
+      unsubscribe();
+      media?.removeEventListener("change", onSystemChange);
+    };
+  }, []);
 
   return (
     <PreferencesStoreContext.Provider value={storeRef.current}>

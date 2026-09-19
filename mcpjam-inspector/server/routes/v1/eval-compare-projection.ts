@@ -243,7 +243,11 @@ function runSide(value: unknown): Rec {
     ...(typeof run.effectiveModelId === "string"
       ? { effectiveModelId: run.effectiveModelId }
       : {}),
-    ...(run.modelSource === "client_default" || run.modelSource === "override"
+    ...(isRecord(run.client) && typeof run.client.name === "string"
+      ? { client: { name: run.client.name } }
+      : {}),
+    ...(run.modelSource === "client_default" || run.modelSource === "override" ||
+    run.modelSource === "case"
       ? { modelSource: run.modelSource }
       : {}),
   };

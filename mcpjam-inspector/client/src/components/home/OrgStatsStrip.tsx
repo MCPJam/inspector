@@ -110,7 +110,7 @@ export function OrgStatsStrip({
         icon={FlaskConical}
         value={evalSuiteCount}
         label={evalSuiteCount === 1 ? "eval suite" : "eval suites"}
-        onClick={() => navigate("/evals")}
+        onClick={() => navigate("/evaluate")}
       />
       <Sep />
       <Stat
