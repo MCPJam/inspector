@@ -1,3 +1,5 @@
+import { swarmsCreatePath, userTestingCreatePath } from "@/lib/app-navigation";
+
 /**
  * Every word a signed-out visitor reads on Swarms or User Testing (REEV-11).
  *
@@ -104,6 +106,10 @@ export type GatedFeatureSample =
 export interface GatedFeatureCopy {
   /** Sidebar and tab wording. Swarms' own h1 is the singular "Swarm". */
   readonly navLabel: string;
+  /** The single button on the preview that opens the nudge. */
+  readonly ctaLabel: string;
+  /** Where sign-in/up returns to: the creation flow the visitor asked for. */
+  readonly createPath: string;
   /**
    * NO HEADLINE OR BODY LIVE HERE ANY MORE.
    *
@@ -129,6 +135,8 @@ export interface GatedFeatureCopy {
 export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
   swarms: {
     navLabel: "Swarms",
+    ctaLabel: "Create new swarm",
+    createPath: swarmsCreatePath,
     sampleLabel: "What a swarm looks like",
     sample: {
       kind: "findings",
@@ -168,15 +176,16 @@ export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
     },
     analyticsLocation: "swarms_guest_preview",
     nudge: {
-      title: "Create an account to run swarms",
-      // What is true and checkable: swarms run on our infrastructure and spend
-      // model credits, which is why they need an account. No claim about what
-      // that costs, and no free-run offer.
-      body: "Swarms run on our infrastructure and spend model credits, so they need an account behind them.",
+      title: "Create an account to run your first swarm",
+      // Sells what the run teaches, not why we need the account. Still no
+      // claim about what it costs, and no free-run offer.
+      body: "Test your MCP server with agent personas pursuing different user goals. See where they succeed, where they get stuck, and what to improve.",
     },
   },
   "user-testing": {
     navLabel: "User Testing",
+    ctaLabel: "Create new study",
+    createPath: userTestingCreatePath,
     sampleLabel: "What a study looks like",
     sample: {
       kind: "flow",
@@ -262,8 +271,8 @@ export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
     },
     analyticsLocation: "user_testing_guest_preview",
     nudge: {
-      title: "Create an account to run a study",
-      body: "Studies hand out live sandboxes to your testers, so they need an account to attach the sessions to.",
+      title: "Create an account to run your first study",
+      body: "See how real users interact with your MCP server. Find out where they succeed, where they get stuck, and what to improve.",
     },
   },
 };

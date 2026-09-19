@@ -34,6 +34,34 @@ describe("FeatureSignUpNudgeDialog", () => {
 
     expect(screen.getByText(copy.title)).toBeInTheDocument();
     expect(screen.getByText(copy.body)).toBeInTheDocument();
+    expect(copy.title).toBe("Create an account to run your first swarm");
+    expect(copy.body).toBe(
+      "Test your MCP server with agent personas pursuing different user goals. See where they succeed, where they get stuck, and what to improve.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Create free account" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+  });
+
+  it("shows the jam artwork for both features", () => {
+    const { rerender } = render(
+      <FeatureSignUpNudgeDialog feature="swarms" isOpen onClose={vi.fn()} />,
+    );
+    expect(
+      document.querySelector('img[src="/guest-credit-wall.png"]'),
+    ).toBeInTheDocument();
+
+    rerender(
+      <FeatureSignUpNudgeDialog
+        feature="user-testing"
+        isOpen
+        onClose={vi.fn()}
+      />,
+    );
+    expect(
+      document.querySelector('img[src="/guest-credit-wall.png"]'),
+    ).toBeInTheDocument();
   });
 
   // The bullets are gone, and this is what stops them coming back by habit.
@@ -94,24 +122,22 @@ describe("FeatureSignUpNudgeDialog", () => {
     screen.getByRole("button", { name: "Create free account" }).click();
 
     expect(signUpMock).toHaveBeenCalledTimes(1);
-    // Captured on the click, before WorkOS navigates away — this is what puts
-    // the user back on the tab they were reading rather than the front door.
-    expect(readAppSignInReturnPath()).toBe("/swarms");
+    expect(readAppSignInReturnPath()).toBe("/swarms/new");
     expect(track).toHaveBeenCalledWith(
       "sign_up_button_clicked",
       expect.objectContaining({ location: "swarms_guest_preview" }),
     );
   });
 
-  it("the existing-account path returns to the same tab", () => {
+  it("the existing-account path returns to the swarm creation flow", () => {
     render(
       <FeatureSignUpNudgeDialog feature="swarms" isOpen onClose={vi.fn()} />,
     );
 
-    screen.getByRole("button", { name: "I already have an account" }).click();
+    screen.getByRole("button", { name: "Sign in" }).click();
 
     expect(signInMock).toHaveBeenCalledTimes(1);
-    expect(readAppSignInReturnPath()).toBe("/swarms");
+    expect(readAppSignInReturnPath()).toBe("/swarms/new");
     expect(track).toHaveBeenCalledWith(
       "login_button_clicked",
       expect.objectContaining({ location: "swarms_guest_preview" }),
@@ -144,13 +170,18 @@ describe("FeatureSignUpNudgeDialog", () => {
       />,
     );
 
-    expect(
-      screen.getByText(GATED_FEATURE_COPY["user-testing"].nudge.title),
-    ).toBeInTheDocument();
+    const copy = GATED_FEATURE_COPY["user-testing"].nudge;
+    expect(copy.title).toBe("Create an account to run your first study");
+    expect(copy.body).toBe(
+      "See how real users interact with your MCP server. Find out where they succeed, where they get stuck, and what to improve.",
+    );
+    expect(screen.getByText(copy.title)).toBeInTheDocument();
+    expect(screen.getByText(copy.body)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
 
     screen.getByRole("button", { name: "Create free account" }).click();
 
-    expect(readAppSignInReturnPath()).toBe("/user-testing");
+    expect(readAppSignInReturnPath()).toBe("/user-testing/new");
     expect(track).toHaveBeenCalledWith(
       "sign_up_button_clicked",
       expect.objectContaining({ location: "user_testing_guest_preview" }),
