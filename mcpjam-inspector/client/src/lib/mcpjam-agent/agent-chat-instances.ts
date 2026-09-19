@@ -25,6 +25,10 @@ import { DefaultChatTransport } from "ai";
 import { shouldAutoResumeTurn } from "@/lib/chat-auto-resume";
 import { track } from "@/lib/analytics";
 import { authFetch } from "@/lib/session-token";
+import {
+  notifyMCPJamLimitError,
+  notifyMCPJamLimitErrorFromResponse,
+} from "@/lib/mcpjam-limit";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 import { handleUiToolCall } from "@/lib/webmcp/ui-tool-executor";
 import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
@@ -294,7 +298,16 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     id: chatSessionId,
     transport: new DefaultChatTransport({
       api: AGENT_API_PATH,
-      fetch: authFetch,
+      // A pre-stream refusal (the daily allowance precheck) is a non-ok JSON
+      // body the AI SDK folds into `new Error(await response.text())`; by
+      // the time `onError` runs the Response is gone. Same hook as
+      // `useChatSession`'s `chatFetch`, so the side panel raises the limit
+      // dialog instead of printing the body.
+      fetch: async (input, init) => {
+        const response = await authFetch(input, init);
+        if (!response.ok) await notifyMCPJamLimitErrorFromResponse(response);
+        return response;
+      },
       prepareSendMessagesRequest: ({
         id,
         messages,
@@ -342,6 +355,11 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
         systemPrompt: readTourSystemPrompt(chatSessionId) ?? undefined,
       }),
     }),
+    // A refusal that arrives mid-stream never passes through the fetch
+    // branch above; the SDK surfaces it here with the JSON in the message.
+    onError: (error) => {
+      notifyMCPJamLimitError({ message: error.message });
+    },
     // WebMCP UI tools are no-execute server-side; the stream pauses until
     // the client supplies the result via `addToolOutput`. Non-UI names fall
     // through untouched (this surface has no app tools). `addToolOutput`

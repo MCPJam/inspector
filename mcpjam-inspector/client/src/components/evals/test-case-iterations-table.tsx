@@ -1,4 +1,8 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
+import {
+  modelDisplayName,
+  ModelDisplayNamesContext,
+} from "@/lib/model-display-name";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
@@ -76,6 +80,7 @@ export function TestCaseIterationsTable({
 }: TestCaseIterationsTableProps) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
 
+  const availableModels = useContext(ModelDisplayNamesContext);
   const sortedIterations = (() => {
     if (sortMode === "chronological") {
       return [...iterations].sort(
@@ -205,7 +210,10 @@ export function TestCaseIterationsTable({
                     <div className="min-w-[120px] text-left truncate">
                       <span className="font-mono text-xs">
                         {snapshot
-                          ? `${snapshot.provider}/${snapshot.model}`
+                          ? modelDisplayName(
+                              `${snapshot.provider}/${snapshot.model}`,
+                              availableModels,
+                            )
                           : "—"}
                       </span>
                     </div>

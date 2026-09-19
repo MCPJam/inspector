@@ -33,6 +33,40 @@ function renderEditor(value: EvalJudgeRubric | undefined) {
 }
 
 describe("JudgeRubricEditor", () => {
+  it("keeps grading instructions when removing the last criterion", async () => {
+    const { onChange } = renderEditor({
+      instructions: "Cite evidence",
+      criteria: [{ id: "a", label: "A" }],
+    });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /Remove criterion 1/ }));
+    expect(onChange).toHaveBeenLastCalledWith({
+      instructions: "Cite evidence",
+    });
+  });
+
+  it("clears instructions without removing structured criteria", async () => {
+    const criteria = [{ id: "a", label: "A" }];
+    const { onChange } = renderEditor({
+      instructions: "Cite evidence",
+      criteria,
+    });
+    await userEvent
+      .setup()
+      .clear(screen.getByLabelText(/Grading instructions/));
+    expect(onChange).toHaveBeenLastCalledWith({ criteria });
+  });
+
+  it("validates instructions even when criteria are valid", () => {
+    expect(
+      isRubricValid({
+        instructions: "x".repeat(2001),
+        criteria: [{ id: "a", label: "A" }],
+      }),
+    ).toBe(false);
+    expect(isRubricValid({ instructions: "Cite evidence" })).toBe(true);
+  });
   it("refuses a duplicate id inline, naming why it matters", () => {
     const { container } = renderEditor({
       criteria: [
@@ -121,7 +155,7 @@ describe("JudgeRubricEditor", () => {
 describe("rubric validation helpers", () => {
   it("treats no rubric as valid — it is how you clear one", () => {
     expect(isRubricValid(undefined)).toBe(true);
-    expect(isRubricValid({ criteria: [] })).toBe(true);
+    expect(isRubricValid({ criteria: [] })).toBe(false);
   });
 
   it("rejects a rubric with any bad criterion", () => {
