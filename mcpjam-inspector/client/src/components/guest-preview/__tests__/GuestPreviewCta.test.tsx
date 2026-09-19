@@ -14,6 +14,8 @@ import { GuestPreviewCta } from "../GuestPreviewCta";
 
 describe("GuestPreviewCta", () => {
   beforeEach(() => {
+    sessionStorage.clear();
+    window.history.replaceState({}, "", "/");
     signInMock.mockReset();
     signUpMock.mockReset();
   });
@@ -65,4 +67,24 @@ describe("GuestPreviewCta", () => {
       ).toBeInTheDocument(),
     );
   });
+  it.each([
+    ["swarms", "Create new swarm"],
+    ["user-testing", "Create new study"],
+  ] as const)(
+    "can dismiss and reopen the %s modal without starting auth",
+    (feature, label) => {
+      render(<GuestPreviewCta feature={feature} />);
+      fireEvent.click(screen.getByRole("button", { name: label }));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: label }));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(signInMock).not.toHaveBeenCalled();
+      expect(signUpMock).not.toHaveBeenCalled();
+      expect(
+        sessionStorage.getItem("mcpjam_app_signin_return_path_v1"),
+      ).toBeNull();
+    },
+  );
 });

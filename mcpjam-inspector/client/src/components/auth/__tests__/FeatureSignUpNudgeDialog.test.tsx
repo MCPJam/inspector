@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 const signInMock = vi.fn();
 const signUpMock = vi.fn();
@@ -12,6 +12,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
 // posthog.capture in components); mock it to assert the surface tag.
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
+import {
+  PERMALINK_SIGN_IN_STATE_KEY,
+  takePermalinkSignInReturn,
+} from "@/lib/permalink-signin-return";
 import { track } from "@/lib/analytics";
 import { readAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { GATED_FEATURE_COPY } from "@/components/guest-preview/feature-highlights";
@@ -114,7 +118,7 @@ describe("FeatureSignUpNudgeDialog", () => {
     ).toHaveLength(2);
   });
 
-  it("Create free account remembers the tab, then starts WorkOS sign-up", () => {
+  it("Create free account remembers the creation flow, then starts WorkOS sign-up", () => {
     render(
       <FeatureSignUpNudgeDialog feature="swarms" isOpen onClose={vi.fn()} />,
     );
@@ -141,6 +145,42 @@ describe("FeatureSignUpNudgeDialog", () => {
     expect(track).toHaveBeenCalledWith(
       "login_button_clicked",
       expect.objectContaining({ location: "swarms_guest_preview" }),
+    );
+  });
+
+  describe.each([
+    ["swarms", "/swarms/new"],
+    ["user-testing", "/user-testing/new"],
+  ] as const)("%s authentication return", (feature, destination) => {
+    it.each(["Create free account", "Sign in"])(
+      "%s stores the creation flow before navigating and restores it through AuthKit",
+      (label) => {
+        window.history.replaceState({}, "", `/${feature}`);
+        const authenticate = label === "Sign in" ? signInMock : signUpMock;
+        authenticate.mockImplementation(() => {
+          expect(readAppSignInReturnPath()).toBe(destination);
+        });
+        render(
+          <FeatureSignUpNudgeDialog
+            feature={feature}
+            isOpen
+            onClose={vi.fn()}
+          />,
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: label }));
+
+        expect(authenticate).toHaveBeenCalledTimes(1);
+        const options = authenticate.mock.calls[0][0];
+        window.history.replaceState({}, "", "/callback");
+        // main.tsx consumes this nonce before App's generic return handler.
+        expect(
+          takePermalinkSignInReturn(
+            options.state?.[PERMALINK_SIGN_IN_STATE_KEY],
+            window.location.origin,
+          ),
+        ).toBe(destination);
+      },
     );
   });
 

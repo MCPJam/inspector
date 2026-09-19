@@ -246,13 +246,13 @@ describe("gated feature routes — hosted", () => {
       expect(tabMock).not.toHaveBeenCalled();
     });
 
-    it("offers a guest sign-up, not an upgrade", () => {
+    it("offers a guest the feature creation CTA", () => {
       guest();
 
       renderRoute(<Route />);
 
       expect(
-        screen.getByRole("button", { name: "Create account" }),
+        screen.getByRole("button", { name: GATED_FEATURE_COPY[feature].ctaLabel }),
       ).toBeInTheDocument();
       expect(
         screen.queryByTestId("billing-upsell-gate"),
@@ -309,7 +309,7 @@ describe("gated feature routes — hosted", () => {
       renderRoute(<Route />);
 
       expect(
-        screen.getByRole("button", { name: "Create account" }),
+        screen.getByRole("button", { name: GATED_FEATURE_COPY[feature].ctaLabel }),
       ).toBeInTheDocument();
       expect(
         screen.queryByTestId("billing-upsell-gate"),

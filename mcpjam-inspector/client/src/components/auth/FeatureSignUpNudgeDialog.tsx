@@ -13,7 +13,7 @@
  * What it does share is the ordering that matters on every button:
  *   1. writeAppSignInReturnPath(copy.createPath) — remember the creation flow,
  *      in sessionStorage, before WorkOS navigates away;
- *   2. signUp/signIn(permalinkSignInOptions()) — the navigation itself.
+ *   2. signUp/signIn(permalinkSignInOptions(copy.createPath)) — the navigation itself.
  * Get those backwards and the user lands on the app's front door instead of
  * the creation flow named by the CTA.
  *
@@ -80,13 +80,13 @@ export function FeatureSignUpNudgeDialog({
   const handleSignUp = () => {
     track("sign_up_button_clicked", { location });
     writeAppSignInReturnPath(copy.createPath);
-    signUp(permalinkSignInOptions());
+    signUp(permalinkSignInOptions(copy.createPath));
   };
 
   const handleSignIn = () => {
     track("login_button_clicked", { location });
     writeAppSignInReturnPath(copy.createPath);
-    signIn(permalinkSignInOptions());
+    signIn(permalinkSignInOptions(copy.createPath));
   };
 
   return (
