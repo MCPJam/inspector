@@ -9,7 +9,7 @@
     "rail": "openrouter"
   },
   "extractionModel": "openai/gpt-5.6-luna",
-  "extractionVersion": 2,
+  "extractionVersion": 1,
   "findings": [
     {
       "basis": "verifiedMechanism",
@@ -78,6 +78,7 @@
         "unit": "sessions"
       },
       "reportExcerpt": {
+        "account": "She tried to save her changes and the app would not take them. She gave up without the work saved.",
         "actual": "The change was rejected.",
         "citations": ["00000000000000010011chatSessions/m:0"]
       },
@@ -117,5 +118,12 @@
   },
   "reasoningModel": "z-ai/glm-5.3-flash",
   "sourceRevision": "407724f6afae4caa04103a0f5d5bafa7fb2a502e7c1ca817c0c8881f340c2a91",
-  "summaryKind": "broken"
+  "summaryKind": "broken",
+  "verification": {
+    "confirmed": 1,
+    "omitted": 0,
+    "proposed": 1,
+    "rejected": 0,
+    "unverified": 0
+  }
 }

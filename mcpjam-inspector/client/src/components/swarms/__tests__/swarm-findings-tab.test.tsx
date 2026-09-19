@@ -2,6 +2,7 @@ import { neverStartedReport } from "./swarm-report-fixtures";
 import {
   brokenWire,
   WIRE_FIX_PHRASE,
+  WIRE_MECHANISM_PHRASE,
   WIRE_GOAL,
   WIRE_PERSONA,
 } from "./swarm-findings-wire-fixtures";
@@ -692,7 +693,7 @@ describe("SwarmFindingsTab on shared findings", () => {
     );
   });
 
-  it("leads with the top verified mechanism's fix", () => {
+  it("names the cause and shows its fix on its own line", () => {
     render(
       <SwarmFindingsTab
         wave={wave()}
@@ -702,9 +703,14 @@ describe("SwarmFindingsTab on shared findings", () => {
         generatedSummary="Lane A prose that must not win."
       />,
     );
-    expect(screen.getByTestId("findings-headline").textContent).toBe(
-      WIRE_FIX_PHRASE,
-    );
+    // The cause leads; the fix is beside it, not instead of it. Lane A's prose
+    // still loses to the shared pipeline on this path.
+    const headline = screen.getByTestId("findings-headline").textContent;
+    expect(headline).toContain(WIRE_MECHANISM_PHRASE.replace(/\.$/, ""));
+    expect(headline).not.toContain("Lane A prose");
+    const summary = screen.getByTestId("findings-summary").textContent;
+    expect(summary).toContain(WIRE_FIX_PHRASE);
+    expect(summary).toContain("Suggested fix");
   });
 
   it("names the goal, stage and persona when there is no fix to promote", () => {
@@ -719,10 +725,14 @@ describe("SwarmFindingsTab on shared findings", () => {
       />,
     );
     const headline = screen.getByTestId("findings-headline").textContent;
-    expect(headline).toContain(
-      `"${WIRE_GOAL.title}" broke at tool response for ${WIRE_PERSONA.name}.`,
-    );
+    expect(headline).toContain(WIRE_MECHANISM_PHRASE.replace(/\.$/, ""));
+    expect(headline).toContain(WIRE_GOAL.title);
+    expect(headline).toContain(WIRE_PERSONA.name);
     expect(headline).not.toContain("Some goals were blocked.");
+    // No fix on the cause means no fix shown — never another cause's.
+    expect(screen.getByTestId("findings-summary").textContent).not.toContain(
+      "Suggested fix",
+    );
   });
 
   it.each([

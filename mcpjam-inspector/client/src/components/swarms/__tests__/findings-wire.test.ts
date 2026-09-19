@@ -4,6 +4,7 @@ import {
   SWARM_FINDING_COVERAGE_NOTE_LABELS,
   SWARM_FINDING_DISPOSITION_LABELS,
   SWARM_FINDING_TONE_OF_DISPOSITION,
+  swarmJourneyFindingsSchema,
   type SwarmJourneyFinding,
   type SwarmJourneyFindings,
 } from "@mcpjam/sdk/contract";
@@ -11,14 +12,18 @@ import type { SwarmOverviewRun } from "@/lib/swarm-api";
 import {
   brokenWire,
   publishedWire,
+  truncatedWire,
+  WIRE_ACCOUNT,
   WIRE_GOAL,
   WIRE_MECHANISM_PHRASE,
   WIRE_PERSONA,
   WIRE_RUN_ID,
+  WIRE_TRUNCATION_FIX,
 } from "./swarm-findings-wire-fixtures";
 import {
   deriveSwarmFindingsModelFromWire,
   representativeGoalRow,
+  selectLeadWireMechanism,
   wireRecommendation,
 } from "../findings/findings-derivation";
 import {
@@ -199,16 +204,24 @@ describe("the wire model", () => {
 });
 
 describe("wireRecommendation", () => {
-  it("takes the fix from the verified mechanism reaching the most sessions", () => {
+  it("takes the fix from the cause reaching the most sessions", () => {
     const value = brokenWire();
     const mechanism = value.findings[0]!;
     value.findings = [
-      { ...mechanism, id: "small", fixPhrase: "Small fix." },
+      {
+        ...mechanism,
+        id: "small",
+        mechanismId: "cause-small",
+        fixPhrase: "Small fix.",
+        sessionIds: ["session-1"],
+      },
       {
         ...mechanism,
         id: "big",
+        mechanismId: "cause-big",
         fixPhrase: "Big fix.",
-        population: { ...mechanism.population, count: 5, total: 5 },
+        sessionIds: ["session-2", "session-3", "session-4", "session-5"],
+        population: { ...mechanism.population, count: 4, total: 5 },
       },
       {
         ...value.findings[1]!,
@@ -241,15 +254,22 @@ describe("composeWireFindingsSummary", () => {
     ]);
   });
 
-  it("names the goal, stage and persona for a broken wave", () => {
+  it("names the cause, the stage and the persona's goal for a broken wave", () => {
     const value = brokenWire();
     const summary = composeWireFindingsSummary(value, derive(value), {
       terminal: true,
     });
     expect(summary.kind).toBe("broken");
-    expect(summary.lines[0]).toBe(
-      `"${WIRE_GOAL.title}" broke at tool response for ${WIRE_PERSONA.name}.`,
+    // The CAUSE leads now. The stage and the goal follow on their own lines,
+    // so the reader learns what went wrong before where it was noticed.
+    expect(summary.lines[0]).toContain(
+      WIRE_MECHANISM_PHRASE.replace(/\.$/, ""),
     );
+    expect(summary.lines).toContain(
+      "The explanation points at the tool response.",
+    );
+    expect(summary.lines.join(" ")).toContain(WIRE_GOAL.title);
+    expect(summary.lines.join(" ")).toContain(WIRE_PERSONA.name);
   });
 
   it("names the goal when the chain never located the break", () => {
@@ -264,9 +284,13 @@ describe("composeWireFindingsSummary", () => {
       terminal: true,
     });
     expect(summary.kind).toBe("broken");
-    expect(summary.lines[0]).toBe(
-      `"${WIRE_GOAL.title}" broke for ${WIRE_PERSONA.name}.`,
+    expect(summary.lines[0]).toContain(
+      WIRE_MECHANISM_PHRASE.replace(/\.$/, ""),
     );
+    // An unmeasured stage is stated as nothing at all, never guessed.
+    expect(summary.lines.join(" ")).not.toContain("stage");
+    expect(summary.lines.join(" ")).toContain(WIRE_GOAL.title);
+    expect(summary.lines.join(" ")).toContain(WIRE_PERSONA.name);
   });
 });
 
@@ -295,5 +319,217 @@ describe("waveNarration", () => {
       undefined,
     );
     expect(waveNarration("completed", null)).toBe(undefined);
+  });
+});
+
+describe("one cause supplies both the headline and the fix", () => {
+  it("rejoins the rows a mechanism was fanned across and counts sessions once", () => {
+    const wire = truncatedWire();
+    const lead = selectLeadWireMechanism(wire)!;
+    expect(lead.mechanismId).toBe("mechanism-truncation");
+    expect(lead.sessionCount).toBe(2);
+    expect(lead.goalRunIds).toHaveLength(2);
+    expect(lead.fixPhrase).toBe(WIRE_TRUNCATION_FIX);
+  });
+
+  it("ranks by distinct supporting sessions, not by the largest single row", () => {
+    // A: two rows of three sessions each = six. B: one row of four.
+    // Ranking individual rows picks B; ranking the CAUSE picks A.
+    const wire = truncatedWire();
+    const rows = wire.findings.filter((r) => r.basis === "verifiedMechanism");
+    const a = rows.map((row, i) => ({
+      ...row,
+      id: `a${i}`,
+      mechanismId: "cause-a",
+      sessionIds: [`a${i}-1`, `a${i}-2`, `a${i}-3`],
+      population: { count: 3, total: 6, unit: "sessions" as const },
+      fixPhrase: "Fix A.",
+      mechanismPhrase: "Cause A happened.",
+    }));
+    const b = {
+      ...rows[0]!,
+      id: "b0",
+      mechanismId: "cause-b",
+      sessionIds: ["b-1", "b-2", "b-3", "b-4"],
+      population: { count: 4, total: 6, unit: "sessions" as const },
+      fixPhrase: "Fix B.",
+      mechanismPhrase: "Cause B happened.",
+    };
+    const built = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: [...a, b],
+    });
+    expect(selectLeadWireMechanism(built)!.mechanismId).toBe("cause-a");
+    expect(wireRecommendation(built)).toBe("Fix A.");
+    // Stable under wire order.
+    const reversed = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: [b, ...a.slice().reverse()],
+    });
+    expect(selectLeadWireMechanism(reversed)!.mechanismId).toBe("cause-a");
+    expect(wireRecommendation(reversed)).toBe("Fix A.");
+  });
+
+  it("shows no fix rather than borrowing one from another cause", () => {
+    const wire = truncatedWire();
+    const rows = wire.findings.filter((r) => r.basis === "verifiedMechanism");
+    const built = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: [
+        ...rows.map((row, i) => ({ ...row, id: `lead${i}`, fixPhrase: null })),
+        {
+          ...rows[0]!,
+          id: "other",
+          mechanismId: "cause-other",
+          sessionIds: ["other-1"],
+          population: { count: 1, total: 6, unit: "sessions" as const },
+          fixPhrase: "Do not show me.",
+        },
+      ],
+    });
+    expect(selectLeadWireMechanism(built)!.mechanismId).toBe(
+      "mechanism-truncation",
+    );
+    expect(wireRecommendation(built)).toBeNull();
+  });
+});
+
+describe("the wire headline says what was established", () => {
+  const model = (wire: ReturnType<typeof truncatedWire>) =>
+    deriveSwarmFindingsModelFromWire({
+      journeyFindings: wire,
+      personas: [],
+      runs: [],
+    });
+
+  it("names the cause, the span and the stage, with the goal title intact", () => {
+    const wire = truncatedWire();
+    const summary = composeWireFindingsSummary(wire, model(wire), {
+      terminal: true,
+    });
+    expect(summary.lines[0]).toBe(
+      "The reply stopped before it was finished in 2 of 4 sessions read across 2 goals.",
+    );
+    // `derived` means the chain worker measured it; a model's reading would
+    // be worded as a reading.
+    expect(summary.lines[1]).toBe("Recorded at the tool response stage.");
+    expect(summary.lines.join(" ")).toContain("Reconcile payouts");
+    expect(summary.lines.join(" ")).not.toContain("…");
+  });
+
+  it("words the stage as a reading when that is all it is", () => {
+    const wire = truncatedWire();
+    const built = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: wire.findings.map((row) =>
+        row.basis === "verifiedMechanism"
+          ? { ...row, chainStageBasis: "reported" }
+          : row,
+      ),
+    });
+    const summary = composeWireFindingsSummary(built, model(built), {
+      terminal: true,
+    });
+    expect(summary.lines[1]).toBe(
+      "The explanation points at the tool response.",
+    );
+  });
+
+  it("falls back to the recorded fact when no cause was confirmed", () => {
+    const wire = truncatedWire({ mechanismRows: false });
+    const summary = composeWireFindingsSummary(wire, model(wire), {
+      terminal: true,
+    });
+    expect(summary.lines[0]).toBe("Reply cut off in 2 of 4 sessions read.");
+  });
+
+  it("reports rejected and unverified causes as different footnotes", () => {
+    const wire = truncatedWire({
+      verification: {
+        proposed: 3,
+        confirmed: 0,
+        rejected: 1,
+        unverified: 2,
+        omitted: 0,
+      },
+    });
+    const notes = wireFindingsFootnotes(wire);
+    expect(notes).toContain("1 possible cause was rejected.");
+    expect(notes).toContain("2 possible causes could not be verified.");
+  });
+
+  it("never calls an absent analysis a rejected cause", () => {
+    const wire = truncatedWire({
+      verification: {
+        proposed: 0,
+        confirmed: 0,
+        rejected: 0,
+        unverified: 0,
+        omitted: 0,
+      },
+    });
+    expect(wireFindingsFootnotes(wire).join(" ")).not.toContain("rejected");
+  });
+});
+
+describe("the persona speaks for a session that actually exists", () => {
+  it("borrows the account from a supporting session, with its own detail", () => {
+    const wire = truncatedWire();
+    const derived = deriveSwarmFindingsModelFromWire({
+      journeyFindings: wire,
+      personas: [],
+      runs: [],
+    });
+    const persona = derived.personas[0]!;
+    expect(persona.account).toBe(WIRE_ACCOUNT);
+    expect(persona.issue).toBe(WIRE_ACCOUNT);
+    expect(persona.accountSessionId).toMatch(/^session-/);
+    // The cited engineering sentence belongs to that SAME session.
+    expect(persona.cited?.actual).toBe(
+      "The assistant's reply stopped at its output limit.",
+    );
+  });
+
+  it("is stable under wire reordering", () => {
+    const wire = truncatedWire();
+    const reversed = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: [...wire.findings].reverse(),
+    });
+    const of = (w: typeof wire) =>
+      deriveSwarmFindingsModelFromWire({
+        journeyFindings: w,
+        personas: [],
+        runs: [],
+      }).personas[0]!;
+    expect(of(reversed).accountSessionId).toBe(of(wire).accountSessionId);
+  });
+
+  it("falls back cleanly on a payload with no accounts at all", () => {
+    const wire = brokenWire();
+    const persona = deriveSwarmFindingsModelFromWire({
+      journeyFindings: wire,
+      personas: [],
+      runs: [],
+    }).personas[0]!;
+    expect(persona.account).toBeUndefined();
+    expect(persona.issue).not.toBe("");
+  });
+});
+
+describe("a recorded fact is evidence, not a verdict", () => {
+  it("puts the signal on its stage without colouring the stage", () => {
+    const wire = truncatedWire({ mechanismRows: false });
+    const goal = deriveSwarmFindingsModelFromWire({
+      journeyFindings: wire,
+      personas: [],
+      runs: [],
+    }).personas[0]!.goals.find((g) => g.runId === WIRE_RUN_ID)!;
+    const response = goal.stages.response;
+    expect(response.evidence.map((e) => e.observation)).toContain(
+      "Reply cut off",
+    );
+    // The chain never measured this stage, so it stays unstated.
+    expect(response.state).toBe("none");
   });
 });
