@@ -20,7 +20,7 @@
     "vite": "^7.3.1"
   },
   "dependencies": {
-    "@modelcontextprotocol/ext-apps": "^0.3.1",
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@vitejs/plugin-react": "^5.1.2",
     "react": "^19.2.0",
