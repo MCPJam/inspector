@@ -28,7 +28,12 @@ import {
   commandResponseToActionResult,
   dispatchInspectorCommand,
 } from "../ui-actions";
-import { asOptionalString, errorResult, fromActionResult } from "./shared";
+import {
+  PUBLISH_NATIVE,
+  asOptionalString,
+  errorResult,
+  fromActionResult,
+} from "./shared";
 
 const HOST_PROPERTY = {
   type: "string",
@@ -81,6 +86,7 @@ export function buildHostsUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       // A successful create opens the new host's editor.
       mayNavigate: true,
       execute: async (args) => {
@@ -120,6 +126,7 @@ export function buildHostsUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       mayNavigate: true,
       execute: async (args) => {
         const host = asOptionalString(args.host);
@@ -160,6 +167,7 @@ export function buildHostsUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const host = asOptionalString(args.host);
         if (!host) {
@@ -197,6 +205,7 @@ export function buildHostsUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const host = asOptionalString(args.host);
         if (!host) {
@@ -233,6 +242,7 @@ export function buildHostsUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       // A successful duplicate opens the copy's editor.
       mayNavigate: true,
       execute: async (args) => {

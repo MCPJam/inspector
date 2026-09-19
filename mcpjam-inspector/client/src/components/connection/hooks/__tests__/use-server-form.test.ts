@@ -1389,3 +1389,174 @@ describe("useServerForm", () => {
     expect(result.current.buildFormData().clientSecret).toBeUndefined();
   });
 });
+
+/**
+ * MJ-003 — the form has to say, before the save, that this edit will destroy
+ * the row's stored credentials. `credential-origin.test.ts` pins the rules;
+ * these pin that the hook feeds them the right values and gates Save on the
+ * acknowledgement.
+ */
+describe("useServerForm credential-clear warning", () => {
+  const httpServer = {
+    name: "Hosted server",
+    config: { url: "https://owner.example.com/mcp" },
+    hasHeaders: true,
+    lastConnectionTime: new Date(),
+    connectionStatus: "disconnected",
+    retryCount: 0,
+    enabled: true,
+  } as any;
+
+  const stdioServer = {
+    name: "Local server",
+    config: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-everything"],
+      env: { API_KEY: "secret" },
+    },
+    lastConnectionTime: new Date(),
+    connectionStatus: "disconnected",
+    retryCount: 0,
+    enabled: true,
+  } as any;
+
+  it("warns and blocks Save on a cross-origin URL edit", async () => {
+    const { result } = renderHook(() => useServerForm(httpServer));
+    await waitFor(() => {
+      expect(result.current.url).toBe("https://owner.example.com/mcp");
+    });
+
+    act(() => {
+      result.current.setUrl("https://elsewhere.example.com/mcp");
+    });
+
+    expect(result.current.pendingCredentialClear).toMatchObject({
+      kind: "url-origin",
+      nextOrigin: "https://elsewhere.example.com",
+    });
+    expect(result.current.credentialClearBlocksSubmit).toBe(true);
+  });
+
+  it("requires acknowledgment when another member's OAuth tokens are absent from runtime state", async () => {
+    const server = {
+      ...httpServer,
+      hasHeaders: false,
+      oauthTokens: undefined,
+      config: { ...httpServer.config, useOAuth: true },
+    };
+    const { result } = renderHook(() => useServerForm(server));
+    await waitFor(() => expect(result.current.url).toBe(httpServer.config.url));
+    act(() => result.current.setUrl("https://elsewhere.example.com/mcp"));
+    expect(result.current.credentialClearBlocksSubmit).toBe(true);
+  });
+
+  it("warns and blocks Save on a stdio command swap", async () => {
+    // The vector the form was silent about: the row's env secret goes to
+    // whatever process this command names, and the backend clears it.
+    const { result } = renderHook(() => useServerForm(stdioServer));
+    await waitFor(() => {
+      expect(result.current.commandInput).toBe(
+        "npx -y @modelcontextprotocol/server-everything"
+      );
+    });
+
+    act(() => {
+      result.current.setCommandInput("node exfiltrate.js");
+    });
+
+    expect(result.current.pendingCredentialClear).toMatchObject({
+      kind: "stdio-target",
+      previousCommand: "npx -y @modelcontextprotocol/server-everything",
+      nextCommand: "node exfiltrate.js",
+    });
+    expect(result.current.credentialClearBlocksSubmit).toBe(true);
+  });
+
+  it("stays silent on an edit that keeps the destination", async () => {
+    const { result } = renderHook(() => useServerForm(stdioServer));
+    await waitFor(() => {
+      expect(result.current.commandInput).toBe(
+        "npx -y @modelcontextprotocol/server-everything"
+      );
+    });
+
+    act(() => {
+      result.current.setName("Renamed");
+    });
+
+    expect(result.current.pendingCredentialClear).toBeNull();
+    expect(result.current.credentialClearBlocksSubmit).toBe(false);
+  });
+
+  it("releases Save once the destination is acknowledged, and re-arms on a new one", async () => {
+    const { result } = renderHook(() => useServerForm(httpServer));
+    await waitFor(() => {
+      expect(result.current.url).toBe("https://owner.example.com/mcp");
+    });
+
+    act(() => {
+      result.current.setUrl("https://one.example.com/mcp");
+    });
+    act(() => {
+      result.current.acknowledgeCredentialClear("url:https://one.example.com");
+    });
+    expect(result.current.credentialClearBlocksSubmit).toBe(false);
+
+    // Consent was for one destination. Typing another is a new decision.
+    act(() => {
+      result.current.setUrl("https://two.example.com/mcp");
+    });
+    expect(result.current.credentialClearBlocksSubmit).toBe(true);
+  });
+
+  const spacedStdioServer = {
+    name: "Local server",
+    config: {
+      command: "node",
+      args: ["--inspect", "C:\\Program Files\\mcp\\file name.js", 'say "hi"'],
+      env: { API_KEY: "secret" },
+    },
+    lastConnectionTime: new Date(),
+    connectionStatus: "disconnected",
+    retryCount: 0,
+    enabled: true,
+  } as any;
+
+  it("round-trips stdio arguments that contain whitespace and quotes", async () => {
+    const { result } = renderHook(() => useServerForm(spacedStdioServer));
+    await waitFor(() => {
+      expect(result.current.commandInput).not.toBe("");
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      command: "node",
+      args: ["--inspect", "C:\\Program Files\\mcp\\file name.js", 'say "hi"'],
+    });
+  });
+
+  it("stays silent when a space-bearing stdio target is opened and saved unchanged", async () => {
+    // The user-visible bug: a whitespace split re-reads the stored arguments
+    // as different ones, so the form announces that an untouched row is about
+    // to lose its credentials.
+    const { result } = renderHook(() => useServerForm(spacedStdioServer));
+    await waitFor(() => {
+      expect(result.current.commandInput).not.toBe("");
+    });
+
+    expect(result.current.pendingCredentialClear).toBeNull();
+    expect(result.current.credentialClearBlocksSubmit).toBe(false);
+  });
+});
+
+describe("pasted command compatibility", () => {
+  it("preserves a pasted Windows path", () => {
+    const { result } = renderHook(() => useServerForm());
+    act(() => {
+      result.current.setType("stdio");
+      result.current.setCommandInput(String.raw`node C:\tools\server.js`);
+    });
+    expect(result.current.buildFormData().args).toEqual([
+      String.raw`C:\tools\server.js`,
+    ]);
+  });
+});

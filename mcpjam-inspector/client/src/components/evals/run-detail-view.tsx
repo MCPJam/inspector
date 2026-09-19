@@ -1,3 +1,4 @@
+import { RunMetadataDisplay } from "./run-metadata-display";
 import {
   useCallback,
   useEffect,
@@ -15,7 +16,7 @@ import {
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
-import { formatRunId } from "./helpers";
+import { formatRunId, runClientIdentity, runClientLogo } from "./helpers";
 import {
   buildOpenAiSubmissionReport,
   renderOpenAiSubmissionReport,
@@ -61,7 +62,7 @@ import { useStageFindings } from "@/components/evaluate/use-stage-findings";
 import { ExplanatoryFlowOptIn } from "@/components/shared/usage-insights/ExplanatoryFlowOptIn";
 import type { InsightsScope } from "@/hooks/useUsageInsights";
 import { useAvailableModels } from "@/hooks/use-available-models";
-import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
+import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 import { ArrowUpDown, Download, Share2 } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
@@ -328,10 +329,10 @@ export function RunIterationsSidebar({
     // gates, tool errors) the browser cannot see at all. The matcher survives
     // inside that helper for rows with no stored result; see its docblock.
     const passed = caseGroupsForSelectedRun.filter((i) =>
-      computeIterationPassed(i)
+      computeIterationPassed(i),
     ).length;
     const failed = caseGroupsForSelectedRun.filter(
-      (i) => !computeIterationPassed(i)
+      (i) => !computeIterationPassed(i),
     ).length;
     const total = caseGroupsForSelectedRun.length;
     const passRate = total > 0 ? passed / total : 0;
@@ -342,7 +343,7 @@ export function RunIterationsSidebar({
     if (!runForOverview) return null;
     return getSidebarRunInsightsPassRateLabel(
       runForOverview,
-      overviewStatsOverride
+      overviewStatsOverride,
     );
   }, [runForOverview, overviewStatsOverride]);
 
@@ -350,7 +351,7 @@ export function RunIterationsSidebar({
     () =>
       groupRunIterationsByTestCase(caseGroupsForSelectedRun, runDetailSortBy)
         .length,
-    [caseGroupsForSelectedRun, runDetailSortBy]
+    [caseGroupsForSelectedRun, runDetailSortBy],
   );
 
   const sortHeaderControl = (
@@ -403,7 +404,7 @@ export function RunIterationsSidebar({
             <div
               className={cn(
                 showRunOverviewNav && runForOverview && "border-t",
-                "px-4 pb-2 pt-2"
+                "px-4 pb-2 pt-2",
               )}
             >
               {runOverviewExtra}
@@ -417,7 +418,7 @@ export function RunIterationsSidebar({
             flushChrome
               ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-card"
               : caseListCardClassName,
-            "min-h-0 min-w-0 flex-1 overflow-hidden"
+            "min-h-0 min-w-0 flex-1 overflow-hidden",
           )}
         >
           <div className="min-h-0 flex-1 overflow-y-auto bg-muted/10 dark:bg-muted/15">
@@ -480,11 +481,11 @@ export function RunDetailView({
     onEditTestCaseProp ??
     ((testCaseId: string) =>
       navigateApp(
-        buildEvalsPath({
+        buildEvaluatePath({
           type: "test-edit",
           suiteId: selectedRunDetails.suiteId,
           testId: testCaseId,
-        })
+        }),
       ));
   useRunInsights(selectedRunDetails, { autoRequest: true });
 
@@ -528,7 +529,7 @@ export function RunDetailView({
     selectedRunDetails.configSnapshot?.environment?.computerEnvironmentId ??
     null;
   const runEnvironments = useSandboxImages(
-    runComputerEnvId ? selectedRunDetails.projectId ?? null : null
+    runComputerEnvId ? selectedRunDetails.projectId ?? null : null,
   );
   // Friendly name when resolvable; otherwise the RAW id (never truncated — it's
   // the only durable identifier once the environment is deleted).
@@ -573,7 +574,7 @@ export function RunDetailView({
     const anchorEl = document.createElement("a");
     anchorEl.href = url;
     anchorEl.download = `openai-submission-${formatRunId(
-      selectedRunDetails._id
+      selectedRunDetails._id,
     )}.md`;
     anchorEl.click();
     URL.revokeObjectURL(url);
@@ -615,7 +616,7 @@ export function RunDetailView({
             source,
           })
         : [],
-    [kpiPlacement, selectedRunDetails, caseGroupsForSelectedRun, source]
+    [kpiPlacement, selectedRunDetails, caseGroupsForSelectedRun, source],
   );
 
   const embeddedInResultsSplit = hideKpiStrip;
@@ -743,7 +744,7 @@ export function RunDetailView({
   // side card. Null when nothing is graded, which skips badge rendering.
   const judgeByCaseKey = useMemo(
     () => buildJudgeCaseMap(goalCompletionResult),
-    [goalCompletionResult]
+    [goalCompletionResult],
   );
 
   // Run-level judge headline for the collapsed insight band (the per-case detail
@@ -756,7 +757,7 @@ export function RunDetailView({
     const deterministicByCaseKey = new Map<string, boolean | null>();
     for (const group of groupRunIterationsByTestCase(
       caseGroupsForSelectedRun,
-      "test"
+      "test",
     )) {
       const key = caseKeyForGroup(group);
       if (key) deterministicByCaseKey.set(key, deterministicCasePassed(group));
@@ -764,8 +765,8 @@ export function RunDetailView({
     const disagreements = cases.filter((c) =>
       judgeDisagreesWithVerdict(
         deterministicByCaseKey.get(c.caseKey) ?? null,
-        c.passed
-      )
+        c.passed,
+      ),
     ).length;
     return { meet, total: cases.length, disagreements };
   }, [goalCompletionResult, caseGroupsForSelectedRun]);
@@ -799,11 +800,9 @@ export function RunDetailView({
   const badgeMetricLabel = source === "sdk" ? "Pass Rate" : "Accuracy";
 
   const runClient = useMemo(() => {
-    const hostId = selectedRunDetails.namedHostId;
-    if (!hostId) return null;
-    const displayName = hostNamesById?.get(hostId) ?? formatRunId(hostId);
-    return { hostId, displayName };
-  }, [selectedRunDetails.namedHostId, hostNamesById]);
+    const identity = runClientIdentity(selectedRunDetails, hostNamesById);
+    return { hostId: identity.namedHostId, displayName: identity.name, logoSrc: runClientLogo(selectedRunDetails) };
+  }, [selectedRunDetails, hostNamesById]);
 
   const accuracyHero = showAccuracyHero ? (
     <RunAccuracyHeroBand
@@ -825,11 +824,11 @@ export function RunDetailView({
           return;
         }
         navigateApp(
-          buildEvalsPath({
+          buildEvaluatePath({
             type: "run-detail",
             suiteId: selectedRunDetails.suiteId,
             runId,
-          })
+          }),
         );
       }}
       className="mb-4"
@@ -976,7 +975,7 @@ export function RunDetailView({
         serverQuality: serverQualityResult ?? null,
         iterations: caseGroupsForSelectedRun,
       }).length,
-    [serverQualityResult, caseGroupsForSelectedRun]
+    [serverQualityResult, caseGroupsForSelectedRun],
   );
 
   const bandPassRatePercent = useMemo(() => {
@@ -1017,11 +1016,11 @@ export function RunDetailView({
         secondaryParts.push(
           `${judgeHeadline.disagreements} judge disagreement${
             judgeHeadline.disagreements === 1 ? "" : "s"
-          }`
+          }`,
         );
       } else {
         secondaryParts.push(
-          `Judge ${judgeHeadline.meet}/${judgeHeadline.total} meet goal`
+          `Judge ${judgeHeadline.meet}/${judgeHeadline.total} meet goal`,
         );
       }
     } else if (
@@ -1030,7 +1029,7 @@ export function RunDetailView({
       judgeHeadline.disagreements === 0
     ) {
       secondaryParts.push(
-        `${judgeHeadline.meet}/${judgeHeadline.total} meet goal`
+        `${judgeHeadline.meet}/${judgeHeadline.total} meet goal`,
       );
     }
 
@@ -1054,6 +1053,7 @@ export function RunDetailView({
 
   const runMetadataBlock = (
     <>
+      <RunMetadataDisplay run={selectedRunDetails} />
       {/* FROZEN import evidence, from the run's own snapshot.
           Fetched canonically rather than derived from the suite's current
           cases: those get edited after runs finish, and recomputing would let
@@ -1208,7 +1208,7 @@ export function RunDetailView({
         useTwoColumnLayout
           ? cn("overflow-hidden", embeddedInResultsSplit ? "p-0" : "p-4")
           : "overflow-y-auto p-4",
-        omitIterationList && "px-3 py-3"
+        omitIterationList && "px-3 py-3",
       )}
     >
       {/* Renders nothing. Sits above every layout branch below because all of
@@ -1303,7 +1303,7 @@ export function RunDetailView({
                 withHandle={!embeddedInResultsSplit}
                 className={cn(
                   embeddedInResultsSplit &&
-                    "w-px bg-border/60 after:w-0 [&>div]:hidden"
+                    "w-px bg-border/60 after:w-0 [&>div]:hidden",
                 )}
               />
               <ResizablePanel

@@ -30,7 +30,10 @@ import {
 import type { CasePredicates } from "@/shared/eval-matching";
 import { withPredicateRole } from "@/components/evals/suite-scorer-table-model";
 import type { ScorerUiRole } from "@/components/evals/suite-scorer-table-model";
-import type { UserValueStage } from "@mcpjam/sdk/contract";
+import {
+  measurementUnitLabel,
+  type UserValueStage,
+} from "@mcpjam/sdk/contract";
 import {
   isSimpleCaseShape,
   readSimpleCase,
@@ -236,9 +239,8 @@ function existingCriterionIds(
 }
 
 const ROLE_ORDER: Record<ScorerUiRole, number> = {
-  gate: 0,
-  warn: 1,
-  report: 2,
+  required: 0,
+  advisory: 1,
 };
 
 function plural(n: number, one: string, many: string): string {
@@ -328,7 +330,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
           noTool,
         },
         placement: { kind: "wholeRun" },
-        role: "gate",
+        role: "required",
         stability: agree,
         stage: "selection",
       });
@@ -366,7 +368,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
         if (held.held !== of || of === 0) continue;
         const predicate = withPredicateRole(
           { type: "toolCalledAtLeastOnce", toolName } as Predicate,
-          "gate",
+          "required",
         );
         push({
           key: `sugg:${hostedCriterionId(predicate, { kind: "turn", promptIndex: turn } as never)}`,
@@ -375,7 +377,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
           purpose: "Require this tool on future runs",
           label: `Tool was called at least once · ${toolName}`,
           consequence: `Future runs where step ${ordinal} does not call ${toolName} will fail this case.`,
-          evidence: `${toolName} was called in step ${ordinal} in ${held.held} of ${of} ${plural(of, "trial", "trials")}`,
+          evidence: `${toolName} was called in step ${ordinal} in ${held.held} of ${of} ${measurementUnitLabel("trial", of)}`,
           predicate,
           scope: { kind: "turn", promptIndex: turn },
           placement: {
@@ -384,7 +386,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
             actionOrdinal: ordinal,
             turnIndex: turn,
           },
-          role: "gate",
+          role: "required",
           stability: held,
           stage: stageOfPredicate(predicate),
         });
@@ -410,7 +412,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
       );
       const predicate = withPredicateRole(
         { type: "noToolErrors" } as Predicate,
-        "gate",
+        "required",
       );
       push({
         key: `sugg:${hostedCriterionId(predicate)}`,
@@ -420,10 +422,10 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
         label: "No tool errors",
         consequence:
           "Future runs where a tool returns an error will fail this case.",
-        evidence: `No tool errored in ${held.held} of ${of} ${plural(of, "trial", "trials")} (${calls} ${plural(calls, "call", "calls")})`,
+        evidence: `No tool errored in ${held.held} of ${of} ${measurementUnitLabel("trial", of)} (${calls} ${plural(calls, "call", "calls")})`,
         predicate,
         placement: { kind: "wholeRun" },
-        role: "gate",
+        role: "required",
         stability: held,
         stage: stageOfPredicate(predicate),
       });
@@ -444,7 +446,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
       if (held.held !== of || of === 0) continue;
       const predicate = withPredicateRole(
         { type: "widgetRendered", toolName } as Predicate,
-        "gate",
+        "required",
       );
       push({
         key: `sugg:${hostedCriterionId(predicate)}`,
@@ -453,10 +455,10 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
         purpose: "Verify the view renders",
         label: `View rendered · ${toolName}`,
         consequence: `Future runs where ${toolName}'s view does not render will fail this case.`,
-        evidence: `${toolName} rendered in ${held.held} of ${of} ${plural(of, "trial", "trials")}`,
+        evidence: `${toolName} rendered in ${held.held} of ${of} ${measurementUnitLabel("trial", of)}`,
         predicate,
         placement: { kind: "wholeRun" },
-        role: "gate",
+        role: "required",
         stability: held,
         stage: stageOfPredicate(predicate),
       });
@@ -524,7 +526,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
             turnIndex:
               turnIndices[input.steps.findIndex((s) => s.id === step.id)] ?? 0,
           },
-          role: "gate",
+          role: "required",
           stability: held,
           stage: WIDGET_ASSERT_STAGE,
         });
@@ -552,7 +554,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
         if (held.held !== of) continue;
         const predicate = withPredicateRole(
           { type: "responseContains", needle } as Predicate,
-          "warn",
+          "advisory",
         );
         push({
           key: `sugg:${hostedCriterionId(predicate)}`,
@@ -563,7 +565,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
           evidence: `Every answer contained "${needle}" — from your goal sentence`,
           predicate,
           placement: { kind: "wholeRun" },
-          role: "warn",
+          role: "advisory",
           stability: held,
           stage: stageOfPredicate(predicate),
         });
@@ -584,7 +586,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
       const tokens = Math.ceil((1.3 * max) / 100) * 100;
       const predicate = withPredicateRole(
         { type: "tokenBudgetUnder", tokens } as Predicate,
-        "report",
+        "advisory",
       );
       push({
         key: `sugg:${hostedCriterionId(predicate)}`,
@@ -598,7 +600,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
             : `Used ${min.toLocaleString()}–${max.toLocaleString()} tokens. The ceiling reports a future increase; it does not mean this run was efficient.`,
         predicate,
         placement: { kind: "wholeRun" },
-        role: "report",
+        role: "advisory",
         stability: { held: observed.length, of: observed.length, unread: 0 },
         stage: stageOfPredicate(predicate),
       });
@@ -617,7 +619,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
       const min = Math.min(...numbers);
       const predicate = withPredicateRole(
         { type: "turnCountUnder", turns: max + 1 } as Predicate,
-        "report",
+        "advisory",
       );
       push({
         key: `sugg:${hostedCriterionId(predicate)}`,
@@ -631,7 +633,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
             : `Resolved in ${min}–${max} turns; ceiling ${max + 1}`,
         predicate,
         placement: { kind: "wholeRun" },
-        role: "report",
+        role: "advisory",
         stability: { held: observed.length, of: observed.length, unread: 0 },
         stage: stageOfPredicate(predicate),
       });

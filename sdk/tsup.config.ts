@@ -17,6 +17,7 @@ export default defineConfig({
     "src/skill-reference.ts",
     "src/model-factory.ts",
     "src/matchers.ts",
+    "src/assertions/index.ts",
     "src/predicates/index.ts",
     // Versioned evaluation contract (score definitions/results + pinned
     // cross-runtime hashing) shared by the SDK, the CLI gate engine, the
