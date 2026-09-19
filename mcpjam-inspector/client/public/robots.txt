@@ -1,0 +1,6 @@
+# robots.txt for app.mcpjam.com — authenticated app shell, not content.
+# Crawling is allowed on purpose: every response carries X-Robots-Tag: noindex,
+# and robots can only honor that directive if they are allowed to fetch the
+# page (a Disallow here would blind them to it and risk link-only indexing).
+User-agent: *
+Allow: /
