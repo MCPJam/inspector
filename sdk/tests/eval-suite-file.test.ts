@@ -25,6 +25,8 @@ import { IMPORT_MAPPING_STATUSES } from "../src/contract/chain.js";
 import { TEST_STEP_KINDS } from "../src/contract/steps.js";
 import {
   EVAL_SUITE_SCHEMA_VERSION,
+  EVAL_SUITE_SCHEMA_VERSION_2,
+  EVAL_SUITE_SCHEMA_VERSIONS,
   evalSuiteFileCaseImportSchema,
   evalSuiteFileSchema,
 } from "../src/contract/suite-file.js";
@@ -60,6 +62,22 @@ describe("eval suite file fixtures — shape of the fixture itself", () => {
     for (const row of [...data.accept, ...data.reject, ...data.roundTrip]) {
       expect(row.__kind, row.__label).toBe("suiteFile");
     }
+  });
+
+  it("exercises BOTH dialects in every cohort", () => {
+    // A corpus that quietly dropped back to one dialect would leave the other
+    // dialect's document and the union's second branch untested with nothing
+    // failing. The unknown-version reject row is the one legitimate exception.
+    const known = new Set<unknown>(EVAL_SUITE_SCHEMA_VERSIONS);
+    for (const cohort of [data.accept, data.roundTrip]) {
+      const versions = new Set(cohort.map((row) => row.schemaVersion));
+      expect([...versions].sort()).toEqual([...EVAL_SUITE_SCHEMA_VERSIONS]);
+    }
+    const rejectVersions = data.reject
+      .filter((row) => known.has(row.schemaVersion))
+      .map((row) => row.schemaVersion);
+    expect(rejectVersions).toContain(EVAL_SUITE_SCHEMA_VERSION);
+    expect(rejectVersions).toContain(EVAL_SUITE_SCHEMA_VERSION_2);
   });
 
   it("annotates every reject row as structural or not", () => {
@@ -160,10 +178,15 @@ describe("eval suite file — reserved values are rejected AS RESERVED", () => {
 
 describe("eval suite file — cross-field rules", () => {
   it("an unknown schemaVersion sends the reader to the CLI/SDK, not the file", () => {
-    const messages = messagesFor('unknown schemaVersion "2"');
+    const messages = messagesFor('unknown schemaVersion "3"');
     const message = messages.find((entry) => entry.includes("schemaVersion"));
     expect(message).toContain("needs a newer CLI/SDK");
     expect(message).toContain("rather than editing the file");
+    // And it names every dialect this build reads, so the reader can tell
+    // "too new" from "misspelled" without opening the source.
+    for (const version of EVAL_SUITE_SCHEMA_VERSIONS) {
+      expect(message).toContain(`"${version}"`);
+    }
   });
 
   it("rejects duplicate case ids at the offending path", () => {
@@ -265,6 +288,57 @@ describe("eval suite file — cross-field rules", () => {
         testCase.import?.status === "approximated" && !testCase.disabled
     );
     expect(enabledApproximation).toBeDefined();
+  });
+});
+
+describe("eval suite file — dialect 2 spells the count and the rules canonically", () => {
+  it("reads `iterations` and `assertions`, and nothing else for those fields", () => {
+    const parsed = evalSuiteFileSchema.parse(
+      payload(findFixture(data.accept, "dialect 2 — full"))
+    );
+    expect(parsed.schemaVersion).toBe(EVAL_SUITE_SCHEMA_VERSION_2);
+    if (parsed.schemaVersion !== EVAL_SUITE_SCHEMA_VERSION_2) return;
+    expect(typeof parsed.defaults.iterations).toBe("number");
+    expect("repetitions" in parsed.defaults).toBe(false);
+    const withOverride = parsed.cases.find(
+      (entry) => entry.iterations !== undefined
+    );
+    expect(
+      withOverride,
+      "the full row carries a per-case override"
+    ).toBeDefined();
+    const withRules = parsed.cases.find((entry) => entry.assertions?.length);
+    expect(withRules, "the full row carries assertions").toBeDefined();
+    for (const entry of parsed.cases) {
+      expect("checks" in entry).toBe(false);
+      expect("repetitions" in entry).toBe(false);
+    }
+  });
+
+  it("refuses the dialect-1 spellings as unknown keys, not as aliases", () => {
+    // Structural, so the JSON Schema test proves the same thing over ajv.
+    for (const label of [
+      "dialect 2 with the dialect-1 count spelling",
+      "dialect 2 with the dialect-1 rule spelling",
+    ]) {
+      const parsed = evalSuiteFileSchema.safeParse(payload(rejectRow(label)));
+      expect(parsed.success, label).toBe(false);
+      if (parsed.success) continue;
+      expect(parsed.error.issues.map((issue) => issue.code)).toContain(
+        "unrecognized_keys"
+      );
+    }
+  });
+
+  it("keeps dialect 1 frozen — it never learns the dialect-2 word", () => {
+    const parsed = evalSuiteFileSchema.safeParse(
+      payload(rejectRow("dialect 1 with the dialect-2 count spelling"))
+    );
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    expect(parsed.error.issues.map((issue) => issue.code)).toContain(
+      "unrecognized_keys"
+    );
   });
 });
 

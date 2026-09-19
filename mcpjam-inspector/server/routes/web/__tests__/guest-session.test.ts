@@ -118,6 +118,37 @@ describe("POST /guest-session", () => {
     });
   });
 
+  it("returns 429 with Retry-After and RATE_LIMITED when the upstream refuses creation (per-IP cap)", async () => {
+    vi.mocked(global.fetch).mockImplementationOnce(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: "Too many guest sessions from this network",
+          }),
+          {
+            status: 429,
+            headers: {
+              "Content-Type": "application/json",
+              "retry-after": "3600",
+            },
+          },
+        ),
+    );
+
+    // Distinct IP so this request does not spend the shared local window
+    // the later 503/limit tests rely on.
+    const res = await app.request("/guest-session", {
+      method: "POST",
+      headers: { "x-forwarded-for": "198.51.100.9" },
+    });
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("3600");
+    const body = await res.json();
+    expect(body.code).toBe("RATE_LIMITED");
+    expect(body.message).toMatch(/Sign in to continue/);
+  });
+
   it("forwards Set-Cookie from Convex to the browser", async () => {
     const res = await app.request("/guest-session", { method: "POST" });
     expect(res.status).toBe(200);

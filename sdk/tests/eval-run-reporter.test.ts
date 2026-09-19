@@ -1,3 +1,4 @@
+import verdictFixtures from "./fixtures/eval-verdict-policy-parity-fixtures.json";
 const sentryMocks = vi.hoisted(() => ({
   captureEvalReportingFailure: vi.fn().mockResolvedValue(undefined),
 }));
@@ -34,6 +35,480 @@ describe("createEvalRunReporter", () => {
     global.fetch = originalFetch;
     sentryMocks.captureEvalReportingFailure.mockClear();
     vi.restoreAllMocks();
+  });
+
+  it("gives each chunk a bounded request budget instead of exhausting one upload deadline", async () => {
+    let now = 1_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const sizes: number[] = [];
+    global.fetch = vi.fn(async (_url, init) => {
+      now += 40_000;
+      const body = JSON.parse(init!.body as string);
+      if (body.results) {
+        sizes.push(body.results.length);
+        return okResponse({
+          inserted: body.results.length,
+          skipped: 0,
+          total: sizes.reduce((sum, count) => sum + count, 0),
+        });
+      }
+      return okResponse({ suiteId: "suite", runId: "run", status: "running" });
+    }) as any;
+    const reporter = createEvalRunReporter({
+      apiKey: "test-key",
+      suiteName: "large upload",
+      strict: true,
+      transport: { operationTimeoutMs: 60_000 },
+    });
+    for (let index = 0; index < 401; index++)
+      reporter.add({ caseTitle: `case-${index}`, passed: true });
+    await reporter.flush();
+    expect(sizes).toEqual([200, 200, 1]);
+    expect(reporter.getReportingAccounting()).toEqual({
+      accepted: 401,
+      acknowledged: 401,
+      pending: 0,
+    });
+  });
+
+  it("explicitly terminalizes a partial run without changing its planned count", async () => {
+    const calls: any[] = [];
+    global.fetch = vi.fn(async (url, init) => {
+      const body = JSON.parse(init!.body as string);
+      calls.push(body);
+      if (String(url).endsWith("capabilities"))
+        return okResponse({ capabilities: { evalsRunTermination: 1 } });
+      if (String(url).endsWith("iterations"))
+        return okResponse({ inserted: 1, skipped: 0, total: 1 });
+      if (String(url).endsWith("finalize"))
+        return okResponse({
+          suiteId: "suite",
+          runId: "run",
+          status: "cancelled",
+          result: "inconclusive",
+          summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
+        });
+      return okResponse({ suiteId: "suite", runId: "run", status: "running" });
+    }) as any;
+    const reporter = createEvalRunReporter({
+      apiKey: "test-key",
+      suiteName: "partial",
+      expectedIterations: 3,
+      strict: true,
+      ci: {},
+    });
+    reporter.add({ caseTitle: "received", passed: true });
+    await reporter.flush();
+    const receipt = await reporter.finalizeWithReceipt({
+      terminalStatus: "cancelled",
+    });
+    expect(calls[0].expectedIterations).toBe(3);
+    expect(calls.at(-1)).toMatchObject({
+      runId: "run",
+      terminalStatus: "cancelled",
+    });
+    expect(reporter.getReportingError()).toBeUndefined();
+    expect(receipt).toMatchObject({
+      state: "persisted",
+      acceptedIterations: 1,
+      acknowledgedIterations: 1,
+      pendingIterations: 0,
+      report: { status: "cancelled", result: "inconclusive" },
+    });
+  });
+
+  it("refuses partial termination without target support and never calls finalize", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        okResponse({ suiteId: "suite", runId: "run", status: "running" })
+      )
+      .mockResolvedValueOnce(okResponse({ inserted: 1, skipped: 0, total: 1 }))
+      .mockResolvedValueOnce(okResponse({ capabilities: {} }));
+    global.fetch = fetch as any;
+    const reporter = createEvalRunReporter({
+      apiKey: "test-key",
+      suiteName: "partial",
+      expectedIterations: 3,
+      strict: true,
+      ci: {},
+    });
+    reporter.add({ caseTitle: "received", passed: true });
+    await reporter.flush();
+    expect(
+      await reporter.finalizeWithReceipt({ terminalStatus: "timed_out" })
+    ).toMatchObject({ state: "failed", acknowledgedIterations: 1 });
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(reporter.getReportingError()).toBeTruthy();
+  });
+
+  it("retains results accepted while an append is in flight", async () => {
+    let release!: (value: any) => void;
+    let entered!: () => void;
+    const appending = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "running",
+          result: "pending",
+        })
+      )
+      .mockImplementationOnce(() => {
+        entered();
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      })
+      .mockResolvedValueOnce(okResponse({ inserted: 1, skipped: 0, total: 1 }));
+    global.fetch = fetchMock as any;
+    const reporter = createEvalRunReporter({
+      apiKey: "sk_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "race",
+      strict: true,
+    });
+    reporter.add({ caseTitle: "first", passed: true });
+    const flushing = reporter.flush();
+    await appending;
+    reporter.add({ caseTitle: "second", passed: true });
+    release(okResponse({ inserted: 1, skipped: 0, total: 1 }));
+    await flushing;
+    expect(reporter.getBufferedCount()).toBe(1);
+    await reporter.flush();
+    expect(
+      JSON.parse(fetchMock.mock.calls[2][1].body).results[0].caseTitle
+    ).toBe("second");
+  });
+
+  it("serializes concurrent flushes and finalize, rejecting late additions", async () => {
+    let release!: (value: any) => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        entered();
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      })
+      .mockResolvedValueOnce(okResponse({ inserted: 1, skipped: 0, total: 1 }))
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    global.fetch = fetchMock as any;
+    const reporter = createEvalRunReporter({
+      apiKey: "sk_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "serial",
+      strict: true,
+    });
+    reporter.add({ caseTitle: "first", passed: true });
+    const first = reporter.flush();
+    await started;
+    const second = reporter.flush();
+    const final = reporter.finalize();
+    const duplicate = reporter.finalize();
+    expect(final).toBe(duplicate);
+    expect(() => reporter.add({ caseTitle: "late", passed: true })).toThrow(
+      /finalized/
+    );
+    release(
+      okResponse({
+        suiteId: "suite_1",
+        runId: "run_1",
+        status: "running",
+        result: "pending",
+      })
+    );
+    await Promise.all([first, second, final, duplicate]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(reporter.getReportingAccounting()).toEqual({
+      accepted: 1,
+      acknowledged: 1,
+      pending: 0,
+    });
+  });
+
+  it.each([true, false])(
+    "retains only unacknowledged chunks and stable IDs on retry (strict=%s)",
+    async (strict) => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          okResponse({
+            suiteId: "suite_1",
+            runId: "run_1",
+            status: "running",
+            result: "pending",
+          })
+        )
+        .mockResolvedValueOnce(
+          okResponse({ inserted: 200, skipped: 0, total: 200 })
+        )
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 400,
+          json: async () => ({ error: "rejected" }),
+        })
+        .mockResolvedValueOnce(
+          okResponse({ inserted: 0, skipped: 1, total: 1 })
+        );
+      global.fetch = fetchMock as any;
+      const reporter = createEvalRunReporter({
+        apiKey: "sk_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "retry",
+        strict,
+        externalRunId: "stable",
+      });
+      for (let i = 0; i < 201; i++)
+        reporter.add({ caseTitle: `case-${i}`, passed: true });
+      if (strict) await expect(reporter.flush()).rejects.toThrow();
+      else await reporter.flush();
+      expect(reporter.getReportingAccounting()).toEqual({
+        accepted: 201,
+        acknowledged: 200,
+        pending: 1,
+      });
+      expect(reporter.exportPendingResults()[0].externalIterationId).toBe(
+        "stable-201"
+      );
+      await reporter.flush();
+      expect(JSON.parse(fetchMock.mock.calls[3][1].body).results).toEqual(
+        JSON.parse(fetchMock.mock.calls[2][1].body).results
+      );
+      expect(reporter.getReportingAccounting()).toEqual({
+        accepted: 201,
+        acknowledged: 201,
+        pending: 0,
+      });
+    }
+  );
+
+  it("snapshots accepted input and exported recovery data, rejects duplicate IDs and saturation", () => {
+    const reporter = createEvalRunReporter({
+      apiKey: "sk_test_key",
+      suiteName: "limits",
+      queueLimits: { maxCount: 1 },
+    });
+    const input = {
+      caseTitle: "original",
+      passed: true,
+      metadata: { nested: { value: 1 } },
+      externalIterationId: "id",
+    };
+    reporter.add(input);
+    input.metadata.nested.value = 2;
+    input.caseTitle = "mutated";
+    const exported = reporter.exportPendingResults();
+    exported[0].caseTitle = "mutated export";
+    expect(reporter.exportPendingResults()[0]).toMatchObject({
+      caseTitle: "original",
+      metadata: { nested: { value: 1 } },
+    });
+    expect(() => reporter.add(input)).toThrow(/Duplicate/);
+    expect(() => reporter.add({ caseTitle: "extra", passed: true })).toThrow(
+      /queue limit/
+    );
+    expect(reporter.getReportingAccounting()).toEqual({
+      accepted: 1,
+      acknowledged: 0,
+      pending: 1,
+    });
+    expect(() =>
+      createEvalRunReporter({
+        suiteName: "invalid",
+        apiKey: "sk_test_key",
+        queueLimits: { maxBytes: NaN },
+      })
+    ).toThrow(/positive/);
+    const tiny = createEvalRunReporter({
+      suiteName: "bytes",
+      apiKey: "sk_test_key",
+      queueLimits: { maxBytes: 1 },
+    });
+    expect(() => tiny.add({ caseTitle: "large", passed: true })).toThrow(
+      /queue limit/
+    );
+    expect(tiny.getAddedCount()).toBe(0);
+  });
+
+  it("does not acknowledge an incomplete server append response", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "running",
+          result: "pending",
+        })
+      )
+      .mockResolvedValueOnce(
+        okResponse({ inserted: 0, skipped: 0, total: 0 })
+      ) as any;
+    const reporter = createEvalRunReporter({
+      suiteName: "partial",
+      apiKey: "sk_test_key",
+      baseUrl: "https://example.com",
+      strict: true,
+    });
+    reporter.add({ caseTitle: "a", passed: true });
+    await expect(reporter.flush()).rejects.toThrow(
+      /acknowledgment|Invalid reporting response/
+    );
+    expect(reporter.getReportingAccounting()).toEqual({
+      accepted: 1,
+      acknowledged: 0,
+      pending: 1,
+    });
+  });
+
+  it("can retry finalization after a non-strict failure without reuploading acknowledged evidence", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "running",
+          result: "pending",
+        })
+      )
+      .mockResolvedValueOnce(okResponse({ inserted: 1, skipped: 0, total: 1 }))
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        json: async () => ({ error: "rejected" }),
+      })
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    global.fetch = fetchMock as any;
+    const reporter = createEvalRunReporter({
+      suiteName: "finalize-retry",
+      apiKey: "sk_test_key",
+      baseUrl: "https://example.com",
+      strict: false,
+    });
+    reporter.add({ caseTitle: "a", passed: true });
+    await reporter.flush();
+    expect((await reporter.finalize()).runId).toBe("");
+    expect(reporter.getReportingError()).toBeDefined();
+    expect((await reporter.finalize()).runId).toBe("run_1");
+    expect(reporter.getReportingError()).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("returns failed receipt in strict mode while retaining recoverable evidence", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: "secret" }),
+    }) as any;
+    const reporter = createEvalRunReporter({
+      suiteName: "receipt",
+      apiKey: "sk_test_key",
+      baseUrl: "https://example.com",
+      strict: true,
+    });
+    reporter.add({ caseTitle: "a", passed: true });
+    const receipt = await reporter.finalizeWithReceipt();
+    expect(receipt).toMatchObject({
+      state: "failed",
+      acceptedIterations: 1,
+      acknowledgedIterations: null,
+      pendingIterations: null,
+    });
+    expect(receipt.report).toBeUndefined();
+    expect(JSON.stringify(receipt)).not.toContain("secret");
+    expect(reporter.exportPendingResults()).toHaveLength(1);
+  });
+
+  it("generated identities do not collide with accepted explicit IDs", () => {
+    const reporter = createEvalRunReporter({
+      suiteName: "ids",
+      apiKey: "sk_test_key",
+      externalRunId: "run",
+    });
+    reporter.add({
+      caseTitle: "explicit",
+      passed: true,
+      externalIterationId: "run-1",
+    });
+    reporter.add({ caseTitle: "generated", passed: true });
+    expect(
+      reporter
+        .exportPendingResults()
+        .map((result) => result.externalIterationId)
+    ).toEqual(["run-1", "run-2"]);
+  });
+
+  it("counts in-flight evidence against queue capacity and releases it only after acknowledgment", async () => {
+    let release!: (value: any) => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    global.fetch = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        entered();
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      })
+      .mockResolvedValueOnce(
+        okResponse({ inserted: 1, skipped: 0, total: 1 })
+      ) as any;
+    const reporter = createEvalRunReporter({
+      suiteName: "capacity",
+      apiKey: "sk_test_key",
+      baseUrl: "https://example.com",
+      queueLimits: { maxCount: 1 },
+      strict: true,
+    });
+    reporter.add({ caseTitle: "first", passed: true });
+    const flush = reporter.flush();
+    await started;
+    expect(() => reporter.add({ caseTitle: "second", passed: true })).toThrow(
+      /queue limit/
+    );
+    release(
+      okResponse({
+        suiteId: "suite",
+        runId: "run",
+        status: "running",
+        result: "pending",
+      })
+    );
+    await flush;
+    reporter.add({ caseTitle: "second", passed: true });
+    expect(reporter.getReportingAccounting()).toEqual({
+      accepted: 2,
+      acknowledged: 1,
+      pending: 1,
+    });
   });
 
   it("generates monotonic externalIterationId values across multiple flushes", async () => {
@@ -93,8 +568,8 @@ describe("createEvalRunReporter", () => {
     ).toEqual([`${externalRunId}-3`]);
   });
 
-  it("flush uploads widget snapshots before append iterations", async () => {
-    const fetchMock = jest
+  it("flush preserves inline widget bytes for server-side idempotency", async () => {
+    const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
         okResponse({
@@ -104,20 +579,8 @@ describe("createEvalRunReporter", () => {
           result: "pending",
         })
       )
-      .mockResolvedValueOnce(
-        okResponse({
-          uploadUrl: "https://upload.example.com/widget-1",
-        })
-      )
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        statusText: "OK",
-        json: async () => ({ storageId: "blob_123" }),
-      })
       .mockResolvedValueOnce(okResponse({ inserted: 1, skipped: 0, total: 1 }));
     global.fetch = fetchMock as any;
-
     const reporter = createEvalRunReporter({
       apiKey: "sk_test_key",
       baseUrl: "https://example.com",
@@ -147,27 +610,12 @@ describe("createEvalRunReporter", () => {
     });
     await reporter.flush();
 
-    expect(fetchMock.mock.calls[0][0]).toBe(
-      "https://example.com/api/v1/projects/default/eval-ingest/runs/start"
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(body.results[0].widgetSnapshots[0].widgetHtml).toBe(
+      "<html>test</html>"
     );
-    expect(fetchMock.mock.calls[1][0]).toBe(
-      "https://example.com/api/v1/projects/default/eval-ingest/artifacts/upload-url"
-    );
-    expect(fetchMock.mock.calls[2][0]).toBe(
-      "https://upload.example.com/widget-1"
-    );
-    expect(fetchMock.mock.calls[3][0]).toBe(
-      "https://example.com/api/v1/projects/default/eval-ingest/runs/iterations"
-    );
-
-    const appendBody = JSON.parse(fetchMock.mock.calls[3][1].body as string);
-    expect(appendBody.results[0].widgetSnapshots[0]).toEqual(
-      expect.objectContaining({
-        toolCallId: "call-1",
-        widgetHtmlBlobId: "blob_123",
-      })
-    );
-    expect(appendBody.results[0].widgetSnapshots[0].widgetHtml).toBeUndefined();
+    expect(body.results[0].widgetSnapshots[0].widgetHtmlBlobId).toBeUndefined();
   });
 
   it("forwards serverReplayConfigs when starting a chunked run", async () => {
@@ -286,11 +734,17 @@ describe("createEvalRunReporter", () => {
       result: "inconclusive",
       summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
       verdictPolicyVersion: 2,
-      verdictSummary: {
-        policyVersion: 2,
-        verdict: "inconclusive",
-        reasons: ["insufficientCompletion"],
-      },
+      verdictSummary: JSON.parse(
+        JSON.stringify(
+          verdictFixtures.accept.find(
+            (row) =>
+              row.__kind === "decision" &&
+              "verdict" in row &&
+              row.verdict === "inconclusive"
+          )
+        ),
+        (key, value) => (key.startsWith("__") ? undefined : value)
+      ),
     };
 
     it("sends the policy on run START and explicit statuses on the chunks", async () => {
@@ -304,7 +758,9 @@ describe("createEvalRunReporter", () => {
             result: "pending",
           })
         )
-        .mockResolvedValueOnce(okResponse({ inserted: 3, skipped: 0, total: 3 }))
+        .mockResolvedValueOnce(
+          okResponse({ inserted: 3, skipped: 0, total: 3 })
+        )
         .mockResolvedValueOnce(okResponse(inconclusiveRun));
       global.fetch = fetchMock as any;
 
@@ -456,6 +912,7 @@ describe("createEvalRunReporter", () => {
     expect(agent.getServerReplayConfigs).toHaveBeenCalledTimes(1);
     expect(mcpClientManager.getServerReplayConfigs).toHaveBeenCalledTimes(1);
     const startBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(startBody.serverNames).toEqual(["manager"]);
     expect(startBody.serverReplayConfigs).toEqual([
       {
         serverId: "manager",
@@ -977,7 +1434,7 @@ describe("run URL printing", () => {
 
     const lines = logSpy.mock.calls.map((call) => String(call[0]));
     expect(lines).toEqual([
-      "[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/suite_stream/runs/run_stream?project=proj_stream",
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evaluate/suite/suite_stream/runs/run_stream?project=proj_stream",
     ]);
   });
 

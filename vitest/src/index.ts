@@ -32,10 +32,11 @@
  * failed instead of a bare non-zero exit.
  */
 
-import { beforeAll, describe, it } from "vitest";
+import { afterAll, beforeAll, describe, it } from "vitest";
 import {
   assertGate,
   formatGateReport,
+  formatRunSummaryTable,
   gateInputFromRunResult,
   gateInputFromSuiteResult,
   type EvalRunResult,
@@ -88,7 +89,7 @@ export type EvalSuitePlan = {
  */
 export function planEvalSuite(
   suite: EvalSuite,
-  options: { gate?: GatePolicy } = {}
+  options: { gate?: GatePolicy } = {},
 ): EvalSuitePlan {
   const cases = suite.getAll().map((test): EvalCasePlan => {
     const testName = test.getName();
@@ -129,15 +130,17 @@ export function planEvalSuite(
 export function runAndAssertCase(
   run: EvalRunResult | undefined,
   testName: string,
-  failureReport?: () => string
+  failureReport?: () => string,
 ): void {
   if (!run) {
     // Reachable if a case was added to the suite after the plan was taken.
     throw new Error(
       `No result was recorded for eval case "${testName}". The suite ran, but ` +
-        `this case was not part of it.`
+        `this case was not part of it.`,
     );
   }
+  if (run.iterations === 0)
+    throw new Error(`No iterations executed for eval case "${testName}".`);
   if (run.failures === 0) return;
 
   let detail = "";
@@ -177,24 +180,32 @@ export type EvalSuiteVitestOptions = {
   executor?: HostExecutor;
   /** Built inside `beforeAll` — for an executor that must connect first. */
   factory?: () => HostExecutor | Promise<HostExecutor>;
-  run: EvalTestRunOptions;
+  run: Omit<EvalTestRunOptions, "iterations"> & { iterations?: number };
+  /** Selected case identities. Selection retains the source coverage manifest. */
+  only?: readonly string[];
+  /** Skips win over only; no skipped case executes. */
+  skip?: readonly string[];
+  /** Explicit cleanup, run even when execution or reporting fails. */
+  dispose?: (executor: HostExecutor) => void | Promise<void>;
+  /** Defaults to table. Formatting errors never replace evaluation results. */
+  summary?: "none" | "table";
   /** Omit to register no gate test. */
   gate?: GatePolicy;
   hookTimeoutMs?: number;
 };
 
 async function resolveExecutor(
-  options: EvalSuiteVitestOptions
+  options: EvalSuiteVitestOptions,
 ): Promise<HostExecutor> {
   if (options.executor && options.factory) {
     throw new Error(
-      "Pass either `executor` or `factory` to describeEvalSuite, not both."
+      "Pass either `executor` or `factory` to describeEvalSuite, not both.",
     );
   }
   if (options.executor) return options.executor;
   if (options.factory) return await options.factory();
   throw new Error(
-    "describeEvalSuite needs an `executor` or a `factory` to build one."
+    "describeEvalSuite needs an `executor` or a `factory` to build one.",
   );
 }
 
@@ -202,31 +213,76 @@ async function resolveExecutor(
  * Register a vitest `describe` for an eval suite: one test per case, plus the
  * gate test when a policy is given.
  */
-export function describeEvalSuite(
+function registerEvalSuite(
   name: string,
   suite: EvalSuite,
-  options: EvalSuiteVitestOptions
+  options: EvalSuiteVitestOptions,
+  mode: "normal" | "skip" | "only" = "normal",
 ): void {
   const plan = planEvalSuite(suite, options);
+  const available = new Set(suite.getAll().map((test) => test.getId()));
+  for (const id of [...(options.only ?? []), ...(options.skip ?? [])]) {
+    if (!available.has(id)) throw new Error(`Unknown selected case ID: ${id}`);
+  }
+  const skipped = new Set(options.skip ?? []);
+  const selectedIds = [...available].filter(
+    (id) => !skipped.has(id) && (!options.only || options.only.includes(id)),
+  );
+  const selectedSuite =
+    options.only || options.skip ? suite.subset(selectedIds) : suite;
   // Captured BEFORE the run so a case's detailed report is reachable by name
   // without re-walking the suite inside every test.
   const testsByName = new Map<string, EvalTest>(
-    suite.getAll().map((test) => [test.getName(), test])
+    selectedSuite.getAll().map((test) => [test.getName(), test]),
   );
 
-  describe(name, () => {
+  const register =
+    mode === "skip"
+      ? describe.skip
+      : mode === "only" || options.only
+        ? describe.only
+        : describe;
+  register(name, () => {
+    let executor: HostExecutor | undefined;
     let result: EvalSuiteResult | undefined;
 
     beforeAll(async () => {
-      const executor = await resolveExecutor(options);
-      result = await suite.run(executor, options.run);
+      if (selectedIds.length === 0) return;
+      executor = await resolveExecutor(options);
+      try {
+        result = await selectedSuite.run(executor, {
+          ...options.run,
+          summary: "none",
+        });
+      } finally {
+        const completed = result ?? selectedSuite.getResults();
+        if (completed && options.summary !== "none") {
+          try {
+            console.log(
+              formatRunSummaryTable(
+                completed,
+                selectedSuite.getReportingReceipt(),
+              ),
+            );
+          } catch {
+            /* formatting is observational */
+          }
+        }
+      }
     }, options.hookTimeoutMs ?? DEFAULT_HOOK_TIMEOUT_MS);
 
+    afterAll(async () => {
+      if (executor) await options.dispose?.(executor);
+    });
     for (const entry of plan.cases) {
-      it(entry.title, () => {
+      const registerCase =
+        entry.caseId && !selectedIds.includes(entry.caseId) ? it.skip : it;
+      registerCase(entry.title, () => {
         const test = testsByName.get(entry.testName);
-        runAndAssertCase(result?.tests.get(entry.testName), entry.testName, () =>
-          test ? test.getFailureReport() : ""
+        runAndAssertCase(
+          result?.tests.get(entry.testName),
+          entry.testName,
+          () => (test ? test.getFailureReport() : ""),
         );
       });
     }
@@ -253,7 +309,10 @@ export function describeEvalSuite(
           // `formatGateReport` below renders a `waived` report correctly if
           // one ever does reach it, so the widened union is safe to pass
           // through untouched.
-          assertGate(gateInputFromSuiteResult(result), options.gate as GatePolicy);
+          assertGate(
+            gateInputFromSuiteResult(result),
+            options.gate as GatePolicy,
+          );
         } catch (error) {
           throw new Error(gateFailureMessage(error));
         }
@@ -262,7 +321,21 @@ export function describeEvalSuite(
   });
 }
 
-export type EvalTestVitestOptions = EvalSuiteVitestOptions;
+export const describeEvalSuite = Object.assign(
+  (name: string, suite: EvalSuite, options: EvalSuiteVitestOptions) =>
+    registerEvalSuite(name, suite, options),
+  {
+    skip: (name: string, suite: EvalSuite, options: EvalSuiteVitestOptions) =>
+      registerEvalSuite(name, suite, options, "skip"),
+    only: (name: string, suite: EvalSuite, options: EvalSuiteVitestOptions) =>
+      registerEvalSuite(name, suite, options, "only"),
+  },
+);
+
+export type EvalTestVitestOptions = Omit<
+  EvalSuiteVitestOptions,
+  "run" | "only" | "skip"
+> & { run: EvalTestRunOptions };
 
 /**
  * The single-test seat, for a file that owns one eval and wants no suite.
@@ -276,24 +349,48 @@ export type EvalTestVitestOptions = EvalSuiteVitestOptions;
  * and ignoring it would be the worst outcome available: a policy that reports
  * green because nothing evaluated it.
  */
-export function testEval(
+function registerTestEval(
   test: EvalTest,
-  options: EvalTestVitestOptions
+  options: EvalTestVitestOptions,
+  mode: "normal" | "skip" | "only" = "normal",
 ): void {
   const scenarioId = test.getConfig().externalCaseId;
   const name = test.getName();
   const suffix = scenarioId === undefined ? "" : ` [${scenarioId}]`;
   const title = name.endsWith(suffix) ? name : `${name}${suffix}`;
 
-  describe(title, () => {
+  const register =
+    mode === "skip"
+      ? describe.skip
+      : mode === "only"
+        ? describe.only
+        : describe;
+  register(title, () => {
+    let executor: HostExecutor | undefined;
     let run: EvalRunResult | undefined;
 
     beforeAll(async () => {
-      const executor = await resolveExecutor(options);
-      run = await test.run(executor, options.run);
+      executor = await resolveExecutor(options);
+      try {
+        run = await test.run(executor, { ...options.run, summary: "none" });
+      } finally {
+        const completed = run ?? test.getResults();
+        if (completed && options.summary !== "none") {
+          try {
+            console.log(
+              formatRunSummaryTable(completed, test.getReportingReceipt()),
+            );
+          } catch {
+            /* formatting is observational */
+          }
+        }
+      }
     }, options.hookTimeoutMs ?? DEFAULT_HOOK_TIMEOUT_MS);
 
-    it(title, () => {
+    afterAll(async () => {
+      if (executor) await options.dispose?.(executor);
+    });
+    it("passes", () => {
       runAndAssertCase(run, name, () => test.getFailureReport());
     });
 
@@ -303,10 +400,7 @@ export function testEval(
           throw new Error("The eval did not run, so it cannot be gated.");
         }
         try {
-          assertGate(
-            gateInputFromRunResult(run),
-            options.gate as GatePolicy
-          );
+          assertGate(gateInputFromRunResult(run), options.gate as GatePolicy);
         } catch (error) {
           throw new Error(gateFailureMessage(error));
         }
@@ -314,3 +408,14 @@ export function testEval(
     }
   });
 }
+
+export const testEval = Object.assign(
+  (test: EvalTest, options: EvalTestVitestOptions) =>
+    registerTestEval(test, options),
+  {
+    skip: (test: EvalTest, options: EvalTestVitestOptions) =>
+      registerTestEval(test, options, "skip"),
+    only: (test: EvalTest, options: EvalTestVitestOptions) =>
+      registerTestEval(test, options, "only"),
+  },
+);

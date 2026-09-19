@@ -27,6 +27,7 @@ const streamState = {
  * the persisted spans or nothing at all.
  */
 const liveTraceState = { trace: null as Record<string, unknown> | null };
+const streamSubscriptions = new Map<string, boolean>();
 
 vi.mock("@/lib/toast", () => ({
   toast: {
@@ -38,7 +39,10 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 vi.mock("@/components/swarms/use-journey-run-stream", () => ({
-  useJourneyRunStream: () => streamState,
+  useJourneyRunStream: (runId: string, enabled: boolean) => {
+    streamSubscriptions.set(runId, enabled);
+    return streamState;
+  },
   liveSessionTrace: () => liveTraceState.trace,
   swarmCellKey: (targetKey: string, sessionIndex: number) =>
     `${targetKey}:${sessionIndex}`,
@@ -133,7 +137,13 @@ const failedSessionFixture = {
  */
 const runQueryState = { run: runFixture as JourneyRun | null };
 
+/** `journeyRuns:cancelJourneyRun`, recorded so Stop run can be asserted. */
+const cancelJourneyRun = vi.fn(async (_args: unknown) => ({ canceled: true }));
+
 vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  useMutation: (name: string) =>
+    name === "journeyRuns:cancelJourneyRun" ? cancelJourneyRun : vi.fn(),
   useQuery: (name: string) => {
     switch (name) {
       case "journeyRuns:getJourneyRun":
@@ -153,6 +163,7 @@ vi.mock("convex/react", () => ({
 }));
 
 import { toast } from "@/lib/toast";
+import { SwarmLiveStreamPane } from "../journey-run-results";
 import {
   NewSwarmRunningStep,
   swarmCellHeadline,
@@ -162,6 +173,7 @@ import {
 
 describe("NewSwarmRunningStep — session stream pane", () => {
   beforeEach(() => {
+    streamSubscriptions.clear();
     streamState.sessions = {};
     streamState.cellStatus = {
       "environment:env-1:0": "running",
@@ -183,6 +195,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     persistedState.spanError = null;
     traceViewerProps.mockClear();
     vi.mocked(toast.success).mockClear();
+    cancelJourneyRun.mockClear();
   });
 
   /** Render the wizard and open the pane on the first session chip. */
@@ -221,6 +234,60 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     fireEvent.click(chips[0]!);
     return chips;
   };
+
+  it("keeps session report copy off the chip and the live pane", async () => {
+    sessionsFixture = [
+      {
+        ...failedSessionFixture,
+        chatSessionId: "synth_run-1_env_env-1_0",
+        verdict: {
+          lifecycle: "ran",
+          verdict: "passed",
+          grading: { state: "settled" },
+        },
+        observations: [
+          {
+            evaluatorId: "standard:noToolErrors",
+            predicateType: "noToolErrors",
+            role: "advisory",
+            status: "passed",
+          },
+        ],
+      },
+    ];
+    await renderPaneAndSelectSession();
+    expect(screen.queryByText(/Goal result/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/User value chain/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Not established/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Execution:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No tool errors/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/advisory/)).not.toBeInTheDocument();
+    expect(
+      screen.getAllByTestId("new-swarm-running-session")[0],
+    ).toHaveAttribute("data-goal-result", "passed");
+  });
+
+  it("subscribes only to the selected run in a ten-run wave", async () => {
+    render(
+      <NewSwarmRunningStep
+        projectId="proj-1"
+        runs={Array.from({ length: 10 }, (_, i) => ({
+          runId: `run-${i + 1}`, journeyId: `j-${i}`, personaId: "p-1",
+          personaName: "Tester", personaRole: "Tester", label: `Goal ${i}`,
+        }))}
+        fallbackColumns={[{ key: "environment:env-1", label: "Host" }]}
+        onLeave={vi.fn()}
+        onOpenSession={vi.fn()}
+      />,
+    );
+    const enabledRuns = () => [...streamSubscriptions].filter(([, enabled]) => enabled).map(([id]) => id);
+    const chips = await screen.findAllByTestId("new-swarm-running-session");
+    expect(enabledRuns()).toEqual([]);
+    fireEvent.click(chips[0]!);
+    await waitFor(() => expect(enabledRuns()).toEqual(["run-1"]));
+    fireEvent.click(chips.at(-1)!);
+    await waitFor(() => expect(enabledRuns()).toEqual(["run-10"]));
+  });
 
   it("shows an empty stream pane until a session is clicked", async () => {
     runFixture.hostSummaries![0].targetId = "opaque-target";
@@ -306,6 +373,68 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     expect(chips[0]).toHaveTextContent("Running: Refund a charge");
   });
 
+  it("drops wizard chrome on the run-detail page", async () => {
+    render(
+      <div className="h-[40rem]">
+        <NewSwarmRunningStep
+          projectId="proj-1"
+          chrome="page"
+          runs={[
+            {
+              runId: "run-1",
+              journeyId: "j-1",
+              personaId: "p-1",
+              personaName: "Async Documentation Writer",
+              personaRole: "Writer",
+              label: "Async Documentation Writer · Refund a charge",
+              goalLabel: "Refund a charge",
+            },
+          ]}
+          fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
+          hosts={[{ hostId: "host-1", name: "MCPJam" }]}
+          onLeave={vi.fn()}
+          onOpenSession={vi.fn()}
+        />
+      </div>,
+    );
+
+    await screen.findByTestId("new-swarm-running-step");
+    expect(screen.getByTestId("new-swarm-running-stream")).toBeInTheDocument();
+    expect(screen.queryByTestId("new-swarm-running-title")).toBeNull();
+    expect(screen.queryByTestId("new-swarm-running-open-findings")).toBeNull();
+    expect(screen.queryByTestId("new-swarm-running-progress")).toBeNull();
+    expect(screen.queryByTestId("swarm-running-hero")).toBeNull();
+    expect(screen.queryByText(/Clients:/)).toBeNull();
+  });
+
+  it("keeps the matrix at the top of the page column", async () => {
+    render(
+      <div className="h-[40rem]">
+        <NewSwarmRunningStep
+          projectId="proj-1"
+          chrome="page"
+          runs={Array.from({ length: 10 }, (_, i) => ({
+            runId: `run-${i + 1}`,
+            journeyId: `j-${i}`,
+            personaId: "p-1",
+            personaName: "Tester",
+            personaRole: "Tester",
+            label: `Goal ${i}`,
+          }))}
+          fallbackColumns={[{ key: "environment:env-1", label: "Host" }]}
+          hosts={[{ hostId: "host-1", name: "MCPJam" }]}
+          onLeave={vi.fn()}
+          onOpenSession={vi.fn()}
+        />
+      </div>,
+    );
+
+    await screen.findAllByTestId("new-swarm-running-session");
+    const matrix = screen.getByTestId("new-swarm-running-matrix");
+    expect(matrix.parentElement?.firstElementChild).toBe(matrix);
+    expect(screen.getByRole("columnheader")).toHaveTextContent("MCPJam");
+  });
+
   it("opens the live stream pane when a session chip is clicked", async () => {
     render(
       <div className="h-[40rem]">
@@ -382,6 +511,78 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     };
     expect(props.trace.spans).toHaveLength(1);
     expect(props.traceStartedAtMs).toBe(1_000_000);
+  });
+
+  it("shows saved messages when a completed session's live buffer is empty", async () => {
+    liveTraceState.trace = { traceVersion: 1, messages: [] };
+    const messages = [
+      { role: "user", content: "Inspect the server" },
+      { role: "assistant", content: "The server is reachable" },
+    ];
+    persistedState.trace = { traceVersion: 1, messages };
+    await renderPaneAndSelectSession();
+    await waitFor(() => expect(traceViewerProps).toHaveBeenCalled());
+    expect(traceViewerProps.mock.calls.at(-1)![0].trace.messages).toEqual(messages);
+  });
+
+  it("explains a stale failure even when no session transcript was persisted", () => {
+    render(
+      <SwarmLiveStreamPane
+        selection={{ targetKey: "environment:env-1", hostId: "host-1", sessionIndex: 0, chatSessionId: "missing-session" }}
+        stream={{ ...streamState, sessions: {}, cellStatus: {}, connected: false } as never}
+        convexSession={null}
+        attempt={{ status: "failed", errorCode: "stale_runner", errorMessage: "Runner heartbeat went silent; run marked stale." }}
+        fallbackTrace={null}
+        runStatus="failed"
+        onOpenCompleted={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("swarm-live-pane-failure")).toHaveTextContent("runner stopped reporting progress");
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent("May not have run.");
+  });
+
+  it("does not reassure with Done when a completed attempt saved an empty transcript", () => {
+    persistedState.trace = { traceVersion: 1, messages: [] };
+    render(
+      <SwarmLiveStreamPane
+        selection={{
+          targetKey: "environment:env-1",
+          hostId: "host-1",
+          sessionIndex: 0,
+          chatSessionId: "empty-session",
+        }}
+        stream={
+          {
+            ...streamState,
+            sessions: {},
+            cellStatus: {},
+            connected: false,
+          } as never
+        }
+        convexSession={null}
+        attempt={{ status: "succeeded" }}
+        fallbackTrace={null}
+        runStatus="completed"
+        onOpenCompleted={vi.fn()}
+      />
+    );
+    expect(
+      screen.getByTestId("swarm-live-pane")
+    ).toHaveTextContent("No transcript recorded");
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
+      "No conversation"
+    );
+    expect(screen.getByTestId("swarm-live-pane")).not.toHaveTextContent("Done");
+  });
+
+  it("keeps a live transcript that has progressed beyond the saved snapshot", async () => {
+    const savedMessages = [{ role: "user", content: "Inspect the server" }];
+    const liveMessages = [...savedMessages, { role: "assistant", content: "Checking…" }];
+    liveTraceState.trace = { traceVersion: 1, messages: liveMessages };
+    persistedState.trace = { traceVersion: 1, messages: savedMessages };
+    await renderPaneAndSelectSession();
+    await waitFor(() => expect(traceViewerProps).toHaveBeenCalled());
+    expect(traceViewerProps.mock.calls.at(-1)![0].trace.messages).toEqual(liveMessages);
   });
 
   /**
@@ -677,9 +878,118 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     expect(onRunsComplete).toHaveBeenCalledTimes(1);
     expect(toast.success).toHaveBeenCalledTimes(1);
   });
+
+  /**
+   * "Open findings" leaves; it does not cancel. Without a stop here, the only
+   * way to end a swarm from the screen that launched it was to leave first
+   * and find "Stop run" on `/swarms/:id`.
+   */
+  it("stops the wave from the Run swarm step, and says stopped rather than complete", async () => {
+    const onLeave = vi.fn();
+    const tree = () => (
+      <div className="h-[40rem]">
+        <NewSwarmRunningStep
+          projectId="proj-1"
+          runs={[
+            {
+              runId: "run-1",
+              journeyId: "j-1",
+              personaId: "p-1",
+              personaName: "Async Documentation Writer",
+              personaRole: "Writer",
+              label: "Async Documentation Writer · Refund a charge",
+              goalLabel: "Refund a charge",
+            },
+          ]}
+          fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
+          onLeave={onLeave}
+          onOpenSession={vi.fn()}
+        />
+      </div>
+    );
+    const { rerender } = render(tree());
+
+    await screen.findByTestId("new-swarm-running-step");
+    // Confirmed first: opening the popover cancels nothing.
+    fireEvent.click(screen.getByTestId("new-swarm-running-stop"));
+    expect(cancelJourneyRun).not.toHaveBeenCalled();
+    fireEvent.click(
+      await screen.findByTestId("new-swarm-running-stop-confirm"),
+    );
+
+    await waitFor(() =>
+      expect(cancelJourneyRun).toHaveBeenCalledWith({ journeyRunId: "run-1" }),
+    );
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Run stopped"),
+    );
+    // Stopping is not leaving.
+    expect(onLeave).not.toHaveBeenCalled();
+
+    // The backend settles a canceled run as `failed`.
+    runQueryState.run = {
+      ...runFixture,
+      status: "failed",
+      error: "canceled",
+      summary: { total: 2, succeeded: 0, failed: 2, rateLimited: 0 },
+    } as JourneyRun;
+    rerender(tree());
+
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-running-title")).toHaveTextContent(
+        /^Swarm stopped/,
+      ),
+    );
+    expect(screen.queryByTestId("new-swarm-running-stop")).toBeNull();
+    expect(screen.queryByTestId("new-swarm-running-failure")).toBeNull();
+    await waitFor(() => expect(onLeave).toHaveBeenCalledTimes(1), {
+      timeout: 4000,
+    });
+    expect(toast.success).not.toHaveBeenCalledWith("Swarm complete!");
+  });
+
+  it("leaves Stop run to the detail page's live strip on the page chrome", async () => {
+    render(
+      <NewSwarmRunningStep
+        projectId="proj-1"
+        chrome="page"
+        runs={[
+          {
+            runId: "run-1",
+            journeyId: "j-1",
+            personaId: "p-1",
+            personaName: "Tester",
+            personaRole: "Tester",
+            label: "Goal",
+          },
+        ]}
+        fallbackColumns={[{ key: "environment:env-1", label: "Host" }]}
+        onLeave={vi.fn()}
+        onOpenSession={vi.fn()}
+      />,
+    );
+    await screen.findByTestId("new-swarm-running-step");
+    expect(screen.queryByTestId("new-swarm-running-stop")).toBeNull();
+  });
 });
 
 describe("NewSwarmRunningStep — frame copy", () => {
+  it("does not claim evaluators passed when only execution completed", () => {
+    expect(
+      swarmCellHeadline({
+        outcome: "succeeded",
+        primary: "done",
+        goal: "Export board",
+      }),
+    ).toBe("Run completed: Export board");
+    expect(
+      swarmCellHeadline({
+        outcome: "succeeded",
+        primary: "0/0 pass",
+        goal: "Export board",
+      }),
+    ).toBe("Run completed: Export board");
+  });
   it("titles the wave the way the running and finished frames do", () => {
     expect(
       swarmRunningTitle({
@@ -708,6 +1018,28 @@ describe("NewSwarmRunningStep — frame copy", () => {
         total: 15,
       }),
     ).toBe("Swarm failed 0 of 15 sessions");
+    // A wave this viewer stopped is not a failure.
+    expect(
+      swarmRunningTitle({
+        allTerminal: true,
+        succeeded: 0,
+        rateLimited: 0,
+        done: 15,
+        total: 15,
+        stopped: true,
+      }),
+    ).toBe("Swarm stopped 0 of 15 sessions");
+    // Still running means still running, whatever was clicked.
+    expect(
+      swarmRunningTitle({
+        allTerminal: false,
+        succeeded: 0,
+        rateLimited: 0,
+        done: 3,
+        total: 15,
+        stopped: true,
+      }),
+    ).toBe("Swarm running 3 of 15 sessions");
   });
 
   it("leads each cell with the goal, not a score chip", () => {
@@ -727,7 +1059,7 @@ describe("NewSwarmRunningStep — frame copy", () => {
         primary: "3/3 pass",
         goal: "Refund a charge",
       }),
-    ).toBe("Run completed: All checks passed");
+    ).toBe("Run completed: All evaluators passed");
     expect(
       swarmCellHeadline({
         outcome: "rate_limited",
@@ -737,3 +1069,12 @@ describe("NewSwarmRunningStep — frame copy", () => {
     ).toBe("Run completed: Goal completion had mixed results");
   });
 });
+
+vi.mock("@/hooks/use-host-snapshot", () => ({
+  useHostSnapshotForSession: () => ({
+    status: "ready", snapshot: { hostStyle: "mcpjam" },
+  }),
+  useHostSnapshotForHost: () => ({
+    status: "ready", snapshot: { hostStyle: "mcpjam" },
+  }),
+}));

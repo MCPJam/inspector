@@ -453,9 +453,29 @@ export const EVAL_VERDICT_DECISION_REASONS = [
 ] as const;
 export type EvalVerdictDecisionReason =
   (typeof EVAL_VERDICT_DECISION_REASONS)[number];
-export const evalVerdictDecisionReasonSchema = z.enum(
-  EVAL_VERDICT_DECISION_REASONS
-);
+export const evalVerdictDecisionReasonSchema = z
+  .enum(EVAL_VERDICT_DECISION_REASONS)
+  // Carried into `openapi.json` by `generate-swarm-report-schema.ts`: the spec
+  // is the only place a third-party integrator can read what a reason MEANS.
+  .describe(
+    "Why the verdict is what it is. The validity reasons are evaluated " +
+      "FIRST and make a run `inconclusive`; the task reasons decide " +
+      "`passed` / `failed` once validity holds. " +
+      "`configuredTrialsNotAttempted` — some configured trial never ran. " +
+      "`noGradeableTrials` — nothing in the suite was gradeable. " +
+      "`eligibleTrialsBelowMinimum` — the explicit `minEligibleTrials` was " +
+      "not reached. `completionRateBelowMinimum` — measured, and under the " +
+      "floor. `completionRateNotMeasured` — nothing was attempted, so the " +
+      "floor is unsatisfiable; a not-measured rate never passes one. " +
+      "`evaluatorErrorRateAboveMaximum` — the grader failed too often for " +
+      "the run to describe the server. `evaluatorErrorRateNotMeasured` — " +
+      "the same unsatisfiable case for the ceiling. " +
+      "`caseHasNoEligibleTrials` — a case graded nothing, which is " +
+      "inconclusive even at `passThreshold: 0`. `casePassRateMetThreshold` " +
+      "— a case's own passing reason. `casePassRateBelowThreshold` — a case " +
+      "failed its threshold, and so therefore did the suite. " +
+      "`allMeasuredCasesMetThreshold` — the suite's only passing reason."
+  );
 
 export function isEvalVerdictDecisionReason(
   value: unknown

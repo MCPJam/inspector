@@ -1,4 +1,5 @@
-import { describeError } from "@mcpjam/sdk/browser";
+import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
+import { describeAsSlug, describeError } from "@mcpjam/sdk/browser";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import type { MCPJamLimitSurface } from "@/stores/mcpjam-limit-dialog-store";
 
@@ -36,7 +37,7 @@ export function isSpendBudgetReachedCode(code: string | undefined): boolean {
  * refused.
  */
 export const SPEND_BUDGET_REACHED_MESSAGE =
-  "This organization's spend budget is reached. An owner or admin can raise it in Organization \u2192 Budget.";
+  "This organization's spend budget is reached. An owner or admin can raise it in Organization \u2192 Billing.";
 const MCPJAM_RATE_LIMIT_CODE_PATTERN =
   /\b(?:mcpjam_rate_limit|user_rate_limit)\b/;
 
@@ -160,6 +161,9 @@ const findMCPJamRateLimitCode = (
  * dialog, selling credits to an organization that set its own ceiling and
  * cannot spend its way past it.
  */
+const isInlineAccountRefusal = (code: unknown): boolean =>
+  code === "platform_free_budget_exhausted" || code === "account_suspended" || isSpendBudgetReachedCode(typeof code === "string" ? code : undefined);
+
 const hasNestedSpendBudgetCode = (
   value: unknown,
   seen = new WeakSet<object>(),
@@ -168,7 +172,7 @@ const hasNestedSpendBudgetCode = (
   if (seen.has(value)) return false;
   seen.add(value);
 
-  if (isSpendBudgetReachedCode(getStringProperty(value, "code"))) return true;
+  if (isInlineAccountRefusal(getStringProperty(value, "code"))) return true;
 
   const values = Array.isArray(value) ? value : Object.values(value);
   for (const item of values) {
@@ -177,7 +181,7 @@ const hasNestedSpendBudgetCode = (
     // how the budget code hides from this walk — leaving the deep scan below
     // to read the same payload's rate-limit text and open the top-up dialog.
     if (typeof item === "string") {
-      if (isSpendBudgetReachedCode(item)) return true;
+      if (isInlineAccountRefusal(item)) return true;
       for (const parsed of collectJsonCandidates(item)) {
         if (hasNestedSpendBudgetCode(parsed, seen)) return true;
       }
@@ -285,10 +289,10 @@ export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
   // happens to embed a rate-limit string still classifies as a budget —
   // and checked at EVERY nesting level, because the code arrives inside
   // `details` or a JSON-encoded `message` as readily as at the top.
-  if (isSpendBudgetReachedCode(args.code)) return false;
+  if (isInlineAccountRefusal(args.code)) return false;
   for (const value of [args.message, args.details]) {
     if (typeof value === "string") {
-      if (isSpendBudgetReachedCode(value)) return false;
+      if (isInlineAccountRefusal(value)) return false;
       for (const parsed of collectJsonCandidates(value)) {
         if (hasNestedSpendBudgetCode(parsed)) return false;
       }
@@ -339,7 +343,35 @@ export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
   return false;
 }
 
+const hasFrontierSignInCode = (
+  value: unknown,
+  seen = new WeakSet<object>(),
+): boolean => {
+  if (typeof value === "string") {
+    return collectJsonCandidates(value).some((parsed) =>
+      hasFrontierSignInCode(parsed, seen),
+    );
+  }
+  if (!value || typeof value !== "object" || seen.has(value)) return false;
+  seen.add(value);
+
+  if (getStringProperty(value, "code") === "guest_model_not_allowed") return true;
+  return Object.values(value).some((item) => hasFrontierSignInCode(item, seen));
+};
+
 export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
+  // Authentication gating is not credit exhaustion: do not mark the wallet empty.
+  if (
+    hasFrontierSignInCode(args) ||
+    [args.message, ...collectStringValues(args.details)].some(
+      (value) =>
+        typeof value === "string" &&
+        /sign in to use frontier models/i.test(value),
+    )
+  ) {
+    useFrontierSignInDialogStore.getState().open();
+    return true;
+  }
   if (!isMCPJamModelLimitError(args)) return false;
   const period = findMCPJamLimitPeriod(args.message);
   useMCPJamLimitDialogStore.getState().notifyLimitHit({
@@ -351,8 +383,33 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
   return true;
 }
 
+const MCPJAM_LIMIT_SLUGS = new Set([
+  "provider/mcpjam_limit_daily",
+  "provider/mcpjam_limit_monthly",
+  "provider/mcpjam_limit",
+]);
+
+/**
+ * One plain sentence for a limit refusal, for surfaces that print an error
+ * string inline (the agent side panel, the generation workspace). The dialog
+ * carries the actions; without this those surfaces echo the raw JSON body the
+ * backend refused with, which reads as a crash. `null` for anything that
+ * isn't a limit error, so callers keep their own message.
+ */
+export function describeMCPJamLimitMessage(
+  message: string | null | undefined,
+): string | null {
+  if (!message || !isMCPJamModelLimitError({ message })) return null;
+  const described = describeError(message);
+  const entry = MCPJAM_LIMIT_SLUGS.has(described.slug)
+    ? described
+    : describeAsSlug("provider/mcpjam_limit", message);
+  return `${entry.title}. ${entry.oneLine}`;
+}
+
 export async function notifyMCPJamLimitErrorFromResponse(
   response: Response,
+  surface?: MCPJamLimitSurface,
 ): Promise<boolean> {
   let details: unknown;
   let message: string | null = null;
@@ -385,5 +442,6 @@ export async function notifyMCPJamLimitErrorFromResponse(
       limitKind === "total" || limitKind === "concurrency"
         ? limitKind
         : undefined,
+    ...(surface ? { surface } : {}),
   });
 }
