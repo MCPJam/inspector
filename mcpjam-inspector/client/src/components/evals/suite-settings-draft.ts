@@ -31,6 +31,7 @@ import {
   describeEvalPassCriterion,
   normalizeSuiteGatePolicy,
   type SuiteGatePolicyV1,
+  evalExecutionBudgetsSchema,
 } from "@mcpjam/sdk/contract";
 import { ORDER_OPTIONS, ARGS_OPTIONS } from "./validators-section";
 import type { EvalJudgeConfig, EvalJudgeRubric } from "./types";
@@ -92,6 +93,24 @@ export type SuiteSettingsValues = {
    * travels as `null` so the backend can distinguish omit from wipe.
    */
   gatePolicy: SuiteGatePolicyV1 | undefined;
+  /**
+   * AUTHORED execution budgets, one draft key per clock.
+   *
+   * Five keys rather than one object so a dirty badge names the clock that is
+   * actually dirty — the same reason `policy` and `iterations` were split. They
+   * are nonetheless SAVED as one object (see `toUpdateArgs`), because that is
+   * the shape the mutation takes.
+   *
+   * `undefined` means un-authored, which resolves to the platform default. It
+   * is not the same as a number that happens to equal the default: one is a
+   * choice and the other is an inheritance, and the settings surface shows
+   * them differently.
+   */
+  turnTimeoutMs: number | undefined;
+  toolCallTimeoutMs: number | undefined;
+  iterationTimeoutMs: number | undefined;
+  runTimeoutMs: number | undefined;
+  turnRetries: number | undefined;
 };
 
 /** The v2 defaults a case inherits. Fractions in [0,1], never percents. */
@@ -119,6 +138,11 @@ export const SUITE_SETTINGS_KEYS: readonly SuiteSettingsKey[] = [
   "verdictPolicyVersion",
   "verdictPolicyDefaults",
   "gatePolicy",
+  "turnTimeoutMs",
+  "toolCallTimeoutMs",
+  "iterationTimeoutMs",
+  "runTimeoutMs",
+  "turnRetries",
 ];
 
 export type SuiteSettingsDraft = {
@@ -195,6 +219,13 @@ export function readSuiteSettingsValues(suite: {
   verdictPolicyVersion?: 2;
   verdictPolicyDefaults?: SuiteVerdictPolicyDefaults;
   gatePolicy?: SuiteGatePolicyV1;
+  executionBudgets?: {
+    turnTimeoutMs?: number;
+    toolCallTimeoutMs?: number;
+    iterationTimeoutMs?: number;
+    runTimeoutMs?: number;
+    turnRetries?: number;
+  };
 }): SuiteSettingsValues {
   return {
     name: suite.name ?? "",
@@ -214,6 +245,14 @@ export function readSuiteSettingsValues(suite: {
     verdictPolicyVersion: suite.verdictPolicyVersion,
     verdictPolicyDefaults: suite.verdictPolicyDefaults,
     gatePolicy: normalizeDraftGatePolicy(suite.gatePolicy),
+    // Spread flat, deliberately: the stored object is optional and so is every
+    // field in it, so `?.` on each is the only reading that distinguishes "no
+    // budgets authored" from "budgets authored, this clock left to default".
+    turnTimeoutMs: suite.executionBudgets?.turnTimeoutMs,
+    toolCallTimeoutMs: suite.executionBudgets?.toolCallTimeoutMs,
+    iterationTimeoutMs: suite.executionBudgets?.iterationTimeoutMs,
+    runTimeoutMs: suite.executionBudgets?.runTimeoutMs,
+    turnRetries: suite.executionBudgets?.turnRetries,
   };
 }
 
@@ -370,7 +409,82 @@ export function canCommit(
 ): boolean {
   if (dirtyKeys(draft).length === 0) return false;
   if (draft.current.name.trim().length === 0) return false;
+  if (outOfRangeBudgetKeys(draft.current).length > 0) return false;
   return areChecksValid(draft.current.defaultPredicates);
+}
+
+export type ExecutionBudgetDraftKey =
+  | "turnTimeoutMs"
+  | "toolCallTimeoutMs"
+  | "iterationTimeoutMs"
+  | "runTimeoutMs"
+  | "turnRetries";
+
+/**
+ * Every clock the authored schema carries, taken from the schema rather than
+ * listed again beside it.
+ *
+ * The union above is the spelling the rest of the module reads, but this list
+ * is what the validation actually walks, so a sixth clock added to the
+ * contract is bounded from the moment it exists. If it were ever a field with
+ * no numeric bounds to read, it lands in the table below without them and
+ * fails the test that walks it — which is the loud half of the same property.
+ */
+const EXECUTION_BUDGET_DRAFT_KEYS = Object.keys(
+  evalExecutionBudgetsSchema.shape,
+) as ExecutionBudgetDraftKey[];
+
+/** Both platform bounds for one authored clock, in its stored unit. */
+export type ExecutionBudgetBounds = { min: number; max: number };
+
+/**
+ * The PLATFORM bounds for each authored clock, read off the very schema the
+ * route parses with.
+ *
+ * Both halves come from one place deliberately. Every clock here has a real
+ * floor as well as a ceiling — a tool call may not be given under a second,
+ * an iteration under thirty — and a table that carried only the ceiling let
+ * the form offer a `0` the server was always going to refuse. A derived `max`
+ * sitting beside a hand-written floor reads as single-sourced at a glance
+ * while only half of it is.
+ *
+ * Taking the authored schema rather than lifting the ceilings table also
+ * retires a name hazard: the iteration clock is `unitTimeoutMs` once resolved
+ * but `iterationTimeoutMs` as authored, so a lift needed one hand-written
+ * rename whose only symptom, if wrong, would be a check that silently passed.
+ */
+export const EXECUTION_BUDGET_DRAFT_BOUNDS: Readonly<
+  Record<ExecutionBudgetDraftKey, ExecutionBudgetBounds>
+> = Object.freeze(
+  Object.fromEntries(
+    EXECUTION_BUDGET_DRAFT_KEYS.map((key) => {
+      const field = evalExecutionBudgetsSchema.shape[key].unwrap();
+      return [key, { min: field.minValue, max: field.maxValue }];
+    }),
+  ) as Record<ExecutionBudgetDraftKey, ExecutionBudgetBounds>,
+);
+
+/**
+ * Authored clocks the PLATFORM would refuse, so the save button can refuse
+ * them first.
+ *
+ * Only the platform bounds, deliberately. An organization that lowered its own
+ * ceiling is still enforced by the server, which names the field and the
+ * bound; the client does not know that number and guessing it would either
+ * block a legal value or promise one the server rejects.
+ */
+export function outOfRangeBudgetKeys(
+  values: SuiteSettingsValues,
+): ExecutionBudgetDraftKey[] {
+  return EXECUTION_BUDGET_DRAFT_KEYS.filter((key) => {
+    const value = values[key];
+    if (value === undefined) return false;
+    // Not a number at all is out of range too: a control that parsed junk into
+    // NaN must not reach a save that would send it.
+    if (!Number.isFinite(value)) return true;
+    const bounds = EXECUTION_BUDGET_DRAFT_BOUNDS[key];
+    return value < bounds.min || value > bounds.max;
+  });
 }
 
 /**
@@ -483,9 +597,50 @@ export function toUpdateArgs(
         // NULL clears the stored policy. Omission would keep the old one.
         args.gatePolicy = value ?? null;
         break;
+      case "turnTimeoutMs":
+      case "toolCallTimeoutMs":
+      case "iterationTimeoutMs":
+      case "runTimeoutMs":
+      case "turnRetries":
+        // WHOLE-OBJECT, however few of the five are dirty. The mutation takes
+        // `executionBudgets` as one value, so sending only the edited clock
+        // would clear the other four — the stored object is replaced, not
+        // merged. Assembling from `draft.current` sends every authored clock
+        // whether or not it was touched this session.
+        //
+        // All five arms share this, and assigning the same object five times
+        // is deliberate rather than guarded: it is idempotent, and a guard
+        // would be one more thing to keep true.
+        //
+        // `null` when nothing is authored: that CLEARS back to the platform
+        // defaults, which is what an author who emptied every field meant.
+        // Omitting it would silently keep the budgets they just deleted.
+        args.executionBudgets = authoredExecutionBudgets(draft.current);
+        break;
     }
   }
   return args;
+}
+
+/**
+ * The five draft clocks as the object the mutation stores, or `null` when the
+ * author has left every one of them empty.
+ */
+function authoredExecutionBudgets(
+  values: SuiteSettingsValues,
+): Record<string, number> | null {
+  const authored: Record<string, number> = {};
+  if (values.turnTimeoutMs !== undefined)
+    authored.turnTimeoutMs = values.turnTimeoutMs;
+  if (values.toolCallTimeoutMs !== undefined)
+    authored.toolCallTimeoutMs = values.toolCallTimeoutMs;
+  if (values.iterationTimeoutMs !== undefined)
+    authored.iterationTimeoutMs = values.iterationTimeoutMs;
+  if (values.runTimeoutMs !== undefined)
+    authored.runTimeoutMs = values.runTimeoutMs;
+  if (values.turnRetries !== undefined)
+    authored.turnRetries = values.turnRetries;
+  return Object.keys(authored).length > 0 ? authored : null;
 }
 
 // ── Describing a change ─────────────────────────────────────────────────────
@@ -500,6 +655,39 @@ export type SuiteSettingsChange = {
   before: string;
   after: string;
 };
+
+/** One label per clock, shared by the ledger and revision history. */
+const EXECUTION_BUDGET_CHANGE_LABELS = {
+  turnTimeoutMs: "Per-turn timeout",
+  toolCallTimeoutMs: "Per-tool-call timeout",
+  iterationTimeoutMs: "Per-iteration timeout",
+  runTimeoutMs: "Whole-run timeout",
+  turnRetries: "Model call retries",
+} as const;
+
+/**
+ * A budget as a reader recognises it.
+ *
+ * "Platform default" rather than a number, because an un-authored clock IS the
+ * default and printing the number would claim somebody chose it. Durations
+ * render in the unit they were authored in — whole minutes stay minutes,
+ * anything else falls back to seconds — so a 45s tool budget does not read as
+ * "0.75 minutes".
+ */
+function describeBudgetValue(
+  key: keyof typeof EXECUTION_BUDGET_CHANGE_LABELS,
+  value: number | undefined,
+): string {
+  if (value === undefined) return "Platform default";
+  if (key === "turnRetries")
+    return `${value} ${value === 1 ? "retry" : "retries"}`;
+  if (value % 60_000 === 0) {
+    const minutes = value / 60_000;
+    return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+  }
+  const seconds = value / 1000;
+  return `${seconds} ${seconds === 1 ? "second" : "seconds"}`;
+}
 
 function describeMatchOptions(value: EvalMatchOptions | undefined): string {
   if (!value) return "Inherited";
@@ -617,6 +805,17 @@ export function describeChange(
         label: "Pass criteria and iterations",
         before: describePolicyDefaults(before.verdictPolicyDefaults),
         after: describePolicyDefaults(after.verdictPolicyDefaults),
+      };
+    case "turnTimeoutMs":
+    case "toolCallTimeoutMs":
+    case "iterationTimeoutMs":
+    case "runTimeoutMs":
+    case "turnRetries":
+      return {
+        key,
+        label: EXECUTION_BUDGET_CHANGE_LABELS[key],
+        before: describeBudgetValue(key, before[key]),
+        after: describeBudgetValue(key, after[key]),
       };
     case "gatePolicy":
       return {
