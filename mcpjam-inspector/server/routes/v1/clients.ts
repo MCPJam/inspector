@@ -86,6 +86,8 @@ type HostImpact = {
 };
 
 type HostDetailRow = {
+  versionId?: string;
+  versionNumber?: number;
   hostId: string;
   name: string;
   config: Record<string, unknown>;
@@ -160,6 +162,9 @@ function toClientDetailDto(detail: HostDetailRow) {
       ? {}
       : { configId: detail.hostConfigId }),
     config: detail.config,
+    ...(detail.versionId
+      ? { versionId: detail.versionId, versionNumber: detail.versionNumber }
+      : {}),
     ownerScope: detail.ownerScope ?? null,
     ...(detail.hasComputer === undefined
       ? {}
@@ -429,6 +434,13 @@ const hostConfigSchema = z.record(z.string(), z.unknown());
  * (`ENV_MODEL_REQUIRED`). A client minted with `modelId: ""` is therefore a
  * client that cannot back a headless environment, and the failure would surface
  * at launch rather than at creation.
+ *
+ * This public API deliberately rejects an explicit config with a blank model.
+ * Callers can select a catalog template instead when they want its defaults.
+ * The Convex `hosts:createHost` mutation has a compatibility exception for
+ * older browser seed callers: it fills a blank model from the client's catalog
+ * template at creation. That exception does not change this REST contract or
+ * permit model substitution at launch. Explicit model choices are preserved.
  *
  * Deliberately a REFINEMENT over the passthrough record rather than a full
  * config schema: every other config field stays untyped here on purpose (the

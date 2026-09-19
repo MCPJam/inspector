@@ -33,6 +33,8 @@ const MAX_INGEST_BODY_BYTES = 6 * 1024 * 1024;
 const PROXY_TIMEOUT_MS = 60_000;
 
 const INGEST_SUFFIXES = [
+  "capabilities",
+  "runs/evaluations",
   "report",
   "runs/start",
   "runs/iterations",
@@ -54,7 +56,7 @@ async function proxyIngest(c: Context, suffix: string): Promise<Response> {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
+      "Server missing CONVEX_HTTP_URL configuration",
     );
   }
 
@@ -63,7 +65,7 @@ async function proxyIngest(c: Context, suffix: string): Promise<Response> {
     return v1Error(
       c,
       "VALIDATION_ERROR",
-      "Payload exceeds the eval ingestion size limit"
+      "Payload exceeds the eval ingestion size limit",
     );
   }
   let payload: Record<string, unknown>;
@@ -128,7 +130,7 @@ async function proxyIngest(c: Context, suffix: string): Promise<Response> {
 
 for (const suffix of INGEST_SUFFIXES) {
   evalIngest.post(`/projects/:projectId/eval-ingest/${suffix}`, (c) =>
-    proxyIngest(c, suffix)
+    proxyIngest(c, suffix),
   );
 }
 
