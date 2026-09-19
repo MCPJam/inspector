@@ -134,6 +134,20 @@ If you're seeing **401 Unauthorized** errors when trying to connect to your serv
   process and identify where things might be going wrong.
 </Info>
 
+### OAuth flow stops with a missing authorization server or PKCE error
+
+Starting with the 2025-06-18 and 2025-11-25 protocol versions, connect flows fail closed when required OAuth metadata is missing rather than silently downgrading.
+
+**"Protected resource metadata does not list an authorization server"** — The RFC 9728 `authorization_servers` field in the server's protected-resource metadata is empty or absent. The flow stops before the browser redirect because there is no server authorized to issue tokens for this resource.
+
+Fix: ensure your authorization server's protected-resource metadata document includes `authorization_servers` with at least one entry. This is required by the 2025-06-18 profile and later.
+
+**"Authorization server advertises PKCE without S256"** or **"does not advertise code_challenge_methods_supported"** — The authorization server's metadata does not include `S256` in `code_challenge_methods_supported`. The flow stops to prevent a silent downgrade to a weaker code challenge method.
+
+Fix: configure your authorization server to advertise `S256` in `code_challenge_methods_supported`. Advertising `plain` alongside `S256` is fine. This check applies to the 2025-11-25 profile and later; the 2025-03-26 era is unaffected.
+
+If you are debugging a nonconforming server and need to observe its behavior despite these failures, use the [OAuth Debugger](/inspector/guided-oauth) — it runs in observe mode and warns rather than stopping the flow.
+
 ### OAuth connection failures
 
 When an OAuth flow fails, Inspector surfaces the failure directly in the connection UI so you can diagnose the problem without leaving the Servers tab.
