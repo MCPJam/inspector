@@ -3,23 +3,74 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/inspector",
+          "name": "@mcpjam/sdk",
           "type": "patch"
         }
       ],
-      "summary": "Fix comparison browser controls leaving browser access blocked before the next chat turn. Make Chromium installation and recovery available before a comparison browser starts, and notify consent subscribers once when clearing browser permission.",
-      "id": "friendly-browsers-recover"
+      "summary": "Report the model on every iteration an `EvalSuite` or `EvalTest` run uploads. A run started with `runWithClient` showed an empty MODEL column, because only the `promptsToEvalResult` path stamped the provider and model that the run had already recorded. When a case fails in setup and never reaches the model, the run now names the model it was configured with — the saved client's, for a `runWithClient` run.\n\nReport per-step verdicts too (`metadata.stepResults`), the same rows the hosted runner writes. An SDK case whose tool call matched still read \"0 of 1 assertion passed\" on the Steps tab, with a grey unknown icon, because no step ever carried a verdict.",
+      "id": "eval-suite-iteration-model"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "patch"
+        },
+        {
+          "name": "@mcpjam/sdk",
+          "type": "patch"
+        }
+      ],
+      "summary": "Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the\nwork already merged into main reaches npm. Version bump only — no code changes.",
+      "id": "release-inspector-cli-sdk"
     }
   ],
   "releases": [
     {
+      "name": "@mcpjam/sdk",
+      "type": "patch",
+      "oldVersion": "8.11.0",
+      "changesets": [
+        "eval-suite-iteration-model",
+        "release-inspector-cli-sdk"
+      ],
+      "newVersion": "8.11.1"
+    },
+    {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "3.5.1",
+      "oldVersion": "3.8.0",
       "changesets": [
-        "friendly-browsers-recover"
+        "release-inspector-cli-sdk"
       ],
-      "newVersion": "3.5.2"
+      "newVersion": "3.8.1"
+    },
+    {
+      "name": "@mcpjam/cli",
+      "type": "patch",
+      "oldVersion": "5.10.1",
+      "changesets": [
+        "release-inspector-cli-sdk"
+      ],
+      "newVersion": "5.10.2"
+    },
+    {
+      "name": "@mcpjam/mcp",
+      "type": "none",
+      "oldVersion": "0.0.1",
+      "changesets": [],
+      "newVersion": "0.0.1"
+    },
+    {
+      "name": "@mcpjam/slack-app",
+      "type": "none",
+      "oldVersion": "0.1.0",
+      "changesets": [],
+      "newVersion": "0.1.0"
     }
   ]
 }

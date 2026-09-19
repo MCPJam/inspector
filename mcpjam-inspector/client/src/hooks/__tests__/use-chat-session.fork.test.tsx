@@ -656,40 +656,54 @@ describe("useChatSession fork preservation", () => {
     // Transcript with one tool call so the trace timeline can resolve its
     // input/output. The same shape we read from a real session blob via
     // transcriptToUIMessages → dynamic-tool part.
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify([
-            { role: "user", content: "show me barca" },
-            {
-              role: "assistant",
-              content: [
-                {
-                  type: "tool-call",
-                  toolCallId: "call-1",
-                  toolName: "show-squad",
-                  input: { team: "Barcelona" },
+    const fetchMock = vi.fn(async (url) =>
+      String(url).includes("requests.json")
+        ? new Response(
+            JSON.stringify([
+              {
+                turnId: "turn-1",
+                promptIndex: 0,
+                stepIndex: 0,
+                payload: {
+                  system: "historical",
+                  tools: {},
+                  messages: [{ role: "user", content: "original request" }],
                 },
-              ],
-            },
+              },
+            ]),
+          )
+        : new Response(
+            JSON.stringify([
+              { role: "user", content: "show me barca" },
+              {
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool-call",
+                    toolCallId: "call-1",
+                    toolName: "show-squad",
+                    input: { team: "Barcelona" },
+                  },
+                ],
+              },
+              {
+                role: "tool",
+                content: [
+                  {
+                    type: "tool-result",
+                    toolCallId: "call-1",
+                    toolName: "show-squad",
+                    output: { type: "json", value: { players: [] } },
+                    result: { players: [] },
+                  },
+                ],
+              },
+            ]),
             {
-              role: "tool",
-              content: [
-                {
-                  type: "tool-result",
-                  toolCallId: "call-1",
-                  toolName: "show-squad",
-                  output: { type: "json", value: { players: [] } },
-                  result: { players: [] },
-                },
-              ],
+              status: 200,
+              headers: { "Content-Type": "application/json" },
             },
-          ]),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          },
-        ),
+          ),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -721,6 +735,7 @@ describe("useChatSession fork preservation", () => {
         version: 1,
         turnTraces: [
           {
+            requestPayloadsBlobUrl: "https://storage.test/requests.json",
             turnId: "turn-1",
             promptIndex: 0,
             startedAt: 1000,
@@ -741,6 +756,11 @@ describe("useChatSession fork preservation", () => {
       result.current.messages.find((message) => message.role === "assistant")
         ?.metadata,
     ).toMatchObject({ timestampMs: 2000 });
+
+    expect(result.current.requestPayloadHistory[0]?.turnId).toBe("turn-1");
+    expect(result.current.requestPayloadHistory[0]?.payload.system).toBe(
+      "historical",
+    );
 
     // Trace envelope picks up the rehydrated UI transcript, so timeline lookups
     // by toolCallId hit the tool-call/tool-result parts instead of an empty

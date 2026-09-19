@@ -1,4 +1,5 @@
 @import "./tokens.css";
+@import "./scroll-fade.css";
 
 .scenario-host-shell {
   background-color: var(--background);

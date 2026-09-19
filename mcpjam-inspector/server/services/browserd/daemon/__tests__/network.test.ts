@@ -203,3 +203,32 @@ describe("capNetwork", () => {
     expect(omitted).toBe(3);
   });
 });
+
+describe("NetworkRing — credential shapes in a failure", () => {
+  it("redacts on INSERT, so nothing downstream can read the raw value", () => {
+    // The ring is what `dropNetworkSince` hands back and what a later
+    // observation re-reads, so a value stored raw survives every filter below
+    // it. A failure message is an upstream string and quotes the whole URL.
+    const ring = new NetworkRing(10);
+    ring.started({
+      requestId: "r1",
+      method: "GET",
+      url: "https://api.test/me",
+      resourceType: "fetch",
+    });
+    ring.finished({
+      requestId: "r1",
+      failure: "net::ERR_ABORTED at https://api.test/me?api_key=sk-live-abcdefghijklmnop",
+    });
+    const row = ring.get("r1");
+    expect(row?.failure).not.toContain("sk-live-abcdefghijklmnop");
+    expect(row?.failure).toContain("api_key=[redacted]");
+  });
+
+  it("leaves an ordinary failure untouched", () => {
+    const ring = new NetworkRing(10);
+    ring.started({ requestId: "r1", method: "GET", url: "https://x.test/" });
+    ring.finished({ requestId: "r1", failure: "net::ERR_NAME_NOT_RESOLVED" });
+    expect(ring.get("r1")?.failure).toBe("net::ERR_NAME_NOT_RESOLVED");
+  });
+});

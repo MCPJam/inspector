@@ -192,6 +192,23 @@ function getConvexDeploymentSlug(url: string | undefined): string | null {
   }
 }
 
+// The first hostname label is the deployment name only on Convex's default
+// hosts. On a custom domain (`rt.mcpjam.com` / `rt-http.mcpjam.com` both front
+// the production deployment) the labels legitimately differ, so a slug
+// comparison there would only ever produce a false mismatch warning.
+function isConvexDefaultHost(url: string | undefined): boolean {
+  if (!url) return false;
+
+  try {
+    const { hostname } = new URL(url);
+    return (
+      hostname.endsWith(".convex.cloud") || hostname.endsWith(".convex.site")
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function checkBootstrapRoute(convexHttpUrl: string): Promise<void> {
   const response = await fetch(`${convexHttpUrl}/scenario/bootstrap`, {
     method: "OPTIONS",
@@ -227,8 +244,12 @@ export function warnOnConvexDevMisconfiguration(env: LoadedInspectorEnv): void {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   const viteConvexUrl = process.env.VITE_CONVEX_URL;
 
-  const httpSlug = getConvexDeploymentSlug(convexHttpUrl);
-  const viteSlug = getConvexDeploymentSlug(viteConvexUrl);
+  const httpSlug = isConvexDefaultHost(convexHttpUrl)
+    ? getConvexDeploymentSlug(convexHttpUrl)
+    : null;
+  const viteSlug = isConvexDefaultHost(viteConvexUrl)
+    ? getConvexDeploymentSlug(viteConvexUrl)
+    : null;
 
   if (httpSlug && viteSlug && httpSlug !== viteSlug) {
     appLogger.warn(

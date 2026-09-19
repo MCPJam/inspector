@@ -17,9 +17,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * a replayed launch key must acknowledge the original and start NOTHING.
  */
 
-const { createRunMock, startRunMock } = vi.hoisted(() => ({
+const { createRunMock, startRunMock, rolloutMock } = vi.hoisted(() => ({
   createRunMock: vi.fn(),
   startRunMock: vi.fn(),
+  rolloutMock: vi.fn(),
 }));
 
 vi.mock("../../swarm-agent.js", async (importOriginal) => {
@@ -32,6 +33,9 @@ vi.mock("../../../routes/web/auth.js", () => ({
 }));
 vi.mock("../../evals/route-helpers.js", () => ({
   createConvexClient: vi.fn(),
+}));
+vi.mock("../../../utils/computers/browser-rollout.js", () => ({
+  rolloutEnabled: rolloutMock,
 }));
 
 import { launchJourneyRun } from "../launch-journey-run.js";
@@ -65,6 +69,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
   startRunMock.mockResolvedValue(undefined);
+  rolloutMock.mockResolvedValue(false);
 });
 afterEach(() => {
   vi.clearAllMocks();
@@ -101,6 +106,83 @@ describe("launchJourneyRun", () => {
     };
     expect(typeof opts.getBearer).toBe("function");
     await expect(opts.getBearer()).resolves.toBe("run-jwt");
+  });
+
+  describe("hosted-browser rollout", () => {
+    const browserHosts = created({
+      snapshot: {
+        hosts: [
+          {
+            hostId: "h1",
+            targetId: "t1",
+            serverIds: [],
+            modelId: "m",
+            builtInToolIds: ["bash", "browser"],
+          },
+          { hostId: "h2", targetId: "t2", serverIds: [], modelId: "m" },
+        ],
+        sessionsPerTarget: 1,
+        maxTurns: 4,
+      },
+    });
+    const startedToolIds = () =>
+      (
+        startRunMock.mock.calls[0]![0] as {
+          hosts: Array<{ builtInToolIds?: string[] }>;
+        }
+      ).hosts.map((host) => host.builtInToolIds);
+
+    it("drops `browser` for a member outside the rollout", async () => {
+      // The flag was only read by the client, so a member without it whose
+      // client still had `browser` saved got a notice on every session about
+      // a tool they cannot see.
+      createRunMock.mockResolvedValue(browserHosts);
+
+      await launchJourneyRun(
+        { ...DEPS, callerContext: { workosUserId: "user_1" } },
+        INPUT,
+      );
+      await settle();
+
+      expect(rolloutMock).toHaveBeenCalledWith(false, "user_1");
+      expect(startedToolIds()).toEqual([["bash"], undefined]);
+    });
+
+    it("keeps `browser` for a member in the rollout", async () => {
+      rolloutMock.mockResolvedValue(true);
+      createRunMock.mockResolvedValue(browserHosts);
+
+      await launchJourneyRun(
+        { ...DEPS, callerContext: { workosUserId: "user_1" } },
+        INPUT,
+      );
+      await settle();
+
+      expect(startedToolIds()).toEqual([["bash", "browser"], undefined]);
+    });
+
+    it("drops `browser` when the caller has no member identity", async () => {
+      createRunMock.mockResolvedValue(browserHosts);
+
+      await launchJourneyRun(DEPS, INPUT);
+      await settle();
+
+      expect(rolloutMock).not.toHaveBeenCalled();
+      expect(startedToolIds()).toEqual([["bash"], undefined]);
+    });
+
+    it("skips the flag read when no host asks for a browser", async () => {
+      createRunMock.mockResolvedValue(created());
+
+      await launchJourneyRun(
+        { ...DEPS, callerContext: { workosUserId: "user_1" } },
+        INPUT,
+      );
+      await settle();
+
+      expect(rolloutMock).not.toHaveBeenCalled();
+      expect(startRunMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("starts NOTHING when the launch key deduped onto an existing run", async () => {
@@ -163,8 +245,8 @@ describe("launchJourneyRun", () => {
     ],
     [
       "Convex structured data",
-      '{"code":"ENV_MODEL_REQUIRED","message":"Environment \\"Prod\\" has no model to run."}',
-      'Environment "Prod" has no model to run.',
+      '{"code":"SPEND_CAP","message":"Organization spend cap reached."}',
+      "Organization spend cap reached.",
     ],
   ])(
     "unwraps a structured backend body (%s)",
@@ -179,6 +261,39 @@ describe("launchJourneyRun", () => {
       });
     }
   );
+
+  it("translates a no-model refusal to the same 409 Evals returns", async () => {
+    // The shape the Convex HTTP action actually sends: its blanket catch wraps
+    // the ConvexError data in an `invalid_request` 400. Swarm used to report
+    // that as a VALIDATION_ERROR while Evals — through the same translator —
+    // reports a 409 whose reason a caller can branch on.
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        400,
+        JSON.stringify({
+          ok: false,
+          code: "invalid_request",
+          error: {
+            code: "ENV_MODEL_REQUIRED",
+            message: 'Environment "Prod" has no model to run.',
+            details: { environmentId: "env-1", hostId: "host-1" },
+          },
+        }),
+        "nope"
+      )
+    );
+    await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+      status: 409,
+      code: "CONFLICT",
+      message: 'Environment "Prod" has no model to run.',
+      details: {
+        code: "ENV_MODEL_REQUIRED",
+        reason: "environment_model_required",
+        environmentId: "env-1",
+        hostId: "host-1",
+      },
+    });
+  });
 
   it("preserves structured backend details without trusting them as the message", async () => {
     createRunMock.mockRejectedValue(
@@ -385,6 +500,17 @@ describe("launchJourneyRun", () => {
     });
     await settle();
   });
+
+  it.each([undefined, "", "wave_9"])(
+    "bills a launch with wave %s by run kind",
+    async (waveId) => {
+      createRunMock.mockResolvedValue(created());
+      await launchJourneyRun(DEPS, { ...INPUT, waveId });
+      expect(createRunMock.mock.calls[0][2]).toMatchObject({
+        kind: waveId ? "swarm" : "user_testing",
+      });
+    },
+  );
 
   it("passes the wave id and environment fan-out through to the create", async () => {
     createRunMock.mockResolvedValue(created());

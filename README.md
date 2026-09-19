@@ -38,15 +38,22 @@ Clients like ChatGPT, Claude, and Cursor all read your server differently. MCPJa
 - **Cross-client evals**: Score agent behavior across 16 client configurations — ChatGPT, Claude, Cursor, Copilot, and more — to understand how your MCP integrations perform across all users. Track accuracy, latency, and tool-call performance over time.
 - **Security & reliability**: Automate conformance & behavior checks in CI/CD to catch regressions before they reach production.
 
+<img alt="MCPJam Playground trace view: every tool call, agent step, and JSON-RPC message in one timeline" src="./docs/images/readme-playground.png">
+
+<div align="center">
+
+_Trace view: every tool call, agent step, and JSON-RPC message in one timeline._
+
+</div>
+
 # 🔨 Features
 
 | Capability           | What it does                                                                                                                                                                                                        |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Playground**       | Cross-client chat interface that emulates UIs, tool calls, and skills (with full traces). OpenAI Apps SDK and MCP app UIs, text tools, and a Chrome DevTools-style widget emulator. [Read more](https://docs.mcpjam.com/inspector/playground) |
-| **Chat**             | Multi-server chat on frontier models for free, or bring your own API key. Compare up to 3 models side by side. [Read more](https://docs.mcpjam.com/inspector/chat)                                                  |
 | **OAuth Debugger**   | Visualize your OAuth & EMA requests step-by-step to find the source of errors. Guided MCP OAuth conformance checks across protocol versions 03-26, 06-18, 11-25, and 2026-07-28; DCR, client pre-registration, and CIMD. [Read more](https://docs.mcpjam.com/inspector/guided-oauth) |
 | **Server Debugging** | Manually run tools, resources, templates, prompts, and elicitation flows with full JSON-RPC logs.                                                                                                                  |
-| **Skills**           | Extend models with reusable behaviors in Chat and Playground. Local skills are read from your filesystem and never leave your machine; a project can also carry hosted skills, available on accounts where that is enabled. [Read more](https://docs.mcpjam.com/inspector/skills) |
+| **Skills**           | Extend models with reusable behaviors in Playground. Local skills are read from your filesystem and never leave your machine; a project can also carry hosted skills, available on accounts where that is enabled. [Read more](https://docs.mcpjam.com/inspector/skills) |
 | **Workspaces**       | Shared server groups with real-time team sync, so everyone tests the same config. [Read more](https://docs.mcpjam.com/inspector/workspaces)                                                                         |
 | **Evals**            | Test cases with expected tool calls, run across LLMs, with accuracy metrics over time. [Read more](https://docs.mcpjam.com/inspector/test-cases)                                                                    |
 | **CLI**              | Probe servers, run doctor checks, exercise OAuth, and list tools/resources/prompts from your terminal. [Read more](https://docs.mcpjam.com/cli/overview)                                                            |
@@ -64,19 +71,7 @@ Debug your server against a model using tool calls or in-panel chat, with Chat, 
 - Switch the emulator between Desktop, Tablet, and Mobile.
 - Test locale changes, CSP permissions, light/dark mode, hover & touch, and safe-area insets.
 
-<img alt="MCPJam Playground trace view: every tool call, agent step, and JSON-RPC message in one timeline" src="./docs/images/readme-playground.png">
-
-<div align="center">
-
-_Trace view: every tool call, agent step, and JSON-RPC message in one timeline._
-
-</div>
-
-## Chat
-
-Multi-server chat on frontier models for free, or bring your own API key. Chat, Trace, and Raw views; compare up to 3 models side by side and watch each server's token usage.
-
-<img alt="MCPJam Chat comparing frontier models side by side" src="./docs/images/readme-chat.png">
+<img alt="MCPJam comparing frontier models side by side" src="./docs/images/readme-chat.png">
 
 ## OAuth Debugger
 
@@ -92,7 +87,7 @@ Everything you need to test an MCP server by hand: run tools, resources, resourc
 
 ## Skills
 
-Use Skills in Chat and Playground to extend models with reusable behaviors. Local skills are read from your filesystem and never leave your machine; a project can also carry hosted skills, available on accounts where that is enabled. [Read more](https://docs.mcpjam.com/inspector/skills)
+Use Skills in Playground to extend models with reusable behaviors. Local skills are read from your filesystem and never leave your machine; a project can also carry hosted skills, available on accounts where that is enabled. [Read more](https://docs.mcpjam.com/inspector/skills)
 
 ## Workspaces
 

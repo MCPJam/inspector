@@ -1,3 +1,8 @@
+import { swarmVerdictValueLabel } from "@mcpjam/sdk/contract";
+import { swarmTargetCaseId } from "@mcpjam/sdk/contract";
+import type { GoalJudgePolicy } from "@/shared/judge-defaults";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, usePaginatedQuery } from "convex/react";
 import { Check, ChevronDown, Info, Layers } from "lucide-react";
@@ -27,6 +32,7 @@ import {
 import {
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
+  LaunchJourneyRunError,
   type JourneyRun,
   type JourneyRollup,
 } from "@/lib/swarm-api";
@@ -57,6 +63,8 @@ import { useRunSessionsContext } from "./run-sessions-context";
 // Structural view of the SwarmsTab `Journey` / `HostItem` shapes — kept local so
 // this module stays decoupled from the surface component (no import cycle).
 export type JourneyListJourney = {
+  createdByUserId?: string;
+  projectId?: string;
   _id: string;
   personaRefId: string;
   name?: string;
@@ -71,6 +79,7 @@ export type JourneyListJourney = {
    * declared here because `autoRun` decides whether the pre-run credit estimate
    * carries a judge line at all. */
   judgeConfig?: GoalJudgeConfig;
+  judgePolicy?: GoalJudgePolicy;
   /** Deterministic criteria. `null` from the wire when the journey has none. */
   rubric?: JourneyCriterion[] | null;
 };
@@ -91,10 +100,18 @@ const CELL_STATUS_META: Record<
   Exclude<JourneyCellOutcome, "none">,
   { label: string; dot: string; text: string }
 > = {
-  pass: { label: "Pass", dot: "bg-success", text: "text-success" },
-  fail: { label: "Fail", dot: "bg-destructive", text: "text-destructive" },
+  pass: {
+    label: swarmVerdictValueLabel("passed"),
+    dot: "bg-success",
+    text: "text-success",
+  },
+  fail: {
+    label: swarmVerdictValueLabel("failed"),
+    dot: "bg-destructive",
+    text: "text-destructive",
+  },
   part: {
-    label: "Partial",
+    label: swarmVerdictValueLabel("inconclusive"),
     dot: "bg-amber-500",
     text: "text-amber-600 dark:text-amber-400",
   },
@@ -106,7 +123,8 @@ const CELL_STATUS_META: Record<
 };
 
 /** Trend-segment fills — same palette as the evals RunTrendStrip. */
-const SEGMENT_CLASS: Record<Exclude<JourneyCellOutcome, "none">, string> = {
+const SEGMENT_CLASS: Record<JourneyCellOutcome, string> = {
+  none: "bg-muted",
   pass: "bg-success/70",
   fail: "bg-destructive/70",
   part: "bg-amber-500/70 dark:bg-amber-400/70",
@@ -128,7 +146,7 @@ export function journeyTargetColumns(
   hosts: JourneyListHost[],
   latestRun?: JourneyRun | null,
   environments?: ProjectEnvironmentView[],
-  environmentsEnabled = true
+  environmentsEnabled = true,
 ): SwarmTargetColumn[] {
   // `nameOf` returns undefined for a host no longer in the project so
   // `buildSwarmRunTargets` can fall back to the RUN SNAPSHOT's own hostName
@@ -158,19 +176,26 @@ export function journeyTargetColumns(
  * pre-3A historical rows and fresh legacy rows key identically). */
 export function journeyHostOutcome(
   run: JourneyRun,
-  targetKey: string
+  targetKey: string,
 ): JourneyCellOutcome {
-  const entry = run.hostSummaries.find(
-    (h) => summaryTargetKey(h) === targetKey
+  if (run.status === "running" || run.verdictSummary?.status === "pending")
+    return "running";
+  if (run.verdictSummary?.status !== "decided") return "none";
+  const decision = run.verdictSummary.decision.cases.find(
+    (c) =>
+      c.caseId ===
+      swarmTargetCaseId(
+        run.snapshot?.hosts?.find((h) => summaryTargetKey(h) === targetKey)
+          ?.targetId ?? targetKey,
+      ),
   );
-  if (!entry || entry.total === 0) {
-    return run.status === "running" ? "running" : "none";
-  }
-  const done = entry.succeeded + entry.failed + entry.rateLimited;
-  if (run.status === "running" && done < entry.total) return "running";
-  if (entry.succeeded === entry.total) return "pass";
-  if (entry.succeeded === 0) return "fail";
-  return "part";
+  return decision?.verdict === "passed"
+    ? "pass"
+    : decision?.verdict === "failed"
+      ? "fail"
+      : decision?.verdict === "inconclusive"
+        ? "part"
+        : "none";
 }
 
 function hostSummaryFor(run: JourneyRun, targetKey: string) {
@@ -198,7 +223,7 @@ export function JourneyList({
   isAuthenticated: boolean;
   projectId: string;
   onLaunch: (
-    journeyId: string
+    journeyId: string,
   ) => Promise<
     { status: "launched"; runId?: string } | { status: "already_launching" }
   >;
@@ -208,7 +233,7 @@ export function JourneyList({
   onOpenRun: (
     journey: JourneyListJourney,
     run: JourneyRun,
-    targetKey: string | null
+    targetKey: string | null,
   ) => void;
   onCloseRun: () => void;
   /** Live project environments (flag-gated; undefined when the flag is off). */
@@ -261,7 +286,7 @@ function JourneyBlock({
   projectId: string;
   serverAttachments: ServerAttachment[];
   onLaunch: (
-    journeyId: string
+    journeyId: string,
   ) => Promise<
     { status: "launched"; runId?: string } | { status: "already_launching" }
   >;
@@ -271,7 +296,7 @@ function JourneyBlock({
   onOpenRun: (
     journey: JourneyListJourney,
     run: JourneyRun,
-    targetKey: string | null
+    targetKey: string | null,
   ) => void;
   onCloseRun: () => void;
   environments?: ProjectEnvironmentView[];
@@ -280,11 +305,11 @@ function JourneyBlock({
   const { results: runs } = usePaginatedQuery(
     SWARM_QUERIES.listJourneyRuns as any,
     { journeyRefId: journey._id } as any,
-    { initialNumItems: DEFAULT_PAGE_SIZE }
+    { initialNumItems: DEFAULT_PAGE_SIZE },
   );
   const rollup = useQuery(
     SWARM_QUERIES.journeyRollup as any,
-    { journeyRefId: journey._id } as any
+    { journeyRefId: journey._id } as any,
   ) as JourneyRollup | undefined;
 
   const [launching, setLaunching] = useState(false);
@@ -303,13 +328,13 @@ function JourneyBlock({
         hosts,
         latestRun,
         environments,
-        environmentsEnabled
+        environmentsEnabled,
       ),
-    [journey, hosts, latestRun, environments, environmentsEnabled]
+    [journey, hosts, latestRun, environments, environmentsEnabled],
   );
   const serverGroupName = journey.serverAttachmentId
-    ? serverAttachments.find((a) => a._id === journey.serverAttachmentId)
-        ?.name ?? null
+    ? (serverAttachments.find((a) => a._id === journey.serverAttachmentId)
+        ?.name ?? null)
     : null;
   const configHint = `${journey.config.sessionsPerTarget}/host · ${journey.config.maxTurns} turns`;
   // Cost-relevant journey config, so an edit re-prices an already-open estimate
@@ -355,6 +380,10 @@ function JourneyBlock({
       if (result.status === "already_launching") return;
       toast.success("Goal run started");
     } catch (e) {
+      // A model limit is owned by its dialog, which carries the same sentence
+      // plus the actions that clear it. Repeating it inline under the goal
+      // would say the same thing twice with nothing to act on.
+      if (e instanceof LaunchJourneyRunError && e.limitDialogRaised) return;
       setLaunchError(e instanceof Error ? e.message : "Failed to start run");
     } finally {
       setLaunching(false);
@@ -373,7 +402,7 @@ function JourneyBlock({
     <div
       className={cn(
         "rounded-lg border px-3 py-2.5",
-        selection ? "border-primary/50" : "border-border/60"
+        selection ? "border-primary/50" : "border-border/60",
       )}
     >
       <div className="flex items-start justify-between gap-3">
@@ -405,7 +434,7 @@ function JourneyBlock({
             <span
               className={cn(
                 "rounded-full px-1.5 py-px text-[10px] font-medium capitalize",
-                runStatusChipClass(journeyRunDisplayStatus(latestRun))
+                runStatusChipClass(journeyRunDisplayStatus(latestRun)),
               )}
             >
               {journeyRunDisplayStatus(latestRun).replace(/_/g, " ")}
@@ -423,6 +452,7 @@ function JourneyBlock({
           <>
             <span aria-hidden>·</span>
             <JourneyEnvironmentsEditor
+              projectId={projectId}
               journey={journey}
               environments={environments ?? []}
             />
@@ -494,14 +524,6 @@ function JourneyBlock({
               run: r,
               outcome: journeyHostOutcome(r, col.key),
             }))
-            .filter(
-              (
-                p
-              ): p is {
-                run: JourneyRun;
-                outcome: Exclude<JourneyCellOutcome, "none">;
-              } => p.outcome !== "none"
-            )
             .slice(-MAX_TREND_SEGMENTS);
           const cellSelected =
             selection?.targetKey === col.key &&
@@ -514,7 +536,7 @@ function JourneyBlock({
                 "flex min-h-[4rem] w-full flex-col items-start justify-center gap-1 rounded-md border px-2.5 py-2 text-left transition-colors",
                 cellSelected
                   ? "border-primary bg-primary/5"
-                  : "border-border/50 bg-background/60"
+                  : "border-border/50 bg-background/60",
               )}
             >
               <button
@@ -543,12 +565,12 @@ function JourneyBlock({
                   <span
                     className={cn(
                       "text-[11px] font-semibold tabular-nums",
-                      meta?.text ?? "text-muted-foreground"
+                      meta?.text ?? "text-muted-foreground",
                     )}
                   >
                     {summary
                       ? `${summary.succeeded}/${summary.total} ok`
-                      : meta?.label ?? "No data"}
+                      : (meta?.label ?? "No data")}
                   </span>
                 </span>
               </button>
@@ -567,23 +589,23 @@ function JourneyBlock({
                       // would announce a deliberate stop as a failure here
                       // while the row chip beside it says "canceled".
                       aria-label={`Open run ${journeyRunDisplayStatus(
-                        run
+                        run,
                       )} (${runSummaryLine(run)}) on ${col.label}`}
                       title={`${runNumberLabel(
                         runCount,
-                        typedRuns.indexOf(run)
+                        typedRuns.indexOf(run),
                       )} · ${journeyRunDisplayStatus(run).replace(
                         /_/g,
-                        " "
-                      )} · ${runSummaryLine(
-                        run
-                      )} · ${formatJourneyRelativeTime(run.createdAt)}`}
+                        " ",
+                      )} · ${runSummaryLine(run)} · ${formatJourneyRelativeTime(
+                        run.createdAt,
+                      )}`}
                       onClick={() => openRun(run, col.key)}
                       className={cn(
                         "min-w-[4px] flex-1 rounded-[2px] outline-none transition-opacity hover:opacity-70 focus-visible:ring-2 focus-visible:ring-ring",
                         SEGMENT_CLASS[segOutcome],
                         selection?.runId === run._id &&
-                          "ring-1 ring-primary ring-offset-1 ring-offset-background"
+                          "ring-1 ring-primary ring-offset-1 ring-offset-background",
                       )}
                     />
                   ))}
@@ -637,7 +659,7 @@ function JourneyGradingEditor({
   const [open, setOpen] = useState(false);
   const [rubric, setRubric] = useState<JourneyCriterion[]>([]);
   const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
-    undefined
+    undefined,
   );
   const [saving, setSaving] = useState(false);
 
@@ -675,7 +697,7 @@ function JourneyGradingEditor({
       toast.success("Grading updated — applies to future runs");
       setOpen(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to update grading");
+      toast.error(getBillingErrorMessage(e, "Failed to update grading"));
     } finally {
       setSaving(false);
     }
@@ -692,7 +714,7 @@ function JourneyGradingEditor({
         >
           <span className="min-w-0 truncate">
             {criteriaCount > 0
-              ? `${criteriaCount} ${criteriaCount === 1 ? "check" : "checks"}`
+              ? `${criteriaCount} ${criteriaCount === 1 ? "evaluator" : "evaluators"}`
               : "Grading"}
           </span>
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
@@ -704,31 +726,38 @@ function JourneyGradingEditor({
         sideOffset={4}
         onCloseAutoFocus={(e) => e.preventDefault()}
       >
-        <JudgesSection
-          chrome="bare"
-          value={judgeConfig}
-          onChange={setJudgeConfig}
-          availableModels={availableModels}
-          bareAutoGradeBlurb="Grade every session automatically against this goal. Uses credits."
-          bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
-        />
-        <div className="mt-3 border-t border-border/40 pt-3">
-          <JourneyRubricEditor value={rubric} onChange={setRubric} />
-        </div>
-        <div className="mt-2 flex items-center justify-between gap-2 border-t border-border/40 pt-2">
-          <p className="text-[10px] text-muted-foreground">
-            Applies to future runs — finished runs keep their launch snapshot.
-          </p>
-          <Button
-            type="button"
-            size="sm"
-            className="h-7 px-2.5 text-xs"
-            disabled={saving || !rubricValid}
-            onClick={() => void save()}
-          >
-            Save
-          </Button>
-        </div>
+        <SharedSettingsGate
+          projectId={projectId}
+          creatorId={journey.createdByUserId}
+          resource="swarm settings"
+        >
+          <JudgesSection
+            policy={journey.judgePolicy}
+            chrome="bare"
+            value={judgeConfig}
+            onChange={setJudgeConfig}
+            availableModels={availableModels}
+            bareAutoGradeBlurb="The goal completion judge grades every session against this goal, and its verdict decides whether the session passed. Uses credits."
+            bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
+          />
+          <div className="mt-3 border-t border-border/40 pt-3">
+            <JourneyRubricEditor value={rubric} onChange={setRubric} />
+          </div>
+          <div className="mt-2 flex items-center justify-between gap-2 border-t border-border/40 pt-2">
+            <p className="text-[10px] text-muted-foreground">
+              Applies to future runs — finished runs keep their launch snapshot.
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 px-2.5 text-xs"
+              disabled={saving || !rubricValid}
+              onClick={() => void save()}
+            >
+              Save
+            </Button>
+          </div>
+        </SharedSettingsGate>
       </PopoverContent>
     </Popover>
   );
@@ -743,11 +772,13 @@ function JourneyGradingEditor({
  * stale. Clearing is blocked when no valid compat host resolves.
  */
 function JourneyEnvironmentsEditor({
+  projectId,
   journey,
   environments,
 }: {
   journey: JourneyListJourney;
   environments: ProjectEnvironmentView[];
+  projectId: string;
 }) {
   const updateJourney = useMutation("journeys:updateJourney" as any);
   const [open, setOpen] = useState(false);
@@ -756,7 +787,7 @@ function JourneyEnvironmentsEditor({
 
   const current = useMemo(
     () => journey.environmentIds ?? [],
-    [journey.environmentIds]
+    [journey.environmentIds],
   );
   // Seed ONLY on the closed→open transition. `journey` is a live Convex
   // subscription, so `current` gets a new identity whenever anything on the
@@ -777,12 +808,12 @@ function JourneyEnvironmentsEditor({
   // user can remove it (a saved journey can't target a retired environment).
   const liveEnvironments = useMemo(
     () => environments.filter((e) => !e.archivedAt),
-    [environments]
+    [environments],
   );
   const orphanDraftIds = useMemo(
     () =>
       draft.filter((id) => !environments.some((e) => e.environmentId === id)),
-    [draft, environments]
+    [draft, environments],
   );
 
   const toggle = (environmentId: string) =>
@@ -791,7 +822,7 @@ function JourneyEnvironmentsEditor({
         ? prev.filter((id) => id !== environmentId)
         : prev.length >= MAX_ENVIRONMENTS_PER_JOURNEY
         ? prev
-        : [...prev, environmentId]
+        : [...prev, environmentId],
     );
 
   const dirty =
@@ -801,7 +832,7 @@ function JourneyEnvironmentsEditor({
     const payload = buildEnvJourneyPayload(draft, environments);
     if (!payload) {
       toast.error(
-        "Pick at least one environment that resolves to a valid client."
+        "Pick at least one environment that resolves to a valid client.",
       );
       return;
     }
@@ -815,9 +846,7 @@ function JourneyEnvironmentsEditor({
       toast.success("Goal environments updated");
       setOpen(false);
     } catch (e) {
-      toast.error(
-        e instanceof Error ? e.message : "Failed to update environments"
-      );
+      toast.error(getBillingErrorMessage(e, "Failed to update environments"));
     } finally {
       setSaving(false);
     }
@@ -828,7 +857,7 @@ function JourneyEnvironmentsEditor({
     if (!payload) {
       toast.error(
         "Can't switch to clients: none of this goal's environments " +
-          "resolves to a valid client. Select clients manually instead."
+          "resolves to a valid client. Select clients manually instead.",
       );
       return;
     }
@@ -836,7 +865,7 @@ function JourneyEnvironmentsEditor({
       !window.confirm(
         "Switch this goal back to clients? Environment server-group " +
           "overrides and environment skills stop applying; future runs use " +
-          "those clients' own defaults."
+          "those clients' own defaults.",
       )
     ) {
       return;
@@ -851,9 +880,7 @@ function JourneyEnvironmentsEditor({
       toast.success("Goal switched back to clients");
       setOpen(false);
     } catch (e) {
-      toast.error(
-        e instanceof Error ? e.message : "Failed to update environments"
-      );
+      toast.error(getBillingErrorMessage(e, "Failed to update environments"));
     } finally {
       setSaving(false);
     }
@@ -861,8 +888,8 @@ function JourneyEnvironmentsEditor({
 
   const label =
     current.length === 1
-      ? environments.find((e) => e.environmentId === current[0])?.name ??
-        "1 environment"
+      ? (environments.find((e) => e.environmentId === current[0])?.name ??
+        "1 environment")
       : `${current.length} environments`;
 
   return (
@@ -885,101 +912,107 @@ function JourneyEnvironmentsEditor({
         sideOffset={4}
         onCloseAutoFocus={(e) => e.preventDefault()}
       >
-        <div className="space-y-0.5" role="group" aria-label="Environments">
-          <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Environments
-          </p>
-          {liveEnvironments.length === 0 && orphanDraftIds.length === 0 ? (
-            <p className="px-1 py-1.5 text-xs text-muted-foreground">
-              No environments in this project.
+        <SharedSettingsGate
+          projectId={projectId}
+          creatorId={journey.createdByUserId}
+          resource="swarm settings"
+        >
+          <div className="space-y-0.5" role="group" aria-label="Environments">
+            <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Environments
             </p>
-          ) : (
-            <>
-              {liveEnvironments.map((env) => {
-                const selected = draft.includes(env.environmentId);
-                const ordinal = draft.indexOf(env.environmentId);
-                const disabled =
-                  !selected && draft.length >= MAX_ENVIRONMENTS_PER_JOURNEY;
-                return (
+            {liveEnvironments.length === 0 && orphanDraftIds.length === 0 ? (
+              <p className="px-1 py-1.5 text-xs text-muted-foreground">
+                No environments in this project.
+              </p>
+            ) : (
+              <>
+                {liveEnvironments.map((env) => {
+                  const selected = draft.includes(env.environmentId);
+                  const ordinal = draft.indexOf(env.environmentId);
+                  const disabled =
+                    !selected && draft.length >= MAX_ENVIRONMENTS_PER_JOURNEY;
+                  return (
+                    <button
+                      key={env.environmentId}
+                      type="button"
+                      role="checkbox"
+                      aria-checked={selected}
+                      disabled={disabled}
+                      onPointerDown={(e) => e.preventDefault()}
+                      onClick={() => toggle(env.environmentId)}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded py-1.5 pl-2 pr-2 text-left text-sm",
+                        "hover:bg-accent hover:text-accent-foreground",
+                        selected && "bg-accent/50",
+                        disabled && "cursor-not-allowed opacity-50",
+                      )}
+                    >
+                      <Check
+                        className={cn(
+                          "size-3.5 shrink-0",
+                          selected ? "opacity-100" : "opacity-0",
+                        )}
+                      />
+                      <span className="min-w-0 flex-1 truncate">
+                        <span className="font-medium">{env.name}</span>
+                      </span>
+                      {selected ? (
+                        <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
+                          {ordinal + 1}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+                {orphanDraftIds.map((id) => (
                   <button
-                    key={env.environmentId}
+                    key={id}
                     type="button"
                     role="checkbox"
-                    aria-checked={selected}
-                    disabled={disabled}
+                    aria-checked
                     onPointerDown={(e) => e.preventDefault()}
-                    onClick={() => toggle(env.environmentId)}
+                    onClick={() => toggle(id)}
                     className={cn(
-                      "flex w-full items-center gap-2 rounded py-1.5 pl-2 pr-2 text-left text-sm",
+                      "flex w-full items-center gap-2 rounded bg-accent/50 py-1.5 pl-2 pr-2 text-left text-sm",
                       "hover:bg-accent hover:text-accent-foreground",
-                      selected && "bg-accent/50",
-                      disabled && "cursor-not-allowed opacity-50"
                     )}
                   >
-                    <Check
-                      className={cn(
-                        "size-3.5 shrink-0",
-                        selected ? "opacity-100" : "opacity-0"
-                      )}
-                    />
+                    <Check className="size-3.5 shrink-0 opacity-100" />
                     <span className="min-w-0 flex-1 truncate">
-                      <span className="font-medium">{env.name}</span>
-                    </span>
-                    {selected ? (
-                      <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
-                        {ordinal + 1}
+                      <span className="font-medium">Retired environment</span>
+                      <span className="ml-1 text-[10px] text-muted-foreground">
+                        (unavailable — remove)
                       </span>
-                    ) : null}
-                  </button>
-                );
-              })}
-              {orphanDraftIds.map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  role="checkbox"
-                  aria-checked
-                  onPointerDown={(e) => e.preventDefault()}
-                  onClick={() => toggle(id)}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded bg-accent/50 py-1.5 pl-2 pr-2 text-left text-sm",
-                    "hover:bg-accent hover:text-accent-foreground"
-                  )}
-                >
-                  <Check className="size-3.5 shrink-0 opacity-100" />
-                  <span className="min-w-0 flex-1 truncate">
-                    <span className="font-medium">Retired environment</span>
-                    <span className="ml-1 text-[10px] text-muted-foreground">
-                      (unavailable — remove)
                     </span>
-                  </span>
-                  <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
-                    {draft.indexOf(id) + 1}
-                  </span>
-                </button>
-              ))}
-            </>
-          )}
-        </div>
-        <div className="mt-2 flex items-center justify-between gap-2 border-t border-border/40 pt-2">
-          <button
-            type="button"
-            className="text-[11px] text-muted-foreground hover:text-destructive hover:underline"
-            disabled={saving}
-            onClick={() => void clearToLegacy()}
-          >
-            Use clients instead
-          </button>
-          <Button
-            type="button"
-            size="sm"
-            className="h-7 px-2.5 text-xs"
-            disabled={saving || !dirty || draft.length === 0}
-            onClick={() => void save()}
-          >
-            Save
-          </Button>
-        </div>
+                    <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
+                      {draft.indexOf(id) + 1}
+                    </span>
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+          <div className="mt-2 flex items-center justify-between gap-2 border-t border-border/40 pt-2">
+            <button
+              type="button"
+              className="text-[11px] text-muted-foreground hover:text-destructive hover:underline"
+              disabled={saving}
+              onClick={() => void clearToLegacy()}
+            >
+              Use clients instead
+            </button>
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 px-2.5 text-xs"
+              disabled={saving || !dirty || draft.length === 0}
+              onClick={() => void save()}
+            >
+              Save
+            </Button>
+          </div>
+        </SharedSettingsGate>
       </PopoverContent>
     </Popover>
   );
