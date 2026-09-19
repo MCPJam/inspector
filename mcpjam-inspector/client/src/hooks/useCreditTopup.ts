@@ -159,7 +159,6 @@ export type CreditTopupSource = "chat_banner" | "billing_page" | "limit_modal";
 interface StartCheckoutInput {
   organizationId: string;
   packageId: string;
-  priceCents: number | null;
   chatSessionId: string;
   lastUserMessage: string;
   returnUrl?: string;
@@ -203,7 +202,6 @@ export function useCreditTopup() {
     async ({
       organizationId,
       packageId,
-      priceCents,
       chatSessionId,
       lastUserMessage,
       returnUrl,
@@ -227,9 +225,6 @@ export function useCreditTopup() {
         } as any);
         track("credit_topup_checkout_started", {
           location: "credit_topup",
-          organization_id: organizationId,
-          package_id: packageId,
-          price_cents: priceCents,
           source,
           has_resume_context: Boolean(chatSessionId && lastUserMessage),
           has_return_url: Boolean(returnUrl),
@@ -257,11 +252,7 @@ export function useCreditTopup() {
         setError(message);
         track("credit_topup_checkout_failed", {
           location: "credit_topup",
-          organization_id: organizationId,
-          package_id: packageId,
-          price_cents: priceCents,
           error_kind: errorKind,
-          error_name: err instanceof Error ? err.name : "unknown",
           source,
         });
         throw err;

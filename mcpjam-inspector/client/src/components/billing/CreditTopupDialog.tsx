@@ -69,11 +69,8 @@ export function CreditTopupDialog({
     track("credit_topup_dialog_shown", {
       location: "credit_topup",
       source,
-      organization_id: organizationId,
       organization_resolved: Boolean(organizationId),
       package_count: presets?.length ?? 0,
-      default_package_id: presets?.[0]?.packageId ?? null,
-      default_price_cents: presets?.[0]?.priceCents ?? null,
       packages_available: Boolean(presets?.length),
       has_resume_context: Boolean(chatSessionId && lastUserMessage),
     });
@@ -101,10 +98,8 @@ export function CreditTopupDialog({
     track("credit_topup_dialog_dismissed", {
       location: "credit_topup",
       source,
-      organization_id: organizationId,
       dismissal_method: dismissalMethod,
-      selected_package_id: selectedPreset?.packageId ?? null,
-      selected_price_cents: selectedPreset?.priceCents ?? null,
+      had_selection: selectedPreset !== undefined,
     });
   };
 
@@ -116,9 +111,6 @@ export function CreditTopupDialog({
     track("credit_topup_package_selected", {
       location: "credit_topup",
       source,
-      organization_id: organizationId,
-      package_id: preset.packageId,
-      price_cents: preset.priceCents,
       package_index: packageIndex,
       package_count: presets?.length ?? 0,
     });
@@ -130,7 +122,6 @@ export function CreditTopupDialog({
       await startCheckout({
         organizationId,
         packageId: selectedPreset.packageId,
-        priceCents: selectedQuote?.priceCents ?? null,
         chatSessionId,
         lastUserMessage,
         source,

@@ -23,7 +23,6 @@ export interface AllowanceLimitDialogViewProps {
   /** Free-plan admins must ask an owner to upgrade. */
   showRequestUpgrade?: boolean;
   requestRecipients: UpgradeRequestRecipient[];
-  organizationId?: string | null;
   organizationName: string;
   teamName: string;
   onLearnMore?: () => void;
@@ -42,7 +41,6 @@ export function AllowanceLimitDialogView({
   isKnownNonManager,
   showRequestUpgrade = false,
   requestRecipients,
-  organizationId,
   organizationName,
   teamName,
   onLearnMore,
@@ -86,7 +84,6 @@ export function AllowanceLimitDialogView({
               origin="credits"
               limitKind="credits"
               requestAction={isFreePlan ? "upgrade" : "buyCredits"}
-              organizationId={organizationId}
             />
             {showRequestUpgrade && (
               <Button variant="link" onClick={onLearnMore}>
