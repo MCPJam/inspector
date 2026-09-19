@@ -7,7 +7,6 @@ import {
 } from "./swarm-findings-wire-fixtures";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReactNode } from "react";
 
 import type {
   SwarmOverview,
@@ -130,24 +129,12 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
-// The Insights/Sessions surfaces are heavy and not under test — stub them,
-// keeping the run-insights helpers the derivation module reuses.
+// The Insights/Sessions surfaces are heavy and not under test — stub them.
+// (`run-insights` is gone since #5271; `signalSentence` lives beside the
+// derivation module now and needs no stub.)
 vi.mock("@/components/shared/usage-insights/InsightsWorkbench", () => ({
   InsightsWorkbench: () => <div data-testid="stub-insights-workbench" />,
 }));
-vi.mock("@/components/shared/usage-insights/run-insights", async (orig) => {
-  const actual =
-    await orig<
-      typeof import("@/components/shared/usage-insights/run-insights")
-    >();
-  return {
-    ...actual,
-    RunInsightsProvider: ({ children }: { children?: ReactNode }) => (
-      <>{children}</>
-    ),
-    RunInsightsRecommendations: () => null,
-  };
-});
 vi.mock("@/components/shared/actionable-insights/actionable-findings", () => ({
   ActionableFindings: ({ surface }: { surface: { runId: string } }) => (
     <div data-testid="actionable-findings-mount" data-run-id={surface.runId} />

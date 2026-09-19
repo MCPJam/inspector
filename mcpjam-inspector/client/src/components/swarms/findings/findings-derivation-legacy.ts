@@ -17,7 +17,7 @@ import type {
   SwarmWaveSignalCandidate,
   SwarmWaveSignals,
 } from "@/lib/swarm-api";
-import { signalSentence } from "@/components/shared/usage-insights/run-insights";
+import { signalSentence } from "@/components/swarms/findings/signal-sentence";
 import {
   findingName,
   findingSeverity,
