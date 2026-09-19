@@ -91,8 +91,10 @@ so results respect the caller's project access.
 | `get_eval_iteration_trace` | Fetch the full trace for one eval iteration: the complete message history plus expected-vs-actual tool-call analysis. | — |
 | `get_eval_run_steps` | Fetch one row per authored test step for an eval iteration, in order: each step's status (ok / fail / skipped / pending), the reason, and evidence (screenshot/video URLs, widget tool calls). | — |
 | `cancel_eval_run` | Cancel an in-flight eval run. | — |
+| `backtest_eval_run` | Preview draft assertions against stored evidence; reports missing capture and never changes saved results. | — |
+| `backtest_eval_run_judge` | Preview a draft judge rubric against recorded evidence. Spends model budget without changing saved verdicts; supports continuation. | — |
 | `request_eval_run_judge` | Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget; read the results from `get_eval_run`'s `judges.goalCompletion`. | — |
-| `propose_eval_description_rewrite` | Draft a rewritten description for one tool from a finished run's failed trials. SPENDS a small model budget; the developer applies the diff in their own server, MCPJam never edits it. | — |
+| `propose_eval_description_rewrite` | Draft a rewritten description for one tool from a finished run's failed trials. Included with MCPJam, so no credits are consumed; the developer applies the diff in their own server, MCPJam never edits it. | — |
 | `start_eval_description_experiment` | Replay the affected cases twice, original description versus the proposed rewrite, with the model, host and grader held still. SPENDS eval-iteration credits up to the stated cap; read the report from `get_eval_description_experiment`. | — |
 | `get_eval_description_experiment` | Read a description experiment: its proposal diff, the two arm runs, and the report-only result — pass rates per arm, the interval on the difference, regressions on untouched cases, and whether the evidence was controlled or only reproducible. | — |
 | `list_eval_github_repos` | List the repositories whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach. | — |
@@ -127,13 +129,13 @@ so results respect the caller's project access.
 | `list_secrets` | List the project's credentials as metadata only — name, delivery mode, host binding, sharing. No value is ever returned. | — |
 | `get_secret` | One secret's metadata: how it is delivered, where it is bound, when it was last handed to a run. Never its value. | — |
 | `delete_secret` | Delete a stored credential. Hard: the row and the encrypted value both go, and delivery stops. Does not revoke the key at its provider. | — |
-| `generate_personas` | Draft candidate personas with a model, grounded in what the project's servers do. Saves nothing; spends. | — |
+| `generate_personas` | Draft candidate personas with a model, grounded in what the project's servers do. Saves nothing; included with MCPJam, so no credits are consumed. | — |
 | `list_journeys` | List the project's journeys — a persona, a goal, and the environments to pursue it against. | — |
 | `get_journey` | Get one journey in full, including the execution config that determines how many sessions a run produces. | — |
 | `create_journey` | Author a journey. Creating does not run it. | — |
 | `update_journey` | Edit a journey. A run already in flight keeps the config it launched with. | — |
 | `archive_journey` | Take a journey off the roster. Its runs, sessions and scorecards stay readable. | — |
-| `generate_journeys` | Draft candidate journeys for a persona with a model. Saves nothing; spends. | — |
+| `generate_journeys` | Draft candidate journeys for a persona with a model. Saves nothing; included with MCPJam, so no credits are consumed. | — |
 | `list_journey_runs` | List a journey's runs, newest first. | — |
 | `get_journey_run` | Get one journey run: status, per-target rollups, and per-session attempt records. This is what to poll after launching. | — |
 | `list_journey_run_sessions` | List the chat sessions a journey run produced, with readiness, goal scores and a first-message preview. | — |
@@ -150,7 +152,7 @@ so results respect the caller's project access.
 | `dismiss_swarm_finding` | Mark a finding as not worth acting on. Its lifecycle keeps updating underneath. | — |
 | `undismiss_swarm_finding` | Bring a dismissed finding back into the active list. | — |
 | `get_wave_insights` | The model's analysis of a whole wave, if one has been requested. Poll after requesting. | — |
-| `request_wave_insights` | Ask a model to analyze a whole wave. Spends against the organization's shared daily insights budget. | — |
+| `request_wave_insights` | Ask a model to analyze a whole wave. No credits are consumed; it counts against the organization's shared daily insight quota. | — |
 | `cancel_wave_insights` | Stop an in-flight insights generation — the recovery path for a wave stuck pending. | — |
 | `publish_scenario` | Publish a project environment for user testing, returning its share link and access mode. | — |
 | `unpublish_scenario` | Take a live user-testing scenario down. Every guest session on it dies with it. | — |
@@ -163,7 +165,7 @@ so results respect the caller's project access.
 | `get_user_testing_signals` | The scenario's live analysis window, and the windowId its insights are keyed by. | — |
 | `get_user_testing_insights` | The model's analysis of one analysis window, if one has been requested. | — |
 | `update_user_testing_scenario` | Rename a scenario, or change who may open its share link. Send `mode` on its own — identity and exposure are separate operations. | — |
-| `request_user_testing_insights` | Ask a model to analyze the current window. Spends against the organization's shared daily insights budget. | — |
+| `request_user_testing_insights` | Ask a model to analyze the current window. No credits are consumed; it counts against the organization's shared daily insight quota. | — |
 | `cancel_user_testing_insights` | Stop an in-flight insights generation — the recovery path for a window stuck pending. | — |
 | `dismiss_user_testing_finding` | Mark a finding as not worth acting on. | — |
 | `undismiss_user_testing_finding` | Bring a dismissed finding back into the active list. | — |
@@ -218,9 +220,10 @@ require the project the run belongs to — `run_eval_suite` and
 `list_eval_suite_runs` return it, so the loop is self-contained.
 The eval authoring/editing tools are writes, annotated `readOnlyHint: false`
 (the deletes and `cancel_eval_run` additionally announce `destructiveHint`) so
-hosts can gate them. Three of them SPEND: `run_eval_suite` and `run_eval_case`
-start LLM iterations, and `generate_eval_cases` calls an authoring model — all
-against the organization's credits. By default the
+hosts can gate them. Two of them SPEND: `run_eval_suite` and `run_eval_case`
+start LLM iterations against the organization's credits. `generate_eval_cases`
+also calls a model, but that one is on MCPJam — no credits are consumed; it
+counts against the organization's daily generation quota. By default the
 platform connects the suite's saved server selection — the exact set the run
 snapshot references; `servers` is an explicit override. Naming a disabled
 server runs it (the platform authorizes eval runs by project membership; the

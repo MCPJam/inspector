@@ -1,3 +1,5 @@
+import { capRequestPayloadsForPersist } from "../../utils/live-chat-trace-stream";
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ModelMessage } from "ai";
 import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceVideoMeta } from "@/shared/eval-trace";
@@ -71,6 +73,7 @@ import {
   buildSelectionToolCatalog,
   type SelectionCatalogToolLike,
 } from "./selection-tool-catalog.js";
+import type { AgentActivityAssessment } from "./agent-activity.js";
 
 /**
  * The canonical lifecycle vocabulary, imported rather than re-spelled: this
@@ -380,6 +383,7 @@ function narrowEvaluation(
  */
 function buildScoreMetadata(args: {
   mode: GradingEngineMode;
+  agentActivity?: AgentActivityAssessment;
   predicateResults?: unknown[];
   evaluation: Record<string, unknown>;
   matchOptions?: Record<string, unknown>;
@@ -404,6 +408,7 @@ function buildScoreMetadata(args: {
     evaluation: narrowEvaluation(args.evaluation),
     ...(args.matchOptions ? { matchOptions: args.matchOptions } : {}),
     ...(args.isNegativeTest ? { isNegativeTest: true } : {}),
+    ...(args.agentActivity ? { agentActivity: args.agentActivity } : {}),
     // The judge has not run yet on this pass; its row arrives in the second.
   });
   if (scores.length === 0) {
@@ -596,6 +601,8 @@ function buildSelectionToolCatalogMetadata(args: {
 export function buildIterationFinishParams(args: {
   iterationId: string | undefined;
   passed: boolean;
+  /** @see assessAgentActivity */
+  agentActivity?: AgentActivityAssessment;
   /** `evaluation` drives both `toolsCalled` and `buildIterationMetadata`. */
   evaluation: { toolsCalled: ToolCallRecord[] } & Record<string, unknown>;
   usage: UsageTotals;
@@ -604,6 +611,7 @@ export function buildIterationFinishParams(args: {
   modelId?: string;
   systemPrompt?: string;
   spans?: EvalTraceSpan[];
+  requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   prompts?: PromptTraceSummary[];
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   widgetRenderObservations?: RunnerWidgetRenderObservation[];
@@ -671,7 +679,8 @@ export function buildIterationFinishParams(args: {
    * blocked run for real the second time.
    */
   toolPolicy?: EvalSuiteFileToolPolicy;
-  iterationMetadataBase: Record<string, string | number | boolean>;
+  // Metadata includes structured timeout and experiment attribution.
+  iterationMetadataBase: Record<string, unknown>;
   hostPolicy?: HostExecutionPolicy;
   toolSignals?: ToolExposureSignals;
   /**
@@ -749,6 +758,7 @@ export function buildIterationFinishParams(args: {
     modelId,
     systemPrompt,
     spans,
+    requestPayloads,
     prompts,
     widgetSnapshots,
     widgetRenderObservations,
@@ -808,6 +818,7 @@ export function buildIterationFinishParams(args: {
     evaluation,
     passed,
     stageMetadata,
+    ...(args.agentActivity ? { agentActivity: args.agentActivity } : {}),
     ...(args.runId ? { runId: args.runId } : {}),
     ...(iterationId ? { iterationId } : {}),
     ...(scoreMatchOptions ? { matchOptions: scoreMatchOptions } : {}),
@@ -917,6 +928,7 @@ export function buildIterationFinishParams(args: {
     ...(modelId ? { modelId } : {}),
     ...(systemPrompt ? { systemPrompt } : {}),
     ...(persistedSpans.length ? { spans: persistedSpans } : {}),
+    ...(requestPayloads?.length ? { requestPayloads } : {}),
     ...(prompts?.length ? { prompts } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
     ...(widgetRenderObservations?.length ? { widgetRenderObservations } : {}),
@@ -955,6 +967,10 @@ export function buildIterationFinishParams(args: {
       ...(toolPolicy ? { toolPolicy } : {}),
       ...stageMetadata,
       ...(frictionSignals ? { frictionSignals } : {}),
+      // Only when the guard fired, so normal iterations gain no new key.
+      ...(args.agentActivity?.status === "no_agent_activity"
+        ? { agentActivity: args.agentActivity }
+        : {}),
       ...scoreMetadata,
       ...selectionToolCatalogMetadata,
       ...(setupAudit ?? {}),
@@ -980,6 +996,7 @@ export type FinalizeEvalIterationParams = {
   /** Effective model used by the iteration; persisted on the eval session. */
   modelId?: string;
   spans?: EvalTraceSpan[];
+  requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   prompts?: PromptTraceSummary[];
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   /**
@@ -1082,6 +1099,7 @@ export async function finalizeEvalIteration(
     messages,
     modelId,
     spans,
+    requestPayloads,
     prompts,
     widgetSnapshots,
     systemPrompt,
@@ -1213,6 +1231,7 @@ export async function finalizeEvalIteration(
     messages,
     ...(modelId ? { modelId } : {}),
     spans,
+    requestPayloads,
     prompts,
     widgetSnapshots,
     systemPrompt,
@@ -1264,6 +1283,13 @@ export async function finalizeEvalIteration(
       ...(useW1Fallback
         ? {
             messages: sanitizeForConvexTransport(messages),
+            ...(requestPayloads?.length
+              ? {
+                  requestPayloadsJson: JSON.stringify(
+                    capRequestPayloadsForPersist(requestPayloads),
+                  ),
+                }
+              : {}),
             // Mirrors `appendEvalTurnTrace.systemPrompt`. Cursor Bugbot
             // follow-up "W1 omits systemPrompt": without this the W1
             // fallback persists a transcript with no resolved system

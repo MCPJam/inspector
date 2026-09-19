@@ -224,3 +224,97 @@ it("prevents removing a draft while it is being saved", async () => {
   finish();
   await waitFor(() => expect(screen.queryByRole("button", { name: "Remove First" })).toBeNull());
 });
+
+/**
+ * The store keeps the wire message verbatim on purpose, so the shaping has to
+ * happen at render — and this list OVERRIDES the Generate screen's own line the
+ * moment a draft lands, which is exactly the reported screenshot.
+ */
+it("explains a model-limit refusal instead of echoing its raw body", () => {
+  useEvalGeneration.setState((s) => ({
+    suites: {
+      [key]: {
+        ...s.suites[key],
+        status: "error",
+        error:
+          'Failed to generate test cases: {"ok":false,"code":"user_rate_limit","limitKind":"total","error":"Daily MCPJam model limit reached. Use BYOK or try again tomorrow.","isRetryable":true}',
+      },
+    },
+  }));
+  renderWithProviders(<EvalGeneratedDrafts {...scope} />);
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent(/MCPJam (model )?limit reached\./);
+  expect(alert).not.toHaveTextContent("user_rate_limit");
+});
+
+it("turns a write conflict on a draft into a plain retry line", () => {
+  useEvalGeneration.setState((s) => ({
+    suites: {
+      [key]: {
+        ...s.suites[key],
+        drafts: s.suites[key].drafts.map((draft, index) =>
+          index === 0
+            ? {
+                ...draft,
+                error:
+                  '[Request ID: abc] Server Error\nUncaught Error: Documents read from or written to the "testSuites" table changed while this mutation was being run and on every subsequent retry. Another call to this mutation changed the document. {"code":"OptimisticConcurrencyControlFailure"}',
+              }
+            : draft,
+        ),
+      },
+    },
+  }));
+  renderWithProviders(<EvalGeneratedDrafts {...scope} />);
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent(
+    "Another change to this suite landed first. Try adding it again.",
+  );
+  expect(alert).not.toHaveTextContent("OptimisticConcurrencyControlFailure");
+});
+
+it("leaves an ordinary draft error verbatim", () => {
+  useEvalGeneration.setState((s) => ({
+    suites: {
+      [key]: {
+        ...s.suites[key],
+        drafts: s.suites[key].drafts.map((draft, index) =>
+          index === 0 ? { ...draft, error: "Save failed. Try again." } : draft,
+        ),
+      },
+    },
+  }));
+  renderWithProviders(<EvalGeneratedDrafts {...scope} />);
+  expect(screen.getByRole("alert")).toHaveTextContent("Save failed. Try again.");
+});
+
+/**
+ * Every save reads and writes the SAME suite document, so firing them together
+ * loses the optimistic-concurrency check and all but one fail. Serializing is
+ * the fix, so the ordering is the thing worth pinning.
+ */
+it("adds drafts one at a time so they cannot collide on the suite", async () => {
+  const order: string[] = [];
+  let releaseFirst!: () => void;
+  const first = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  save.mockImplementation(async (input: { title: string }) => {
+    order.push(`start:${input.title}`);
+    if (input.title === "First") await first;
+    order.push(`end:${input.title}`);
+  });
+  renderWithProviders(<EvalGeneratedDrafts {...scope} />);
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Add all to suite" }));
+  await waitFor(() => expect(order).toContain("start:First"));
+  expect(order).not.toContain("start:Second");
+  releaseFirst();
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+  expect(order).toEqual([
+    "start:First",
+    "end:First",
+    "start:Second",
+    "end:Second",
+  ]);
+});

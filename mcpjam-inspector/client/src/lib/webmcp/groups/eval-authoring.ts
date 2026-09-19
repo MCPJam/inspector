@@ -13,6 +13,7 @@ import {
   useEvalGeneration,
   evalSuiteKey,
 } from "@/lib/mcpjam-agent/eval-workspace";
+import { nativeInternal } from "./shared";
 
 const revision = {
   type: "string",
@@ -88,6 +89,15 @@ export function buildEvalAuthoringTools(): UiToolDefinition[] {
       idempotentHint: spec.name === "ui_eval_context",
       openWorldHint: false,
     },
+    // Never published to browser-native agents. Each of these reads or writes
+    // the eval scope PINNED TO ONE Ask MCPJam conversation (`context.scope`)
+    // and refuses outright without it — see the guard in `execute` below. A
+    // native call has no conversation, so the whole group would be an
+    // advertised capability whose only answer is "open Ask MCPJam from the
+    // eval workspace first".
+    nativePublication: nativeInternal(
+      "Reads and writes the eval scope pinned to one Ask MCPJam conversation; refuses without that session.",
+    ),
     inputSchema: {
       type: "object",
       properties: spec.properties,

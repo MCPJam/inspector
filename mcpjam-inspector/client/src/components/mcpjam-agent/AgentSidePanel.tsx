@@ -2,6 +2,7 @@ import {
   setDescribeNeedsResume,
   useDescribeFlow,
 } from "@/lib/mcpjam-agent/describe-flow";
+import { useDescribeSurface } from "@/lib/mcpjam-agent/describe-surface";
 import { getOrCreateAgentChat } from "@/lib/mcpjam-agent/agent-chat-instances";
 import { dismissAskUserQuestions } from "@/lib/webmcp/ask-user-store";
 /**
@@ -58,6 +59,9 @@ export function AgentSidePanel({
   organizationId,
   activeTab,
 }: AgentSidePanelProps) {
+  const describeScreen = useDescribeSurface(
+    (s) => s.scope !== null && s.scope.projectId === projectId,
+  );
   const [overlay, setOverlay] = useState(
     () => window.matchMedia("(max-width: 1023px)").matches,
   );
@@ -238,6 +242,7 @@ export function AgentSidePanel({
 
   return (
     <InlineSidePanelShell
+      describeScreen={describeScreen}
       isOpen={isOpen}
       overlay={overlay}
       viewportWidth={viewportWidth}
@@ -261,6 +266,7 @@ export function AgentSidePanel({
 }
 
 interface InlineSidePanelShellProps {
+  describeScreen: boolean;
   isOpen: boolean;
   overlay: boolean;
   viewportWidth: number;
@@ -271,6 +277,7 @@ interface InlineSidePanelShellProps {
 }
 
 function InlineSidePanelShell({
+  describeScreen,
   isOpen,
   overlay,
   viewportWidth,
@@ -323,7 +330,8 @@ function InlineSidePanelShell({
       data-agent-dock="side"
       aria-label="Ask MCPJam"
       className={cn(
-        "flex min-h-0 shrink-0 flex-col border-l border-input bg-background",
+        "flex min-h-0 shrink-0 flex-col border-l bg-background",
+        describeScreen ? "border-border/40" : "border-input",
         overlay ? "absolute inset-y-0 right-0 z-30" : "relative",
       )}
       style={style}

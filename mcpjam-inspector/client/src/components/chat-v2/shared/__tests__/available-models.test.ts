@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ModelDefinition } from "@/shared/types";
 import {
+  appendDetectedLocalOllamaModels,
   applyGuestModelLocks,
   applyOutOfCreditsLocks,
   composeAvailableModels,
@@ -152,5 +153,19 @@ describe("composeAvailableModels — never empty", () => {
         composeAvailableModels({ ...bareParams, orgConfig: undefined })
       )
     ).toBeDefined();
+  });
+});
+
+describe("detected local model provenance", () => {
+  it("marks appended local models as BYOK without mutating discovery results", () => {
+    const discovered: ModelDefinition = {
+      id: "gpt-5-nano",
+      name: "Local GPT",
+      provider: "ollama",
+    };
+    expect(appendDetectedLocalOllamaModels([], true, [discovered])).toEqual([
+      { ...discovered, hosted: false },
+    ]);
+    expect(discovered).not.toHaveProperty("hosted");
   });
 });
