@@ -15,8 +15,16 @@ test.beforeAll(async () => {
         import { createRoot } from 'react-dom/client';
         import { BrowserPaneSurface } from './client/src/components/browser/BrowserPaneSurface';
         window.inputs = [];
+        // A base64 JPEG rather than a ready-made \`src\`: the pane takes the
+        // daemon's own bytes now, and the \`src\` accommodation that let a
+        // caller hand it a URL is gone. Both paths size the canvas from the
+        // frame's own geometry, which is what the sizing tests below read.
+        const shot = document.createElement('canvas');
+        shot.width = 400;
+        shot.height = 300;
+        const data = shot.toDataURL('image/jpeg').split(',')[1];
         createRoot(document.getElementById('root')).render(
-          <BrowserPaneSurface frame={{deviceWidth:400,deviceHeight:300,scale:1,ts:1,seq:1,src:document.createElement("canvas").toDataURL()}}
+          <BrowserPaneSurface frame={{deviceWidth:400,deviceHeight:300,scale:1,ts:1,seq:1,data}}
             authority={{kind:'shared'}} control="you" onInput={events => window.inputs.push(...events)} />
         );`,
       loader: "tsx",

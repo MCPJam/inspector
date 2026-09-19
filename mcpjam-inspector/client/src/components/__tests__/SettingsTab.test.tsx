@@ -1,3 +1,4 @@
+import { MemoryRouter } from "react-router";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SettingsTab } from "../SettingsTab";
@@ -21,7 +22,10 @@ const { mockSetThemeMode, mockUpdateThemeMode } = vi.hoisted(() => ({
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: any) =>
-    selector({ themeMode: "light", setThemeMode: mockSetThemeMode }),
+    selector({
+      themePreference: "light",
+      setThemePreference: mockSetThemeMode,
+    }),
 }));
 
 vi.mock("@/hooks/use-ai-provider-keys", () => ({
@@ -83,15 +87,15 @@ describe("SettingsTab", () => {
     vi.clearAllMocks();
   });
 
-  it("renders settings heading and version info", () => {
-    render(<SettingsTab />);
-
-    expect(
-      screen.getByRole("heading", { name: "Settings" })
-    ).toBeInTheDocument();
-    expect(screen.getByText("About")).toBeInTheDocument();
+  it("shows version on About without appearance controls", () => {
+    render(
+      <MemoryRouter initialEntries={["/settings/about"]}>
+        <SettingsTab />
+      </MemoryRouter>,
+    );
     expect(screen.getByText("Version")).toBeInTheDocument();
     expect(screen.getByText("v0.0.0-test")).toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
 
   it("renders appearance controls in hosted mode", () => {
@@ -100,20 +104,23 @@ describe("SettingsTab", () => {
     expect(screen.getByText("Appearance")).toBeInTheDocument();
     expect(screen.getByText("Theme")).toBeInTheDocument();
     expect(screen.getByText("Light")).toBeInTheDocument();
-    expect(
-      screen.getByRole("switch", { name: "Toggle dark mode" })
-    ).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Dark" })).toBeInTheDocument();
     expect(screen.queryByText("LLM Providers")).not.toBeInTheDocument();
   });
 
-  it("updates theme when toggled", async () => {
+  it("selects Dark", async () => {
     render(<SettingsTab />);
 
-    fireEvent.click(screen.getByRole("switch", { name: "Toggle dark mode" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Dark" }));
 
     await waitFor(() => {
-      expect(mockUpdateThemeMode).toHaveBeenCalledWith("dark");
       expect(mockSetThemeMode).toHaveBeenCalledWith("dark");
     });
+  });
+  it("offers System and persists that preference", () => {
+    render(<SettingsTab />);
+    expect(screen.getByRole("radio", { name: "Light" })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: "System" }));
+    expect(mockSetThemeMode).toHaveBeenCalledWith("system");
   });
 });

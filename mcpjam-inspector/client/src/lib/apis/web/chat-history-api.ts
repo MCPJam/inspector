@@ -116,6 +116,7 @@ export interface ChatHistoryTurnTrace {
   spanCount: number;
   modelId?: string;
   spansBlobUrl?: string | null;
+  requestPayloadsBlobUrl?: string | null;
   /**
    * The `webmcp_*` page tools this turn actually advertised, when the backend
    * projected them (`mintedPageTool.ts`). A fact about the turn, not the live

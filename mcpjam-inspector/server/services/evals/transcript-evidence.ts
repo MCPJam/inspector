@@ -325,3 +325,67 @@ export function toTranscriptToolInventory(
     };
   });
 }
+
+/** Collect original catalogs only for the selected servers, without name merging. */
+export function collectToolDeclarations(
+  manager:
+    | {
+        getCapturedToolDeclarations?: (id: string) =>
+          | {
+              tools: Array<{
+                name: string;
+                description?: string;
+                inputSchema?: unknown;
+                outputSchema?: unknown;
+                annotations?: unknown;
+              }>;
+              capture: "complete" | "partial";
+            }
+          | undefined;
+      }
+    | undefined,
+  serverIds: readonly string[],
+): {
+  toolDeclarations?: import("@mcpjam/sdk/predicates").TranscriptToolDeclaration[];
+  declarationsCaptured: "complete" | "partial" | "absent";
+} {
+  if (typeof manager?.getCapturedToolDeclarations !== "function")
+    return { declarationsCaptured: "absent" };
+  const toolDeclarations: import("@mcpjam/sdk/predicates").TranscriptToolDeclaration[] =
+    [];
+  let complete = true;
+  try {
+    for (const serverKey of new Set(serverIds)) {
+      const captured = manager.getCapturedToolDeclarations(serverKey);
+      if (!captured) {
+        complete = false;
+        continue;
+      }
+      if (captured.capture !== "complete") complete = false;
+      for (const tool of captured.tools) {
+        toolDeclarations.push({
+          serverKey,
+          name: tool.name,
+          ...(tool.description !== undefined
+            ? { description: tool.description }
+            : {}),
+          ...(tool.inputSchema !== undefined
+            ? { inputSchema: tool.inputSchema }
+            : {}),
+          ...(tool.outputSchema !== undefined
+            ? { outputSchema: tool.outputSchema }
+            : {}),
+          ...(isRecord(tool.annotations)
+            ? { annotations: tool.annotations }
+            : {}),
+        });
+      }
+    }
+  } catch {
+    complete = false;
+  }
+  return {
+    toolDeclarations,
+    declarationsCaptured: complete ? "complete" : "partial",
+  };
+}

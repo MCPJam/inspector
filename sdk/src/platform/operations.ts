@@ -1,4 +1,21 @@
+import { gradingPolicyFromPlatformSuiteSettings } from "../eval-grading-policy.js";
+import { planEvalGradingPolicyEdit } from "../contract/grading-policy.js";
+import {
+  caseJudgeSettingsSchema,
+  judgeRubricSchema,
+} from "../contract/judge-settings.js";
+import {
+  judgeBacktestRequestSchema,
+  type JudgeBacktestReport,
+} from "../contract/judge-backtest.js";
+import {
+  evalBacktestDraftSchema,
+  evalBacktestContinuationSchema,
+  type EvalBacktestReport,
+} from "../contract/eval-backtest.js";
+import { suppressedSuiteStandardCheckIdsSchema } from "../contract/standard-checks.js";
 import { platformBrowserToolPolicySchema } from "./browser-policy.js";
+import { BROWSER_AGENT_ACT_VERBS } from "./browser-agent-contract.js";
 import type { PlatformSessionBrowserCommand } from "./types.js";
 import type { PlatformSessionBrowserOperationResult } from "./types.js";
 /**
@@ -1895,15 +1912,22 @@ export const checkHostCompatibilityOperation: PlatformOperation<
  * operations has to say so — a model told "start a run" and handed a receipt
  * will otherwise report the receipt as the answer.
  *
- * ## Why the starts declare `risk: "spend"` when the default is free
+ * ## Why the starts declare `risk: "none"`
  *
- * `includeLlmObservations` is the only field that costs anything and it
- * defaults off, so most runs are free. But `risk` is a static declaration read
- * by five surfaces to decide how much ceremony a call needs, and a field that
- * described the cheap case would be describing the case that does not need
- * describing. The worst case is what a spend guard has to be told; the
- * agent's `confirmSeverity` is a function precisely so the approval copy can
- * still say "this one is free" when the flag is off.
+ * `includeLlmObservations` is the only field that runs a model, and that model
+ * call is PLATFORM-PAID: it consumes no organization credits, so there is no
+ * money for a spend guard to warn about and no invoice to be surprised by.
+ * `risk` is a static declaration read by five surfaces to decide how much
+ * ceremony a call needs, and declaring `spend` for a call that cannot spend
+ * puts a money warning on every one of them.
+ *
+ * NOT free of consequence, though: the model pass draws on MCPJam's own daily
+ * budget for the feature, and a start dials somebody else's server and
+ * persists a project row either way. That is why the agent surface keeps these
+ * GATED rather than deriving `direct` from the risk — see `TIER_EXCEPTIONS` in
+ * the inspector's `agent-op-registry.test.ts`, where `start_conformance_run`
+ * already sits for exactly this reason at exactly this risk. A person approves
+ * the start; they are simply not told it costs money, because it does not.
  */
 
 const readinessRunScopedInput = z.object({
@@ -1923,7 +1947,7 @@ const startReadinessInput = serverScopedInput.extend({
     .boolean()
     .optional()
     .describe(
-      "Ask a model for optional experience observations. COSTS the organization's MCPJam credits. Defaults false; the deterministic grade is complete without it."
+      "Ask a model for optional experience observations. Included with MCPJam; no customer credits consumed; subject to MCPJam's daily analysis budget. Defaults false; the deterministic grade is complete without it."
     ),
   idempotencyKey: z
     .string()
@@ -1962,9 +1986,9 @@ export const startClaudeReadinessRunOperation: PlatformOperation<
   name: "start_claude_readiness_run",
   title: "Start a Claude directory readiness run",
   description:
-    "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id — poll `get_readiness_run` for the verdict, which is NOT in this response. Deterministic grading is free; `includeLlmObservations` adds an optional model pass that consumes MCPJam credits.",
+    "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id — poll `get_readiness_run` for the verdict, which is NOT in this response. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink(
     "route-not-addressable",
     "No `conformance/readiness/:runId` route: the readiness section rediscovers the LATEST run for a server and has no run-selection UI, so `/conformance?readinessRun=` is read by nothing. A link carrying it would switch the reader's project and then show them a different run — the wrong-resource landing this contract exists to end."
@@ -2011,9 +2035,9 @@ export const startOpenAIReadinessRunOperation: PlatformOperation<
   name: "start_openai_readiness_run",
   title: "Start an OpenAI directory readiness run",
   description:
-    "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; poll `get_readiness_run` for the verdict. Deterministic grading is free; `includeLlmObservations` consumes MCPJam credits.",
+    "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; poll `get_readiness_run` for the verdict. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink(
     "route-not-addressable",
     "No `conformance/readiness/:runId` route: the readiness section rediscovers the LATEST run for a server and has no run-selection UI, so `/conformance?readinessRun=` is read by nothing. A link carrying it would switch the reader's project and then show them a different run — the wrong-resource landing this contract exists to end."
@@ -2625,7 +2649,7 @@ function operationInputError(message: string): PlatformApiError {
  *
  * Passing both spellings of ONE selector is a refusal, never a precedence
  * rule — the same call `clients.ts` makes for `--client` / `--host` and this
- * file already makes for `repetitions` / `iterations`. A precedence rule is
+ * file already makes for `iterations` / `repetitions`. A precedence rule is
  * invisible: a script that passes both because someone half-finished a
  * migration keeps running, silently launching against whichever of two
  * possibly-different clients this function happened to prefer, and spends on
@@ -2638,7 +2662,7 @@ function foldClientSelectors<
     hosts?: string[];
     client?: string;
     clients?: string[];
-  },
+  }
 >(input: T): T {
   if (input.client !== undefined && input.host !== undefined) {
     throw operationInputError(
@@ -2677,7 +2701,7 @@ function foldClientSelectors<
  */
 function foldComposeClientSelector<
   C extends { host?: string; client?: string },
-  T extends { compose?: C },
+  T extends { compose?: C }
 >(input: T): T & { compose?: C & { host: string } } {
   const compose = input.compose;
   if (!compose) return input as T & { compose?: C & { host: string } };
@@ -3012,9 +3036,9 @@ function resolveSuiteHostTargets(
 /** The knobs both launch shapes forward, in the wire's own vocabulary. */
 function runKnobBody(
   input: {
-    repetitions?: number;
-    /** Deprecated alias for repetitions. */
     iterations?: number;
+    /** Legacy spelling of iterations. */
+    repetitions?: number;
     notes?: string;
     minPassRate?: number;
     matchOptions?: z.infer<typeof publicMatchOptionsSchema>;
@@ -3026,8 +3050,8 @@ function runKnobBody(
   caseIds: string[] | undefined
 ): Record<string, unknown> {
   return {
-    ...(input.repetitions !== undefined || input.iterations !== undefined
-      ? { iterationOverride: input.repetitions ?? input.iterations }
+    ...(input.iterations !== undefined || input.repetitions !== undefined
+      ? { iterationOverride: input.iterations ?? input.repetitions }
       : {}),
     ...(caseIds ? { caseIds } : {}),
     ...(input.matchOptions ? { matchOptionsOverride: input.matchOptions } : {}),
@@ -3855,15 +3879,10 @@ const importApprovalsSchema = z
   .min(1);
 
 const RUN_KNOB_FIELDS = {
-  repetitions: z
-    .number()
-    .int()
-    .min(1)
-    .max(10)
-    .optional()
-    .describe(
-      "Run each case this many times under verdict policy 2, overriding its saved repetitions FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs."
-    ),
+  // `iterations` is the canonical spelling of the configured count
+  // (`docs/evals-vocabulary-consolidation.md`); `repetitions` is its legacy
+  // spelling. Both fold onto the wire's `iterationOverride`, so flipping which
+  // one is canonical changes documentation and precedence, not meaning.
   iterations: z
     .number()
     .int()
@@ -3871,8 +3890,15 @@ const RUN_KNOB_FIELDS = {
     .max(10)
     .optional()
     .describe(
-      "Run each case this many times, overriding its saved iteration count FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs."
+      "Run each case this many times under verdict policy 2, overriding its saved iterations FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs."
     ),
+  repetitions: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe("Legacy spelling of iterations."),
   notes: z
     .string()
     .trim()
@@ -4002,12 +4028,12 @@ const runEvalSuiteInput = z
     ...RUN_KNOB_FIELDS,
   })
   .superRefine((input, ctx) => {
-    if (input.repetitions !== undefined && input.iterations !== undefined) {
+    if (input.iterations !== undefined && input.repetitions !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["repetitions"],
+        path: ["iterations"],
         message:
-          "Use either repetitions or the deprecated iterations alias, not both.",
+          "Send iterations or repetitions, not both — they are two spellings of one field.",
       });
     }
   });
@@ -4239,13 +4265,13 @@ export const runEvalSuiteOperation: PlatformOperation<
       project,
       suite,
       detail,
-      input.environment ? [input.environment] : (input.environments ?? []),
+      input.environment ? [input.environment] : input.environments ?? [],
       signal
     );
     const selectedHosts = resolveSuiteHostTargets(
       suite,
       detail,
-      input.host ? [input.host] : (input.hosts ?? [])
+      input.host ? [input.host] : input.hosts ?? []
     );
 
     // Attached environments arrive as bare IDS — the suite detail carries no
@@ -4381,8 +4407,8 @@ export const runEvalSuiteOperation: PlatformOperation<
             ...(disclosureEnvironmentIds.length === 1
               ? { environmentId: disclosureEnvironmentIds[0]! }
               : disclosureEnvironmentIds.length > 1
-                ? { environmentIds: disclosureEnvironmentIds }
-                : {}),
+              ? { environmentIds: disclosureEnvironmentIds }
+              : {}),
             ...(disclosureHostId ? { namedHostId: disclosureHostId } : {}),
           },
           { signal: disclosureBound.signal }
@@ -4627,8 +4653,8 @@ const runEvalCaseInput = z
           DEPRECATED_HOST_SELECTOR_SUFFIX
       ),
     compose: composeRunTargetInput.optional(),
-    repetitions: RUN_KNOB_FIELDS.repetitions,
     iterations: RUN_KNOB_FIELDS.iterations,
+    repetitions: RUN_KNOB_FIELDS.repetitions,
     idempotencyKey: RUN_KNOB_FIELDS.idempotencyKey,
     // A single-case run of an APPROXIMATED case needs the same per-run
     // approval a suite run does. Without it this operation could never launch
@@ -4639,12 +4665,12 @@ const runEvalCaseInput = z
     importApprovals: RUN_KNOB_FIELDS.importApprovals,
   })
   .superRefine((input, ctx) => {
-    if (input.repetitions !== undefined && input.iterations !== undefined) {
+    if (input.iterations !== undefined && input.repetitions !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["repetitions"],
+        path: ["iterations"],
         message:
-          "Use either repetitions or the deprecated iterations alias, not both.",
+          "Send iterations or repetitions, not both — they are two spellings of one field.",
       });
     }
   });
@@ -4800,9 +4826,9 @@ export const runEvalCaseOperation: PlatformOperation<
             ...(environment ? { environmentId: environment.id } : {}),
             ...(host ? { namedHostId: host.id } : {}),
             ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
-            ...(input.repetitions !== undefined ||
-            input.iterations !== undefined
-              ? { iterationOverride: input.repetitions ?? input.iterations }
+            ...(input.iterations !== undefined ||
+            input.repetitions !== undefined
+              ? { iterationOverride: input.iterations ?? input.repetitions }
               : {}),
             ...(input.idempotencyKey
               ? { idempotencyKey: input.idempotencyKey }
@@ -4961,6 +4987,8 @@ const evalCaseInput = z.object({
     .describe(
       "Per-case check gate (advanced): `{ mode: inherit | replace | extend, list: [...] }`. `predicates` is the deprecated spelling of this field; passing both is an error."
     ),
+  suppressedSuiteStandardCheckIds:
+    suppressedSuiteStandardCheckIdsSchema.optional(),
   /** @deprecated Use `checks`. */
   predicates: z
     .record(z.string(), z.any())
@@ -5166,6 +5194,7 @@ const caseModelSchema = z.object({
 // Per-case editable fields, shared by create and update. All optional so a
 // PATCH carries only what changes; create layers required fields on top.
 const caseFieldsShape = {
+  judge: caseJudgeSettingsSchema.nullable().optional(),
   title: z.string().trim().min(1).optional().describe("Short case label."),
   intent: caseIntentSchema
     .optional()
@@ -5215,6 +5244,8 @@ const caseFieldsShape = {
   // untouched (omitted). On create, null is treated as "no override".
   matchOptions: publicMatchOptionsSchema.nullable().optional(),
   checks: publicCheckOverrideSchema.nullable().optional(),
+  suppressedSuiteStandardCheckIds:
+    suppressedSuiteStandardCheckIdsSchema.optional(),
   // THE CONVERTER'S CLAIM, on the operation surface too.
   //
   // Without it Zod strips the key and `buildCaseBody` never sees it, so a
@@ -5396,7 +5427,7 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
       project,
       suite,
       detail,
-      input.environment ? [input.environment] : (input.environments ?? []),
+      input.environment ? [input.environment] : input.environments ?? [],
       signal
     );
     // SAME plan resolution `run_eval_suite` uses — including its
@@ -5485,8 +5516,8 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
         ...(disclosureEnvironmentIds.length === 1
           ? { environmentId: disclosureEnvironmentIds[0]! }
           : disclosureEnvironmentIds.length > 1
-            ? { environmentIds: disclosureEnvironmentIds }
-            : {}),
+          ? { environmentIds: disclosureEnvironmentIds }
+          : {}),
         ...(disclosureHostId ? { namedHostId: disclosureHostId } : {}),
       },
       { signal }
@@ -5521,221 +5552,206 @@ const declaredSuiteIdField = z
 // field this surface does not implement, like `judge.groundedness` — returns
 // 200 having written nothing, and the caller has a receipt for a change that
 // never happened. A refusal that names the key is the honest answer.
-const updateEvalSuiteInput = z.strictObject({
-  project: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe(PROJECT_SELECTOR_DESCRIPTION),
-  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
-  declaredSuiteId: declaredSuiteIdField,
-  name: z.string().trim().min(1).optional(),
-  description: z.string().trim().optional(),
-  environment: z
-    .object({
-      servers: z
-        .array(z.string().trim().min(1))
-        .optional()
-        .describe(
-          "Server selection by name; replaces the suite's server set. Omit to leave it (and its bindings) alone."
-        ),
-      computerEnvironment: z
-        .union([z.string().trim().min(1), z.null()])
-        .optional()
-        .describe(
-          "Custom sandbox image the suite's eval runs boot from, by name or id (see list_sandbox_images). null uses the provider's default base image."
-        ),
-    })
-    .optional()
-    .describe(
-      "Suite environment: server selection and the sandbox image runs boot from. Unspecified fields are preserved."
-    ),
-  executionConfig: z
-    .object({
-      model: z.string().trim().min(1).optional(),
-      systemPrompt: z.string().optional(),
-      temperature: z.number().optional(),
-    })
-    .optional()
-    .describe("Suite execution config; unspecified fields are preserved."),
-  clients: z
-    .array(
-      z.object({
-        client: z.string().trim().min(1).describe("Client name or ID."),
-        servers: z.array(z.string().trim().min(1)).optional(),
+const updateEvalSuiteInput = z
+  .strictObject({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+    declaredSuiteId: declaredSuiteIdField,
+    name: z.string().trim().min(1).optional(),
+    description: z.string().trim().optional(),
+    environment: z
+      .object({
+        servers: z
+          .array(z.string().trim().min(1))
+          .optional()
+          .describe(
+            "Server selection by name; replaces the suite's server set. Omit to leave it (and its bindings) alone."
+          ),
+        computerEnvironment: z
+          .union([z.string().trim().min(1), z.null()])
+          .optional()
+          .describe(
+            "Custom sandbox image the suite's eval runs boot from, by name or id (see list_sandbox_images). null uses the provider's default base image."
+          ),
       })
-    )
-    .optional()
-    .describe(
-      "Client attachments (replace-all). `hosts` is the deprecated spelling of this field."
-    ),
-  hosts: z
-    .array(
-      z.object({
-        host: z.string().trim().min(1).describe("Client name or ID."),
-        servers: z.array(z.string().trim().min(1)).optional(),
+      .optional()
+      .describe(
+        "Suite environment: server selection and the sandbox image runs boot from. Unspecified fields are preserved."
+      ),
+    executionConfig: z
+      .object({
+        model: z.string().trim().min(1).optional(),
+        systemPrompt: z.string().optional(),
+        temperature: z.number().optional(),
       })
-    )
-    .optional()
-    .describe(
-      "Client attachments (replace-all)." + DEPRECATED_HOSTS_SELECTOR_SUFFIX
-    ),
-  settings: z
-    .strictObject({
-      minimumAccuracy: z.number().min(0).max(100).optional(),
-      minimumIterations: z
-        .union([z.number().int().min(1).max(10), z.null()])
-        .optional()
-        .describe(
-          "Floor on per-case iterations, 1–10: every case runs at least this many times. null removes the floor."
-        ),
-      // Nullable to CLEAR suite defaults (vs omit to leave untouched).
-      matchOptions: publicMatchOptionsSchema.nullable().optional(),
-      checks: z.array(publicCheckSchema).nullable().optional(),
-      judge: z
-        .strictObject({
-          enabled: z
-            .boolean()
-            .optional()
-            .describe(
-              "Make the judge available on this suite. On its own this grades nothing — set autoRun (or request grading on a finished run) to make grading happen."
-            ),
-          model: z.string().trim().min(1).optional(),
-          autoRun: z
-            .boolean()
-            .optional()
-            .describe(
-              "Grade every run automatically as it completes. This is the flag that makes LLM-as-judge grading happen; it SPENDS on each run."
-            ),
-          threshold: z
-            .number()
-            .min(0)
-            .max(1)
-            .optional()
-            .describe(
-              "Advisory pass threshold, 0–1 (passed = score >= threshold)."
-            ),
-          role: z
-            .enum(["advisory", "gating"])
-            .optional()
-            .describe(
-              "Whether the judge decides the verdict. `gating` is accepted only on a calibrated judge, and only where the deployment allows it."
-            ),
-          severity: z
-            .literal("warn")
-            .optional()
-            .describe(
-              "Presentation severity for an advisory judge: flag it without failing the run. Legal only with role: advisory."
-            ),
-          rubric: z
-            .union([
-              z.strictObject({
-                criteria: z
-                  .array(
-                    z.strictObject({
-                      id: z
-                        .string()
-                        .regex(/^[A-Za-z0-9_-]{1,64}$/)
-                        .describe(
-                          "Stable id the judge cites in its reasons. Unique within the rubric; editing it retires the suite's calibration."
-                        ),
-                      label: z.string().trim().min(1).max(200),
-                      description: z.string().max(1000).optional(),
-                      required: z.boolean().optional(),
-                    })
-                  )
-                  .min(1)
-                  .max(25),
-              }),
-              z.null(),
-            ])
-            .optional()
-            .describe(
-              "The suite's own grading criteria, handed to the judge alongside each case's expected output. null CLEARS them; an empty criteria array is refused, because a rubric that asks nothing still changes what the judge was asked. Editing this retires the suite's judge calibration."
-            ),
+      .optional()
+      .describe("Suite execution config; unspecified fields are preserved."),
+    clients: z
+      .array(
+        z.object({
+          client: z.string().trim().min(1).describe("Client name or ID."),
+          servers: z.array(z.string().trim().min(1)).optional(),
         })
-        .optional(),
-      repetitions: z
-        .number()
-        .int()
-        .min(1)
-        .max(100)
-        .optional()
-        .describe(
-          "Verdict policy v2 only: trials per case unless the case overrides it. On a legacy suite, sending this together with passThreshold UPGRADES the suite to policy v2; neither alone is accepted there."
-        ),
-      passThreshold: z
-        .number()
-        .min(0)
-        .max(1)
-        .optional()
-        .describe(
-          "Verdict policy v2 only: FRACTION of a case's trials that must pass, 0–1 (0.8 is eighty percent). The v2 replacement for minimumAccuracy, which is a percent; sending both is refused."
-        ),
-      validity: z
-        .object({
-          minEligibleTrials: z.number().int().min(1).optional(),
-          minCompletionRate: z.number().min(0).max(1).optional(),
-          maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
+      )
+      .optional()
+      .describe(
+        "Client attachments (replace-all). `hosts` is the deprecated spelling of this field."
+      ),
+    hosts: z
+      .array(
+        z.object({
+          host: z.string().trim().min(1).describe("Client name or ID."),
+          servers: z.array(z.string().trim().min(1)).optional(),
         })
-        .strict()
-        .optional()
-        .describe(
-          "Verdict policy v2 only: when a run's measurement is trustworthy enough to decide. Fractions, 0–1. Omitted members keep the contract defaults (minCompletionRate 0.8, maxEvaluatorErrorRate 0.1); supplied members merge over the suite's stored validity rather than replacing it."
-        ),
-      qualityGate: z
-        .union([suiteGatePolicySchema, z.null()])
-        .optional()
-        .describe(
-          "Live quality-gate policy. null CLEARS it. Comparative conditions require a baseline; previous_completed is reserved. Requires expectedRevisionNumber and revisionNote."
-        ),
-    })
-    .optional(),
-  expectedRevisionNumber: z
-    .number()
-    .int()
-    .min(0)
-    .optional()
-    .describe(
-      "The suite's revisionNumber as you last read it. Supplying it makes this edit a compare-and-set: a suite changed since then is refused with 409 having written nothing. Omit for last-write-wins."
-    ),
-  revisionNote: z
-    .string()
-    .max(500)
-    .optional()
-    .describe(
-      "Why this edit is being made. Required (nonblank) whenever settings.qualityGate is present."
-    ),
-}).superRefine((body, ctx) => {
-  if (body.settings?.qualityGate === undefined) return;
-  if (body.expectedRevisionNumber === undefined) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["expectedRevisionNumber"],
-      message:
-        "expectedRevisionNumber is required when settings.qualityGate is present.",
-    });
-  }
-  const note = body.revisionNote?.trim() ?? "";
-  if (note.length === 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["revisionNote"],
-      message: "revisionNote is required when settings.qualityGate is present.",
-    });
-  }
-  if (body.settings.qualityGate !== null) {
-    const parsed = parseSuiteGatePolicyForAuthoring(body.settings.qualityGate);
-    if (!parsed.ok) {
+      )
+      .optional()
+      .describe(
+        "Client attachments (replace-all)." + DEPRECATED_HOSTS_SELECTOR_SUFFIX
+      ),
+    settings: z
+      .strictObject({
+        minimumAccuracy: z.number().min(0).max(100).optional(),
+        minimumIterations: z
+          .union([z.number().int().min(1).max(10), z.null()])
+          .optional()
+          .describe(
+            "Floor on per-case iterations, 1–10: every case runs at least this many times. null removes the floor."
+          ),
+        // Nullable to CLEAR suite defaults (vs omit to leave untouched).
+        matchOptions: publicMatchOptionsSchema.nullable().optional(),
+        checks: z.array(publicCheckSchema).nullable().optional(),
+        judge: z
+          .strictObject({
+            enabled: z
+              .boolean()
+              .optional()
+              .describe(
+                "Make the judge available on this suite. On its own this grades nothing — set autoRun (or request grading on a finished run) to make grading happen."
+              ),
+            model: z.string().trim().min(1).optional(),
+            autoRun: z
+              .boolean()
+              .optional()
+              .describe(
+                "Grade every run automatically as it completes. This is the flag that makes LLM-as-judge grading happen; it SPENDS on each run."
+              ),
+            threshold: z
+              .number()
+              .min(0)
+              .max(1)
+              .optional()
+              .describe(
+                "Advisory pass threshold, 0–1 (passed = score >= threshold)."
+              ),
+            role: z
+              .enum(["advisory", "gating", "required"])
+              .optional()
+              .describe(
+                "Whether the judge decides the verdict. `required` (legacy spelling: `gating`) is accepted only on a calibrated judge, and only where the deployment allows it."
+              ),
+            severity: z
+              .literal("warn")
+              .optional()
+              .describe(
+                "Presentation severity for an advisory judge: flag it without failing the run. Legal only with role: advisory."
+              ),
+            rubric: judgeRubricSchema
+              .nullable()
+              .optional()
+              .describe(
+                "Optional grading instructions and structured criteria, alongside each case's task and expected output. null clears both. Editing either retires judge calibration."
+              ),
+          })
+          .optional(),
+        repetitions: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe(
+            "Verdict policy v2 only: trials per case unless the case overrides it. On a legacy suite, sending this together with passThreshold UPGRADES the suite to policy v2; neither alone is accepted there."
+          ),
+        passThreshold: z
+          .number()
+          .min(0)
+          .max(1)
+          .optional()
+          .describe(
+            "Verdict policy v2 only: FRACTION of a case's trials that must pass, 0–1 (0.8 is eighty percent). The v2 replacement for minimumAccuracy, which is a percent; sending both is refused."
+          ),
+        validity: z
+          .object({
+            minEligibleTrials: z.number().int().min(1).optional(),
+            minCompletionRate: z.number().min(0).max(1).optional(),
+            maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
+          })
+          .strict()
+          .optional()
+          .describe(
+            "Verdict policy v2 only: when a run's measurement is trustworthy enough to decide. Fractions, 0–1. Omitted members keep the contract defaults (minCompletionRate 0.8, maxEvaluatorErrorRate 0.1); supplied members merge over the suite's stored validity rather than replacing it."
+          ),
+        qualityGate: z
+          .union([suiteGatePolicySchema, z.null()])
+          .optional()
+          .describe(
+            "Live quality-gate policy. null CLEARS it. Comparative conditions require a baseline; previous_completed is reserved. Requires expectedRevisionNumber and revisionNote."
+          ),
+      })
+      .optional(),
+    expectedRevisionNumber: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "The suite's revisionNumber as you last read it. Supplying it makes this edit a compare-and-set: a suite changed since then is refused with 409 having written nothing. Omit for last-write-wins."
+      ),
+    revisionNote: z
+      .string()
+      .max(500)
+      .optional()
+      .describe(
+        "Why this edit is being made. Required (nonblank) whenever settings.qualityGate is present."
+      ),
+  })
+  .superRefine((body, ctx) => {
+    if (body.settings?.qualityGate === undefined) return;
+    if (body.expectedRevisionNumber === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["settings", "qualityGate"],
-        message: parsed.message,
+        path: ["expectedRevisionNumber"],
+        message:
+          "expectedRevisionNumber is required when settings.qualityGate is present.",
       });
     }
-  }
-});
+    const note = body.revisionNote?.trim() ?? "";
+    if (note.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["revisionNote"],
+        message:
+          "revisionNote is required when settings.qualityGate is present.",
+      });
+    }
+    if (body.settings.qualityGate !== null) {
+      const parsed = parseSuiteGatePolicyForAuthoring(
+        body.settings.qualityGate
+      );
+      if (!parsed.ok) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["settings", "qualityGate"],
+          message: parsed.message,
+        });
+      }
+    }
+  });
 export type UpdateEvalSuiteInput = z.infer<typeof updateEvalSuiteInput>;
 
 export const updateEvalSuiteOperation: PlatformOperation<
@@ -5745,7 +5761,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
   name: "update_eval_suite",
   title: "Update MCPJam eval suite",
   description:
-    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the verdict policy v2 fields (repetitions/passThreshold/validity — fractions, and the v2 replacement for minimumAccuracy). Only the fields you pass change.",
+    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the per-case grading fields (repetitions/passThreshold/validity — FRACTIONS). minimumAccuracy is the suite-wide accuracy threshold, a PERCENT over the whole run; passThreshold is the per-case criterion, a fraction each case must meet over its own iterations. They are different criteria, not two units of one number — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one — so send whichever one the suite already uses (settings.policy on a read says which) and never convert between them. The operation reads the current criterion first and refuses repetitions (including the repetitions/passThreshold pair) on a suite-wide suite, and minimumIterations on a per-case suite. Changing criterion is API-only for now. Only the fields you pass change.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     { type: "eval_suite", id: result.id, ...projectIdOf(result) },
@@ -5775,6 +5791,31 @@ export const updateEvalSuiteOperation: PlatformOperation<
       input.project
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
+    const settings = input.settings;
+    if (
+      settings &&
+      ["passThreshold", "repetitions", "minimumIterations", "validity"].some(
+        (key) => settings[key as keyof typeof settings] !== undefined
+      )
+    ) {
+      const detail = await client.getEvalSuite(
+        { projectId: project.id, suiteId: suite.id },
+        { signal }
+      );
+      const read = gradingPolicyFromPlatformSuiteSettings(detail.settings);
+      if (!read.ok) throw operationInputError(read.message);
+      // Use the canonical refusals without translating the caller's wire fields.
+      // A lone passThreshold on a suite-wide suite is refused by the route.
+      const plan = planEvalGradingPolicyEdit(read.policy, {
+        ...(settings.repetitions !== undefined
+          ? { iterations: settings.repetitions }
+          : {}),
+        ...(settings.minimumIterations !== undefined
+          ? { minimumIterations: settings.minimumIterations }
+          : {}),
+      });
+      if (!plan.ok) throw operationInputError(plan.message);
+    }
     const body: Record<string, unknown> = {};
     for (const key of [
       "name",
@@ -6524,7 +6565,7 @@ const generateEvalCasesInput = z.object({
     .max(256)
     .optional()
     .describe(
-      "Retry-safety key: pass one, because generating spends model credits and a retry must not pay for a second generation. Repeating a call with the same key replays the first attempt's drafts and returns the cases it already created."
+      "Retry-safety key: pass one, because a retry must not take a second slice of the organization's daily generation quota. Repeating a call with the same key replays the first attempt's drafts and returns the cases it already created."
     ),
 });
 export type GenerateEvalCasesInput = z.infer<typeof generateEvalCasesInput>;
@@ -6534,10 +6575,10 @@ export const generateEvalCasesOperation: PlatformOperation<
   GenerateEvalCasesResult
 > = {
   name: "generate_eval_cases",
-  risk: "spend",
+  risk: "none",
   title: "Generate MCPJam eval cases",
   description:
-    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools and spends the organization's credits. For a suite with attached project environments, tools are discovered from the environment's closed server set — pass environment to choose which one. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models. IDEMPOTENT on idempotencyKey: pass one, because generating spends model credits and a retry must not pay for a second generation.",
+    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time — wait until then; topping up credits does not lift it. For a suite with attached project environments, tools are discovered from the environment's closed server set — pass environment to choose which one. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models. IDEMPOTENT on idempotencyKey: pass one, because a retry must not take a second slice of that quota.",
   readOnly: false,
   permalink: derivePermalinks((result) =>
     result.created.flatMap((testCase) =>
@@ -6691,7 +6732,7 @@ export const getEvalRunOperation: PlatformOperation<
   name: "get_eval_run",
   title: "Get MCPJam eval run",
   description:
-    "Get the status, verdict, and — once the run is terminal — its `decisionSummary`: START THERE when a run did not pass. It carries the verdict and where it came from (`verdictSource`), the counts with the population they count (`measurementUnit`: caseVariant under verdict policy v2, trial on legacy runs — never assume one), the authoritative `decision` with the exact reasons a v2 run passed, failed, or was withheld as inconclusive, and per-trial `diagnostics` giving the user-value chain, the first failed stage, the failure category, the evidence for THAT stage, and one next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable) — it is not a failure. THE CHAIN, IN ORDER: connection → discovery → selection → call → response → userValue; a stage is only ever about the link it names, and the order is what makes `notReached` mean anything. Each diagnostic's `chain.status` is a THREE-WAY discriminant and only one of them carries rows: `verified` — the stored derivation validated, so `stages`, `firstFailedStage` and `failureCategory` are present and may be read; `unverified` — a derivation was stored and did not validate, so the rows and both claims derived from them are withheld deliberately (substituting your own reading of the trace for the withheld claim is the one thing this state exists to stop); `absent` — no derivation was ever stored, which is a DIFFERENT fact from one that was rejected. A row's `state` is one of five, and the three non-verdicts are three different facts that must never be collapsed: `passed` — measured, and it passed; `failed` — measured, and it failed; `notReached` — it never ran, because an earlier stage failed; `notMeasured` — this run captured nothing that could decide it; `notApplicable` — the stage does not apply to this case at all. Reporting a `notMeasured` or `notReached` stage as healthy is the misreading the five-state vocabulary exists to prevent. `firstFailedStage` IS A LOCATION, NOT A CAUSE: it names where the chain stopped, and the nearest thing to a cause is `reason` on that same stage's row. `failureCategory` is a coarse bucket, and it can be present with NO `firstFailedStage` at all — a setup abort and an evaluator error are real answers about a trial that never reached a stage. Neither the location nor the bucket on its own authorizes proposing a change to the server under test. The `user-value-chain-glossary` skill on this server defines every member of all six vocabularies — the stages, the five states, the twenty-nine stage reasons, the seven categories, the four verdicts and the analytics exclusion classes — along with the population rules that decide what a count means; fetch it rather than guessing a member's meaning from its spelling. Read authored step results (get_eval_run_steps) second and a full trace (get_eval_iteration_trace) last; you should not need to infer the chain from raw tool calls. Diagnostics are paginated: pass diagnosticsCursor to continue, and treat `diagnostics.complete: false` as a partial list, never as the full set of failures. The detail also carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
+    "Get the status, verdict, and — once the run is terminal — its `decisionSummary`: START THERE when a run did not pass. It carries the verdict and where it came from (`verdictSource`), the counts with the population they count (`measurementUnit`: caseVariant under per-case grading, trial under a suite-wide accuracy threshold — never assume one), the authoritative `decision` with the exact reasons a per-case-graded run passed, failed, or was withheld as inconclusive, and per-trial `diagnostics` giving the user-value chain, the first failed stage, the failure category, the evidence for THAT stage, and one next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable) — it is not a failure. THE CHAIN, IN ORDER: connection → discovery → selection → call → response → userValue; a stage is only ever about the link it names, and the order is what makes `notReached` mean anything. Each diagnostic's `chain.status` is a THREE-WAY discriminant and only one of them carries rows: `verified` — the stored derivation validated, so `stages`, `firstFailedStage` and `failureCategory` are present and may be read; `unverified` — a derivation was stored and did not validate, so the rows and both claims derived from them are withheld deliberately (substituting your own reading of the trace for the withheld claim is the one thing this state exists to stop); `absent` — no derivation was ever stored, which is a DIFFERENT fact from one that was rejected. A row's `state` is one of five, and the three non-verdicts are three different facts that must never be collapsed: `passed` — measured, and it passed; `failed` — measured, and it failed; `notReached` — it never ran, because an earlier stage failed; `notMeasured` — this run captured nothing that could decide it; `notApplicable` — the stage does not apply to this case at all. Reporting a `notMeasured` or `notReached` stage as healthy is the misreading the five-state vocabulary exists to prevent. `firstFailedStage` IS A LOCATION, NOT A CAUSE: it names where the chain stopped, and the nearest thing to a cause is `reason` on that same stage's row. `failureCategory` is a coarse bucket, and it can be present with NO `firstFailedStage` at all — a setup abort and an evaluator error are real answers about a trial that never reached a stage. Neither the location nor the bucket on its own authorizes proposing a change to the server under test. The `user-value-chain-glossary` skill on this server defines every member of all six vocabularies — the stages, the five states, the twenty-nine stage reasons, the seven categories, the four verdicts and the analytics exclusion classes — along with the population rules that decide what a count means; fetch it rather than guessing a member's meaning from its spelling. Read authored step results (get_eval_run_steps) second and a full trace (get_eval_iteration_trace) last; you should not need to infer the chain from raw tool calls. Diagnostics are paginated: pass diagnosticsCursor to continue, and treat `diagnostics.complete: false` as a partial list, never as the full set of failures. The detail also carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     evalRunRef(result.run.id, result.run.suiteId, result.project?.id),
@@ -7284,8 +7325,8 @@ const SERVER_FACTS_READING_RULES =
   "Everything here is a FACT ABOUT THE SERVER, and none of it is a verdict: a 57-tool surface is not a defect, a three-second connect is not a failure, and a precheck is a signal. Nothing in this document feeds a gate or changes a pass/fail. " +
   "PAYLOAD SIZE IS THREE DIFFERENT NUMBERS and this document keeps two of them apart by name. `payload.basis` is `aggregated_catalog_json` (the catalog as the client assembled it, measured at capture) or `normalized_snapshot` (the bytes we retained, which is smaller whenever redaction dropped fields — `payload.complete` says so). The third — what the model actually saw — is a per-run HOST fact and is NOT in this document. Never compare numbers across bases and never report either as context consumption. " +
   "TOKENS ARE AN ESTIMATE. `tokenEstimate.method` is `json_chars_div_4`; there is no tokenizer. `referenceWindowShare` is a share of a REFERENCE window (`tokenEstimate.referenceWindowTokens`), not of any model's real context. Quote the estimate with its caveat or not at all. " +
-  "A PRECHECK IS NOT AUTOMATICALLY A VIOLATION. Only `class: \"spec_required\"` names one. A row with `protocolDependent: true` is a rule we could not tell applied — the protocol version was unknown — and reporting it as a defect accuses a server that may be correct. " +
-  "RELATED ASSESSMENTS ARE LINKED, NEVER GRADED. The join is by server id ALONE (`comparability: \"sameServerId\"`): a different server version, environment or auth context is not excluded by it. Each carries its own `createdAt`. None of them is this run's verdict. " +
+  'A PRECHECK IS NOT AUTOMATICALLY A VIOLATION. Only `class: "spec_required"` names one. A row with `protocolDependent: true` is a rule we could not tell applied — the protocol version was unknown — and reporting it as a defect accuses a server that may be correct. ' +
+  'RELATED ASSESSMENTS ARE LINKED, NEVER GRADED. The join is by server id ALONE (`comparability: "sameServerId"`): a different server version, environment or auth context is not excluded by it. Each carries its own `createdAt`. None of them is this run\'s verdict. ' +
   "AN UNOBSERVED SETUP PHASE IS NOT A FAILED ONE: an absent `setup.connection` means nothing was recorded, and `durationMs` is measured ONCE PER RUN — a run with 200 trials did not connect 200 times.";
 
 export type GetEvalRunServerFactsResult = {
@@ -7384,9 +7425,9 @@ export const proposeEvalDescriptionRewriteOperation: PlatformOperation<
   name: "propose_eval_description_rewrite",
   title: "Propose an eval description rewrite",
   description:
-    "Draft a rewritten tool description from a finished eval run's failed trials: the tool's current description and input schema, sibling tool names, the expected vs observed calls, and the failing prompts. SPENDS a small model budget (worst case about $0.10) and returns immediately with a proposing receipt — poll get_eval_description_experiment until status is proposed (or failed). Does not launch runs, write a verdict, or change a gate. Report-only throughout.",
+    "Draft a rewritten tool description from a finished eval run's failed trials: the tool's current description and input schema, sibling tool names, the expected vs observed calls, and the failing prompts. Included with MCPJam; no customer credits consumed; subject to MCPJam's daily analysis budget. Returns immediately with a proposing receipt — poll get_eval_description_experiment until status is proposed (or failed). Does not launch runs, write a verdict, or change a gate. Report-only throughout.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink("mutation-only"),
   inputSchema: proposeEvalDescriptionRewriteInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -7443,7 +7484,7 @@ const startEvalDescriptionExperimentInput = z.object({
     .max(400)
     .optional()
     .describe(
-      "Refuse the launch if plannedTrials (cases × repetitions × 2) exceeds this. Default 200; hard cap 400."
+      "Refuse the launch if plannedTrials (cases × iterations × 2) exceeds this. Default 200; hard cap 400."
     ),
 });
 
@@ -7463,7 +7504,7 @@ export const startEvalDescriptionExperimentOperation: PlatformOperation<
   name: "start_eval_description_experiment",
   title: "Start an eval description experiment",
   description:
-    "Launch the two-arm description-rewrite experiment: one ORIGINAL replay of the source run and one REWRITE replay that applies the proposed description. SPENDS eval-iteration credits — plannedTrials = cases × repetitions × 2, refused over the cap (default 200, hard 400) — plus whatever the suite's judge auto-run costs on both arms. Returns immediately with a launching receipt; poll get_eval_description_experiment. Report-only: nothing writes result, a gate, or a verdict. Emulated engine only in v1; a harness source is refused.",
+    "Launch the two-arm description-rewrite experiment: one ORIGINAL replay of the source run and one REWRITE replay that applies the proposed description. SPENDS eval-iteration credits — plannedTrials = cases × iterations × 2, refused over the cap (default 200, hard 400) — plus whatever the suite's judge auto-run costs on both arms. Returns immediately with a launching receipt; poll get_eval_description_experiment. Report-only: nothing writes result, a gate, or a verdict. Emulated engine only in v1; a harness source is refused.",
   readOnly: false,
   risk: "spend",
   permalink: noPermalink("mutation-only"),
@@ -7870,6 +7911,12 @@ export const revokeEvalGateWaiverOperation: PlatformOperation<
 };
 
 const requestEvalRunJudgeInput = evalRunScopedInput.extend({
+  scope: z
+    .enum(["all", "failed"])
+    .optional()
+    .describe(
+      "Retry failed or ungraded iterations without rerunning measured iterations. Failed-only retries keep their original grading settings."
+    ),
   force: z
     .boolean()
     .optional()
@@ -7901,6 +7948,106 @@ export type RequestEvalRunJudgeResult = {
   judge: PlatformEvalRunJudgeRequested;
 };
 
+const backtestEvalRunJudgeInput = evalRunScopedInput.extend(
+  judgeBacktestRequestSchema.shape
+);
+export const backtestEvalRunJudgeOperation: PlatformOperation<
+  z.infer<typeof backtestEvalRunJudgeInput>,
+  {
+    project: SelectedProjectInfo;
+    runId: string;
+    suiteId: string;
+    report: JudgeBacktestReport;
+  }
+> = {
+  name: "backtest_eval_run_judge",
+  title: "Preview MCPJam judge grading",
+  description:
+    "Grade one recorded iteration against a draft rubric using the full evidence. Uses model budget; leaves the run verdict unchanged. Supply rubric.instructions and optional criteria, or null for objective-only grading. Continue with the same rubric and the returned cursor, sourceHash and reservationId. Completed page retries reuse the cached result. CLI: mcpjam cloud eval judge-backtest --run <id> --json <request>.",
+  readOnly: false,
+  risk: "spend",
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project.id),
+  ]),
+  inputSchema: backtestEvalRunJudgeInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    const report = await client.backtestEvalRunJudge(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        rubric: input.rubric,
+        continuation: input.continuation,
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: run.id,
+      suiteId: run.suiteId,
+      report,
+    };
+  },
+};
+
+const backtestEvalRunInput = evalRunScopedInput.extend({
+  draft: evalBacktestDraftSchema,
+  continuation: evalBacktestContinuationSchema.optional(),
+});
+export type BacktestEvalRunInput = z.infer<typeof backtestEvalRunInput>;
+export const backtestEvalRunOperation: PlatformOperation<
+  BacktestEvalRunInput,
+  {
+    project: SelectedProjectInfo;
+    runId: string;
+    suiteId: string;
+    report: EvalBacktestReport;
+  }
+> = {
+  name: "backtest_eval_run",
+  title: "Preview MCPJam eval assertions",
+  description:
+    "Preview an explicit assertion draft against stored evidence from a terminal run. Replace, extend or inherit frozen assertions explicitly. No model calls or verdict writes; reserves a one-minute deterministic-preview cooldown, independent of judge previews. Returns partial comparison and per-evaluator missing-evidence reasons. This is not a release verdict. Unsupported custom evaluators are never executed. Use mcpjam cloud eval backtest --run <id> --json <draft> from the CLI.",
+  readOnly: false,
+  risk: "none",
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project?.id),
+  ]),
+  inputSchema: backtestEvalRunInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    const report = await client.backtestEvalRun(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        draft: input.draft,
+        continuation: input.continuation,
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: run.id,
+      suiteId: run.suiteId,
+      report,
+    };
+  },
+};
+
 export const requestEvalRunJudgeOperation: PlatformOperation<
   RequestEvalRunJudgeInput,
   RequestEvalRunJudgeResult
@@ -7908,7 +8055,7 @@ export const requestEvalRunJudgeOperation: PlatformOperation<
   name: "request_eval_run_judge",
   title: "Request MCPJam eval run grading",
   description:
-    "Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget. Returns immediately with a pending receipt — read the results from get_eval_run's `judges.goalCompletion`, do not re-request. Pass `enable: true` to grade a run recorded while the judge was off; a run's grading config is pinned when it starts, so enabling the judge on the suite does not reach it.",
+    "Run LLM-as-judge grading over a finished eval run: each iteration’s full recorded trace and tool definitions are graded against its task and grading instructions. SPENDS the organization's model budget. Returns immediately with a pending receipt — read the results from get_eval_run's `judges.goalCompletion`, do not re-request. Pass `enable: true` to grade a run recorded while the judge was off; a run's grading config is pinned when it starts, so enabling the judge on the suite does not reach it.",
   readOnly: false,
   risk: "spend",
   permalink: noPermalink("mutation-only"),
@@ -7922,6 +8069,7 @@ export const requestEvalRunJudgeOperation: PlatformOperation<
       {
         projectId: project.id,
         runId: input.runId,
+        ...(input.scope ? { scope: input.scope } : {}),
         ...(input.force !== undefined ? { force: input.force } : {}),
         ...(input.enable !== undefined ? { enable: input.enable } : {}),
         ...(input.model !== undefined ? { model: input.model } : {}),
@@ -7971,7 +8119,7 @@ function checkRepoOrganizationOrThrow(project: PlatformProject): string {
 // which name replaced it. One body, so the two spellings cannot describe the
 // same behaviour differently.
 const EVAL_GITHUB_REPOS_LIST_DESCRIPTION =
-  'List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the lookup failed, so the choices are unknown; an EMPTY connectable list means the App was asked and reaches nothing, which also covers a deployment with no App installed — check that before assuming a permissions problem.';
+  "List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the lookup failed, so the choices are unknown; an EMPTY connectable list means the App was asked and reaches nothing, which also covers a deployment with no App installed — check that before assuming a permissions problem.";
 const EVAL_GITHUB_REPO_CONNECT_DESCRIPTION =
   "Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. Affects everyone who opens a pull request on that repository, and can block merges depending on outagePolicy. Retargeting, pausing and disconnecting are not on this surface — they live in the app's Settings → Integrations, where every connected repository is visible at once.";
 const DEPRECATED_EVAL_CHECK_REPOS_PREFIX =
@@ -8613,7 +8761,15 @@ export const listChatSessionsOperation: PlatformOperation<
 // everyone in this org has been talking about".
 
 const sendChatMessageInput = z.object({
-  browser: z.object({ policy: platformBrowserToolPolicySchema.optional(), profileId: z.string().min(1).optional() }).optional().describe("Attach the session browser for this turn. The first attachment requires a policy; later turns can send {} to reuse it."),
+  browser: z
+    .object({
+      policy: platformBrowserToolPolicySchema.optional(),
+      profileId: z.string().min(1).optional(),
+    })
+    .optional()
+    .describe(
+      "Attach the session browser for this turn. The first attachment requires a policy; later turns can send {} to reuse it."
+    ),
   idempotencyKey: z
     .string()
     .trim()
@@ -8749,7 +8905,16 @@ export const sendChatMessageOperation: PlatformOperation<
             id: result.sessionId,
             projectId: result.projectId,
           },
-          ...(result.chatSessionId ? [{ type: "playground_conversation" as const, id: result.chatSessionId, browser: !!result.browser?.attached, projectId: result.projectId }] : []),
+          ...(result.chatSessionId
+            ? [
+                {
+                  type: "playground_conversation" as const,
+                  id: result.chatSessionId,
+                  browser: !!result.browser?.attached,
+                  projectId: result.projectId,
+                },
+              ]
+            : []),
         ]
       : []
   ),
@@ -8849,19 +9014,9 @@ const driveSessionBrowserInput = sessionBrowserInput
     if (input.op === "navigate") require("url", !!input.url);
     if (input.op === "act")
       require("command.verb", !!input.command &&
-        [
-          "click",
-          "type",
-          "press",
-          "scroll",
-          "hover",
-          "drag",
-          "select",
-          "close_tab",
-          "activate_tab",
-          "accept_dialog",
-          "dismiss_dialog",
-        ].includes(String(input.command.verb)));
+        (BROWSER_AGENT_ACT_VERBS as readonly string[]).includes(
+          String(input.command.verb)
+        ));
     if (input.op === "invoke") {
       require("toolKey", !!input.toolKey);
       require("input", Object.hasOwn(input, "input"));
@@ -8892,7 +9047,9 @@ const observeSessionBrowserInput = z.object({
 export type DriveChatSessionBrowserInput = z.infer<
   typeof driveSessionBrowserInput
 >;
-export type ObserveChatSessionBrowserInput = z.infer<typeof observeSessionBrowserInput>;
+export type ObserveChatSessionBrowserInput = z.infer<
+  typeof observeSessionBrowserInput
+>;
 export const driveChatSessionBrowserOperation: PlatformOperation<
   DriveChatSessionBrowserInput,
   PlatformSessionBrowserOperationResult
@@ -8977,7 +9134,11 @@ export const driveChatSessionBrowserOperation: PlatformOperation<
       input.op === "navigate"
         ? { op: "navigate", url: input.url }
         : input.op === "invoke"
-        ? { op: "invoke_page_tool", toolKey: input.toolKey, input: input.input }
+        ? {
+            op: "invoke_page_tool",
+            toolKey: input.toolKey,
+            input: input.input,
+          }
         : { ...input.command, op: "act" };
     return client.chatSessionBrowser(
       input.sessionId,
@@ -9069,7 +9230,16 @@ export const getChatSessionOperation: PlatformOperation<
   readOnly: true,
   permalink: derivePermalinks((result) => [
     { type: "chat_session", id: result.sessionId, ...projectIdOf(result) },
-    ...(result.chatSessionId && result.origin === "api" ? [{ type: "playground_conversation" as const, id: result.chatSessionId, browser: !!result.browser, ...projectIdOf(result) }] : []),
+    ...(result.chatSessionId && result.origin === "api"
+      ? [
+          {
+            type: "playground_conversation" as const,
+            id: result.chatSessionId,
+            browser: !!result.browser,
+            ...projectIdOf(result),
+          },
+        ]
+      : []),
   ]),
   inputSchema: getChatSessionInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -9142,11 +9312,21 @@ export const getChatSessionTraceOperation: PlatformOperation<
     "Return per-turn execution spans for a session: per-tool-call latency, token usage, and indices into the transcript. INCREMENTAL — returns the LATEST turn by default, not the whole session; use turnId or afterPromptIndex for older turns and includeSpans:false for summaries. A turn whose spans could not be read reports spansUnavailable rather than an empty span list, because 'made no calls' and 'could not fetch' are opposite conclusions.",
   readOnly: true,
   permalink: derivePermalinks((result, _input, context) => {
-    const projectId = projectIdOf(result).projectId ?? context.resolvedScope?.projectId;
+    const projectId =
+      projectIdOf(result).projectId ?? context.resolvedScope?.projectId;
     if (!projectId) return [];
     return [
       { type: "chat_session", id: result.sessionId, projectId },
-      ...(result.chatSessionId ? [{ type: "playground_conversation" as const, id: result.chatSessionId, browser: result.turns.some(turn => !!turn.browser), projectId }] : []),
+      ...(result.chatSessionId
+        ? [
+            {
+              type: "playground_conversation" as const,
+              id: result.chatSessionId,
+              browser: result.turns.some((turn) => !!turn.browser),
+              projectId,
+            },
+          ]
+        : []),
     ];
   }),
   inputSchema: getChatSessionTraceInput,
@@ -10895,7 +11075,7 @@ async function resolveComposeServerGroup(
  * Callers run this once, up front.
  */
 async function materializeComposeServers<
-  T extends { serverGroup?: string; server?: string; servers?: string[] },
+  T extends { serverGroup?: string; server?: string; servers?: string[] }
 >(
   client: PlatformApiClient,
   project: PlatformProject,
@@ -12250,7 +12430,7 @@ export const listJourneyRunSessionsOperation: PlatformOperation<
   name: "list_journey_run_sessions",
   title: "List the sessions a journey run produced",
   description:
-    "The chat sessions a journey run produced — one per persona attempt against each target — with readiness, goal scores and a first-message preview. Transcript bodies are not on this API yet; use the returned `id` in the app to open a session.",
+    "The chat sessions a journey run produced — one per persona attempt against each target — with graded verdicts, check observations, readiness, goal scores and a first-message preview. `verdict` is the graded goal result; `outcome` is execution lifecycle. A broken execution may have met its goal. Transcript bodies are not on this API yet; use the returned `id` in the app to open a session.",
   readOnly: true,
   permalink: derivePermalinks((result) =>
     result.items.map((session) => ({
@@ -12572,13 +12752,15 @@ function requireExactlyOneGrounding(input: {
 function requireConfigPair(input: {
   sessionsPerTarget?: number;
   maxTurns?: number;
+  setupWrites?: boolean;
 }): void {
   if (
     (input.sessionsPerTarget === undefined) !==
-    (input.maxTurns === undefined)
+      (input.maxTurns === undefined) ||
+    (input.setupWrites !== undefined && input.sessionsPerTarget === undefined)
   ) {
     throw operationInputError(
-      "sessionsPerTarget and maxTurns must be sent together — they are one execution config upstream."
+      "sessionsPerTarget and maxTurns must be sent together; setupWrites requires that pair."
     );
   }
 }
@@ -13645,6 +13827,12 @@ const createJourneyInput = z.object({
       "Sessions per target. TOTAL sessions = targets x this, and the total is what spends."
     ),
   maxTurns: z.number().int().min(1).max(200),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Use a test account."
+    ),
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
 });
 
@@ -13681,6 +13869,9 @@ export const createJourneyOperation: PlatformOperation<
         personaId: input.persona,
         sessionsPerTarget: input.sessionsPerTarget,
         maxTurns: input.maxTurns,
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.swarm !== undefined ? { swarmId: input.swarm } : {}),
         ...(input.environmentIds !== undefined
@@ -13707,6 +13898,12 @@ const updateJourneyInput = journeySelectorInput.extend({
     .describe("null clears the fan-out and returns the journey to its hosts."),
   sessionsPerTarget: z.number().int().min(1).max(100).optional(),
   maxTurns: z.number().int().min(1).max(200).optional(),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing sessionsPerTarget/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
+    ),
 });
 
 export type UpdateJourneyInput = z.infer<typeof updateJourneyInput>;
@@ -13719,7 +13916,7 @@ export const updateJourneyOperation: PlatformOperation<
   name: "update_journey",
   title: "Update an MCPJam journey",
   description:
-    "Edit a journey. sessionsPerTarget and maxTurns must be sent together — they are one execution config upstream. A run already in flight keeps the config it launched with.",
+    "Edit a journey. sessionsPerTarget and maxTurns must be sent together; setupWrites requires that pair. A run already in flight keeps the config it launched with.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -13746,6 +13943,9 @@ export const updateJourneyOperation: PlatformOperation<
           ? { sessionsPerTarget: input.sessionsPerTarget }
           : {}),
         ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
       },
       { signal }
     );
@@ -13868,6 +14068,12 @@ const createSwarmInput = z.object({
   environmentIds: z.array(z.string().min(1)).min(1).optional(),
   sessionsPerTarget: z.number().int().min(1).max(100),
   maxTurns: z.number().int().min(1).max(200),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Use a test account."
+    ),
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
 });
 
@@ -13903,6 +14109,9 @@ export const createSwarmOperation: PlatformOperation<
         name: input.name,
         sessionsPerTarget: input.sessionsPerTarget,
         maxTurns: input.maxTurns,
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
         ...(input.description !== undefined
           ? { description: input.description }
           : {}),
@@ -13929,6 +14138,12 @@ const updateSwarmInput = swarmSelectorInput.extend({
     .optional(),
   sessionsPerTarget: z.number().int().min(1).max(100).optional(),
   maxTurns: z.number().int().min(1).max(200).optional(),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing sessionsPerTarget/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
+    ),
 });
 
 export type UpdateSwarmInput = z.infer<typeof updateSwarmInput>;
@@ -13970,6 +14185,9 @@ export const updateSwarmOperation: PlatformOperation<
           ? { sessionsPerTarget: input.sessionsPerTarget }
           : {}),
         ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
       },
       { signal }
     );
@@ -14065,9 +14283,9 @@ export const generatePersonasOperation: PlatformOperation<
   name: "generate_personas",
   title: "Draft MCPJam personas with a model",
   description:
-    "Draft candidate personas grounded in what the project's servers actually do. NOTHING IS SAVED — pick what you want and pass it to create_persona. Runs a model on the organization's account, so it spends. Exactly one of environmentId or serverAttachmentId.",
+    "Draft candidate personas grounded in what the project's servers actually do. NOTHING IS SAVED — pick what you want and pass it to create_persona. Runs a model. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time — wait until then; topping up credits does not lift it. Exactly one of environmentId or serverAttachmentId.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink(
     "route-not-addressable",
     "No `swarms/personas/:personaId` route: personas are edited inside the Swarms surface as component state."
@@ -14128,9 +14346,9 @@ export const generateJourneysOperation: PlatformOperation<
   name: "generate_journeys",
   title: "Draft MCPJam journeys with a model",
   description:
-    "Draft candidate journeys for a persona, grounded in the project's servers. NOTHING IS SAVED — pass what you want to create_journey. Spends. Exactly one of environmentId or serverAttachmentId.",
+    "Draft candidate journeys for a persona, grounded in the project's servers. NOTHING IS SAVED — pass what you want to create_journey. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time — wait until then; topping up credits does not lift it. Exactly one of environmentId or serverAttachmentId.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink(
     "route-not-addressable",
     "No `swarms/journeys/:journeyId` route: journeys are edited inside the Swarms surface as component state."
@@ -14355,6 +14573,14 @@ export type GetWaveInsightsResult = {
   insights: PlatformWaveInsights;
 };
 
+/**
+ * What a FAILED included analysis means, for the insight getters. The codes
+ * are the backend's stored `errorCode`; an agent reading one needs to know
+ * which failures lift on their own and which are not the caller's to fix.
+ */
+const INCLUDED_ANALYSIS_FAILURE_NOTE =
+  "A failed analysis carries errorCode: `platform_cap_exceeded` means MCPJam's own daily budget for this analysis is used up — nothing was charged, it resets at 00:00 UTC, and neither re-requesting nor topping up credits helps before then; `platform_unavailable` means MCPJam could not reserve capacity — try again later, not in a loop.";
+
 export const getWaveInsightsOperation: PlatformOperation<
   GetWaveInsightsInput,
   GetWaveInsightsResult
@@ -14362,7 +14588,7 @@ export const getWaveInsightsOperation: PlatformOperation<
   name: "get_wave_insights",
   title: "Get an MCPJam wave's insights",
   description:
-    "The model's analysis of a whole wave, if one has been requested. Poll this after request_wave_insights — status goes pending → completed. Not-found means nobody has requested it, which is different from 'requested and still working'.",
+    "The model's analysis of a whole wave, if one has been requested. Poll this after request_wave_insights — status goes pending → completed. Not-found means nobody has requested it, which is different from 'requested and still working'. " + INCLUDED_ANALYSIS_FAILURE_NOTE,
   readOnly: true,
   permalink: derivePermalinks((result) => [
     // A wave IS a journey run on the Swarms surface: `/swarms/<waveId>`.
@@ -14391,7 +14617,7 @@ const requestWaveInsightsInput = waveSelectorInput.extend({
     .boolean()
     .optional()
     .describe(
-      "Regenerate over a wave that already has insights. SPENDS AGAIN — the usual reason a wave looks stuck is a caller that did not poll, so read get_wave_insights before reaching for this."
+      "Regenerate over a wave that already has insights. TAKES ANOTHER SLICE of the daily insight quota (no credits either way) — the usual reason a wave looks stuck is a caller that did not poll, so read get_wave_insights before reaching for this."
     ),
 });
 
@@ -14408,9 +14634,9 @@ export const requestWaveInsightsOperation: PlatformOperation<
   name: "request_wave_insights",
   title: "Request MCPJam wave insights",
   description:
-    "Ask a model to analyze a whole wave. Returns immediately with status pending; poll get_wave_insights. SPENDS against the organization's daily insights budget, which is SHARED with user-testing insights — burning it here takes it from there. Read the run scorecards first; they are free and usually explain the failure.",
+    "Ask a model to analyze a whole wave. Returns immediately with status pending; poll get_wave_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights, so a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink("mutation-only"),
   inputSchema: requestWaveInsightsInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -14443,7 +14669,7 @@ export const cancelWaveInsightsOperation: PlatformOperation<
   name: "cancel_wave_insights",
   title: "Cancel an MCPJam wave insights request",
   description:
-    "Stop an in-flight insights generation. This is the recovery path for a wave stuck in pending — without it the only way forward is force, which spends again.",
+    "Stop an in-flight insights generation. This is the recovery path for a wave stuck in pending — without it the only way forward is force, which takes another slice of the daily insight quota.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -14536,7 +14762,7 @@ export const getUserTestingScenarioOperation: PlatformOperation<
   name: "get_user_testing_scenario",
   title: "Get a user-testing scenario",
   description:
-    "Scenario detail plus its actionable-insights envelope: findings AGGREGATED over the latest analyzed window of real visitor sessions, each with exemplar evidence. Only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change; agent_configuration / eval_case / environment / investigate findings name other work and must not be 'fixed' in server code. Reads never trigger generation — request_user_testing_insights does, and spends.",
+    "Scenario detail plus its actionable-insights envelope: findings AGGREGATED over the latest analyzed window of real visitor sessions, each with exemplar evidence. Only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change; agent_configuration / eval_case / environment / investigate findings name other work and must not be 'fixed' in server code. Reads never trigger generation — request_user_testing_insights does, and it takes a slice of the daily insight quota.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     {
@@ -14916,7 +15142,7 @@ export const getUserTestingInsightsOperation: PlatformOperation<
   name: "get_user_testing_insights",
   title: "Get a user-testing window's insights",
   description:
-    "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working.",
+    "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working. " + INCLUDED_ANALYSIS_FAILURE_NOTE,
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -14946,7 +15172,7 @@ const requestUserTestingInsightsInput = userTestingScenarioSelectorInput.extend(
       .boolean()
       .optional()
       .describe(
-        "Regenerate over a window that already has insights. Spends again."
+        "Regenerate over a window that already has insights. Takes another slice of the daily insight quota; no credits are consumed."
       ),
   }
 );
@@ -14966,9 +15192,9 @@ export const requestUserTestingInsightsOperation: PlatformOperation<
   name: "request_user_testing_insights",
   title: "Request insights for a user-testing scenario",
   description:
-    "Ask a model to analyze the scenario's current window. Returns immediately with the windowId and status pending; poll get_user_testing_insights. SPENDS against the organization's daily insights budget, which is SHARED with swarm wave insights. A 409 means the window has not been mined yet — wait, do not retry in a loop.",
+    "Ask a model to analyze the scenario's current window. Returns immediately with the windowId and status pending; poll get_user_testing_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with swarm wave insights. A 409 means the window has not been mined yet — wait, do not retry in a loop.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink("mutation-only"),
   inputSchema: requestUserTestingInsightsInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -15003,7 +15229,7 @@ export const cancelUserTestingInsightsOperation: PlatformOperation<
   name: "cancel_user_testing_insights",
   title: "Cancel a user-testing insights request",
   description:
-    "Stop an in-flight insights generation. The recovery path for a window stuck pending — without it the only way forward is force, which spends again.",
+    "Stop an in-flight insights generation. The recovery path for a window stuck pending — without it the only way forward is force, which takes another slice of the daily insight quota.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -16184,6 +16410,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   waiveEvalGateOperation,
   getEvalGateWaiverOperation,
   revokeEvalGateWaiverOperation,
+  backtestEvalRunOperation,
+  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
