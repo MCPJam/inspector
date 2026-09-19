@@ -251,14 +251,22 @@ export function useResumedThreadPersistence(
     const receiptProvesWrite =
       receipt?.outcome === "saved" || receipt?.outcome === "duplicate";
 
-    // The user stopped the turn and nothing was committed. There is nothing to
-    // reconcile: the server persists only `runSucceeded && !aborted`
-    // (`server/utils/mcpjam-stream-handler.ts`, `onFinishEngine`), so such a
-    // turn produces no receipt AND no version bump — the exact signature this
-    // hook otherwise reads as a dropped write. Left to run, the no-receipt
-    // branch would watch the subscription for its full 10 s and then tell the
-    // user their reply "couldn't be saved", which is a false alarm about a
-    // deliberate action: not saving a withdrawn turn IS the intended outcome.
+    // The user stopped the turn and no receipt proved a write. The silent
+    // reconcile below is the FALLBACK, not the mechanism.
+    //
+    // It was the mechanism: the server used to persist only `runSucceeded &&
+    // !aborted`, so a stopped turn produced no receipt AND no version bump —
+    // the exact signature this hook otherwise reads as a dropped write. Left to
+    // run, the no-receipt branch would watch the subscription for its full 10 s
+    // and then tell the user their reply "couldn't be saved", which is a false
+    // alarm about a deliberate action.
+    //
+    // A stopped turn IS recorded now, with its tool calls closed and a record
+    // of how it ended (`shared/turn-outcome.ts`), so the normal path is a
+    // receipt arriving like any other. This branch still matters for the turns
+    // that genuinely commit nothing — the recording switch off, an ingest that
+    // never landed, a Stop that cancelled the response before its receipt
+    // could be read — and for all of those, not warning is still right.
     //
     // A `failed`, `skipped`, or `conflict` receipt is suppressed here too: the
     // turn was withdrawn, so there is no reply to warn about and none to fork
@@ -270,11 +278,12 @@ export function useResumedThreadPersistence(
       // own rather than one that depends on a sibling branch.
       pendingReconcileRef.current = null;
 
-      // "Aborted" does NOT prove nothing was written. The server checks
-      // `runSucceeded && !aborted` once, then awaits the ingest — so a Stop
-      // landing after that check still lets the commit through, while
-      // cancelling the response prevents its receipt from ever reaching us.
-      // The write is real and this client cannot see it.
+      // "Aborted" does NOT prove nothing was written — and now it usually
+      // means the opposite. A stopped turn is recorded, so the commit is
+      // expected; and even when it is not, a Stop that cancels the response
+      // prevents the receipt from reaching us while the write goes through
+      // anyway. Either way the write can be real and this client cannot see
+      // it.
       //
       // So the version is still reconciled, just silently: a bump gets picked
       // up (otherwise the next send carries a stale `expectedVersion` into the

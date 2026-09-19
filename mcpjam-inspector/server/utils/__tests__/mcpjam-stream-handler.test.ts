@@ -91,6 +91,14 @@ vi.mock("../harness/run-harness-turn", () => ({
 vi.mock("../logger", () => ({
   logger: {
     error: vi.fn(),
+    // `info` and `debug` are as load-bearing as the rest: the engine logs at
+    // info on paths this suite exercises (the ingress guard's closure report,
+    // the high-step-count line), and a mock missing the method throws INSIDE
+    // the agentic loop's try — which the catch then swallows as an engine
+    // failure. The turn simply stops, with no fetch and no error surfaced, and
+    // the assertion that fails is several steps removed from the cause.
+    info: vi.fn(),
+    debug: vi.fn(),
     // PR 5b-pre review fix (CodeRabbit Minor): the callback try/catch
     // path calls `logger.warn` on a callback throw. The mock must
     // include `warn` so the path is faithfully exercised (without
@@ -1247,7 +1255,17 @@ describe("mcpjam-stream-handler", () => {
       },
     });
 
-    resolveFetch?.(
+    // WAIT FOR THE ENGINE TO REACH `fetch` BEFORE RESOLVING IT.
+    //
+    // `resolveFetch` is assigned inside the fetch mock, so it only exists once
+    // the engine has actually called fetch. Firing `resolveFetch?.()` blind
+    // made this test depend on the engine getting there within a specific
+    // number of microtask ticks: one extra `await` anywhere before the first
+    // model call and the optional-call silently no-ops, the fetch promise is
+    // never resolved, and the failure surfaces 30 seconds later as a timeout
+    // on `await lastExecution` — nowhere near the cause.
+    while (!resolveFetch) await new Promise((r) => setTimeout(r, 0));
+    resolveFetch(
       createSseResponse([
         {
           type: "finish",

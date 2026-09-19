@@ -3,6 +3,10 @@ import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 import { withWebMcpTraffic } from "@/lib/webmcp-traffic";
 import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
 import { BROWSER_CONSENT_HEADER } from "@/lib/local-browser-consent";
+import {
+  closeUnresolvedUiToolParts,
+  diffInterruptedToolParts,
+} from "@/shared/turn-outcome-closure";
 /**
  * useChatSession
  *
@@ -1926,8 +1930,15 @@ export function useChatSession(
    * `if (isAbort || err.name === "AbortError") { this.setStatus({ status:
    * "ready" }); return null; }`). So a stopped turn is indistinguishable from a
    * completed one by status alone, and post-stream consumers that expect a
-   * persist receipt would wait out their whole reconciliation window for a
-   * receipt the server never sends: it persists only `runSucceeded && !aborted`.
+   * persist receipt would wait out their whole reconciliation window for one
+   * that never arrives.
+   *
+   * A stopped turn IS recorded now, with its tool calls closed and an
+   * `outcomeAtTurn` saying who stopped it (`shared/turn-outcome.ts`), so a
+   * receipt normally does arrive. This flag stays because it answers a
+   * different question — "did the user end this turn?" — which the history rail
+   * needs whether or not anything was written, and because the record's write
+   * is still behind a switch.
    *
    * Sourced from the SDK's own `onFinish({ isAbort })` rather than from the Stop
    * button, so an abort from ANY source counts — Stop, an unmounting instance
@@ -3406,9 +3417,37 @@ export function useChatSession(
     // the persist receipt already relies on.
     onFinish: ({ isAbort, message }) => {
       turnAbortedRef.current = isAbort;
-      baseSetMessages((current) =>
-        timestampMessageById(current, message.id, Date.now()),
-      );
+      baseSetMessages((current) => {
+        const stamped = timestampMessageById(current, message.id, Date.now());
+        if (!isAbort) return stamped;
+        // CLOSE THE PARTIAL TURN'S OPEN TOOL CALLS, HERE, IMMEDIATELY.
+        //
+        // The user can send again the moment Stop lands, and the next request
+        // carries THIS history. An open tool call in it is not a cosmetic
+        // loose end: the server's loop treats an unresolved historical call as
+        // work to do, so the call the user just stopped would run for real on
+        // the next turn. Closing it locally means the next request can never
+        // contain one.
+        //
+        // The server applies the equivalent closure at persist time and again
+        // at ingress, and all three produce the same bytes — which is what
+        // lets the stopped turn's persist and the next turn's persist land in
+        // either order without disagreeing about a message that already
+        // exists.
+        //
+        // The state is read CONSERVATIVELY (`uiToolPartInterruptedState`): the
+        // client cannot see dispatch, so a call whose input was complete reads
+        // as "outcome unknown" rather than as one that never ran.
+        return stamped.map((entry) =>
+          entry.id === message.id
+            ? closeUnresolvedUiToolParts(entry, {
+                ...(receiptTurnIdentityRef.current?.turnId
+                  ? { turnId: receiptTurnIdentityRef.current.turnId }
+                  : {}),
+              })
+            : entry,
+        );
+      });
     },
     // SEP-1865 App-Provided Tools: AI SDK v6 IGNORES the return value of
     // `onToolCall`. Tool results must be supplied imperatively via
@@ -4126,6 +4165,26 @@ export function useChatSession(
     }
 
     pendingSessionHydrationRef.current = null;
+
+    // THE SERVER COPY WINS, and a disagreement is reported rather than merged.
+    //
+    // Both sides close a stopped turn's open tool calls, and the design rests
+    // on them producing the same bytes. They do — that is a golden test — but
+    // the failure mode if they ever stopped would be silent: the hydration
+    // below replaces the local message wholesale, so a divergence would quietly
+    // rewrite what the user was told about a call that may have taken effect.
+    // Checked here because this is the one place the two copies are both in
+    // hand.
+    const closureDrift = diffInterruptedToolParts(
+      messagesRef.current ?? [],
+      pendingHydration.messages,
+    );
+    if (closureDrift.length > 0) {
+      console.warn(
+        "[chat] server and client disagree about an interrupted tool call; keeping the server's copy",
+        { chatSessionId, drift: closureDrift },
+      );
+    }
 
     baseSetMessages(pendingHydration.messages);
     syncResumedVersion(pendingHydration.resumedVersion);

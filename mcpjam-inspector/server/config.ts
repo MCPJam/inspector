@@ -497,3 +497,27 @@ export function resolveSandboxIsolation(
 
   return sandboxHosts.has(appHost) ? "same-origin" : "ok";
 }
+
+/**
+ * TERMINAL TURN RECORDING — persist turns that ended abnormally.
+ *
+ * A turn that ends in `cancelled`, `failed` or `timed_out` has always been
+ * excluded from persistence, on the reasoning that a partial turn is not a
+ * conversation. The cost of that is what this switch exists to change: tool
+ * calls that already ran and were already billed leave no durable trace, so
+ * nobody can answer what a stopped session actually did — and the client
+ * carries a silent reconciler built solely to cope with the absence.
+ *
+ * OFF UNTIL THE BACKEND IS DEPLOYED. The records these turns carry are dropped
+ * by a control plane that has not shipped `outcomeAtTurn` yet, and their
+ * transcripts would land with no way to tell them apart from complete ones —
+ * which is exactly the reading (`productionChecks`, the goal judge,
+ * session-flow clustering) that the backend half teaches those readers to
+ * avoid. Turn it on once that is live.
+ *
+ * `paused` is NOT in the set and never will be: a paused turn's dangling tool
+ * call is the resume handle, and persisting it as a finished partial turn would
+ * close the thing the next request needs.
+ */
+export const TERMINAL_TURN_RECORDING_ENABLED =
+  process.env.MCPJAM_TERMINAL_TURN_RECORDING === "true";

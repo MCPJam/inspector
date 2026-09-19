@@ -1269,10 +1269,14 @@ export async function streamWebChatTurn(
           runtime.taskCreatedBridge?.attachStreamWriter(writer);
         },
         ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
-        shouldPauseAfterStep: () =>
-          suspendedScopeStepUpToolCallId !== undefined,
+        pauseAfterStep: () =>
+          suspendedScopeStepUpToolCallId !== undefined
+            ? "scope_step_up"
+            : undefined,
         suspendedToolCallId: () => suspendedScopeStepUpToolCallId,
         abortSignal: runtime.abortSignal,
+        // WEB REQUEST SIGNAL: an abort here means the BROWSER went away, not that a programmatic caller asked. The two are different endings and the record keeps them apart.
+        cancellationSource: "client_disconnect" as const,
       });
     }
 
@@ -1317,6 +1321,8 @@ export async function streamWebChatTurn(
       },
       ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
       abortSignal: runtime.abortSignal,
+      // WEB REQUEST SIGNAL: an abort here means the BROWSER went away, not that a programmatic caller asked. The two are different endings and the record keeps them apart.
+      cancellationSource: "client_disconnect" as const,
     });
   }
 
@@ -1442,6 +1448,8 @@ export async function streamWebChatTurn(
       ? { computerWorkdir: prepare.computerWorkdir }
       : {}),
     abortSignal: runtime.abortSignal,
+    // WEB REQUEST SIGNAL: an abort here means the BROWSER went away, not that a programmatic caller asked. The two are different endings and the record keeps them apart.
+    cancellationSource: "client_disconnect" as const,
     onConversationComplete,
     onStreamComplete: async () => {
       stopHarnessRpcLogBridge?.();

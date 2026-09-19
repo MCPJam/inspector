@@ -204,6 +204,23 @@ type ExecuteToolCallOptionsBase = {
    * in the same step.
    */
   parallelToolExecution?: boolean;
+  /**
+   * DISPATCH / SETTLE observation, for the turn-outcome record.
+   *
+   * `onToolDispatched` fires immediately before `tool.execute()` — the moment
+   * the call becomes capable of taking effect somewhere. `onToolSettled` fires
+   * once a tool-result exists for it, error results included (an error IS an
+   * answer).
+   *
+   * The pair is the ONLY way to tell the two states of an unresolved call
+   * apart. A turn stopped between these two points left a call that may have
+   * created an invoice; one stopped before the first left a call that did
+   * nothing. Recording both as "unresolved" would make the reassuring text a
+   * lie exactly where it matters, so the executor reports the boundary rather
+   * than letting each caller guess.
+   */
+  onToolDispatched?: (toolCallId: string, toolName: string) => void;
+  onToolSettled?: (toolCallId: string, toolName: string) => void;
   /** Host/client policy for eligible MCP tool-result content/resources. */
   modelVisibleMcpToolResults?: McpModelVisibleToolResultPolicy["modelVisibleMcpToolResults"];
   /**
@@ -371,6 +388,21 @@ export async function executeToolCallsFromMessages(
   const executeSingleToolCall = async (
     content: any
   ): Promise<ModelMessage | null> => {
+    const message = await executeSingleToolCallInner(content);
+    // SETTLED means "a tool-result exists for this call" — the error-capture
+    // path below produces one too, and an error is an answer. A `null` return
+    // is a call deliberately left unresolved (client-fulfilled), which never
+    // dispatched; an abort or a suspend throws instead of returning, so
+    // neither reaches here and both correctly stay unsettled.
+    if (message) {
+      options.onToolSettled?.(content.toolCallId, content.toolName);
+    }
+    return message;
+  };
+
+  const executeSingleToolCallInner = async (
+    content: any
+  ): Promise<ModelMessage | null> => {
     throwIfAborted(signal);
     try {
       const toolName: string = content.toolName;
@@ -407,6 +439,10 @@ export async function executeToolCallsFromMessages(
         args?: unknown;
       };
       const input = toolCall.input ?? toolCall.args ?? {};
+      // Everything above this line could still decline to run the call (an
+      // unknown tool, a client-fulfilled skip); everything at or below it can
+      // take effect. This is the dispatch boundary.
+      options.onToolDispatched?.(content.toolCallId, toolName);
       const result = await tool.execute(input, {
         toolCallId: content.toolCallId,
         messages,

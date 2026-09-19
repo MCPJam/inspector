@@ -59,10 +59,16 @@ export type TurnRuntime = HostedRuntime | DirectRuntime;
 export type UnifiedTurnResult = RunAssistantTurnResult & {
   newMessages: ModelMessage[];
   /**
-   * True when the turn was cancelled mid-flight (the direct engine's
-   * `headless.aborted`). Callers MUST drop/skip-persist an aborted turn rather
-   * than record partial state as completed. Always `false` on the hosted path
-   * (Convex handles cancellation internally; `runAssistantTurn` exposes no flag).
+   * True when the turn was cancelled mid-flight.
+   *
+   * DERIVED FROM `outcome.lifecycle`, on both engines. It used to be hardcoded
+   * `false` on the hosted path while BOTH hosted engines computed a real flag
+   * that `runAssistantTurn` then discarded — so four callers re-derived
+   * cancellation from their own `AbortSignal` and any caller without one was
+   * simply told the turn completed.
+   *
+   * Callers may keep branching on this, but the record says strictly more: it
+   * names WHO cancelled and which tool calls were left open.
    */
   aborted: boolean;
 };
@@ -167,7 +173,10 @@ export async function runUnifiedAssistantTurn(
       assistantMessages: extractAssistantMessages(newMessages),
       toolCalls: extractToolCalls(newMessages),
       toolResults: extractToolResults(newMessages),
-      aborted: false,
+      // Tolerant: a caller that mocks `runAssistantTurn` without an `outcome`
+      // reads `false`, which is what it read before. A real hosted turn now
+      // reports its actual cancellation instead of always claiming success.
+      aborted: result.outcome?.lifecycle === "cancelled",
     };
   }
 
@@ -237,6 +246,7 @@ export async function runUnifiedAssistantTurn(
     turnTrace: headless.turnTrace,
     usage: headless.turnTrace.usage,
     finishReason: headless.finishReason ?? undefined,
+    outcome: headless.outcome,
     // Surface the cancellation signal (don't throw) so callers keep the existing
     // "check flag → return cancelled" pattern instead of try/catch.
     aborted: headless.aborted,

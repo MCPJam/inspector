@@ -1,6 +1,7 @@
 import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
+import type { TurnOutcomeRecord } from "@/shared/turn-outcome";
 import type { Context } from "hono";
 import type { ChatRewind } from "@/shared/chat-v2";
 import type {
@@ -290,6 +291,20 @@ export interface PersistedTurnTrace {
    * saying so.
    */
   pageToolsAtTurn?: MintedPageToolRecord[];
+  /**
+   * HOW THIS TURN ENDED (`shared/turn-outcome.ts`).
+   *
+   * Carried INSIDE the trace for the third time and the same reason as
+   * `skillsAtTurn` and `pageToolsAtTurn`: the fact is per-TURN and
+   * `buildIngestBody` serializes `turnTrace` whole, so it reaches the wire with
+   * no change to the body builder. Do not "fix" that by adding it to the spread.
+   *
+   * Absent means UNRECORDED, which is every historical row and every producer
+   * that has not been taught to mark its endings. A reader must never render an
+   * absent record as success — that is the exact mistake this field exists to
+   * stop.
+   */
+  outcomeAtTurn?: TurnOutcomeRecord;
 }
 
 // Mirrors mcpjam-backend `chatOriginValidator`. Required at every writer
@@ -765,6 +780,18 @@ async function attemptChatIngest(
         isVersionConflict = preview.includes("VERSION_CONFLICT");
       }
       if (isVersionConflict) {
+        // A CONFLICT DECLINES THE TRANSCRIPT, NOT THE TRACE.
+        //
+        // The turn-trace row is keyed by `(sessionId, turnId)` and describes
+        // ONE turn, so it is not in the version race at all; the control plane
+        // writes it on this same request even when the optimistic version
+        // check refuses the messages. That is what lets a stopped turn's
+        // persist land AFTER the next turn's and still leave a record of
+        // having ended, instead of losing the evidence to a race it was never
+        // part of.
+        //
+        // Nothing to do here, therefore — but the caller's `conflict` handling
+        // reads very differently once you know the trace survived it.
         return {
           kind: "settled",
           outcome: { outcome: "conflict", currentVersion },

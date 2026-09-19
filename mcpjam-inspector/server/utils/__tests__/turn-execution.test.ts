@@ -263,3 +263,147 @@ describe("runUnifiedAssistantTurn", () => {
     expect(res.newMessages).toEqual([asstMsg]);
   });
 });
+
+describe("UnifiedTurnResult.aborted is derived from the outcome record", () => {
+  it("hosted: a cancelled turn reports aborted (it used to be hardcoded false)", async () => {
+    // Both hosted engines always computed a real cancellation flag; the facade
+    // threw it away and reported `false`, so four callers re-derived
+    // cancellation from their own AbortSignal and any caller without one was
+    // told the turn completed.
+    runAssistantTurnMock.mockResolvedValue({
+      messages: [userMsg, asstMsg],
+      assistantMessages: [asstMsg],
+      toolCalls: [],
+      toolResults: [],
+      turnTrace: { spans: [] },
+      outcome: {
+        contractVersion: 1,
+        lifecycle: "cancelled",
+        runtime: { engine: "emulated", modelAccess: "hosted" },
+        termination: { cancellationSource: "client_disconnect" },
+        recordedAt: 1,
+      },
+    });
+
+    const res = await runUnifiedAssistantTurn({
+      runtime: { kind: "hosted", endpointPath: "/stream" },
+      streamSink: "none",
+      messages: [userMsg],
+    } as never);
+
+    expect(res.aborted).toBe(true);
+    expect(res.outcome?.termination?.cancellationSource).toBe(
+      "client_disconnect",
+    );
+  });
+
+  it("hosted: a completed turn is not aborted", async () => {
+    runAssistantTurnMock.mockResolvedValue({
+      messages: [userMsg, asstMsg],
+      assistantMessages: [asstMsg],
+      toolCalls: [],
+      toolResults: [],
+      turnTrace: { spans: [] },
+      outcome: {
+        contractVersion: 1,
+        lifecycle: "completed",
+        runtime: { engine: "harness", harness: "codex", modelAccess: "hosted" },
+        recordedAt: 1,
+      },
+    });
+
+    const res = await runUnifiedAssistantTurn({
+      runtime: { kind: "hosted", endpointPath: "/stream" },
+      streamSink: "none",
+      messages: [userMsg],
+    } as never);
+
+    expect(res.aborted).toBe(false);
+  });
+
+  it("hosted: a FAILED or TIMED OUT turn is not 'aborted'", async () => {
+    // `aborted` has always meant "somebody cancelled this". A failure is not a
+    // cancellation, and collapsing the two would hide real breakage behind a
+    // flag callers use to skip persistence quietly.
+    for (const lifecycle of ["failed", "timed_out"] as const) {
+      runAssistantTurnMock.mockResolvedValue({
+        messages: [userMsg],
+        assistantMessages: [],
+        toolCalls: [],
+        toolResults: [],
+        outcome: {
+          contractVersion: 1,
+          lifecycle,
+          runtime: { engine: "emulated", modelAccess: "hosted" },
+          termination:
+            lifecycle === "timed_out"
+              ? { timeout: { clock: "turn", budgetMs: 1, elapsedMs: 2 } }
+              : { errorSource: "model" },
+          recordedAt: 1,
+        },
+      });
+      const res = await runUnifiedAssistantTurn({
+        runtime: { kind: "hosted", endpointPath: "/stream" },
+        streamSink: "none",
+        messages: [userMsg],
+      } as never);
+      expect({ lifecycle, aborted: res.aborted }).toEqual({
+        lifecycle,
+        aborted: false,
+      });
+    }
+  });
+
+  it("hosted: a result with NO outcome still reads false (tests mock without one)", async () => {
+    runAssistantTurnMock.mockResolvedValue({
+      messages: [userMsg, asstMsg],
+      assistantMessages: [asstMsg],
+      toolCalls: [],
+      toolResults: [],
+      turnTrace: { spans: [] },
+    });
+
+    const res = await runUnifiedAssistantTurn({
+      runtime: { kind: "hosted", endpointPath: "/stream" },
+      streamSink: "none",
+      messages: [userMsg],
+    } as never);
+
+    expect(res.aborted).toBe(false);
+    expect(res.outcome).toBeUndefined();
+  });
+
+  it("direct: surfaces the engine's own record alongside its aborted flag", async () => {
+    runDirectChatTurnMock.mockReturnValue({ handle: true });
+    consumeDirectChatTurnHeadlessMock.mockResolvedValue({
+      messages: [asstMsg],
+      turnTrace: { spans: [], usage: { totalTokens: 1 } },
+      finishReason: undefined,
+      aborted: true,
+      outcome: {
+        contractVersion: 1,
+        lifecycle: "cancelled",
+        runtime: { engine: "emulated", modelAccess: "direct" },
+        termination: {
+          cancellationSource: "caller",
+          unresolvedToolCalls: [
+            { toolCallId: "c1", toolName: "t", state: "outcome_unknown" },
+          ],
+        },
+        recordedAt: 1,
+      },
+    });
+
+    const res = await runUnifiedAssistantTurn({
+      runtime: { kind: "direct", llmModel: {}, modelId: "m" },
+      streamSink: "none",
+      messages: [userMsg],
+    } as never);
+
+    expect(res.aborted).toBe(true);
+    expect(res.outcome?.runtime.modelAccess).toBe("direct");
+    expect(res.outcome?.termination?.unresolvedToolCalls?.[0]?.state).toBe(
+      "outcome_unknown",
+    );
+  });
+});

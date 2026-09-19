@@ -7,6 +7,7 @@ import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace"
  * while MCP tools execute locally in this Express server.
  */
 import { withPageToolAttributionMetadata } from "./page-tool-call-attribution";
+import { TERMINAL_TURN_RECORDING_ENABLED } from "../config.js";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -307,7 +308,23 @@ import {
   type PersistChatOutcome,
   type PersistedTurnTrace,
 } from "./chat-ingestion";
-import { StreamTurnDriver } from "./stream-turn-driver.js";
+import {
+  StreamTurnDriver,
+  TurnOutcomeBuilder,
+  classifyAbort,
+  classifyCatch,
+} from "./stream-turn-driver.js";
+import type {
+  TurnCancellationSource,
+  TurnModelAccess,
+  TurnOutcomeRecord,
+  TurnPauseKind,
+} from "@/shared/turn-outcome";
+import {
+  closeUnresolvedToolCalls,
+  listUnresolvedToolCalls,
+  type UnresolvedToolCall,
+} from "@/shared/turn-outcome-closure";
 import {
   pushAiSdkTrailingErrorSpan,
   pushBackendStepLlmFailureSpans,
@@ -1081,6 +1098,34 @@ export interface MCPJamHandlerOptions {
     harnessSessionCommit?: HarnessSessionCommitPayload,
   ) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
   onStreamComplete?: () => Promise<void> | void;
+  /**
+   * HOW THIS TURN ENDED, delivered on BOTH sinks.
+   *
+   * A callback rather than a return value because `createUIMessageStream` runs
+   * `execute` lazily — it does not start until the body drains — so the value
+   * the ui sink returns is produced before the turn has run. A completion
+   * promise would be worse: it would never settle at all if the client never
+   * reads the body. Fired from `onFinishEngine`, which both sinks reach.
+   *
+   * `ChatEngineLoopResult.outcome` carries the same record on the `"none"`
+   * sink only, exactly like `turnTrace`.
+   */
+  onTurnOutcome?: (outcome: TurnOutcomeRecord) => void;
+  /**
+   * What an abort on `abortSignal` MEANS for this caller.
+   *
+   * The web request signal firing means the browser went away
+   * (`client_disconnect`); a programmatic signal means its owner asked
+   * (`caller`, the default). Supplied by the caller because only the caller
+   * knows which signal it handed in — guessing would collapse a distinction the
+   * cancellation vocabulary exists to keep.
+   */
+  cancellationSource?: TurnCancellationSource;
+  /**
+   * Whose model credentials paid. `"hosted"` (MCPJam-provided, the default for
+   * this engine) or `"direct"`.
+   */
+  modelAccess?: TurnModelAccess;
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
@@ -1236,6 +1281,9 @@ interface StepContext {
   writer: {
     write: (chunk: UIMessageChunk) => void;
   };
+  /** The turn's outcome builder, so tool dispatch/settle is observed where the
+   *  calls actually run. */
+  outcome?: TurnOutcomeBuilder;
   messageHistory: ModelMessage[];
   /**
    * Full serialized tool list. In non-progressive mode this is what's sent
@@ -1384,6 +1432,197 @@ function collectUsedToolCallIds(messages: ModelMessage[]): Set<string> {
   }
 
   return usedToolCallIds;
+}
+
+/**
+ * THE INGRESS GUARD: close inherited tool calls that nothing is coming back for.
+ *
+ * Before this, `emitInheritedToolCalls` plus `executeToolCallsFromMessages` ran
+ * EVERY unresolved call in the resent history on the next turn. That is correct
+ * for a call somebody is resuming, and dangerous for every other one: a call the
+ * user pressed Stop on would execute for real afterwards — after the Stop, with
+ * no turn in flight and nobody watching. Persisting stopped turns without this
+ * would turn a latent hole into a routine one.
+ *
+ * So the rule inverts. A call runs only when something NAMES it as a resume:
+ *
+ *   - the APPROVAL RAIL owns the step — the history already asked a human about
+ *     one of these calls, or one of them needs approval now. Nothing there can
+ *     run unasked, and its approval-free siblings are the drain the resumed
+ *     turn depends on;
+ *   - an MRTR or scope step-up resume names it, or names a sibling in the same
+ *     assistant message;
+ *   - it is a registered CLIENT-FULFILLED call, whose executor is the browser.
+ *
+ * Everything else is closed as `outcome_unknown`. Conservative on purpose: the
+ * guard has no dispatch evidence of its own — it is looking at a history that
+ * arrived from somewhere — so it cannot promise a call did nothing. The
+ * persist-time closure, which does have the builder's evidence, says
+ * `never_started` where it can.
+ *
+ * Returns the calls it closed, for the log. Mutates `messages` in place: the
+ * engine holds ONE history reference and everything downstream reads it.
+ */
+async function closeInheritedToolCallsWithoutResume(args: {
+  messages: ModelMessage[];
+  tools: ToolSet;
+  turnId: string;
+  decisions: ApprovalDecisionCache;
+  /** Named by an MRTR / scope step-up resume request. */
+  resumeToolCallId?: string;
+}): Promise<UnresolvedToolCall[]> {
+  const { messages, tools, turnId, decisions, resumeToolCallId } = args;
+  const unresolved = listUnresolvedToolCalls(messages, () => "outcome_unknown");
+  if (unresolved.length === 0) return [];
+
+  const protectedIds = new Set<string>();
+
+  // (1) THE APPROVAL RAIL OWNS THE STEP IT ASKED ABOUT — that step, and not
+  // the whole history.
+  //
+  // Two ways to tell that it owns one, and either one protects it:
+  //
+  //   - the history already carries a `tool-approval-request` for an unresolved
+  //     call. The previous turn gated it and is waiting for a human; the
+  //     decision can still arrive, and closing the call would destroy a pending
+  //     approval the user is looking at;
+  //   - an unresolved call needs approval NOW. The engine will re-emit the pill
+  //     and pause again, so nothing there is at risk of running unasked.
+  //
+  // WHOLE-STEP, because the pause is whole-step: `handlePendingApprovals` and
+  // the pre-pause drain both operate on the approval-free SIBLINGS of the
+  // gated call, and closing those would strand the discovery side effect the
+  // resumed turn depends on. So the gated call's own assistant message is
+  // protected entire.
+  //
+  // But ONLY that message. This used to stand the guard down for the entire
+  // history — `return []` on the first approval it found — and that is the
+  // hole: `handlePendingApprovals` hands the WHOLE history to
+  // `executeToolCallsFromMessages` with no filter, so it runs every unresolved
+  // executable call it finds, not only the approved step's. An orphan left by
+  // a stopped turn three messages earlier would execute for real the moment a
+  // human approved something unrelated — a charge nobody asked for, authorized
+  // by a click on a different dialog.
+  //
+  // The second question is asked of the engine's own predicate, with the
+  // turn's own decision cache, so this answer and the pause site's cannot
+  // disagree about the same call.
+  const awaitingApprovalIds = toolCallIdsWithApprovalRequests(messages);
+  for (const call of unresolved) {
+    if (protectedIds.has(call.toolCallId)) continue;
+    const owned =
+      awaitingApprovalIds.has(call.toolCallId) ||
+      (await toolCallNeedsApproval({
+        name: call.toolName,
+        input: findToolCallInput(messages, call.toolCallId),
+        toolCallId: call.toolCallId,
+        tools,
+        messages,
+        decisions,
+      }));
+    if (!owned) continue;
+    protectedIds.add(call.toolCallId);
+    for (const sibling of siblingToolCallIds(messages, call.toolCallId)) {
+      protectedIds.add(sibling);
+    }
+  }
+
+  // (2) A RESUME NAMES ONE CALL, but its siblings ride with it: the MRTR
+  // pre-phase pauses when any sibling in the same assistant message is still
+  // unresolved, and closing one would make it splice into a step it has
+  // already declared finished.
+  if (resumeToolCallId) {
+    protectedIds.add(resumeToolCallId);
+    for (const sibling of siblingToolCallIds(messages, resumeToolCallId)) {
+      protectedIds.add(sibling);
+    }
+  }
+
+  const toClose = unresolved
+    .filter((call) => !protectedIds.has(call.toolCallId))
+    .filter((call) => {
+      // (3) CLIENT-FULFILLED calls are the browser's to run. This path never
+      // runs them (`skipNonExecutableTools`), and the loop's pause for them IS
+      // the rail that gets them fulfilled — closing one would break WebMCP
+      // rather than protect anything.
+      const entry = (
+        tools as Record<string, { execute?: unknown } | undefined>
+      )[call.toolName];
+      return !(
+        isClientFulfilledToolName(call.toolName) &&
+        !!entry &&
+        typeof entry.execute !== "function"
+      );
+    });
+  if (toClose.length === 0) return [];
+
+  const closed = closeUnresolvedToolCalls(messages, toClose, { turnId });
+  messages.length = 0;
+  messages.push(...closed);
+  return toClose;
+}
+
+/**
+ * Tool calls the history has already asked a human about.
+ *
+ * Read from the same `tool-approval-request` parts `handlePendingApprovals`
+ * pairs decisions against, so the guard and the approval path cannot disagree
+ * about which calls are waiting on somebody.
+ */
+function toolCallIdsWithApprovalRequests(
+  messages: ModelMessage[],
+): Set<string> {
+  const ids = new Set<string>();
+  for (const msg of messages) {
+    if (msg?.role !== "assistant") continue;
+    const content = (msg as AssistantModelMessage).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content as Array<Record<string, unknown>>) {
+      if (
+        part?.type === "tool-approval-request" &&
+        typeof part.toolCallId === "string" &&
+        part.toolCallId
+      ) {
+        ids.add(part.toolCallId);
+      }
+    }
+  }
+  return ids;
+}
+
+/** The input a tool call was made with, for the approval predicate. */
+function findToolCallInput(
+  messages: ModelMessage[],
+  toolCallId: string,
+): unknown {
+  for (const msg of messages) {
+    if (msg?.role !== "assistant") continue;
+    const content = (msg as AssistantModelMessage).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (part.type === "tool-call" && part.toolCallId === toolCallId) {
+        return part.input ?? {};
+      }
+    }
+  }
+  return {};
+}
+
+/** Every tool-call id in the SAME assistant message as `toolCallId`. */
+function siblingToolCallIds(
+  messages: ModelMessage[],
+  toolCallId: string,
+): string[] {
+  for (const msg of messages) {
+    if (msg?.role !== "assistant") continue;
+    const content = (msg as AssistantModelMessage).content;
+    if (!Array.isArray(content)) continue;
+    const ids = content
+      .filter((part) => part.type === "tool-call")
+      .map((part) => (part as { toolCallId: string }).toolCallId);
+    if (ids.includes(toolCallId)) return ids;
+  }
+  return [];
 }
 
 function hasUnresolvedClientFulfilledToolCalls(
@@ -1564,7 +1803,7 @@ function createClientFinishChunk(
     !Array.isArray(metadata) &&
     usage
       ? { ...metadata, ...usage }
-      : metadata ?? usage;
+      : (metadata ?? usage);
 
   return buildFinishChunk({
     finishReason: source?.finishReason ?? fallbackReason,
@@ -2043,9 +2282,9 @@ async function processStream(
           ? parseErr
           : new Error(
               typeof parseErr === "object" &&
-              parseErr !== null &&
-              "message" in parseErr &&
-              typeof (parseErr as { message?: unknown }).message === "string"
+                parseErr !== null &&
+                "message" in parseErr &&
+                typeof (parseErr as { message?: unknown }).message === "string"
                 ? (parseErr as { message: string }).message
                 : "stream parse failed",
             );
@@ -2379,7 +2618,7 @@ async function emitToolResults(
             ("structuredContent" in rawResult ||
               isModelVisibleImageOutput(part.output))
               ? rawResult
-              : part.output ?? rawResult;
+              : (part.output ?? rawResult);
 
           let outputForUi: unknown = rawOutput;
           if (rawOutput && typeof rawOutput === "object") {
@@ -2392,7 +2631,8 @@ async function emitToolResults(
                 : {};
             const toolMeta =
               serverId && toolName
-                ? mcpClientManager.getAllToolsMetadata(serverId)[toolName] ?? {}
+                ? (mcpClientManager.getAllToolsMetadata(serverId)[toolName] ??
+                  {})
                 : {};
 
             // Include descriptor metadata in streamed output so shared/minimal chat
@@ -2554,6 +2794,25 @@ function emitInheritedToolCalls(
  *
  * Returns true if approvals were found and handled (agentic loop should continue).
  */
+/**
+ * The dispatch/settle hooks for `executeToolCallsFromMessages`, or nothing.
+ *
+ * Spread at every execution site rather than passed down as a builder, so a new
+ * execution site added later reads as OBVIOUSLY missing them. A call executed
+ * without them is invisible to the record — it would be closed as
+ * `never_started` after a Stop even though it may have created an invoice.
+ */
+function toolOutcomeHooks(outcome: TurnOutcomeBuilder | undefined) {
+  return outcome
+    ? {
+        onToolDispatched: (toolCallId: string, toolName: string) =>
+          outcome.markToolDispatched(toolCallId, toolName),
+        onToolSettled: (toolCallId: string) =>
+          outcome.markToolSettled(toolCallId),
+      }
+    : {};
+}
+
 async function handlePendingApprovals(
   writer: StepContext["writer"],
   messageHistory: ModelMessage[],
@@ -2570,6 +2829,7 @@ async function handlePendingApprovals(
   // emits `tool-input-available` UI chunks — `onToolCall` must fire
   // here too so PR 5b's wiring doesn't see orphan `tool_result`.
   onToolCall?: (event: MCPJamToolCallEvent) => void,
+  outcome?: TurnOutcomeBuilder,
 ): Promise<boolean> {
   // Build approvalId → toolCallId map, toolCallId → toolName map,
   // and toolCallId → assistant message index map from assistant messages
@@ -2789,6 +3049,7 @@ async function handlePendingApprovals(
       // skip the no-execute entry (the loop re-pauses for client
       // fulfillment) instead of throwing and 500ing the whole turn.
       skipNonExecutableTools: true,
+      ...toolOutcomeHooks(outcome),
       ...(abortSignal ? { abortSignal } : {}),
     });
 
@@ -2810,11 +3071,24 @@ async function handlePendingApprovals(
  * Process a single step of the agentic loop.
  * Calls Convex, streams the response, and executes tools if needed.
  */
-async function processOneStep(
-  ctx: StepContext,
-): Promise<{ shouldContinue: boolean; didEmitFinish: boolean }> {
+async function processOneStep(ctx: StepContext): Promise<{
+  shouldContinue: boolean;
+  didEmitFinish: boolean;
+  /**
+   * SET ONLY WHEN THIS STEP PAUSED, and then it names which rail.
+   *
+   * `shouldContinue: false` is three different endings wearing one flag: the
+   * turn finished, the turn failed, or the turn PAUSED for something to come
+   * back. The epilogue cannot tell them apart from the flag, so it used to
+   * call every one of them `completed` — including the approval pause, which
+   * is the most ordinary pause in the product. A resumable turn recorded as a
+   * finished one is the precise claim this contract exists to prevent.
+   */
+  pausedKind?: TurnPauseKind;
+}> {
   const {
     writer,
+    outcome,
     messageHistory,
     toolDefs,
     toolDefsByName,
@@ -3394,6 +3668,7 @@ async function processOneStep(
           isApprovalFreeMetaToolName(name, progressivePlan),
         modelVisibleMcpToolResults,
         readLinkedResource: readLinkedMcpResourceWithManager(mcpClientManager),
+        ...toolOutcomeHooks(outcome),
         ...(abortSignal ? { abortSignal } : {}),
       });
       if (metaMessages.length > 0) {
@@ -3442,7 +3717,11 @@ async function processOneStep(
       if (finishChunk) {
         writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
       }
-      return { shouldContinue: false, didEmitFinish: !!finishChunk };
+      return {
+        shouldContinue: false,
+        didEmitFinish: !!finishChunk,
+        pausedKind: "tool_approval",
+      };
     }
 
     // Emit inherited tool calls that need execution
@@ -3503,6 +3782,7 @@ async function processOneStep(
         skipNonExecutableTools: true,
         modelVisibleMcpToolResults,
         readLinkedResource: readLinkedMcpResourceWithManager(mcpClientManager),
+        ...toolOutcomeHooks(outcome),
         ...(abortSignal ? { abortSignal } : {}),
       });
       const toolsEndAbs = Date.now();
@@ -3597,7 +3877,11 @@ async function processOneStep(
         if (finishChunk) {
           writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
         }
-        return { shouldContinue: false, didEmitFinish: !!finishChunk };
+        return {
+          shouldContinue: false,
+          didEmitFinish: !!finishChunk,
+          pausedKind: "client_fulfilled",
+        };
       }
     } catch (error) {
       // Aborts surface here when the signal fires mid-tool. Bubble up so
@@ -3623,7 +3907,17 @@ async function processOneStep(
         if (finishChunk) {
           writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
         }
-        return { shouldContinue: false, didEmitFinish: !!finishChunk };
+        // Read from the SIGNAL that was raised, not from this request's resume
+        // descriptor: `scopeStepUpResume` says what this request came back to
+        // continue, which is a different question from what it is pausing for
+        // now, and a scope step-up resume can re-suspend on the MRTR rail.
+        return {
+          shouldContinue: false,
+          didEmitFinish: !!finishChunk,
+          pausedKind: isScopeStepUpSuspendSignal(error)
+            ? "scope_step_up"
+            : "tool_input_required",
+        };
       }
       const failAbs = Date.now();
       pushBackendStepToolFailureSpans(
@@ -3903,6 +4197,12 @@ export interface ChatEngineLoopResult {
   response?: Response;
   messageHistory: ModelMessage[];
   turnTrace?: PersistedTurnTrace;
+  /**
+   * HOW THE TURN ENDED. Populated on the `"none"` sink only, like `turnTrace`:
+   * the `"ui"` sink returns before `execute` has run at all. UI callers read
+   * the same record through `onTurnOutcome`.
+   */
+  outcome?: TurnOutcomeRecord;
   aborted: boolean;
 }
 
@@ -3952,6 +4252,9 @@ export async function runChatEngineLoop(
     scopeStepUpResume,
     onConversationComplete,
     onStreamComplete,
+    onTurnOutcome,
+    cancellationSource,
+    modelAccess,
     onStreamWriterReady,
     endpointPath,
     extraHeaders,
@@ -4054,6 +4357,22 @@ export async function runChatEngineLoop(
   // Shared per-turn ritual (turn_start / onStepFinish / turn_finish /
   // PersistedTurnTrace), sharing `traceTurn`'s span array + clock so the live
   // snapshots (still emitted against `traceTurn`) and the driver stay in lockstep.
+  // HOW THIS TURN ENDS. Built at engine entry, not with the driver, so the
+  // pre-stream bail below can still mark a cancellation.
+  //
+  // `harness` is carried even though the engine is `"emulated"`: a scope
+  // step-up continuation deliberately runs on this engine
+  // (`handleMCPJamFreeChatModel` excludes `scopeStepUpResume` from the harness
+  // branch), and a record that dropped the host id would make that turn
+  // indistinguishable from a plain Playground turn on the same session.
+  const outcomeBuilder = new TurnOutcomeBuilder({
+    engine: "emulated",
+    ...(options.harness ? { harness: options.harness } : {}),
+    modelAccess: modelAccess ?? "hosted",
+    ...(cancellationSource
+      ? { defaultCancellationSource: cancellationSource }
+      : {}),
+  });
   const driver = new StreamTurnDriver({
     turnId: traceTurn.turnId,
     promptIndex: traceTurn.promptIndex,
@@ -4061,6 +4380,7 @@ export async function runChatEngineLoop(
     engine: "emulated",
     traceBaseMs: traceTurn.turnStartedAt,
     spans: traceTurn.turnSpans,
+    outcome: outcomeBuilder,
     onStepFinish,
   });
   const promptStepBaseIndex = getPromptAssistantStepBaseIndex(
@@ -4070,6 +4390,32 @@ export async function runChatEngineLoop(
   let steps = 0;
   let runSucceeded = false;
   let aborted = false;
+  /**
+   * The last structured engine error this turn reported, kept so the outcome
+   * record can name WHAT failed on a step that settled with an error but did
+   * not throw.
+   *
+   * `processOneStep` handles a non-OK backend response, a tool-execution
+   * failure and an empty provider response by emitting an error chunk and
+   * returning `{shouldContinue: false, didEmitFinish: false}` — it does NOT
+   * throw, so the outer catch never sees any of them and the loop falls
+   * through to the success epilogue. Before this, every one of those turns
+   * recorded `completed`.
+   */
+  let lastEngineError:
+    { code?: string; phase?: "setup" | "stream" } | undefined;
+  // Counted, not just stored: the question at the loop boundary is "did THIS
+  // step report an error", and a stale error from an earlier step would
+  // otherwise mark a turn failed that recovered.
+  let engineErrorCount = 0;
+  const captureEngineError: typeof onEngineError = (event) => {
+    engineErrorCount += 1;
+    lastEngineError = {
+      ...(event.code ? { code: event.code } : {}),
+      ...(event.phase ? { phase: event.phase } : {}),
+    };
+    onEngineError?.(event);
+  };
 
   // Engine `execute` closure. Factored so it can be invoked either via
   // `createUIMessageStream` (streamSink: "ui") or directly with a no-op
@@ -4139,25 +4485,28 @@ export async function runChatEngineLoop(
     // surface as user-visible failures.
     const startHeartbeat = () => {
       if (resolvedHeartbeatMs <= 0) return;
-      heartbeatTimer = setInterval(() => {
-        if (streamClosed || aborted) return;
-        const sinceLastWrite = Date.now() - lastWriteAt;
-        if (sinceLastWrite < resolvedHeartbeatMs) return;
-        try {
-          writeTraceEvent(safeWriter, {
-            type: "heartbeat",
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
-          });
-        } catch (error) {
-          // Should not happen — safeWriter swallows write errors —
-          // but a final guard here keeps a misbehaving writeTraceEvent
-          // from killing the loop.
-          logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }, Math.max(250, Math.floor(resolvedHeartbeatMs / 2)));
+      heartbeatTimer = setInterval(
+        () => {
+          if (streamClosed || aborted) return;
+          const sinceLastWrite = Date.now() - lastWriteAt;
+          if (sinceLastWrite < resolvedHeartbeatMs) return;
+          try {
+            writeTraceEvent(safeWriter, {
+              type: "heartbeat",
+              turnId: traceTurn.turnId,
+              promptIndex: traceTurn.promptIndex,
+            });
+          } catch (error) {
+            // Should not happen — safeWriter swallows write errors —
+            // but a final guard here keeps a misbehaving writeTraceEvent
+            // from killing the loop.
+            logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        },
+        Math.max(250, Math.floor(resolvedHeartbeatMs / 2)),
+      );
     };
 
     // External abort listener: marks `aborted` so downstream catch
@@ -4198,12 +4547,126 @@ export async function runChatEngineLoop(
 
       if (aborted) {
         // Already aborted before we even started — bail silently.
+        //
+        // Silent on the WIRE, not in the record. This is the path a Stop that
+        // beat the first step takes, and leaving it unmarked is what made
+        // `record()` fall through to its no-terminal-mark degrade.
+        //
+        // `classifyAbort`, not a bare `markCancelled`: a DEADLINE that fired
+        // before the first step aborts this same signal, and calling that a
+        // user cancellation would file a timeout as "somebody asked for this"
+        // — which no consumer counts as a failure.
+        classifyAbort(outcomeBuilder, {
+          signal: abortSignal,
+          startedAtMs: traceTurn.turnStartedAt,
+        });
         return;
       }
 
       driver.emitTurnStart(safeWriter);
 
       startHeartbeat();
+
+      // ── Ingress guard ─────────────────────────────────────────────────────
+      // Close inherited tool calls that nothing is coming back for, BEFORE the
+      // resume pre-phase and the loop both start reading unresolved calls as
+      // work to do. See `closeInheritedToolCallsWithoutResume` for the rule.
+      //
+      // BEFORE `handlePendingApprovals`, and that order is the whole point.
+      // That path hands the WHOLE history to `executeToolCallsFromMessages`
+      // with no filter, so it runs every unresolved executable call it finds —
+      // an orphan from a stopped turn three messages back included. Running the
+      // guard after it would be closing the stable door: the guard protects the
+      // approved call's own step (and its approval-free siblings, which that
+      // path needs), and closes the rest before anything can execute them. A
+      // human approving one dialog must not authorize a charge from a turn they
+      // already stopped.
+      //
+      // Runs regardless of where the history came from — a client that never
+      // closed its partial message, a resumed session, a replayed transcript —
+      // which is what makes it defence in depth rather than a second copy of
+      // the client's logic.
+      const guardClosed = await closeInheritedToolCallsWithoutResume({
+        messages: messageHistory,
+        tools,
+        turnId: traceTurn.turnId,
+        decisions: approvalDecisions,
+        ...((scopeStepUpResume ?? mrtrResume)?.toolCallId
+          ? {
+              resumeToolCallId: (scopeStepUpResume ?? mrtrResume)!.toolCallId,
+            }
+          : {}),
+      });
+      const closedIds = new Set(guardClosed.map((call) => call.toolCallId));
+
+      if (guardClosed.length > 0) {
+        logger.info(
+          "[mcpjam-stream-handler] closed inherited tool calls with no resume marker",
+          {
+            turnId: traceTurn.turnId,
+            count: guardClosed.length,
+            toolNames: guardClosed.map((call) => call.toolName),
+          },
+        );
+        // TELL THE CLIENT, rather than closing the call only in our own copy.
+        //
+        // The browser that sent this history is still showing a spinner on that
+        // call, and would keep showing one until a reload. The pair is emitted
+        // in this order because the AI SDK's reducer looks for a tool part on
+        // the message it is building: a result naming a call it has not seen
+        // introduced throws `No tool invocation found for tool call ID`. Same
+        // reason `emitInheritedToolCalls` exists — which cannot be reused here,
+        // because by now these calls DO have results and it skips those.
+        for (const call of guardClosed) {
+          const input = findToolCallInput(messageHistory, call.toolCallId);
+          emitToolInput(safeWriter, {
+            toolCallId: call.toolCallId,
+            toolName: call.toolName,
+            input,
+          });
+          // Isolated, like every other `onToolCall` site. The callback is the
+          // caller's trace tap; a throw out of it here would abort the turn
+          // AFTER the transcript has already been closed, turning a bookkeeping
+          // failure into a lost turn.
+          try {
+            await onToolCall?.({
+              toolCallId: call.toolCallId,
+              toolName: call.toolName,
+              input,
+              stepIndex: effectiveSteps(),
+              promptIndex: traceTurn.promptIndex,
+              // No server attribution: nothing ran, so there is no origin to
+              // claim. Attaching one would make a closure read as a reply.
+              serverId: undefined,
+            });
+          } catch (error) {
+            logger.warn(
+              "[mcpjam-stream-handler] onToolCall failed for an ingress-closed call",
+              {
+                toolCallId: call.toolCallId,
+                error: error instanceof Error ? error.message : String(error),
+              },
+            );
+          }
+        }
+        await emitToolResults(
+          safeWriter,
+          mcpClientManager,
+          messageHistory.filter(
+            (message) =>
+              message?.role === "tool" &&
+              Array.isArray((message as ToolModelMessage).content) &&
+              (message as ToolModelMessage).content.some((part) =>
+                closedIds.has(
+                  (part as { toolCallId?: string }).toolCallId ?? "",
+                ),
+              ),
+          ),
+          traceTurn,
+          effectiveSteps(),
+          onToolResult,
+        );
+      }
 
       // Process any pending approval responses from a previous request.
       //
@@ -4216,7 +4679,14 @@ export async function runChatEngineLoop(
       // approve path ships a tool-result instead), and the turn hung forever.
       // A history that carries an approval request is the only fact that
       // matters, and it is a fact this function can read for itself.
-      if (options.durableCheckpoint && hasUnresolvedApprovalResponses(messageHistory)) {
+      //
+      // Runs AFTER the guard: it executes every unresolved call in the history
+      // it is handed, so what reaches it has to be the approved step and its
+      // siblings — nothing inherited from a turn that ended.
+      if (
+        options.durableCheckpoint &&
+        hasUnresolvedApprovalResponses(messageHistory)
+      ) {
         await options.durableCheckpoint({
           phase: "tools",
           messages: messageHistory,
@@ -4234,6 +4704,7 @@ export async function runChatEngineLoop(
         modelVisibleMcpToolResults,
         onToolResult,
         onToolCall,
+        outcomeBuilder,
       );
 
       // ── Hosted MRTR resume pre-phase (§12.5, PR5) ─────────────────────────
@@ -4245,7 +4716,13 @@ export async function runChatEngineLoop(
       // indeterminate outcome pauses. This is the SAME engine that produced the
       // suspension, re-entered on any replica.
       let mrtrPaused = false;
+      // Which rail the LOOP paused on, if it did. Distinct from `mrtrPaused`,
+      // which is the pre-phase's pause and is decided before the loop starts.
+      let loopPausedKind: TurnPauseKind | undefined;
       const operationResume = scopeStepUpResume ?? mrtrResume;
+      // A pause is recorded when the loop below is skipped, not here: several
+      // branches set `mrtrPaused` and one of them (the fall-through after a
+      // complete splice) does NOT pause at all.
       if (
         operationResume &&
         !aborted &&
@@ -4314,68 +4791,73 @@ export async function runChatEngineLoop(
 
       while (!mrtrPaused && effectiveSteps() < resolvedMaxSteps) {
         if (aborted) break;
+        const engineErrorsBeforeStep = engineErrorCount;
         await options.durableCheckpoint?.({
           phase: "model",
           messages: messageHistory,
           step: effectiveSteps(),
         });
-        const { shouldContinue, didEmitFinish } = await processOneStep({
-          durableCheckpoint: options.durableCheckpoint,
-          writer: safeWriter,
-          messageHistory,
-          toolDefs,
-          toolDefsByName,
-          tools,
-          progressivePlan,
-          discoveryState,
-          authHeader,
-          scenarioId,
-          accessVersion,
-          projectId,
-          chatSessionId,
-          sourceType,
-          modelId,
-          provider,
-          systemPrompt,
-          temperature,
-          mcpClientManager,
-          selectedServers,
-          approvalDecisions,
-          modelVisibleMcpToolResults,
-          approvalMode,
-          stepIndex: effectiveSteps(),
-          usedToolCallIds,
-          traceTurn,
-          endpointPath: resolvedEndpointPath,
-          extraHeaders,
-          extraBodyFields,
-          clientIp,
-          onLiveTextDelta,
-          // PR 5b-pre: chunk-level callbacks. Passed through to the
-          // step processor where the chunk-switch (onToolCall) +
-          // tool-result emission (onToolResult) sites fire them.
-          onToolCall,
-          onToolResult,
-          // PR 5b-followup-2: structured-error callback. Fires from
-          // the two `processOneStep` error sites (non-OK Convex
-          // response + processStream/tool catch).
-          onEngineError,
-          onModelHandover: () => {
-            modelInvoked = true;
-          },
-          failureReporter,
-          // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
-          prepareAdvertisedTools,
-          abortSignal,
-        });
+        const { shouldContinue, didEmitFinish, pausedKind } =
+          await processOneStep({
+            durableCheckpoint: options.durableCheckpoint,
+            writer: safeWriter,
+            outcome: outcomeBuilder,
+            messageHistory,
+            toolDefs,
+            toolDefsByName,
+            tools,
+            progressivePlan,
+            discoveryState,
+            authHeader,
+            scenarioId,
+            accessVersion,
+            projectId,
+            chatSessionId,
+            sourceType,
+            modelId,
+            provider,
+            systemPrompt,
+            temperature,
+            mcpClientManager,
+            selectedServers,
+            approvalDecisions,
+            modelVisibleMcpToolResults,
+            approvalMode,
+            stepIndex: effectiveSteps(),
+            usedToolCallIds,
+            traceTurn,
+            endpointPath: resolvedEndpointPath,
+            extraHeaders,
+            extraBodyFields,
+            clientIp,
+            onLiveTextDelta,
+            // PR 5b-pre: chunk-level callbacks. Passed through to the
+            // step processor where the chunk-switch (onToolCall) +
+            // tool-result emission (onToolResult) sites fire them.
+            onToolCall,
+            onToolResult,
+            // PR 5b-followup-2: structured-error callback. Fires from
+            // the two `processOneStep` error sites (non-OK Convex
+            // response + processStream/tool catch). Wrapped so the engine also
+            // sees what failed — a step can settle with an error WITHOUT
+            // throwing, and the record has to say so.
+            onEngineError: captureEngineError,
+            onModelHandover: () => {
+              modelInvoked = true;
+            },
+            failureReporter,
+            // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
+            prepareAdvertisedTools,
+            abortSignal,
+          });
 
         steps++;
         await options.durableCheckpoint?.({
           phase: shouldContinue
             ? "ready"
             : didEmitFinish
-            ? "complete"
-            : "model",
+              ? "complete"
+              : "model",
           messages: messageHistory,
           step: effectiveSteps(),
         });
@@ -4396,6 +4878,34 @@ export async function runChatEngineLoop(
           effectiveSteps() - 1,
           !didEmitFinish && !shouldContinue,
         );
+
+        // A step that REPORTED AN ERROR and then stopped the loop failed — a
+        // non-OK backend response, a tool-execution failure, or an empty
+        // provider response. None of them throw, so the outer catch never sees
+        // them and the epilogue below would otherwise mark the turn
+        // `completed`. That was the silent hole: a turn nobody received,
+        // recorded as a success.
+        //
+        // Keyed on an error having been REPORTED, not on the
+        // `!didEmitFinish && !shouldContinue` shape `fireStepFinish` uses: that
+        // shape is also true of a legitimate final step whose backend stream
+        // carried no finish part, and calling those failures would be the same
+        // mistake in the other direction.
+        //
+        // The persistence gate is deliberately unchanged: this turn is still
+        // recorded exactly as it was. Only the record now says what happened,
+        // and the epilogue's later `markCompleted` is superseded rather than
+        // believed.
+        if (!shouldContinue && engineErrorCount > engineErrorsBeforeStep) {
+          outcomeBuilder.markFailed({
+            errorSource: lastEngineError?.phase === "setup" ? "setup" : "model",
+            ...(lastEngineError?.code
+              ? { errorCode: lastEngineError.code }
+              : {}),
+          });
+        }
+
+        if (pausedKind) loopPausedKind = pausedKind;
 
         if (!shouldContinue) {
           break;
@@ -4445,6 +4955,10 @@ export async function runChatEngineLoop(
       // `finally` below.
       if (aborted || abortSignal?.aborted) {
         aborted = true;
+        classifyAbort(outcomeBuilder, {
+          signal: abortSignal,
+          startedAtMs: traceTurn.turnStartedAt,
+        });
         return;
       }
 
@@ -4479,14 +4993,43 @@ export async function runChatEngineLoop(
       driver.finishReason = hitStepCap() ? "length" : "stop";
       driver.finishTurn(safeWriter, { alreadyEmittedFinish: true });
 
+      // A turn that PAUSED for a continuation reached here without running the
+      // model, so it is not a completion: the MRTR / scope step-up leg emitted
+      // its own terminal chunk and the next request resumes it. Its dangling
+      // tool call IS the resume handle, which is why closure deliberately skips
+      // a paused turn.
+      // The LOOP's own pause first — it names the rail it actually stopped on.
+      // `mrtrPaused` is the pre-phase's pause, set before the loop runs at all,
+      // and there `scopeStepUpResume` genuinely does identify the rail because
+      // the pre-phase only drives the resume this request named.
+      if (loopPausedKind) {
+        outcomeBuilder.markPaused(loopPausedKind);
+      } else if (mrtrPaused) {
+        outcomeBuilder.markPaused(
+          scopeStepUpResume ? "scope_step_up" : "tool_input_required",
+        );
+      } else {
+        outcomeBuilder.markCompleted(driver.finishReason);
+      }
       runSucceeded = true;
     } catch (error) {
       // Abort is the cooperative cancellation signal — silent path:
       // no error chunk, no synthetic finish, no turn_finish, no
       // failure spans, no conversation persistence. The downstream
       // controller is already being torn down by the client.
-      if (isAbortError(error) || abortSignal?.aborted) {
+      // Guarded on the SIGNAL first, then on the error: `isAbortError` also
+      // matches the `TimeoutError` a teardown call raises, which is not a
+      // cancellation of this turn.
+      if (abortSignal?.aborted || isAbortError(error)) {
         aborted = true;
+        classifyCatch(outcomeBuilder, {
+          error,
+          signal: abortSignal,
+          // Only reached when the signal did NOT abort (a bare AbortError from
+          // a teardown call); `modelInvoked` still decides whose it is.
+          errorSource: modelInvoked ? "model" : "setup",
+          startedAtMs: traceTurn.turnStartedAt,
+        });
       } else {
         const failAbs = Date.now();
         const errorText =
@@ -4498,6 +5041,18 @@ export async function runChatEngineLoop(
         const loopFailureCode = attachedFailureCode(error);
         const loopNormalized =
           attachedNormalized(error) ?? describeError(error);
+        // Resolved by EVIDENCE, not arrival order: a deadline that fired is a
+        // timeout even when the provider SDK threw a fresh unstamped
+        // `AbortError` first. `modelInvoked` decides whose failure it is — the
+        // same flag `onEngineError`'s `phase` reads below, so the record and
+        // the callback can never disagree.
+        classifyCatch(outcomeBuilder, {
+          error,
+          signal: abortSignal,
+          errorSource: modelInvoked ? "model" : "setup",
+          ...(loopFailureCode ? { errorCode: loopFailureCode } : {}),
+          startedAtMs: traceTurn.turnStartedAt,
+        });
         // Reporter, not a bare logger.error: the old call captured to Sentry
         // unconditionally — paging on user-fault failures — and left no typed
         // record a monitor could read (the response is a 200 stream). The
@@ -4564,6 +5119,7 @@ export async function runChatEngineLoop(
   // `turnTrace` (if produced) so the engine result can surface it to
   // synthetic-runner callers via {@link ChatEngineLoopResult.turnTrace}.
   let capturedTurnTrace: PersistedTurnTrace | undefined;
+  let capturedOutcome: TurnOutcomeRecord | undefined;
   // `receiptWriter` is the RAW stream writer, never `safeWriter`: the finally
   // block above has already flipped `streamClosed`, so every safeWriter write
   // from here on is silently dropped. The underlying stream is still open —
@@ -4572,12 +5128,52 @@ export async function runChatEngineLoop(
     write: (chunk: UIMessageChunk) => void;
   }) => {
     try {
-      // Persist only successful, non-aborted turns. An aborted turn is
-      // partial by definition — recording it as a completed conversation
-      // would corrupt history and reverse the cost-safety win.
-      if (runSucceeded && !aborted) {
+      // WHAT GETS WRITTEN.
+      //
+      // The old rule was `runSucceeded && !aborted`: a turn that did not reach
+      // a clean end was dropped whole. The reasoning was that a partial turn is
+      // not a conversation. The cost was that tool calls which already ran and
+      // were already billed left NO durable trace — nobody could answer what a
+      // stopped session actually did, and the client grew a silent reconciler
+      // solely to cope with the absence.
+      //
+      // Now a terminal turn is recorded too, behind
+      // `TERMINAL_TURN_RECORDING_ENABLED`, with its open tool calls CLOSED
+      // first (see below). `paused` is deliberately not in the set: its
+      // dangling call is the resume handle, and closing it would destroy the
+      // thing the next request needs.
+      const outcomeForPersist = outcomeBuilder.settledLifecycle;
+      const recordTerminalTurn =
+        TERMINAL_TURN_RECORDING_ENABLED &&
+        (outcomeForPersist === "cancelled" ||
+          outcomeForPersist === "failed" ||
+          outcomeForPersist === "timed_out");
+      if ((runSucceeded && !aborted) || recordTerminalTurn) {
+        // CLOSE BEFORE WRITING, with the builder's own dispatch evidence —
+        // which is why this closure, unlike the ingress guard's, can say
+        // `never_started` where it is true rather than assuming the worst.
+        //
+        // The list and the transcript are computed from the SAME history in
+        // the same breath, so the record and the messages can never disagree
+        // about which calls were left open.
+        const unresolvedToolCalls = recordTerminalTurn
+          ? listUnresolvedToolCalls(messageHistory, (id) =>
+              outcomeBuilder.unresolvedToolCallState(id),
+            )
+          : [];
+        const persistedHistory =
+          unresolvedToolCalls.length > 0
+            ? closeUnresolvedToolCalls(messageHistory, unresolvedToolCalls, {
+                turnId: traceTurn.turnId,
+              })
+            : [...messageHistory];
         const trace: PersistedTurnTrace = {
-          ...driver.buildPersistedTrace(),
+          ...driver.buildPersistedTrace(
+            // `undefined`, not `[]`, on a PAUSED turn: the builder merges in
+            // the calls it witnessed dispatched, and a pause's dangling call
+            // is the resume handle rather than a loose end to report.
+            outcomeForPersist === "paused" ? {} : { unresolvedToolCalls },
+          ),
           requestPayloads: capRequestPayloadsForPersist(
             traceTurn.recordedRequestPayloads,
           ),
@@ -4585,7 +5181,7 @@ export async function runChatEngineLoop(
         capturedTurnTrace = trace;
         try {
           const persistOutcome = await onConversationComplete?.(
-            [...messageHistory],
+            persistedHistory,
             trace,
           );
           // Costs no latency: `onConversationComplete` already awaited the
@@ -4619,6 +5215,38 @@ export async function runChatEngineLoop(
         }
       }
     } finally {
+      // HOW THE TURN ENDED, on BOTH sinks and on every path — including the
+      // ones that persist nothing. This is the whole point of the callback:
+      // `createUIMessageStream` runs `execute` lazily, so the ui sink's return
+      // value is produced before the turn has run, and a completion promise
+      // would never settle at all if the client never drained the body.
+      //
+      // Emitted after the persist attempt so the record a consumer sees is the
+      // same one that reached the trace.
+      // The unresolved list is computed HERE, from the same history the
+      // persist path writes, so the record and the transcript cannot disagree
+      // about which calls were left open. `paused` is excluded: a paused turn's
+      // dangling call IS the resume handle.
+      capturedOutcome =
+        capturedTurnTrace?.outcomeAtTurn ??
+        outcomeBuilder.record(
+          outcomeBuilder.settledLifecycle === "paused"
+            ? undefined
+            : listUnresolvedToolCalls(messageHistory, (id) =>
+                outcomeBuilder.unresolvedToolCallState(id),
+              ),
+        );
+      try {
+        onTurnOutcome?.(capturedOutcome);
+      } catch (outcomeError) {
+        // A throwing consumer must not take the stream's finalization with it.
+        logger.warn("[mcpjam-stream-handler] onTurnOutcome callback failed", {
+          error:
+            outcomeError instanceof Error
+              ? outcomeError.message
+              : String(outcomeError),
+        });
+      }
       try {
         await onStreamComplete?.();
       } catch (cleanupError) {
@@ -4685,6 +5313,7 @@ export async function runChatEngineLoop(
     messageHistory,
     aborted,
     ...(capturedTurnTrace ? { turnTrace: capturedTurnTrace } : {}),
+    ...(capturedOutcome ? { outcome: capturedOutcome } : {}),
   };
 }
 

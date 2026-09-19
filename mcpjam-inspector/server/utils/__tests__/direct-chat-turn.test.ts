@@ -992,4 +992,78 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     // `onError` started recording the abort — assert the store stayed empty.
     expect(handle.lastStreamError()).toBeUndefined();
   });
+  it("PAUSED: a turn stopped by the pause predicate is not a completion", async () => {
+    // THE DEFECT THIS PINS: `stopWhen` ends a suspended turn exactly the way a
+    // finished one ends — no abort, no `streamError` — so `onFinish` recorded
+    // the resumable leg as `completed` and `didTurnComplete` read it as
+    // success. The turn is WAITING on a registered continuation.
+    let suspendedToolCallId: string | undefined;
+    let streamTextOptions: any;
+    streamTextMock.mockImplementationOnce((options: any) => {
+      streamTextOptions = options;
+      return defaultStreamTextReturn();
+    });
+
+    const handle = runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+      pauseAfterStep: () =>
+        suspendedToolCallId !== undefined ? "scope_step_up" : undefined,
+      suspendedToolCallId: () => suspendedToolCallId,
+    });
+
+    // While nothing is suspended the predicate does not stop the loop...
+    const pausePredicate = streamTextOptions.stopWhen[1];
+    expect(pausePredicate()).toBe(false);
+
+    // ...and once the continuation is registered, it is the SAME closure that
+    // both stops the stream and names the rail for the record.
+    suspendedToolCallId = "call-suspended-1";
+    expect(pausePredicate()).toBe(true);
+
+    await streamTextOptions.onFinish({
+      finishReason: "tool-calls",
+      steps: [],
+      totalUsage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+    });
+
+    const record = handle.outcome.record([]);
+    expect(record.lifecycle).toBe("paused");
+    expect(record.paused).toEqual({ kind: "scope_step_up" });
+    // A paused turn has not ended, so it names no termination.
+    expect(record.termination?.cancellationSource).toBeUndefined();
+  });
+
+  it("COMPLETED: the same turn with nothing suspended still completes", async () => {
+    // The inverse of the pause test. Without it a `markPaused` that fired
+    // unconditionally would satisfy the assertion above and break every turn.
+    let streamTextOptions: any;
+    streamTextMock.mockImplementationOnce((options: any) => {
+      streamTextOptions = options;
+      return defaultStreamTextReturn();
+    });
+
+    const handle = runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+      pauseAfterStep: () => undefined,
+    });
+
+    await streamTextOptions.onFinish({
+      finishReason: "stop",
+      steps: [],
+      totalUsage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+    });
+
+    const record = handle.outcome.record([]);
+    expect(record.lifecycle).toBe("completed");
+    expect(record.finishReason).toBe("stop");
+    expect(record.paused).toBeUndefined();
+  });
 });

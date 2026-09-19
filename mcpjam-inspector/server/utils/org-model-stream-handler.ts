@@ -43,7 +43,10 @@ import {
   type PersistChatOutcome,
   type PersistedTurnTrace,
 } from "./chat-ingestion";
-import { handleMCPJamFreeChatModel } from "./mcpjam-stream-handler.js";
+import {
+  handleMCPJamFreeChatModel,
+  type MCPJamHandlerOptions,
+} from "./mcpjam-stream-handler.js";
 import { logger } from "./logger.js";
 import {
   createSystemStreamFailureReporter,
@@ -79,6 +82,7 @@ import {
   isSuspendedScopeStepUpOutputChunk,
   resumeScopeStepUpBeforeDirectTurn,
 } from "./direct-chat-scope-step-up.js";
+import type { TurnPauseKind } from "@/shared/turn-outcome";
 
 export interface OrgModelHandlerOptions {
   projectId: string;
@@ -106,6 +110,12 @@ export interface OrgModelHandlerOptions {
    * in a synthetic run). Direct chatters omit or pass `"prompt"`.
    */
   approvalMode?: "prompt" | "auto-deny";
+  /**
+   * What an abort on `abortSignal` MEANS for this caller — see
+   * `MCPJamHandlerOptions.cancellationSource`. Forwarded verbatim; org BYOK
+   * still runs the emulated engine, so nothing else about the record changes.
+   */
+  cancellationSource?: MCPJamHandlerOptions["cancellationSource"];
   /**
    * Persist tap. May return the ingest's outcome so the rail can stream a
    * `data-persist-receipt` before closing. See `PersistChatOutcome`.
@@ -287,6 +297,8 @@ export interface OrgLocalModelHandlerOptions {
   authHeader?: string;
   scenarioId?: string;
   accessVersion?: number;
+  /** See `MCPJamHandlerOptions.cancellationSource`. */
+  cancellationSource?: MCPJamHandlerOptions["cancellationSource"];
   /**
    * Persist tap. May return the ingest's outcome so the rail can stream a
    * `data-persist-receipt` before closing. See `PersistChatOutcome`.
@@ -312,7 +324,7 @@ export interface OrgLocalModelHandlerOptions {
    */
   maxSteps?: number;
   scopeStepUpResume?: MrtrEngineResume;
-  shouldPauseAfterStep?: () => boolean;
+  pauseAfterStep?: () => TurnPauseKind | undefined;
   suspendedToolCallId?: () => string | undefined;
   /**
    * Progressive tool discovery plan. When `plan.enabled === true`, each
@@ -542,9 +554,12 @@ export function handleLocalOrgChatModel(
         progressivePlan: options.progressivePlan,
         discoveryState: options.discoveryState,
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+        ...(options.cancellationSource
+          ? { cancellationSource: options.cancellationSource }
+          : {}),
         ...(onLiveTextDelta ? { onLiveTextDelta } : {}),
         maxSteps: resolvedMaxSteps,
-        shouldPauseAfterStep: options.shouldPauseAfterStep,
+        pauseAfterStep: options.pauseAfterStep,
         suspendedToolCallId: options.suspendedToolCallId,
         // Shared SSE-callback factory — byte-identical wire output with
         // route 4 (`streamDirectChatWithLiveTrace`).
@@ -875,6 +890,12 @@ export async function handleHostedOrgChatModel(
     onStreamComplete: options.onStreamComplete,
     onStreamWriterReady: options.onStreamWriterReady,
     onLiveTextDelta: options.onLiveTextDelta,
+    ...(options.cancellationSource
+      ? { cancellationSource: options.cancellationSource }
+      : {}),
+    // Org BYOK: the CUSTOMER's provider key pays, even though the turn runs on
+    // the hosted emulated engine.
+    modelAccess: "direct",
     clientIp: options.clientIp,
     abortSignal: options.abortSignal,
     heartbeatIntervalMs: options.heartbeatIntervalMs,

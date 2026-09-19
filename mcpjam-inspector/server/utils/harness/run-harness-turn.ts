@@ -40,7 +40,15 @@ import {
   getPromptIndex,
   setToolSpanMessageRangesFromResults,
 } from "../live-chat-trace-stream.js";
-import { StreamTurnDriver } from "../stream-turn-driver.js";
+import {
+  StreamTurnDriver,
+  TurnOutcomeBuilder,
+  classifyAbort,
+  classifyCatch,
+  createCancellationReason,
+} from "../stream-turn-driver.js";
+import type { TurnOutcomeRecord } from "@/shared/turn-outcome";
+import { listUnresolvedToolCalls } from "@/shared/turn-outcome-closure";
 import {
   getHarnessAdapter,
   buildBrokerDummyAuth,
@@ -643,6 +651,9 @@ export async function runHarnessTurn(
     abortSignal,
     onConversationComplete,
     onStreamComplete,
+    onTurnOutcome,
+    cancellationSource,
+    modelAccess,
     onStreamWriterReady,
     onToolCall,
     onToolResult,
@@ -729,6 +740,24 @@ export async function runHarnessTurn(
   const promptIndex = getPromptIndex(messages);
   let aborted = false;
   let runSucceeded = false;
+  /**
+   * HOW THIS TURN ENDS.
+   *
+   * Constructed at FUNCTION entry, not beside the driver. The driver is only
+   * built once `agent.stream()` has resolved — after credential resolution, box
+   * wake, broker start and session connect — so a turn cancelled or failed
+   * during any of those has no driver at all. Those are precisely the endings
+   * that used to leave nothing behind.
+   */
+  const outcomeBuilder = new TurnOutcomeBuilder({
+    engine: "harness",
+    ...(harness ? { harness } : {}),
+    modelAccess: modelAccess ?? "hosted",
+    ...(cancellationSource
+      ? { defaultCancellationSource: cancellationSource }
+      : {}),
+  });
+  let capturedOutcome: TurnOutcomeRecord | undefined;
   // The file-capable sandbox session, captured from `onSandboxSession` so the
   // turn-end adoption pass (in the finally, before the box is released) can read
   // `~/.claude/skills` and write the managed-skills manifest. The finally's own
@@ -922,6 +951,14 @@ export async function runHarnessTurn(
     onStreamWriterReady?.(writer);
     if (effectiveAbortSignal.aborted) {
       aborted = true;
+      // No driver exists yet and never will on this path — which is exactly
+      // why the builder is function-scoped. The signal's typed reason names
+      // WHO cancelled (a user Stop, a lost lease, a lost reservation); without
+      // it all four read as one boolean.
+      classifyAbort(outcomeBuilder, {
+        signal: effectiveAbortSignal,
+        startedAtMs: turnStartedAt,
+      });
       return;
     }
     // Harness MCP-server tools run out of process through the generated
@@ -974,6 +1011,7 @@ export async function runHarnessTurn(
         .then((event) => {
           emitScopeStepUpRequiredChunk(writer, event);
           pausedForScopeStepUp = true;
+          outcomeBuilder.markPaused("scope_step_up");
         })
         .catch((error) => {
           logger.warn("[harness-scope-step-up] continuation create failed", {
@@ -1940,7 +1978,12 @@ export async function runHarnessTurn(
               logger.error(
                 "[harness] preparation reservation was lost; aborting the turn",
               );
-              livenessAbort.abort(new Error("harness box reservation lost"));
+              livenessAbort.abort(
+                createCancellationReason(
+                  "reservation_lost",
+                  "harness box reservation lost",
+                ),
+              );
             }
           })
           .catch((err) => {
@@ -1949,7 +1992,12 @@ export async function runHarnessTurn(
                 "[harness] preparation reservation renewal failed; aborting the turn",
                 err,
               );
-              livenessAbort.abort(new Error("harness box reservation lost"));
+              livenessAbort.abort(
+                createCancellationReason(
+                  "reservation_lost",
+                  "harness box reservation lost",
+                ),
+              );
             }
           })
           .finally(() => {
@@ -2574,7 +2622,9 @@ export async function runHarnessTurn(
               logger.warn("[harness] lease lost — aborting turn", {
                 leaseId: c.leaseId,
               });
-              livenessAbort.abort(new Error("harness lease lost"));
+              livenessAbort.abort(
+                createCancellationReason("lease_lost", "harness lease lost"),
+              );
               return;
             }
             // retryable: tolerate blips, but don't run blind forever
@@ -2587,7 +2637,12 @@ export async function runHarnessTurn(
               logger.warn(
                 "[harness] heartbeat lost liveness past TTL — aborting turn",
               );
-              livenessAbort.abort(new Error("harness lost liveness"));
+              livenessAbort.abort(
+                createCancellationReason(
+                  "liveness_lost",
+                  "harness lost liveness",
+                ),
+              );
             }
           });
         }, HARNESS_HEARTBEAT_MS);
@@ -2781,6 +2836,7 @@ export async function runHarnessTurn(
           harness,
           traceBaseMs,
           spans: capturedSpans,
+          outcome: outcomeBuilder,
           onStepFinish,
         });
         driver = activeDriver;
@@ -2791,6 +2847,10 @@ export async function runHarnessTurn(
         >) {
           if (effectiveAbortSignal.aborted) {
             aborted = true;
+            classifyAbort(outcomeBuilder, {
+              signal: effectiveAbortSignal,
+              startedAtMs: turnStartedAt,
+            });
             break;
           }
           if (scopeStepUpCreation && suspendedHarnessToolCallId) {
@@ -2909,6 +2969,11 @@ export async function runHarnessTurn(
             // can resolve this tool's serverId (the harness has no `ai` ToolSet).
             toolSetForTrace[toolName] = serverId ? { _serverId: serverId } : {};
             toolStartMs.set(toolCallId, Date.now());
+            // DISPATCHED. On the harness the call is already inside the
+            // sandbox by the time this part arrives — the runtime executes it
+            // itself — so a turn cancelled from here on leaves a call whose
+            // outcome is genuinely unknown, not one that never started.
+            outcomeBuilder.markToolDispatched(toolCallId, toolName);
             // providerExecuted:true — the harness runs ALL tools in-sandbox
             // (Claude Code executes them itself). Without it the client treats
             // these as client-side tools to fulfill and `sendAutomaticallyWhen`
@@ -3052,6 +3117,9 @@ export async function runHarnessTurn(
               output,
               providerExecuted: true,
             });
+            // SETTLED — an answer exists, whether it succeeded, failed, or was
+            // refused by policy. All three are outcomes; only silence is not.
+            outcomeBuilder.markToolSettled(toolCallId);
             // A policy block is neither a tool result nor a tool span: it never
             // reached the server, so counting it as either would attribute a
             // MCPJam refusal to the customer's tool (a `notMeasured` +
@@ -3216,6 +3284,11 @@ export async function runHarnessTurn(
             }
             emitToolApprovalRequest(writer, { approvalId, toolCallId });
             pausedForApproval = true;
+            // PAUSED, not completed. The finally below suspends the turn and
+            // commits the continuation standalone; if THAT commit fails it
+            // releases the lease and marks the turn failed, because a pause
+            // nobody can resume must not be recorded as one.
+            outcomeBuilder.markPaused("tool_approval");
             break;
           } else if (type === "finish") {
             const fr = (part as { finishReason?: unknown }).finishReason;
@@ -3364,6 +3437,7 @@ export async function runHarnessTurn(
         // Shared ritual: write turn_finish + mark success (finish chunk already
         // emitted above).
         activeDriver.finishTurn(writer, { alreadyEmittedFinish: true });
+        outcomeBuilder.markCompleted(turnFinishReason);
         runSucceeded = true;
         const tStream = Date.now();
         // Values inlined into the message — this logger drops the 2nd arg.
@@ -3533,14 +3607,54 @@ export async function runHarnessTurn(
           // half-built commit and free the lane so the next turn can claim.
           capturedHarnessCommit = undefined;
           await releaseHarnessLease?.();
+          // AN APPROVAL PAUSE WHOSE COMMIT FAILED IS UNRESUMABLE, and the
+          // record must say so. Its continuation IS the sidecar commit plus
+          // the lease, and the lease has just been released — leaving `paused`
+          // would promise the user a resume that can never happen. This is the
+          // one transition the builder allows out of `paused`, and this is the
+          // site it exists for.
+          //
+          // SCOPE STEP-UP IS NOT THAT. Its continuation was created and
+          // registered back when the challenge was observed, long before this
+          // teardown, and the resume path claims that record on its own — it
+          // needs neither this harness session nor this lease. Calling it
+          // failed because `destroy()` threw would throw away a continuation
+          // that is still live for the rest of its TTL, and send the user to a
+          // dead end the product could actually have honoured.
+          if (pausedForApproval) {
+            outcomeBuilder.markFailed({
+              errorSource: "setup",
+              errorCode: "harness_finalize_failed",
+            });
+          }
         }
       }
     } catch (err) {
       if (effectiveAbortSignal.aborted || isAbortError(err)) {
         aborted = true;
+        // Resolved by EVIDENCE, not by arrival order. A provider SDK raises a
+        // FRESH, unstamped `AbortError` when its request is torn down, so the
+        // caught error carries none of the deadline's attribution — the
+        // signal's reason does, and `composeAbortSignals` propagates it through
+        // every composition. Hence: timeout first, then cancellation.
+        classifyCatch(outcomeBuilder, {
+          error: err,
+          signal: effectiveAbortSignal,
+          errorSource: modelInvoked ? "model" : "setup",
+          startedAtMs: turnStartedAt,
+        });
         return;
       }
       const errorText = err instanceof Error ? err.message : String(err);
+      // This catch covers the WHOLE turn, preparation included, so `phase` and
+      // `errorSource` read the same flag at the same moment and cannot
+      // disagree about whose failure it was.
+      classifyCatch(outcomeBuilder, {
+        error: err,
+        signal: effectiveAbortSignal,
+        errorSource: modelInvoked ? "model" : "setup",
+        startedAtMs: turnStartedAt,
+      });
       // Reporter, not a bare logger.error: the old call captured to Sentry
       // unconditionally and left no typed record (the response is a 200
       // stream the HTTP failure events never see). Classify first, page only
@@ -3712,6 +3826,28 @@ export async function runHarnessTurn(
     if (!sessionEstablished) {
       await releaseHarnessLease?.();
     }
+    // HOW THE TURN ENDED, on BOTH sinks and on every path — including the ones
+    // that persist nothing (a cancelled harness turn still does not persist;
+    // see the gate above). The record is the only evidence those endings leave.
+    capturedOutcome =
+      capturedTurnTrace?.outcomeAtTurn ??
+      outcomeBuilder.record(
+        outcomeBuilder.settledLifecycle === "paused"
+          ? undefined
+          : listUnresolvedToolCalls(messageHistory, (id) =>
+              outcomeBuilder.unresolvedToolCallState(id),
+            ),
+      );
+    try {
+      onTurnOutcome?.(capturedOutcome);
+    } catch (outcomeError) {
+      logger.warn("[harness] onTurnOutcome callback failed", {
+        error:
+          outcomeError instanceof Error
+            ? outcomeError.message
+            : String(outcomeError),
+      });
+    }
     // Mirror the emulated engine (mcpjam-stream-handler.ts): a cleanup/teardown
     // error must not reject stream finalization after an otherwise successful
     // turn (the trace + onConversationComplete already ran above).
@@ -3760,6 +3896,7 @@ export async function runHarnessTurn(
     messageHistory,
     aborted,
     ...(capturedTurnTrace ? { turnTrace: capturedTurnTrace } : {}),
+    ...(capturedOutcome ? { outcome: capturedOutcome } : {}),
   };
 }
 

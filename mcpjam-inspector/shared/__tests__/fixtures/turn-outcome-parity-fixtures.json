@@ -1,0 +1,385 @@
+{
+  "__readme": "Parity fixtures for TurnOutcomeRecord (shared/turn-outcome.ts) across repos. Kept in lockstep with mcpjam-backend (tests/convex/fixtures/turn-outcome-parity-fixtures.json) and pinned in convex/lib/mirrors.json. The backend cannot import this repo's Zod (Convex bundling isolation), so this JSON is the common ground truth: turnOutcomeRecordZ must parse every 'accept' row and refuse every 'reject' row, and the backend's parseTurnOutcomeRecord() must reach the SAME verdict on each. A producer emitting a record the backend refuses would be silently stripped at ingest and the turn would read as 'unrecorded' — which is why the backend deploys first. The 'reject' rows are the contract's invariants, one per row: a timed_out with no clock is the bare 'aborted' this contract replaces; a completed carrying a termination claims both that it finished and that something ended it.",
+  "accept": [
+    {
+      "label": "completed emulated hosted turn",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "completed",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "finishReason": "stop",
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "completed harness turn keeps its host id",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "completed",
+        "runtime": {
+          "engine": "harness",
+          "harness": "claude-code",
+          "modelAccess": "hosted"
+        },
+        "finishReason": "stop",
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "cancelled by the user pressing Stop, one dispatched tool call left open",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "cancelled",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "termination": {
+          "cancellationSource": "client_disconnect",
+          "unresolvedToolCalls": [
+            {
+              "toolCallId": "call_a1",
+              "toolName": "create_invoice",
+              "state": "outcome_unknown"
+            },
+            {
+              "toolCallId": "call_a2",
+              "toolName": "list_invoices",
+              "state": "never_started"
+            }
+          ]
+        },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "cancelled by an explicit caller signal",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "cancelled",
+        "runtime": { "engine": "emulated", "modelAccess": "direct" },
+        "termination": { "cancellationSource": "caller" },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "harness turn cancelled because the lease was lost",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "cancelled",
+        "runtime": {
+          "engine": "harness",
+          "harness": "codex",
+          "modelAccess": "hosted"
+        },
+        "termination": { "cancellationSource": "lease_lost" },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "timed out on the turn clock",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "timed_out",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "termination": {
+          "timeout": { "clock": "turn", "budgetMs": 360000, "elapsedMs": 360412 }
+        },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "timed out on the sandbox-capacity clock during setup",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "timed_out",
+        "runtime": { "engine": "harness", "modelAccess": "hosted" },
+        "termination": {
+          "timeout": {
+            "clock": "sandboxCapacity",
+            "budgetMs": 120000,
+            "elapsedMs": 120003
+          },
+          "errorSource": "setup"
+        },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "failed before the model was ever invoked",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "failed",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "termination": {
+          "errorSource": "setup",
+          "errorCode": "MCP_CONNECT_FAILED"
+        },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "failed mid-stream with a provider status",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "failed",
+        "runtime": { "engine": "emulated", "modelAccess": "direct" },
+        "finishReason": "error",
+        "termination": {
+          "errorSource": "model",
+          "errorCode": "UPSTREAM_ERROR",
+          "errorHttpStatus": 529
+        },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "record with no terminal mark degrades to failed/setup, never completed",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "failed",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "termination": {
+          "errorSource": "setup",
+          "errorCode": "no_terminal_mark"
+        },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "paused for tool approval",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "paused",
+        "runtime": {
+          "engine": "harness",
+          "harness": "claude-code",
+          "modelAccess": "hosted"
+        },
+        "paused": { "kind": "tool_approval" },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "scope step-up resume runs emulated but keeps the host id",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "paused",
+        "runtime": {
+          "engine": "emulated",
+          "harness": "claude-code",
+          "modelAccess": "hosted"
+        },
+        "paused": { "kind": "scope_step_up" },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "paused for a call only the browser can run",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "paused",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "paused": { "kind": "client_fulfilled" },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "paused on the multi-round-trip rail, waiting for another leg",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "paused",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "paused": { "kind": "tool_input_required" },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "late marks that lost the race are kept for diagnosis",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "cancelled",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "termination": {
+          "cancellationSource": "client_disconnect",
+          "superseded": [{ "mark": "completed", "at": 1750000000123 }]
+        },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "interrupted parses even though nothing produces it yet",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "interrupted",
+        "runtime": { "engine": "harness", "modelAccess": "hosted" },
+        "recordedAt": 1750000000000
+      }
+    }
+  ],
+  "reject": [
+    {
+      "label": "timed_out without a clock is the bare 'aborted' this contract replaces",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "timed_out",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "cancelled without a source collapses four causes into one",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "cancelled",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "termination": {},
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "paused without a kind",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "paused",
+        "runtime": { "engine": "harness", "modelAccess": "hosted" },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "completed carrying a termination claims two contradictory things",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "completed",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "termination": { "errorSource": "model" },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "unknown lifecycle",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "aborted",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "unknown cancellation source",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "cancelled",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "termination": { "cancellationSource": "network" },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "unknown deadline clock",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "timed_out",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "termination": {
+          "timeout": { "clock": "wall", "budgetMs": 1000, "elapsedMs": 1001 }
+        },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "unknown engine",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "completed",
+        "runtime": { "engine": "codex", "modelAccess": "hosted" },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "missing modelAccess",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "completed",
+        "runtime": { "engine": "emulated" },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "unknown unresolved tool-call state",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "cancelled",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "termination": {
+          "cancellationSource": "caller",
+          "unresolvedToolCalls": [
+            { "toolCallId": "c1", "toolName": "t", "state": "pending" }
+          ]
+        },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "unknown top-level field is not silently carried",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "completed",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "clock": "turn",
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "a future contract version is not parsed as v1",
+      "value": {
+        "contractVersion": 2,
+        "lifecycle": "completed",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "missing recordedAt",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "completed",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" }
+      }
+    },
+    {
+      "label": "a timeout on a turn that did not call itself timed_out",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "failed",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "termination": {
+          "errorSource": "model",
+          "timeout": { "clock": "turn", "budgetMs": 360000, "elapsedMs": 360100 }
+        },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "a cancellation source on a turn that did not call itself cancelled",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "timed_out",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "termination": {
+          "timeout": { "clock": "turn", "budgetMs": 360000, "elapsedMs": 360100 },
+          "cancellationSource": "caller"
+        },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "a pause kind on a turn that did not call itself paused",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "cancelled",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "termination": { "cancellationSource": "caller" },
+        "paused": { "kind": "tool_approval" },
+        "recordedAt": 1750000000000
+      }
+    }
+  ]
+}
