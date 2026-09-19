@@ -70,7 +70,7 @@ export interface EvalHarnessCase {
  */
 const MODEL_FREE_SENTINEL_PROVIDER = "none";
 
-function isModelFreeCase(test: EvalHarnessCase): boolean {
+export function isModelFreeCase(test: EvalHarnessCase): boolean {
   return (
     !test.model ||
     test.provider === MODEL_FREE_SENTINEL_PROVIDER ||

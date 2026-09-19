@@ -13,7 +13,10 @@ vi.mock("convex/react", () => ({
 }));
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({
-    hosts: [{ hostId: "claude", name: "Claude", modelId: "sonnet" }],
+    hosts: [
+      { hostId: "claude", name: "Claude", modelId: "sonnet" },
+      { hostId: "mcpjam", name: "MCPJam", modelId: "" },
+    ],
     isLoading: false,
   }),
 }));
@@ -177,4 +180,30 @@ it("keeps unsupported temporary pairings out of launch requests", async () => {
   ).toBeVisible();
   expect(ensure).not.toHaveBeenCalled();
   expect(onStart).not.toHaveBeenCalled();
+});
+
+it("blocks a client default when the client has no model", () => {
+  const onStart = vi.fn();
+  render(
+    <SuiteRunReview
+      projectId="project"
+      suite={{ ...suite, environmentIds: ["env-blank"] }}
+      cases={cases}
+      environments={[
+        {
+          ...environments[0],
+          environmentId: "env-blank",
+          hostId: "mcpjam",
+          modelId: undefined,
+        },
+      ]}
+      hostNamesById={new Map()}
+      onStart={onStart}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByText("Choose at least one client and model."),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Start run" })).toBeDisabled();
 });

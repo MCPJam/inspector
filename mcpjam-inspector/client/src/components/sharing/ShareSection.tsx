@@ -8,6 +8,7 @@ import {
   MoreHorizontal,
   Users,
 } from "lucide-react";
+import { useGuestSharingSignUp } from "@/hooks/useGuestSharingSignUp";
 import { toast } from "@/lib/toast";
 import { copyToClipboard } from "@/lib/clipboard";
 import { getInitials } from "@/lib/utils";
@@ -114,6 +115,7 @@ export function ShareSection<TEnvelope>({
   copy,
   testIds,
 }: ShareSectionProps<TEnvelope>) {
+  const { handleGuestSharingError, guestSharingPrompt } = useGuestSharingSignUp();
   const [email, setEmail] = useState("");
   const [isInviting, setIsInviting] = useState(false);
   const [isModeBusy, setIsModeBusy] = useState(false);
@@ -155,6 +157,7 @@ export function ShareSection<TEnvelope>({
     try {
       updateSettings(await onSetPreset(preset));
     } catch (error) {
+      if (handleGuestSharingError(error)) return;
       toast.error(
         error instanceof Error
           ? error.message
@@ -208,6 +211,10 @@ export function ShareSection<TEnvelope>({
       toast.success("Share link rotated");
       setRotateOpen(false);
     } catch (error) {
+      if (handleGuestSharingError(error)) {
+        setRotateOpen(false);
+        return;
+      }
       toast.error(
         error instanceof Error ? error.message : "Failed to rotate link",
       );
@@ -249,7 +256,8 @@ export function ShareSection<TEnvelope>({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
+      {guestSharingPrompt}
       <div className="space-y-2">
         <label className="text-sm font-medium" htmlFor={testIds.linkOutput}>
           {copy.linkLabel}
