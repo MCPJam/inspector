@@ -1081,6 +1081,26 @@ describe("authorEvalSuite — the suite write a rerun does not need", () => {
     );
   });
 
+  it("creates an inline suite with the resolved host attachments", async () => {
+    const { client, mutations } = fakeConvex();
+    const hostAttachments = [
+      { namedHostId: "host-1", selectedServerIds: ["s1"] },
+    ];
+    await authorEvalSuite({
+      ...BASE,
+      suiteId: null,
+      suiteName: "Inline",
+      convexClient: client as never,
+      hostAttachments,
+      suiteRerun: false,
+      refreshSnapshot: false,
+    });
+    expect(
+      mutations.find((mutation) => mutation.fn === "testSuites:createTestSuite")
+        ?.args,
+    ).toMatchObject({ hostAttachments });
+  });
+
   it("still writes the suite when the caller asked to refresh the snapshot", async () => {
     const { client, mutations } = fakeConvex();
     await authorEvalSuite({

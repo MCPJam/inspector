@@ -36,7 +36,6 @@ vi.mock("@/lib/error-reporting", () => ({
 
 const {
   isConvexQueryUnavailable,
-  ScenarioStageFunnelPanel,
   SuiteRunStageFunnelAvailability,
   SwarmRunStageFunnelPanels,
 } = await import("../StageFunnelPanels");
@@ -81,65 +80,6 @@ function queryThrows() {
 
 afterEach(() => {
   vi.clearAllMocks();
-});
-
-describe("ScenarioStageFunnelPanel — the query answers", () => {
-  it("renders the funnel and names the population", () => {
-    convex.useQuery.mockReturnValue(SUMMARY);
-    render(<ScenarioStageFunnelPanel scenarioId="scenario-1" />);
-
-    expect(screen.getByLabelText("User value chain")).toBeTruthy();
-    expect(document.body.textContent).toContain("Real User Testing sessions");
-    expect(document.body.textContent).toContain("7 of 7 sessions measured");
-  });
-
-  it("passes the scenario to the query and skips without one", () => {
-    convex.useQuery.mockReturnValue(SUMMARY);
-    render(<ScenarioStageFunnelPanel scenarioId="scenario-1" />);
-    expect(convex.useQuery.mock.calls[0][1]).toEqual({
-      scenarioId: "scenario-1",
-    });
-
-    vi.clearAllMocks();
-    convex.useQuery.mockReturnValue(undefined);
-    render(<ScenarioStageFunnelPanel scenarioId={undefined} />);
-    expect(convex.useQuery.mock.calls[0][1]).toBe("skip");
-  });
-
-  it("renders nothing while the query is still loading", () => {
-    // `undefined` is in flight and `null` is a scenario we cannot read.
-    // Neither is "no sessions", which the funnel itself reports as notMeasured.
-    for (const value of [undefined, null]) {
-      convex.useQuery.mockReturnValue(value);
-      const { container } = render(
-        <ScenarioStageFunnelPanel scenarioId="scenario-1" />,
-      );
-      expect(container.textContent).toBe("");
-    }
-  });
-});
-
-describe("ScenarioStageFunnelPanel — the query cannot answer", () => {
-  it("renders nothing instead of throwing", () => {
-    queryThrows();
-    const { container } = render(
-      <ScenarioStageFunnelPanel scenarioId="scenario-1" />,
-    );
-    expect(container.textContent).toBe("");
-  });
-
-  it("does not take its host down with it", () => {
-    // The User Testing sessions surface in miniature: a sibling rendered
-    // beside the panel must still be there.
-    queryThrows();
-    const { getByTestId } = render(
-      <div>
-        <span data-testid="sibling">the rest of the page</span>
-        <ScenarioStageFunnelPanel scenarioId="scenario-1" />
-      </div>,
-    );
-    expect(getByTestId("sibling").textContent).toBe("the rest of the page");
-  });
 });
 
 describe("SwarmRunStageFunnelPanels — the query answers", () => {

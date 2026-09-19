@@ -1,8 +1,13 @@
 import {
-  GroupSummaryRow,
-  groupProjectRuns,
-} from "../evals/project-run-suite-groups";
+  dependentFilterOptions,
+  selectedFilter,
+} from "../evals/filter-options";
+import { groupProjectRuns } from "../evals/project-run-suite-groups";
 import type { ProjectRunRow } from "../evals/project-runs-table";
+import {
+  EvaluateHistoryHeader,
+  EvaluateHistoryRow,
+} from "./evaluate-history-row";
 import {
   EvalListFilter,
   ALL_EVAL_FILTER_VALUES,
@@ -22,7 +27,7 @@ import { GenerateCasesDialog } from "./generate-cases-dialog";
 import type { GenerateCasesConfig } from "@/lib/evals/eval-generation-config";
 import { EvalGenerationWorkspace } from "./eval-generation-workspace";
 import { EvalGeneratedDrafts } from "./eval-generated-drafts";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Code2,
   FileUp,
@@ -30,14 +35,27 @@ import {
   MessageSquareText,
   Play,
   Sparkles,
+  Plus,
+  ChevronDown,
+  Trash2,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@mcpjam/design-system/dropdown-menu";
 import { Button } from "@mcpjam/design-system/button";
 import {
-  TableBody,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@mcpjam/design-system/table";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@mcpjam/design-system/dialog";
+import { toast } from "sonner";
+import { TableBody } from "@mcpjam/design-system/table";
 import {
   Tooltip,
   TooltipContent,
@@ -50,15 +68,14 @@ import {
   evalSurfaceHeaderClass,
   evalSurfaceRowHoverClass,
 } from "../evals/eval-surface-chrome";
-import { getEffectiveSuiteServers } from "../evals/helpers";
+import { cancellableRunIds, getEffectiveSuiteServers } from "../evals/helpers";
+import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "../evals/constants";
 import {
   SUITE_RUN_HISTORY_PAGE_SIZE,
   buildSuiteRunHistoryRows,
   buildSuiteTestCaseRows,
-  runHistoryFilterOptions,
   suiteRunBlockedReason,
   runTimestamp,
-  formatRunHistoryDate,
 } from "./suite-detail-model";
 import type {
   EvalCase,
@@ -96,8 +113,6 @@ const EMPTY_CASE_ACTIONS = [
   },
 ] as const;
 
-const runHistoryHeadClass = "whitespace-nowrap";
-
 export function SuiteDetailOverview({
   suite,
   runReviewRequested = false,
@@ -119,8 +134,11 @@ export function SuiteDetailOverview({
   generateTestCasesDisabledReason,
   isGeneratingTestCases = false,
   onImportCases,
+  onDeleteTestCasesBatch,
   onRunClick,
   onTestCaseClick,
+  onCancelRun,
+  cancellingRunId = null,
   rerunningSuiteId,
   replayingRunId = null,
   runningTestCaseId = null,
@@ -128,6 +146,7 @@ export function SuiteDetailOverview({
   readOnlyConfig = false,
   configLocked = false,
   projectId = null,
+  onGeneratingChange,
 }: {
   suite: EvalSuite;
   runReviewRequested?: boolean;
@@ -154,8 +173,19 @@ export function SuiteDetailOverview({
   generateTestCasesDisabledReason?: string;
   isGeneratingTestCases?: boolean;
   onImportCases?: () => void;
+  /**
+   * Shared with the cross-host dashboard's row delete — same batch mutation,
+   * same confirm copy. Absent (or suite read-only) hides the row trash button.
+   */
+  onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   onRunClick: (runId: string) => void;
   onTestCaseClick: (testCaseId: string) => void;
+  /**
+   * Stops runs that are still going. Takes every cancellable id at once — the
+   * header cancels the whole suite, a history row cancels its whole launch.
+   */
+  onCancelRun?: (runIds: readonly string[]) => void;
+  cancellingRunId?: string | null;
   rerunningSuiteId: string | null;
   replayingRunId?: string | null;
   runningTestCaseId?: string | null;
@@ -171,12 +201,42 @@ export function SuiteDetailOverview({
   projectId?: string | null;
   /** Retained for callers; verdicts are read in the report, not history rows. */
   decisionSummaryEnabled?: boolean;
+  /**
+   * Reports the case-generation view opening and closing, with the way back
+   * out of it. Generation is local state rather than a route, so the header —
+   * which builds the breadcrumb from the route alone — cannot otherwise know
+   * the page changed under it, and its "Generate test cases" crumb would have
+   * nothing to return to.
+   */
+  onGeneratingChange?: (
+    state: { exit: () => void; label?: string } | null,
+  ) => void;
 }) {
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [modelFilter, setModelFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [showAllRuns, setShowAllRuns] = useState(false);
   const [reviewRun, setReviewRun] = useState(false);
+  const [caseToDelete, setCaseToDelete] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
+  const [isDeletingCase, setIsDeletingCase] = useState(false);
+
+  const confirmDeleteCase = async () => {
+    if (!caseToDelete || !onDeleteTestCasesBatch) return;
+    setIsDeletingCase(true);
+    try {
+      await onDeleteTestCasesBatch([caseToDelete.id]);
+      toast.success("Test case deleted");
+      setCaseToDelete(null);
+    } catch (error) {
+      console.error("Failed to delete test case:", error);
+      toast.error("Failed to delete test case");
+    } finally {
+      setIsDeletingCase(false);
+    }
+  };
 
   const historyRows = useMemo(
     () =>
@@ -189,10 +249,19 @@ export function SuiteDetailOverview({
       ),
     [runs, allIterations, suite, hostNamesById, projectEnvironmentsEnabled],
   );
-  const filterOptions = useMemo(
-    () => runHistoryFilterOptions(historyRows),
-    [historyRows],
-  );
+  const filterOptions = useMemo(() => {
+    const options = dependentFilterOptions(historyRows, {
+      clients: {
+        selected: selectedFilter(clientFilter),
+        values: (row) => (row.client ? [row.client] : []),
+      },
+      models: {
+        selected: selectedFilter(modelFilter),
+        values: (row) => row.models,
+      },
+    });
+    return { clients: options.clients, models: options.models };
+  }, [historyRows, clientFilter, modelFilter]);
   // Derived once per data/filter change. `details` and the filtered launches
   // are passed down as props, so fresh identities on every local state change
   // (opening the review dialog, toggling "show all") defeated the children's
@@ -309,6 +378,9 @@ export function SuiteDetailOverview({
   });
   const runDisabled = Boolean(runBlockedReason);
   const hasCases = cases.length > 0;
+  const canDeleteCases = Boolean(
+    onDeleteTestCasesBatch && !readOnlyConfig && !configLocked,
+  );
   /**
    * Hide the card until there is something to put in it. A never-run suite
    * already has Test Cases (or the empty-cases hero) — an empty history table
@@ -325,6 +397,35 @@ export function SuiteDetailOverview({
     Boolean(generation?.drafts.length) || generation?.status === "running";
   const showEmptyCasesHero = !hasCases && !hasGeneratedContent;
 
+  /**
+   * Imported drafts get their OWN surface, the way generation does. They are
+   * not in the suite and cannot run, so listing them beside real cases invited
+   * exactly one reading: that the import had already landed.
+   */
+  const importedDrafts =
+    generation?.drafts.filter((draft) => draft.markdownImport) ?? [];
+  const [importReviewClosed, setImportReviewClosed] = useState(false);
+  const hadImportedDrafts = useRef(importedDrafts.length > 0);
+  useEffect(() => {
+    // A fresh import reopens the review; leaving it closed would strand the
+    // drafts with no way back to them.
+    if (importedDrafts.length && !hadImportedDrafts.current)
+      setImportReviewClosed(false);
+    hadImportedDrafts.current = importedDrafts.length > 0;
+  }, [importedDrafts.length]);
+  const reviewingImport = Boolean(
+    projectId && importedDrafts.length && !importReviewClosed,
+  );
+  const exitImportReview = useCallback(() => setImportReviewClosed(true), []);
+  useEffect(() => {
+    if (!reviewingImport) return;
+    onGeneratingChange?.({
+      exit: exitImportReview,
+      label: "Import test cases",
+    });
+    return () => onGeneratingChange?.(null);
+  }, [reviewingImport, exitImportReview, onGeneratingChange]);
+
   const [generationOpen, setGenerationOpen] = useState(false);
   const [generationConfig, setGenerationConfig] =
     useState<GenerateCasesConfig>();
@@ -334,6 +435,46 @@ export function SuiteDetailOverview({
   // Generation needs a project to run against; without one the button can
   // only fail silently.
   const canGenerate = canGenerateTestCases && Boolean(projectId);
+
+  const generating = Boolean(generationConfig && projectId);
+  const exitGeneration = useCallback(() => setGenerationConfig(undefined), []);
+  /**
+   * Back to the suite WITH the scope dialog open. Reopening it in place would
+   * not show: the generation view returns before the dialog is rendered.
+   */
+  const changeGenerationSettings = useCallback(() => {
+    setGenerationConfig(undefined);
+    setGenerationOpen(true);
+  }, []);
+  useEffect(() => {
+    if (!generating) return;
+    onGeneratingChange?.({ exit: exitGeneration });
+    return () => onGeneratingChange?.(null);
+  }, [generating, exitGeneration, onGeneratingChange]);
+
+  const cancellableIds = cancellableRunIds(runs);
+  // Spinner only. The DISABLED state is the wider `cancellingRunId !== null`:
+  // the shared handler refuses a second cancel while one is in flight, so a
+  // sibling row left enabled is a button that quietly does nothing.
+  const isCancelling = cancellableIds.some((id) => id === cancellingRunId);
+  const cancelButton =
+    onCancelRun && cancellableIds.length > 0 ? (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-8"
+        data-testid="suite-detail-cancel"
+        aria-label="Cancel run"
+        disabled={cancellingRunId !== null}
+        onClick={() => onCancelRun(cancellableIds)}
+      >
+        {isCancelling ? (
+          <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden />
+        ) : null}
+        Cancel run
+      </Button>
+    ) : null;
 
   const runButton = (
     <Button
@@ -362,7 +503,26 @@ export function SuiteDetailOverview({
         projectId={projectId}
         suiteId={suite._id}
         suiteName={suite.name}
+        onChangeSettings={changeGenerationSettings}
+        onDone={exitGeneration}
       />
+    );
+
+  if (reviewingImport && projectId)
+    return (
+      <div
+        className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8 lg:py-8"
+        data-testid="suite-import-review"
+      >
+        <div className="mx-auto w-full max-w-5xl">
+          <EvalGeneratedDrafts
+            key={`${projectId}:${suite._id}:import`}
+            projectId={projectId}
+            suiteId={suite._id}
+            suiteName={suite.name}
+          />
+        </div>
+      </div>
     );
 
   return (
@@ -442,7 +602,7 @@ export function SuiteDetailOverview({
               className="h-8"
               onClick={onEditSuite}
             >
-              Edit
+              Configure suite evaluators
             </Button>
           ) : null}
           {configLocked && onDuplicateSuite ? (
@@ -457,6 +617,7 @@ export function SuiteDetailOverview({
               Duplicate to edit
             </Button>
           ) : null}
+          {cancelButton}
           {runDisabled && runBlockedReason ? (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -476,15 +637,6 @@ export function SuiteDetailOverview({
         </div>
       </div>
 
-      {projectId && !readOnlyConfig && (
-        <EvalGeneratedDrafts
-          key={`${projectId}:${suite._id}`}
-          defaultOpen={false}
-          projectId={projectId}
-          suiteId={suite._id}
-          suiteName={suite.name}
-        />
-      )}
       {showRunHistory ? (
         <section
           className={runHistorySurfaceClass}
@@ -531,43 +683,9 @@ export function SuiteDetailOverview({
                   : "No runs yet."}
             </div>
           ) : (
-            <div className="overflow-x-auto bg-card">
+            <div className="@container/run-history overflow-x-auto bg-card">
               <RunHistoryTable aria-label="Suite run history">
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent border-border/30">
-                    <TableHead className={runHistoryHeadClass}>Date</TableHead>
-                    <TableHead className={runHistoryHeadClass}>Run</TableHead>
-                    <TableHead className={runHistoryHeadClass}>
-                      Client : model
-                    </TableHead>
-                    <TableHead className={runHistoryHeadClass}>
-                      Status
-                    </TableHead>
-                    <TableHead
-                      className={cn(runHistoryHeadClass, "text-right")}
-                    >
-                      Iteration pass
-                    </TableHead>
-                    <TableHead
-                      className={cn(runHistoryHeadClass, "text-right")}
-                    >
-                      Latency p50
-                    </TableHead>
-                    <TableHead
-                      className={cn(runHistoryHeadClass, "text-right")}
-                    >
-                      Total tokens
-                    </TableHead>
-                    <TableHead
-                      className={cn(runHistoryHeadClass, "text-right")}
-                    >
-                      Tool calls
-                    </TableHead>
-                    <TableHead className={runHistoryHeadClass}>
-                      Platform
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
+                <EvaluateHistoryHeader />
                 <TableBody>
                   {visibleRows.map((launch) => {
                     const representative = [...launch.runs].sort(
@@ -575,15 +693,13 @@ export function SuiteDetailOverview({
                         a.runNumber - b.runNumber || a._id.localeCompare(b._id),
                     )[0];
                     return (
-                      <GroupSummaryRow
+                      <EvaluateHistoryRow
                         key={launch.key}
                         testId={`suite-run-row-${representative._id}`}
                         rows={launch.runs}
                         details={details}
                         historyRows={rowMap}
-                        showGitContext={false}
-                        label={`#${representative.runNumber}`}
-                        date={formatRunHistoryDate(representative.createdAt)}
+                        hostNamesById={hostNamesById}
                         onOpen={() => onRunClick(representative._id)}
                       />
                     );
@@ -633,54 +749,61 @@ export function SuiteDetailOverview({
               Test Cases
             </h3>
             {!readOnlyConfig && !configLocked ? (
-              <div className="flex shrink-0 items-center gap-2">
-                {/* Generate lives here as well as in the empty hero. Reaching it
-                  only through the hero would mean a suite loses the affordance
-                  the moment it has its first case, which is exactly when
-                  "generate more from live discovery" is most useful. */}
-                {onGenerateTestCases ? (
-                  <GenerateCasesButton
-                    onGenerate={handleGenerateCases}
-                    canGenerate={canGenerate}
-                    disabledReason={generateTestCasesDisabledReason}
-                    isGenerating={isGeneratingTestCases}
-                  />
-                ) : null}
-                {onImportCases ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8"
-                    onClick={onImportCases}
-                  >
-                    Import cases
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" size="sm" className="h-8 gap-1.5">
+                    <Plus className="size-3.5" aria-hidden /> Add case
+                    <ChevronDown className="size-3.5" aria-hidden />
                   </Button>
-                ) : null}
-                {onEditCases ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8"
-                    onClick={onEditCases}
-                  >
-                    Add case
-                  </Button>
-                ) : null}
-              </div>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-44">
+                  {(onDescribeCases ?? onEditCases) && (
+                    <DropdownMenuItem onSelect={onDescribeCases ?? onEditCases}>
+                      Describe
+                    </DropdownMenuItem>
+                  )}
+                  {onGenerateTestCases && (
+                    <DropdownMenuItem
+                      disabled={!canGenerate || isGeneratingTestCases}
+                      onSelect={() => void handleGenerateCases()}
+                    >
+                      {isGeneratingTestCases ? "Generating…" : "Generate"}
+                    </DropdownMenuItem>
+                  )}
+                  {onGenerateTestCases &&
+                    (!canGenerate || isGeneratingTestCases) &&
+                    generateTestCasesDisabledReason && (
+                      <p className="max-w-64 px-2 py-1.5 text-xs text-muted-foreground">
+                        {generateTestCasesDisabledReason}
+                      </p>
+                    )}
+                  {onImportCases && (
+                    <DropdownMenuItem onSelect={onImportCases}>
+                      Import
+                    </DropdownMenuItem>
+                  )}
+                  {onEditCases && (
+                    <DropdownMenuItem onSelect={onEditCases}>
+                      Add manually
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : null}
           </div>
           <ul className="divide-y divide-border/40">
             {testCaseRows.map((row) => (
-              <li key={row.caseId}>
+              <li
+                key={row.caseId}
+                className={cn(
+                  "group flex items-center gap-1 pr-2",
+                  evalSurfaceRowHoverClass,
+                )}
+              >
                 <button
                   type="button"
                   data-testid={`suite-test-case-row-${row.caseId}`}
-                  className={cn(
-                    "flex w-full flex-col items-start gap-0.5 px-4 py-3 text-left",
-                    evalSurfaceRowHoverClass,
-                  )}
+                  className="flex min-w-0 flex-1 flex-col items-start gap-0.5 px-4 py-3 text-left"
                   onClick={() => onTestCaseClick(row.caseId)}
                 >
                   <span className="text-sm font-medium text-foreground">
@@ -692,6 +815,20 @@ export function SuiteDetailOverview({
                     </span>
                   ) : null}
                 </button>
+                {canDeleteCases ? (
+                  <button
+                    type="button"
+                    data-testid={`suite-test-case-delete-${row.caseId}`}
+                    onClick={() =>
+                      setCaseToDelete({ id: row.caseId, title: row.title })
+                    }
+                    title="Delete test case"
+                    aria-label={`Delete test case: ${row.title}`}
+                    className="shrink-0 rounded p-1.5 text-muted-foreground/60 transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
+                  >
+                    <Trash2 className="size-3.5" aria-hidden />
+                  </button>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -722,6 +859,43 @@ export function SuiteDetailOverview({
           )}
         </div>
       ) : null}
+
+      <Dialog
+        open={caseToDelete != null}
+        onOpenChange={(open) => {
+          if (!open && !isDeletingCase) setCaseToDelete(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="size-5 text-destructive" aria-hidden />
+              Delete test case
+            </DialogTitle>
+            <DialogDescription>
+              Delete “{caseToDelete?.title || "Untitled test case"}”? This
+              cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCaseToDelete(null)}
+              disabled={isDeletingCase}
+            >
+              Cancel
+            </Button>
+            <Button
+              className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
+              data-testid="suite-test-case-delete-confirm"
+              onClick={confirmDeleteCase}
+              disabled={isDeletingCase}
+            >
+              {isDeletingCase ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -12,6 +12,7 @@ const {
   mockSurfaceSettingsCalls,
   mockDiscord,
   mockObservability,
+  mockIntegrationsTab,
 } = vi.hoisted(() => ({
   mockAvailability: {
     value: undefined as { state: "enabled" | "disabled" } | undefined,
@@ -48,6 +49,11 @@ const {
     destinations: undefined as
       Array<{ enabled: boolean; paused: unknown }> | undefined,
   },
+  // The tab's own beta gate, TRI-STATE like the hook: `undefined` is "PostHog
+  // has not answered yet". Default ON so every existing assertion still
+  // describes the page a flagged-in reader sees; off and loading are each
+  // their own test.
+  mockIntegrationsTab: { enabled: true as boolean | undefined },
   mockDiscord: {
     enabled: false,
     /** null models VITE_MCPJAM_DISCORD_CLIENT_ID being unset. */
@@ -90,6 +96,11 @@ vi.mock("@/hooks/useOrgSlackSettings", () => ({
 }));
 
 vi.mock("@/lib/app-navigation", () => ({
+  useCurrentLocationParts: () => ({
+    pathname: window.location.pathname,
+    search: window.location.search,
+    hash: window.location.hash,
+  }),
   useAppNavigate: () => mockNavigate,
   buildOrganizationPath: (id: string, section?: string) =>
     section ? `/organizations/${id}/${section}` : `/organizations/${id}`,
@@ -103,16 +114,16 @@ vi.mock("@/hooks/useOrganizations", () => ({
   useOrganizationQueries: () => ({ isLoading: mockOrgsLoading.value }),
 }));
 
-vi.mock("../SettingsNav", () => ({
-  SettingsNav: () => <nav data-testid="settings-nav" />,
-}));
-
 vi.mock("@/hooks/useDiscordAgentEnabled", () => ({
   useDiscordAgentEnabled: () => mockDiscord.enabled,
 }));
 
 vi.mock("@/lib/config", () => ({
   discordInstallUrl: () => mockDiscord.installUrl,
+}));
+
+vi.mock("@/hooks/useIntegrationsTabEnabled", () => ({
+  useIntegrationsTabFlag: () => mockIntegrationsTab.enabled,
 }));
 
 vi.mock("@/hooks/useTraceDestinationsEnabled", () => ({
@@ -147,6 +158,9 @@ function renderRoute({
   error = null,
   activeOrganizationId = "org-1" as string | null,
   slackConnections,
+  // A WORD, not `boolean | undefined`: passing `undefined` explicitly would
+  // hit the default and silently test the flagged-in case instead.
+  integrationsTab = "on" as "on" | "off" | "loading",
 }: {
   availability?: { state: "enabled" | "disabled" };
   repos?: unknown[];
@@ -155,7 +169,10 @@ function renderRoute({
   slackConnections?: { workspaces: Array<{ installed: boolean }> };
   discordEnabled?: boolean;
   discordInstallUrl?: string | null;
+  integrationsTab?: "on" | "off" | "loading";
 }) {
+  mockIntegrationsTab.enabled =
+    integrationsTab === "loading" ? undefined : integrationsTab === "on";
   mockAvailability.value = availability;
   mockAvailability.error = error;
   mockRepos.value = repos;
@@ -180,9 +197,34 @@ function renderRoute({
 }
 
 describe("IntegrationsRoute", () => {
+  it("sends a flagged-off reader to Settings instead of rendering the page", () => {
+    // The rail hides the entry; this is the same decision applied to the URL,
+    // so a link kept from a flagged-in session lands somewhere real.
+    renderRoute({
+      integrationsTab: "off",
+      availability: { state: "enabled" },
+      repos: [],
+    });
+    expect(screen.getByText("Settings Screen")).toBeInTheDocument();
+    expect(screen.queryByText("Slack")).not.toBeInTheDocument();
+  });
+
+  it("waits, rather than redirecting, while the flag is still loading", () => {
+    // A redirect cannot be taken back, and a direct hit on this URL ordinarily
+    // arrives before PostHog answers — so a flagged-IN reader must not be
+    // thrown off their own page by the loading window.
+    renderRoute({
+      integrationsTab: "loading",
+      availability: { state: "enabled" },
+      repos: [],
+    });
+    expect(screen.queryByText("Settings Screen")).not.toBeInTheDocument();
+    expect(screen.queryByText("Slack")).not.toBeInTheDocument();
+  });
+
   it("always shows Slack, whatever GitHub's availability says", () => {
-    // The reason the tab is unconditional: Slack is an integration every org
-    // has, so the page must be useful without the GitHub beta.
+    // Inside the tab, Slack is an integration every org has, so the page must
+    // be useful without the GitHub beta.
     renderRoute({ availability: { state: "disabled" } });
     expect(screen.getByText("Slack")).toBeInTheDocument();
     expect(screen.queryByText("GitHub Checks")).not.toBeInTheDocument();

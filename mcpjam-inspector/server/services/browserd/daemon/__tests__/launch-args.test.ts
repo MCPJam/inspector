@@ -96,6 +96,48 @@ describe("feature switches must not clobber Playwright's (verified vs. 1.62.1)",
     expect(BROWSERD_ENABLED_FEATURES).toContain("CDPScreenshotNewSurface");
   });
 
+  it("folds an --enable-features in `extra` into the single switch", () => {
+    // THE BUG THIS FIXES, and it was live. `extra` is appended LAST, so a
+    // caller passing `--enable-features=WebMCP` alongside these args emitted a
+    // second switch that Chromium honoured IN PLACE OF the first — keeping
+    // WebMCP and silently discarding `CDPScreenshotNewSurface`, which moves
+    // every capture back to the legacy screenshot surface. The WebMCP
+    // Inspector's local Chromium did exactly this.
+    const args = buildBrowserdLaunchArgs([
+      "--enable-features=WebMCP,SomethingElse",
+      "--window-size=1024,768",
+    ]);
+    const enables = args.filter((arg) => arg.startsWith("--enable-features="));
+    expect(enables).toHaveLength(1);
+    const features = enables[0]!.slice("--enable-features=".length).split(",");
+    expect(features).toContain("CDPScreenshotNewSurface");
+    expect(features).toContain("WebMCP");
+    expect(features).toContain("SomethingElse");
+    // Deduped: a caller restating a feature we already carry changes nothing.
+    expect(features.filter((f) => f === "WebMCP")).toHaveLength(1);
+    // And the non-feature extra still passes through, in place.
+    expect(args).toContain("--window-size=1024,768");
+  });
+
+  it("emits byte-identical args for the daemon's own launch", () => {
+    // The fold above must change NOTHING for a caller that passes no feature
+    // switch, which is every hosted boot. Pinned as a literal list rather than
+    // a property so that a reordering shows up here rather than in a browser.
+    const plain = buildBrowserdLaunchArgs();
+    const withExtra = buildBrowserdLaunchArgs(["--window-size=1024,768"]);
+    expect(withExtra).toEqual([...plain, "--window-size=1024,768"]);
+  });
+
+  it("still refuses a --disable-features in `extra` after folding", () => {
+    // The fold reorders `extra`, so the refusal has to survive the reorder.
+    expect(() =>
+      buildBrowserdLaunchArgs([
+        "--enable-features=WebMCP",
+        "--disable-features=SomethingNew",
+      ]),
+    ).toThrow(/must not carry --disable-features/);
+  });
+
   it("passes through a shared arg that is NOT a feature switch", () => {
     // Folding only the feature switches means an arg added upstream for some
     // other purpose still reaches Chromium.
