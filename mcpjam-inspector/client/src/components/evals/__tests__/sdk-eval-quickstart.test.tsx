@@ -225,7 +225,7 @@ describe("SdkEvalQuickstart", () => {
       screen.getByRole("button", { name: "Sign in to create an API key" }),
     );
     expect(mocks.writeApiKeysSignInReturnPath).toHaveBeenCalledWith(
-      "/evals/runs",
+      "/evaluate",
     );
     expect(mocks.signIn).toHaveBeenCalled();
   });

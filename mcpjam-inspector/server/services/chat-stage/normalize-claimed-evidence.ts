@@ -169,7 +169,15 @@ export function normalizeCriteria(
     if (!isRecord(entry)) return [];
     const criterionId = nonEmptyString(entry.criterionId);
     if (!criterionId || typeof entry.passed !== "boolean") return [];
-    return [{ criterionId, passed: entry.passed }];
+    return [
+      {
+        criterionId,
+        passed: entry.passed,
+        ...(entry.status === "scored" || entry.status === "error"
+          ? { status: entry.status }
+          : {}),
+      },
+    ];
   });
 
   // A row we could not read is a row we do not have. Reporting the survivors
@@ -241,6 +249,8 @@ export function normalizeClaimedEvidence(claim: {
     lifecycle?: unknown;
     readiness?: unknown;
     criteria?: unknown;
+    criterionDefinitions?: unknown;
+    swarmPolicy?: unknown;
     goalScore?: unknown;
   };
   envelope: { messages?: unknown[]; spans?: unknown[] } | null;
@@ -255,6 +265,29 @@ export function normalizeClaimedEvidence(claim: {
   const spans = normalizeSpans(envelope.spans);
   const readiness = normalizeReadiness(claim.evidence.readiness);
   const criteria = normalizeCriteria(claim.evidence.criteria);
+  const definitions = claim.evidence.criterionDefinitions;
+  if (criteria?.results && Array.isArray(definitions)) {
+    criteria.results = criteria.results.map((row) => {
+      const definition = definitions.find(
+        (d) => isRecord(d) && d.id === row.criterionId,
+      );
+      return isRecord(definition) &&
+        isRecord(definition.predicate) &&
+        typeof definition.predicate.type === "string"
+        ? {
+            ...row,
+            predicate: {
+              type: definition.predicate.type,
+              role:
+                definition.predicate.role === "advisory"
+                  ? "advisory"
+                  : "required",
+            },
+          }
+        : row;
+    });
+  }
+  const swarmPolicy = claim.evidence.swarmPolicy;
   const goalJudge = normalizeGoalJudge(claim.evidence.goalScore);
 
   return {
@@ -267,6 +300,17 @@ export function normalizeClaimedEvidence(claim: {
       ...(readiness ? { readiness } : {}),
       ...(criteria ? { criteria } : {}),
       ...(goalJudge ? { goalJudge } : {}),
+      ...(source === "swarm" &&
+      isRecord(swarmPolicy) &&
+      typeof swarmPolicy.judgeDecisive === "boolean" &&
+      typeof swarmPolicy.requiredCriteria === "number"
+        ? {
+            swarmPolicy: {
+              judgeDecisive: swarmPolicy.judgeDecisive,
+              requiredCriteria: swarmPolicy.requiredCriteria,
+            },
+          }
+        : {}),
     },
   };
 }

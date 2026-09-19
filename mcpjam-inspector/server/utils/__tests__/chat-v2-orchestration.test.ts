@@ -1824,6 +1824,37 @@ describe("first-class page tools in prepareChatV2", () => {
     expect(result.enhancedSystemPrompt).not.toContain("Tools this page declares");
   });
 
+  it.each([false, true])(
+    "explains inspector aliases even when browser tools may grow: %s",
+    async (mayGrow) => {
+      const result = await prepareChatV2({
+        ...base(),
+        mcpClientManager: mockManager({}),
+        pageTools: [
+          {
+            alias: "page_1a2b3c4d",
+            sessionId: "s",
+            toolKey: "add_topping",
+            rawName: "add_topping",
+            origin: "https://pizza.test",
+          },
+        ],
+        pageToolsMayGrow: mayGrow,
+      } as any);
+      expect(result.allTools.page_1a2b3c4d).toBeDefined();
+      expect(result.allTools.webmcp_add_topping).toBeUndefined();
+      expect(result.enhancedSystemPrompt).toContain(
+        "exact names in the current tool definitions",
+      );
+      expect(result.enhancedSystemPrompt).toContain(
+        "including any `page_` aliases",
+      );
+      expect(result.enhancedSystemPrompt).not.toContain(
+        "None are available right now",
+      );
+    },
+  );
+
   it("explains page tools AHEAD of their arrival when the set may grow", async () => {
     // The model navigates on one step and sees `webmcp_*` tools on the next.
     // A section that appeared only once a tool existed would leave it reading

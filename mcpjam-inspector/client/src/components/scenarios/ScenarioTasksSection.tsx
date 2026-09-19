@@ -3,11 +3,11 @@
  * step 2 authors, in the same editor, so the two surfaces cannot drift into
  * different ideas of what a task is.
  *
- * Editing model mirrors `ScenarioGradingSection`: a local draft seeded from
- * the live-subscription prop ONCE per scenario (a reseed mid-edit would
- * discard unsaved rows), and an explicit Save. Unlike the ratings toggle there
- * is no optimistic display — a list is not a switch, and echoing rows the
- * server has not accepted would make a failed save look like it worked.
+ * Editing model: a local draft seeded from the live-subscription prop ONCE
+ * per scenario (a reseed mid-edit would discard unsaved rows), and an
+ * explicit Save. Unlike the ratings toggle there is no optimistic display — a
+ * list is not a switch, and echoing rows the server has not accepted would
+ * make a failed save look like it worked.
  */
 
 import { useMemo, useRef, useState } from "react";

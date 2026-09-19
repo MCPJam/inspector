@@ -33,7 +33,7 @@ describe("nextQuestionFor", () => {
   it("asks for repetition after one passing trial", () => {
     expect(nextQuestionFor(state())).toMatchObject({
       action: "trials",
-      copy: "It worked once. Run 3 trials to see if it is consistent.",
+      copy: "It worked once. Run 3 iterations to see if it is consistent.",
     });
   });
 

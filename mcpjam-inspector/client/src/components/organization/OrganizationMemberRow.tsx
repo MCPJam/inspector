@@ -1,4 +1,14 @@
-import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from "@mcpjam/design-system/avatar";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import {
@@ -9,7 +19,7 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { getInitials } from "@/lib/utils";
-import { Clock, Loader2, X } from "lucide-react";
+import { Clock, MoreHorizontal, ArrowRightLeft, Trash2, X } from "lucide-react";
 import {
   type OrganizationMember,
   type OrganizationMembershipRole,
@@ -62,13 +72,13 @@ export function OrganizationMemberRow({
 
   if (isPending) {
     return (
-      <div className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50">
-        <div className="size-9 rounded-full bg-muted flex items-center justify-center">
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-3 last:border-b-0 hover:bg-muted/30">
+        <div className="size-8 rounded-full bg-muted flex items-center justify-center">
           <Clock className="size-4 text-muted-foreground" />
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium truncate">{email}</p>
-          <p className="text-xs text-muted-foreground">Waiting for signup</p>
+          <p className="text-xs text-foreground">Waiting for signup</p>
         </div>
         <div className="flex items-center gap-2">
           {onRemove && (
@@ -76,6 +86,7 @@ export function OrganizationMemberRow({
               variant="ghost"
               size="sm"
               className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+              aria-label={`Cancel invitation for ${email}`}
               onClick={onRemove}
             >
               <X className="size-4" />
@@ -87,19 +98,17 @@ export function OrganizationMemberRow({
   }
 
   return (
-    <div className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50">
-      <Avatar className="size-9">
+    <div className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-3 last:border-b-0 hover:bg-muted/30">
+      <Avatar className="size-8">
         <AvatarImage src={member.user?.imageUrl || undefined} alt={name} />
         <AvatarFallback className="text-sm">{initials}</AvatarFallback>
       </Avatar>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <p className="text-sm font-medium truncate">{name}</p>
-          {isSelf && (
-            <span className="text-xs text-muted-foreground">(you)</span>
-          )}
+          {isSelf && <span className="text-xs text-foreground">(you)</span>}
         </div>
-        <p className="text-xs text-muted-foreground truncate">{email}</p>
+        <p className="text-xs text-foreground truncate">{email}</p>
       </div>
 
       <div className="flex items-center gap-2">
@@ -130,30 +139,37 @@ export function OrganizationMemberRow({
             </SelectContent>
           </Select>
         )}
-        {canTransferOwnership && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8"
-            disabled={isTransferringOwnership}
-            onClick={onTransferOwnership}
-          >
-            {isTransferringOwnership ? (
-              <Loader2 className="mr-2 size-3.5 animate-spin" />
-            ) : null}
-            Transfer ownership
-          </Button>
-        )}
-        {canRemove && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-            disabled={isRoleUpdating || isTransferringOwnership}
-            onClick={onRemove}
-          >
-            <X className="size-4" />
-          </Button>
+        {(canTransferOwnership || canRemove) && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                aria-label={`Actions for ${email}`}
+                disabled={isRoleUpdating || isTransferringOwnership}
+              >
+                <MoreHorizontal aria-hidden="true" className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {canTransferOwnership && (
+                <DropdownMenuItem onSelect={onTransferOwnership}>
+                  <ArrowRightLeft aria-hidden="true" className="size-4" />
+                  Transfer ownership
+                </DropdownMenuItem>
+              )}
+              {canRemove && (
+                <DropdownMenuItem
+                  onSelect={onRemove}
+                  className="text-destructive"
+                >
+                  <Trash2 aria-hidden="true" className="size-4" />
+                  Remove member
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
       </div>
     </div>
