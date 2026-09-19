@@ -580,6 +580,11 @@ describe("OrganizationsTab billing", () => {
       "3,000/ mo",
     );
     fireEvent.click(column.getByRole("button", { name: "Upgrade" }));
+    // Upgrade opens the confirmation step; nothing reaches Stripe until it is
+    // confirmed.
+    const confirm = await screen.findByTestId("plan-confirm-cta");
+    expect(startPlanChange).not.toHaveBeenCalled();
+    fireEvent.click(confirm);
     await waitFor(() =>
       expect(startPlanChange).toHaveBeenCalledWith(
         expect.any(String),
@@ -1848,6 +1853,7 @@ describe("OrganizationsTab billing", () => {
 
     const upgradeButtons = screen.getAllByRole("button", { name: "Upgrade" });
     fireEvent.click(upgradeButtons[0]!);
+    fireEvent.click(await screen.findByTestId("plan-confirm-cta"));
 
     await waitFor(() => {
       expect(startPlanChange).toHaveBeenCalledWith(
