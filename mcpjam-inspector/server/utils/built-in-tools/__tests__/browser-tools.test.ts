@@ -15,6 +15,8 @@ vi.mock("../../computers/browser-consent.js", () => ({
  */
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { BrowserProtocolMismatchError } from "../../../services/browserd/browser-session.js";
+import { toBrowserModelOutput } from "../browser";
 import {
   buildBrowserTools,
   BrowserTokenMemory,
@@ -147,8 +149,14 @@ function build(
   return { result, ...fake };
 }
 
-async function run(tools: any, name: string, args: Record<string, unknown>) {
-  return tools[name].execute(args, { toolCallId: "call-1" });
+async function run(
+  tools: any,
+  name: string,
+  args: Record<string, unknown>,
+  /** One model step can emit several browser calls, each with its own id. */
+  toolCallId = "call-1",
+) {
+  return tools[name].execute(args, { toolCallId });
 }
 
 describe("buildBrowserTools — fail-closed advertisement", () => {
@@ -3803,5 +3811,238 @@ describe("buildBrowserTools — session policy", () => {
     });
     expect(JSON.stringify(answer)).toContain("origin_not_allowed");
     expect(daemon).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildBrowserTools — a daemon speaking the wrong wire", () => {
+  it("returns protocol_mismatch as the tool error rather than a raw boot timeout", async () => {
+    // `ensureBrowserSession` relaunches a daemon it cannot talk to, silently
+    // and first. When THAT also fails, what the model used to read was
+    // "browserd did not report listening within 30000ms" — a timeout from a
+    // boot that had nothing to do with the cause, which reads like a transient
+    // hiccup worth retrying forever.
+    const { result } = build({
+      ensureSession: vi.fn(async () => {
+        throw new BrowserProtocolMismatchError({
+          expected: 2,
+          running: 1,
+          source: "reuse",
+        });
+      }) as never,
+    });
+    const answer = (await run(result!.tools, "browser_navigate", {
+      url: "https://example.com",
+    })) as { error?: string };
+    expect(answer.error).toMatch(/protocol_mismatch: /);
+    expect(answer.error).toContain("version 1");
+    expect(answer.error).toContain("version 2");
+    // The hint is the actionable half: an agent told only "mismatch" retries.
+    expect(answer.error).toContain("restarted onto the current build");
+  });
+
+  it("still throws anything that is NOT a wire mismatch", async () => {
+    // The other half: a tool that swallowed unknown failures into `{ok:false}`
+    // would hide a real fault behind a sentence the model tries to work around.
+    const { result } = build({
+      ensureSession: vi.fn(async () => {
+        throw new Error("the computer is hibernating");
+      }) as never,
+    });
+    await expect(
+      run(result!.tools, "browser_navigate", { url: "https://example.com" }),
+    ).rejects.toThrow(/hibernating/);
+  });
+});
+
+describe("buildBrowserTools — credential shapes on the way to the model", () => {
+  it("an error containing an api_key reaches the model as [redacted]", async () => {
+    // A daemon error is an UPSTREAM string and routinely quotes the URL that
+    // failed, query string and all. It passed verbatim into the tool result,
+    // the model's context, the transcript and the eval trace.
+    const { result } = build({}, async () => ({
+      status: "ok",
+      result: {
+        ok: false,
+        error:
+          "act_failed: page.goto: net::ERR_ABORTED at " +
+          "https://api.test/v1/me?api_key=sk-live-abcdefghijklmnop",
+      },
+    }));
+    const out = await run(result!.tools, "browser_observe", {});
+    expect(out.error).not.toContain("sk-live-abcdefghijklmnop");
+    expect(out.error).toContain("api_key=[redacted]");
+    // And still says what went wrong, which is the whole value of the string.
+    expect(out.error).toContain("net::ERR_ABORTED");
+  });
+
+  it("a11y text with a token-shaped word is NOT altered", async () => {
+    // THE HALF THAT KEEPS THIS SAFE ON BY DEFAULT. The tree is what the model
+    // is reading to decide what to do; a false positive there hides the field
+    // it is trying to fill rather than protecting anything.
+    const line = '- textbox "API key" [ref=e1]: "sk-live-abcdefghijklmnop"';
+    const { result } = build({}, async () => ({
+      status: "ok",
+      result: {
+        ok: true,
+        output: { url: "https://x.test/", a11y: line },
+        settled: true,
+      },
+    }));
+    const out = await run(result!.tools, "browser_observe", { mode: "a11y" });
+    expect(JSON.stringify(out)).toContain("sk-live-abcdefghijklmnop");
+  });
+
+  it("scrubs a console line an OLD daemon sent unscrubbed", async () => {
+    // The daemon scrubs its own now — but the hosted fleet reuses RUNNING
+    // daemons across deploys, so a new server routinely talks to a daemon
+    // built before the scrub existed.
+    const { result } = build({}, async () => ({
+      status: "ok",
+      result: {
+        ok: true,
+        output: {
+          url: "https://x.test/",
+          console: [
+            {
+              type: "error",
+              text: "GET https://api.test/me?api_key=sk-live-abcdefghijklmnop 401",
+              at: 1,
+            },
+          ],
+        },
+        settled: true,
+      },
+    }));
+    const out = await run(result!.tools, "browser_observe", { mode: "console" });
+    const model = toBrowserModelOutput({ output: out });
+    const text = JSON.stringify(model.value);
+    expect(text).not.toContain("sk-live-abcdefghijklmnop");
+    expect(text).toContain("api_key=[redacted]");
+  });
+
+  it("scrubs a network failure an OLD daemon sent unscrubbed", async () => {
+    const { result } = build({}, async () => ({
+      status: "ok",
+      result: {
+        ok: true,
+        output: {
+          url: "https://x.test/",
+          network: [
+            {
+              url: "https://api.test/me",
+              at: 1,
+              failure:
+                "net::ERR_ABORTED at https://api.test/me?api_key=sk-live-abcdefghijklmnop",
+            },
+          ],
+        },
+        settled: true,
+      },
+    }));
+    const out = await run(result!.tools, "browser_observe", { mode: "network" });
+    const text = JSON.stringify(toBrowserModelOutput({ output: out }).value);
+    expect(text).not.toContain("sk-live-abcdefghijklmnop");
+  });
+
+  it("leaves the a11y half of the same result alone", async () => {
+    // The two fields travel in one object, so the scrub has to be able to tell
+    // them apart rather than walking the whole thing.
+    const { result } = build({}, async () => ({
+      status: "ok",
+      result: {
+        ok: true,
+        output: {
+          url: "https://x.test/",
+          a11y: '- textbox "Key" [ref=e1]: "?api_key=keep-me-visible"',
+          console: [
+            { type: "log", text: "?api_key=scrub-me-please", at: 1 },
+          ],
+        },
+        settled: true,
+      },
+    }));
+    const out = await run(result!.tools, "browser_observe", { mode: "a11y" });
+    const text = JSON.stringify(toBrowserModelOutput({ output: out }).value);
+    expect(text).toContain("keep-me-visible");
+    expect(text).not.toContain("scrub-me-please");
+  });
+});
+
+describe("buildBrowserTools — what a ledger row can be traced back to", () => {
+  /** The `correlation` the tool put on the command it sent. */
+  const correlationOf = (sendCommand: { mock: { calls: unknown[][] } }) =>
+    (sendCommand.mock.calls[0]![0] as { correlation?: Record<string, string> })
+      .correlation;
+
+  it("stamps the surface's correlation and the AI SDK's tool call id", async () => {
+    // Both halves: the SURFACE knows the chat session, only the AI SDK knows
+    // which of a step's several tool calls this one is — and that is the join
+    // a person reading a browser trace actually wants.
+    const { result, sendCommand } = build({
+      correlation: { chatSessionId: "chat-7" },
+    });
+    await run(result!.tools, "browser_observe", {});
+    expect(correlationOf(sendCommand)).toEqual({
+      chatSessionId: "chat-7",
+      toolCallId: "call-1",
+    });
+  });
+
+  it("stamps the tool call id even with no surface correlation", async () => {
+    const { result, sendCommand } = build();
+    await run(result!.tools, "browser_observe", {});
+    expect(correlationOf(sendCommand)).toEqual({ toolCallId: "call-1" });
+  });
+
+  it("sends NO correlation key when there is nothing to say", async () => {
+    // An empty object on every command would be a new field in every ledger
+    // row and in every trace, saying nothing. Reached by an engine that
+    // supplies no tool call id, which is what the server's own internal reads
+    // look like.
+    const { result, sendCommand } = build();
+    await (
+      result!.tools.browser_observe as {
+        execute: (args: unknown, options: unknown) => Promise<unknown>;
+      }
+    ).execute({}, {});
+    expect(correlationOf(sendCommand)).toBeUndefined();
+  });
+
+  it("drops an oversized map rather than half-writing it", async () => {
+    // Validated with the same rule the coding-agent door uses, because it
+    // reaches the same durable rows. A correlation is a convenience, so a bad
+    // one costs the correlation and never the browser command.
+    const oversized = Object.fromEntries(
+      Array.from({ length: 12 }, (_, i) => [`k${i}`, "v"]),
+    );
+    const { result, sendCommand } = build({ correlation: oversized as never });
+    const out = await run(result!.tools, "browser_observe", {});
+    expect(out.error).toBeUndefined();
+    expect(correlationOf(sendCommand)).toBeUndefined();
+  });
+
+  it("drops a map with an over-long value the same way", async () => {
+    const { result, sendCommand } = build({
+      correlation: { chatSessionId: "x".repeat(201) } as never,
+    });
+    await run(result!.tools, "browser_observe", {});
+    expect(correlationOf(sendCommand)).toBeUndefined();
+  });
+
+  it("gives each call in one step its own id", async () => {
+    // The reason `toolCallId` is threaded through `send` rather than read once
+    // at the top: a model step routinely emits several browser calls.
+    const { result, sendCommand } = build({
+      correlation: { chatSessionId: "chat-7" },
+    });
+    await run(result!.tools, "browser_observe", {}, "call-a");
+    await run(result!.tools, "browser_observe", {}, "call-b");
+    expect(
+      sendCommand.mock.calls.map(
+        (call) =>
+          (call[0] as { correlation?: { toolCallId?: string } }).correlation
+            ?.toolCallId,
+      ),
+    ).toEqual(["call-a", "call-b"]);
   });
 });

@@ -164,7 +164,7 @@ export function RunAccuracyHeroBand({
    */
   hideRecentRuns?: boolean;
   /** Attached client this run was executed against (multi-client fan-out). */
-  runClient?: { hostId: string; displayName: string } | null;
+  runClient?: { hostId?: string; displayName: string; logoSrc?: string } | null;
   className?: string;
 }) {
   const stats = useMemo(
@@ -251,7 +251,7 @@ export function RunAccuracyHeroBand({
       {runClient || runServers.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
           {runClient ? (
-            <HostChip name={runClient.displayName} hostId={runClient.hostId} />
+            <HostChip name={runClient.displayName} hostId={runClient.hostId} logoSrc={runClient.logoSrc} />
           ) : null}
           {visibleServers.map((name) => (
             <Badge

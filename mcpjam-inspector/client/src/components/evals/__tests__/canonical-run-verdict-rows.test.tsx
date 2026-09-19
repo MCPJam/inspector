@@ -49,6 +49,9 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("convex/react", () => ({
   usePaginatedQuery: () => mocks.paginated.current,
+  // The table asks for the project's suites only to name a GitHub check's
+  // servers; nothing here runs a check, so it always skips.
+  useQuery: () => undefined,
   useConvex: () => mocks.convex,
 }));
 vi.mock("@/hooks/useClients", () => ({
@@ -510,7 +513,7 @@ describe("Evaluate suite run history status", () => {
       await Promise.resolve();
       expect(fetchMock).not.toHaveBeenCalled();
       expect(
-        within(screen.getByTestId("suite-run-row-run-1")).getByText("Finished"),
+        within(screen.getByTestId("suite-run-row-run-1")).getByText("Passed"),
       ).toBeVisible();
       expect(
         screen.queryByRole("columnheader", { name: "Verdict" }),
@@ -540,9 +543,7 @@ describe("Evaluate suite run history status", () => {
       [],
     );
     expect(
-      within(screen.getByTestId("suite-run-row-run-1")).getByText(
-        "In progress",
-      ),
+      within(screen.getByTestId("suite-run-row-run-1")).getByText("Running"),
     ).toBeVisible();
     await Promise.resolve();
     expect(fetchMock).not.toHaveBeenCalled();

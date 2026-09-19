@@ -1,3 +1,7 @@
+import { cloneTraceValue } from "../../utils/live-chat-trace-stream";
+import { buildResolvedModelRequestPayload } from "../../utils/model-request-payload";
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
 import type { ModelMessage, Tool as AiTool, ToolChoice, ToolSet } from "ai";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import {
@@ -11,6 +15,7 @@ import { isPinnedTurn, type PromptTurn } from "@/shared/steps";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { EvalToolChoice } from "@/shared/tool-choice";
 import { logger } from "../../utils/logger.js";
+import { withDeadline } from "../../utils/run-supervisor/deadline.js";
 import {
   runDirectChatTurn,
   type RunDirectChatTurnHandle,
@@ -33,6 +38,7 @@ import type { UsageTotals } from "./types.js";
 export type LocalEvalTurnAcc = {
   conversationMessages: ModelMessage[];
   capturedSpans: EvalTraceSpan[];
+  requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   accumulatedUsage: UsageTotals;
   toolsCalledByPrompt: ToolCall[][];
   assistantMessageByPrompt: (string | undefined)[];
@@ -43,6 +49,7 @@ export type LocalEvalTurnAcc = {
   activePartialResponseMessages: ModelMessage[];
   activeCompletedStepCount: number;
   activeTraceCtx: ReturnType<typeof createAiSdkEvalTraceContext> | null;
+  timeout?: TimeoutMetadata;
   iterationError: string | undefined;
   iterationErrorDetails: string | undefined;
   /**
@@ -82,7 +89,8 @@ export function modelLayerForErrorSpan(
 
 export type LocalEvalTurnOutcome =
   | { kind: "completed" }
-  | { kind: "cancelled" };
+  | { kind: "cancelled" }
+  | { kind: "failed"; timeout: TimeoutMetadata };
 
 export type LocalEvalTurnSinks = {
   emit?: Parameters<typeof consumeFullStreamAsEvalEvents>[1]["emit"];
@@ -152,6 +160,17 @@ export type DriveLocalEvalTurnParams = {
   runId: string | null;
   testCaseId: string | undefined;
   abortSignal: AbortSignal | undefined;
+  /**
+   * This turn's slice of the run's frozen budget
+   * (`ResolvedExecutionBudgets.turnTimeoutMs`). Bounds ONE model call; the
+   * iteration's own clock still bounds the sum of them.
+   */
+  turnTimeoutMs: number;
+  /**
+   * The run's frozen `turnRetries`, handed to the AI SDK as its own
+   * transient-failure retry budget for this turn's model call.
+   */
+  turnRetries: number;
   toolChoice: EvalToolChoice | undefined;
   toolPolicyGate?: ToolPolicyGate | null;
   extractToolCalls: (params: {
@@ -218,6 +237,8 @@ export async function driveLocalEvalTurn(
     runId,
     testCaseId,
     abortSignal,
+    turnTimeoutMs,
+    turnRetries,
     toolChoice,
     toolPolicyGate,
     sinks,
@@ -311,6 +332,12 @@ export async function driveLocalEvalTurn(
   const toolsForTurn = toolPolicyGate
     ? toolPolicyGate.wrap(mergedTools)
     : mergedTools;
+  // This turn's own clock, nested under the iteration's. `withDeadline`
+  // COMPOSES rather than replaces: the engine still sees a single signal, and
+  // it fires on whichever bound trips first. Without it, one wedged provider
+  // call holds the iteration until the ITERATION's budget expires — the whole
+  // remaining allowance spent on a turn that was never coming back.
+  const turnDeadline = withDeadline(abortSignal, turnTimeoutMs, "turn");
   const handle = runDirectChatTurn({
     llmModel,
     modelId: test.model,
@@ -335,7 +362,11 @@ export async function driveLocalEvalTurn(
     ...(browser.prepareAdvertisedTools
       ? { prepareAdvertisedTools: browser.prepareAdvertisedTools }
       : {}),
-    ...(abortSignal ? { abortSignal } : {}),
+    abortSignal: turnDeadline.signal,
+    // The SDK retries the model call itself; every attempt shares the signal
+    // above, so the turn deadline still bounds the whole sequence rather than
+    // each attempt.
+    maxRetries: turnRetries,
     ...(toolChoice
       ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
       : {}),
@@ -357,6 +388,14 @@ export async function driveLocalEvalTurn(
       },
     },
     traceEvents: {
+      onRequestPayload: (request) => {
+        (acc.requestPayloads ??= []).push({
+          turnId: request.turnId,
+          promptIndex,
+          stepIndex: request.stepIndex,
+          payload: cloneTraceValue(buildResolvedModelRequestPayload(request)),
+        });
+      },
       onStepSnapshot: ({ traceHistory, traceTurn }) => {
         acc.activeCompletedStepCount += 1;
         acc.activePartialResponseMessages = traceHistory.slice(
@@ -387,7 +426,72 @@ export async function driveLocalEvalTurn(
   });
   acc.activeTraceCtx = handle.traceContext;
 
-  const headless = await consumeDirectChatTurnViaFullStream(handle, sinks);
+  // Disposed through the promise rather than after it, so a throw out of the
+  // stream does not leave the clock armed. The two readers below still work:
+  // `firedClock` and `elapsedMs` close over their own state, and `dispose`
+  // only stops the timer.
+  const headless = await consumeDirectChatTurnViaFullStream(
+    handle,
+    sinks
+  ).finally(() => turnDeadline.dispose());
+  const turnTimedOut = turnDeadline.firedClock() === "turn";
+  const turnElapsedMs = turnDeadline.elapsedMs();
+
+  // Checked BEFORE the cancellation branch below, and that order is the whole
+  // point: the turn clock aborts the same composed signal a user cancel does,
+  // so `headless.aborted` cannot tell them apart. `firedClock()` reports only
+  // THIS handle's own clock, which is exactly the discriminator.
+  //
+  // A turn that ran out of clock is a FAILED turn, not a cancelled iteration.
+  // The remaining prompt turns still deserve to run and the verdict still
+  // deserves to be computed — it just computes to a failure, because
+  // `acc.iterationError` is set. Returning `cancelled` here would throw the
+  // iteration away and report nothing, which is how a budget cut ends up
+  // looking like a run that never happened.
+  if (turnTimedOut) {
+    const partial =
+      headless.messages.length > 0
+        ? headless.messages
+        : acc.activePartialResponseMessages;
+    acc.timeout = {
+      clock: "turn",
+      budgetMs: turnTimeoutMs,
+      elapsedMs: turnElapsedMs,
+    };
+    acc.iterationError = `Turn exceeded its ${turnTimeoutMs}ms budget (elapsed ${turnElapsedMs}ms)`;
+    // The provider held the connection open past the bound. No other layer
+    // reaches this branch.
+    acc.stepErrorSource = "model";
+    logger.error(
+      `[evals] local-BYOK turn exceeded its ${turnTimeoutMs}ms budget; treating as cycle failure`
+    );
+    acc.capturedSpans.push(...acc.activeTraceCtx.recordedSpans);
+    // Whatever completed before the bound tripped is kept: a timed-out turn
+    // still made tool calls worth seeing, and dropping them would leave a
+    // trace that says only "nothing happened".
+    appendToolCallsForPrompt(
+      acc.toolsCalledByPrompt,
+      promptIndex,
+      params.extractToolCalls({ steps: headless.steps, messages: partial })
+    );
+    acc.assistantMessageByPrompt[promptIndex] =
+      extractFinalAssistantMessage(partial);
+    acc.toolErrorsByPrompt[promptIndex] = extractToolErrors({
+      spans: acc.activeTraceCtx.recordedSpans,
+      messages: partial as Array<{ role: string; content: unknown }>,
+    });
+    acc.conversationMessages = [...acc.activePromptInputMessages, ...partial];
+    sinks?.onTurnFailure?.({
+      messages: acc.conversationMessages,
+      spans: acc.capturedSpans,
+      usage: acc.accumulatedUsage,
+      ...(acc.activeCompletedStepCount > 0
+        ? { stepIndex: acc.activeCompletedStepCount - 1 }
+        : {}),
+      iterationError: acc.iterationError,
+    });
+    return { kind: "failed", timeout: acc.timeout };
+  }
 
   if (headless.aborted || localIsAborted()) {
     logger.debug(

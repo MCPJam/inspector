@@ -42,6 +42,23 @@ describe("describeBackendStreamFailure", () => {
     expect(originOf(normalized)).toBe("user_config");
   });
 
+  it(
+    "reads a 403 free_tier_model_restricted as the MCPJam allowance, not a credential wall",
+    () => {
+      // The 2026-09-15 free-allowance gate refuses frontier-priced models on
+      // the free bucket with 403. By status alone that is `provider/auth_error`
+      // ("the provider rejected the key") — wrong fix, wrong blame.
+      const normalized = describeBackendStreamFailure(
+        403,
+        "This model is not included in the free daily allowance.",
+        "free_tier_model_restricted",
+      );
+
+      expect(normalized.slug).toBe("provider/mcpjam_limit");
+      expect(originOf(normalized)).toBe("user_config");
+    },
+  );
+
   // The regression this change exists for. `categorizeError` in the backend
   // mirrors the UPSTREAM provider's status onto our own response, so MCPJam's
   // revoked managed key arrives as a 401 and MCPJam's own quota as a 429 —
@@ -108,6 +125,7 @@ describe("isUserOwnedDenialCode", () => {
     "wallet_locked",
     "billing_limit_reached",
     "spend_budget_reached",
+    "free_tier_model_restricted",
   ])(
     "exempts the routine 200 denial %s from the internal boundary",
     (code) => {

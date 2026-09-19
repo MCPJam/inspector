@@ -21,6 +21,7 @@ import {
 export function RunSourceBadge({
   run,
   className,
+  neutral = false,
 }: {
   /**
    * The run row. A backend that predates run provenance sends only `source`,
@@ -29,6 +30,7 @@ export function RunSourceBadge({
    */
   run: RunOriginInput;
   className?: string;
+  neutral?: boolean;
 }) {
   // The BASIS, not just the value: an `mcp` run resolved from verified
   // attribution and one resolved from a client's own claim are the same badge
@@ -41,7 +43,7 @@ export function RunSourceBadge({
       title={runOriginTitle(resolved?.origin, resolved?.basis)}
       className={cn(
         "shrink-0 px-1.5 py-0 text-[10px] font-normal uppercase tracking-wide",
-        meta.className,
+        neutral ? "border-border bg-muted/50 text-muted-foreground" : meta.className,
         className,
       )}
     >

@@ -25,13 +25,17 @@ import {
   type ScoreResult,
 } from "@mcpjam/sdk/contract";
 import type { Predicate, PredicateScope } from "@mcpjam/sdk/predicates";
+import type { AgentActivityAssessment } from "./agent-activity.js";
 import {
+  HOSTED_AGENT_ACTIVITY_SCORER_ID,
   HOSTED_JUDGE_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
   buildHostedEvaluationConfig,
   hostedCriterionId,
   type HostedScoreDefinitionInputs,
 } from "./score-definitions.js";
+import { authoredRequiredRole } from "@mcpjam/sdk/contract";
+import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
 /** One predicate verdict as the runner produced it. */
 export type HostedPredicateResultLike = {
@@ -102,6 +106,8 @@ export type HostedScoreRowInputs = {
    * not run it.
    */
   toolMatchAuthored?: boolean;
+  /** @see assessAgentActivity */
+  agentActivity?: AgentActivityAssessment;
 };
 
 function isFiniteNumber(value: unknown): value is number {
@@ -192,13 +198,24 @@ export function hostedScoreDefinitionInputs(
             ...(isFiniteNumber(inputs.objectiveScoreCap)
               ? { objectiveScoreCap: inputs.objectiveScoreCap }
               : {}),
-            // The LITERAL "gating" and nothing else. Absent, "advisory", a
-            // future spelling, or the wrong case all resolve to advisory: the
-            // default here decides whether a judge may fail somebody's build,
-            // so it fails closed.
-            ...(judge.role === "gating" ? { role: "gating" as const } : {}),
+            // BOTH spellings of the required role, and nothing else. Absent,
+            // "advisory", an unknown value or the wrong case all resolve to
+            // advisory: the default here decides whether a judge may fail
+            // somebody's build, so it fails closed.
+            //
+            // The pair, not one literal: the backend stamped `"gating"` on
+            // every verdict written before the rename and stamps `"required"`
+            // after it, and this reads historical evidence. A comparator that
+            // took one word would silently un-gate every hosted judge on one
+            // side of that line.
+            ...(isRequiredRole(judge.role)
+              ? { role: authoredRequiredRole() }
+              : {}),
           },
         }
+      : {}),
+    ...(inputs.agentActivity?.status === "no_agent_activity"
+      ? { agentActivityFired: true }
       : {}),
   };
 }
@@ -258,6 +275,19 @@ export function buildHostedScoreRows(
         passed: inputs.evaluation.passed === true,
         reason: describeToolMatch(inputs.evaluation),
       })
+    );
+  }
+
+  const activityDefinition = byId.get(HOSTED_AGENT_ACTIVITY_SCORER_ID);
+  if (activityDefinition && inputs.agentActivity?.status === "no_agent_activity") {
+    // An error row, not a 0: nothing was measured. The paired `passed = false`
+    // lives in `buildEvalIterationVerdict`, since rows decide nothing under
+    // `shadow` and `off` grading.
+    rows.push(
+      errorScoreResult(
+        activityDefinition,
+        `no_agent_activity: ${inputs.agentActivity.detail}`,
+      ),
     );
   }
 

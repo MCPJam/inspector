@@ -277,12 +277,18 @@ export function SwarmsSessionsPanel({
       className="flex h-full min-h-0 flex-col"
       data-testid="swarms-sessions-panel"
     >
-      <ErrorBoundary fallback={null}>
-        <SwarmSessionsMetricStrip
-          projectId={projectId}
-          personaRefId={personaRefId}
-        />
-      </ErrorBoundary>
+      {/* Project / persona Sessions only. The strip queries
+          `getSwarmSessionMetrics` without `journeyRunIds`, so on a run it
+          would report the whole project (e.g. "653 sessions in scope")
+          next to a five-session list. */}
+      {runIdSet ? null : (
+        <ErrorBoundary fallback={null}>
+          <SwarmSessionsMetricStrip
+            projectId={projectId}
+            personaRefId={personaRefId}
+          />
+        </ErrorBoundary>
+      )}
 
       <div className="min-h-0 flex-1 overflow-hidden">
         <ResizablePanelGroup direction="horizontal" className="h-full">

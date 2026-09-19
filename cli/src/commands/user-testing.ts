@@ -217,7 +217,7 @@ export function registerUserTestingCommands(program: Command): void {
     scenarioCommand(
       group,
       "request-insights",
-      "Ask a model to analyze the current window. Returns pending; poll `insights`. SPENDS against a daily budget shared with swarm insights. A 409 means the window has not been mined yet — wait rather than retrying in a loop.",
+      "Ask a model to analyze the current window. Returns pending; poll `insights`. Included with MCPJam — no credits are consumed; it counts against a daily insight quota shared with swarm insights. A 409 means the window has not been mined yet — wait rather than retrying in a loop.",
     ).option("--force", "Regenerate over a window that already has insights."),
     requestUserTestingInsightsOperation,
     (options: ScenarioOptions & { force?: boolean }) => ({
@@ -231,7 +231,7 @@ export function registerUserTestingCommands(program: Command): void {
     scenarioCommand(
       group,
       "cancel-insights",
-      "Stop an in-flight generation. The recovery path for a window stuck pending — without it the only way forward is --force, which spends again.",
+      "Stop an in-flight generation. The recovery path for a window stuck pending — without it the only way forward is --force, which takes another slice of the daily insight quota.",
     ).requiredOption("--window <id>", "Window ID"),
     cancelUserTestingInsightsOperation,
     (options: ScenarioOptions & { window: string }) => ({
