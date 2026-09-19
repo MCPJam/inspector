@@ -8,7 +8,7 @@ import {
 const REFRESH_MS = 500;
 
 /**
- * "Stats for nerds" — what this stream is actually doing, right now.
+ * Stats — what this stream is actually doing, right now.
  *
  * The pane degrades silently by design: a link that cannot carry video falls
  * back to JPEG, a client without `VideoDecoder` never asks for video at all,

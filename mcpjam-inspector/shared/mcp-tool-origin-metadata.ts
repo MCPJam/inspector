@@ -2,6 +2,26 @@ import type { JSONObject, JSONValue } from "@ai-sdk/provider";
 
 const MCPJAM_PROVIDER_METADATA_KEY = "mcpjam";
 
+export function readPageToolAttributionMetadata(metadata: unknown): unknown {
+  if (!isRecord(metadata) || !isRecord(metadata.mcpjam)) return undefined;
+  return metadata.mcpjam.pageTool;
+}
+
+export function mergePageToolAttributionMetadata(
+  metadata: unknown,
+  attribution: { rawName: string; origin: string } | undefined,
+): McpToolOriginProviderMetadata | undefined {
+  const base = toProviderMetadata(metadata);
+  // A resumed call keeps the name it was originally advertised under.
+  if (!attribution || readPageToolAttributionMetadata(base) !== undefined) {
+    return Object.keys(base).length ? base : undefined;
+  }
+  return {
+    ...base,
+    mcpjam: { ...base.mcpjam, pageTool: { ...attribution } },
+  };
+}
+
 export type McpToolOriginProviderMetadata = Record<string, JSONObject>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {

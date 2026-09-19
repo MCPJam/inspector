@@ -112,6 +112,7 @@ export function extractToolCallsFromEnvelopeMessages(
 ): TranscriptToolCall[] {
   return extractToolCallsFromConversation({ messages }).map((toolCall) => ({
     toolName: toolCall.toolName,
+    ...(toolCall.toolCallId ? { toolCallId: toolCall.toolCallId } : {}),
     arguments: (toolCall.arguments ?? {}) as Record<string, unknown>,
   }));
 }

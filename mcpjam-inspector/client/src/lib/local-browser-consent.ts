@@ -27,6 +27,29 @@ import { authFetch } from "@/lib/session-token";
 const STORAGE_KEY = "mcp-local-browser-consent-v1";
 const EVENT_NAME = "local-browser-consent-changed";
 const SETUP_KEY = "mcp-local-browser-setup-pending-v1";
+const ONBOARDING_KEY = "mcp-local-browser-onboarding-v1";
+export type LocalBrowserOnboardingDecision = "dismissed" | "completed" | null;
+
+export function localBrowserOnboardingDecision(): LocalBrowserOnboardingDecision {
+  try {
+    const value = localStorage.getItem(ONBOARDING_KEY);
+    return value === "dismissed" || value === "completed" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function rememberLocalBrowserOnboarding(
+  decision: Exclude<LocalBrowserOnboardingDecision, null>,
+): boolean {
+  try {
+    localStorage.setItem(ONBOARDING_KEY, decision);
+    window.dispatchEvent(new CustomEvent(EVENT_NAME));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function localBrowserSetupPending(): boolean {
   try {
@@ -105,6 +128,7 @@ export function subscribeLocalBrowserConsent(callback: () => void): () => void {
     if (
       event.key === STORAGE_KEY ||
       event.key === SETUP_KEY ||
+      event.key === ONBOARDING_KEY ||
       event.key === null
     )
       callback();
@@ -241,6 +265,7 @@ export function enableLocalBrowserForAllClients(): Promise<boolean> {
     // A revoke or grant in another tab wins over this delayed completion.
     if (loadStoredLocalBrowserConsent()?.token !== token) return false;
     setSetupPending(false);
+    rememberLocalBrowserOnboarding("completed");
     return true;
   })().finally(() => {
     setupInFlight = null;

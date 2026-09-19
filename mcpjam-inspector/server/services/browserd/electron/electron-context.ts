@@ -41,6 +41,7 @@ import {
 
 import type { DriverContext, DriverPage } from "../daemon/browser-page";
 import { BROWSERD_OBSERVATION_VIEWPORT } from "../protocol";
+import { chromeUserAgent } from "../daemon/launch-args";
 import {
   createElectronInputShield,
   type ShieldViewConstructor,
@@ -128,6 +129,8 @@ export interface ElectronLike {
       setPermissionCheckHandler?(
         handler: ((...args: never[]) => void) | null,
       ): void;
+      /** Optional so a fake — and an Electron too old to have it — skips it. */
+      setUserAgent?(userAgent: string, acceptLanguages?: string): void;
     };
   };
 }
@@ -204,6 +207,25 @@ export async function launchElectronContext(
     callback(false);
   }) as never);
   partitionSession.setPermissionCheckHandler?.((() => false) as never);
+
+  // Electron's default UA announces the runtime AND this app —
+  // `… mcpjam-inspector/3.x Chrome/140.0.0.0 Electron/43.6.0 Safari/…` — which
+  // is a one-token match for every bot rule on public HTTPS, and the reason the
+  // desktop engine met captchas the Playwright engine did not. Replace it with
+  // the UA a stock Chrome of the SAME Chromium major sends: the version stays
+  // honest (it is this binary's own), only the runtime tokens go.
+  //
+  // Scoped to the agent's partition, so the app's own windows are untouched.
+  //
+  // NOT A COMPLETE DISGUISE, and not meant as one: Electron still carries its
+  // own brand in `Sec-CH-UA`, which only a CDP metadata override could change.
+  // This removes the signal that was actually being matched on.
+  const chromeMajor = Number.parseInt(process.versions.chrome ?? "", 10);
+  if (Number.isFinite(chromeMajor) && chromeMajor > 0) {
+    partitionSession.setUserAgent?.(
+      chromeUserAgent(process.platform, chromeMajor),
+    );
+  }
 
   const removePolicy = policy
     ? await installElectronLocalSecurity(

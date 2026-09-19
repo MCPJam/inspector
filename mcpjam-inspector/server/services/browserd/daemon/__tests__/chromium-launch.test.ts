@@ -1,10 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   adaptContext,
+  contextOptionsFor,
   wrapPage,
   type AnyContext,
   type AnyPage,
 } from "../chromium-launch";
+import {
+  BROWSERD_CONTEXT_OPTIONS,
+  BROWSERD_LOCAL_CONTEXT_OPTIONS,
+  BROWSERD_OBSERVATION_VIEWPORT,
+} from "../launch-args";
 
 /**
  * Unit coverage for the ONE piece of the Playwright adapter that had a P1: the
@@ -134,6 +140,42 @@ describe("adaptContext — ephemeral ownership (review follow-up)", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("closes the browser even when closing the CONTEXT never answers", async () => {
+    // The other half, and the one `finally` does not cover: a REJECTION runs
+    // the block below, an unsettled promise does not. `context.close()` waits
+    // for Chromium to acknowledge, and a renderer still draining a navigation
+    // — a submitted form, a beforeunload — can leave it pending forever.
+    //
+    // Unbounded, the browser kill is never reached: the process is orphaned
+    // anyway and whoever awaited teardown waits with it. That is a server
+    // shutdown that never exits, and a test hook that times out.
+    vi.useFakeTimers();
+    try {
+      const onClose = vi.fn(async () => {});
+      const adapted = adaptContext(
+        fakeAnyContext({ close: () => new Promise<void>(() => {}) }),
+        { onClose },
+      );
+
+      let settled = false;
+      const closing = adapted.close().then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(9_000);
+      // Not cut short: an ordinary close is milliseconds, and giving up on one
+      // that is merely slow would strand pages this could have closed cleanly.
+      expect(settled).toBe(false);
+      expect(onClose).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      await closing;
+      expect(settled).toBe(true);
+      expect(onClose).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("closes the browser after a clean context close", async () => {
     const onClose = vi.fn(async () => {});
     const adapted = adaptContext(fakeAnyContext(), { onClose });
@@ -182,5 +224,52 @@ describe("wrapPage.screenshotBase64", () => {
       expect.objectContaining({ type: "jpeg" }),
     );
     expect(base64).toBe(Buffer.from("jpeg-bytes").toString("base64"));
+  });
+});
+
+describe("contextOptionsFor — the surface decides what is a determinism pin", () => {
+  it("gives the sandbox its full pin set, scale factor folded in when persistent", () => {
+    expect(contextOptionsFor({ contextMode: "persistent" })).toEqual(
+      BROWSERD_CONTEXT_OPTIONS,
+    );
+    expect(
+      contextOptionsFor({ contextMode: "persistent", deviceScaleFactor: 2 }),
+    ).toEqual({ ...BROWSERD_CONTEXT_OPTIONS, deviceScaleFactor: 2 });
+  });
+
+  it("still pins an EPHEMERAL sandbox context at scale 1, so eval captures match across hosts", () => {
+    expect(
+      contextOptionsFor({ contextMode: "ephemeral", deviceScaleFactor: 2 }),
+    ).toEqual(BROWSERD_CONTEXT_OPTIONS);
+  });
+
+  it("gives a LOCAL context the viewport and nothing that describes a machine", () => {
+    const local = contextOptionsFor({
+      contextMode: "persistent",
+      surface: "local",
+    });
+    expect(local).toEqual(BROWSERD_LOCAL_CONTEXT_OPTIONS);
+    expect(local).not.toHaveProperty("userAgent");
+    expect(local).not.toHaveProperty("timezoneId");
+    expect(local).toHaveProperty("viewport", BROWSERD_OBSERVATION_VIEWPORT);
+  });
+
+  it("drops the pins for a local EPHEMERAL run too", () => {
+    // A local eval's captures were never comparable to a hosted one's — same
+    // pins, different OS and fonts — so the pins bought nothing there and cost
+    // the same captchas.
+    expect(
+      contextOptionsFor({ contextMode: "ephemeral", surface: "local" }),
+    ).toEqual(BROWSERD_LOCAL_CONTEXT_OPTIONS);
+  });
+
+  it("honours the display's scale factor on a local persistent context", () => {
+    expect(
+      contextOptionsFor({
+        contextMode: "persistent",
+        surface: "local",
+        deviceScaleFactor: 2,
+      }),
+    ).toEqual({ ...BROWSERD_LOCAL_CONTEXT_OPTIONS, deviceScaleFactor: 2 });
   });
 });

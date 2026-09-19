@@ -1,0 +1,292 @@
+[
+  {
+    "id": "discovery.description",
+    "preset": {
+      "type": "toolDescriptionsPresent",
+      "minLength": 20,
+      "role": "advisory",
+      "severity": "warn"
+    },
+    "definition": {
+      "scorerId": "predicate:toolDescriptionsPresent#8559065e69e2fa122d3c0f5edc8b6ee19dc2943d0cfbd88e034a94b7f47ace5e",
+      "idSource": "generated",
+      "scorerVersion": "1",
+      "implementationHash": "4ab45beaf6dec19cdd83b899a8ff7953411ff7ab477a76ca11be72565f2ddeb0",
+      "label": "toolDescriptionsPresent",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "advisory"
+    },
+    "definitionHash": "eec6c695b774a9081fa00a48f2b86417bf3f7c237d3a699fe58dd57e2cbd6a4e"
+  },
+  {
+    "id": "discovery.annotations",
+    "preset": {
+      "type": "toolAnnotationsPresent",
+      "role": "advisory",
+      "severity": "warn"
+    },
+    "definition": {
+      "scorerId": "predicate:toolAnnotationsPresent#63c0ddaa10dbfe0e4fe4caefef6c1d3bce0b41df012effaae712bb3dfda702bb",
+      "idSource": "generated",
+      "scorerVersion": "1",
+      "implementationHash": "f1b952f8373a44a3c8bb20323f5f65002587b5c81b7c63b0d66aac0bb52c1407",
+      "label": "toolAnnotationsPresent",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "advisory"
+    },
+    "definitionHash": "3c49c02c934501c9f10a53fe29e689a4d900c40f2e7295f94a3e55e7ea88427f"
+  },
+  {
+    "id": "discovery.collisions",
+    "preset": {
+      "type": "toolNamesUnique",
+      "role": "advisory",
+      "severity": "warn"
+    },
+    "definition": {
+      "scorerId": "predicate:toolNamesUnique#5a8ad0077d90c058f3a44affb12b272cc9ea5a99a9c487e1067d9a5f5241718a",
+      "idSource": "generated",
+      "scorerVersion": "1",
+      "implementationHash": "2e32b85fff639e532a736e9ff96dd9393e563c4107c9847e8b5cb893597a26cb",
+      "label": "toolNamesUnique",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "advisory"
+    },
+    "definitionHash": "e685e7343f7c088e5e7d0e3e24195779042d77fe6db5e218282fba7f9f380ec2"
+  },
+  {
+    "id": "discovery.deprecated",
+    "preset": {
+      "type": "noDeprecatedToolExposed",
+      "role": "advisory",
+      "severity": "warn"
+    },
+    "definition": {
+      "scorerId": "predicate:noDeprecatedToolExposed#dbf4dca7b7896560f789978032d46d48cb047d3ab5422d9f278453bc6f1dc5e2",
+      "idSource": "generated",
+      "scorerVersion": "1",
+      "implementationHash": "a2062bb3540c9f49b1fac2e4eec3b1e6f47fb196645ea5aecdb0c4316df96aa8",
+      "label": "noDeprecatedToolExposed",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "advisory"
+    },
+    "definitionHash": "c312151cf95373e60b3d7d4e2b574069bd57a85edcc34abeef1bed41cc1ccb47"
+  },
+  {
+    "id": "call.schema",
+    "preset": {
+      "type": "toolInputSchemasWellFormed",
+      "role": "advisory",
+      "severity": "warn"
+    },
+    "definition": {
+      "scorerId": "predicate:toolInputSchemasWellFormed#39365c6ab7a9500927ebf5b28773fd5d2333e21380dcfb86b0fd7fdf937d841c",
+      "idSource": "generated",
+      "scorerVersion": "1",
+      "implementationHash": "9b2df590cbc54549ca8a2297f10f6386b245b5341e9681de02b425de6cdc7fc1",
+      "label": "toolInputSchemasWellFormed",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "advisory"
+    },
+    "definitionHash": "7d8193143ae9ab57f6d7d9e2bc07c0230f346f2de7803d1ecd98f172240188f4"
+  },
+  {
+    "id": "response.schema",
+    "preset": {
+      "type": "toolOutputSchemasPresent",
+      "role": "advisory",
+      "severity": "warn"
+    },
+    "definition": {
+      "scorerId": "predicate:toolOutputSchemasPresent#74fbc26d19cd35f46521d6035a46c53b521b47f76419deb38539c28d82b95aae",
+      "idSource": "generated",
+      "scorerVersion": "1",
+      "implementationHash": "c138963784946e99bca13e63de7cca244f1c8fc2f17a37a9beefb8a767501da7",
+      "label": "toolOutputSchemasPresent",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "advisory"
+    },
+    "definitionHash": "06ff2d6cf671cec15982f05746e1a00ff8e32db65a173b4e2c4a26489d4c034d"
+  },
+  {
+    "id": "selection.hops",
+    "preset": {
+      "type": "toolCallCountUnder",
+      "count": 4,
+      "role": "advisory",
+      "severity": "warn"
+    },
+    "definition": {
+      "scorerId": "predicate:toolCallCountUnder#8569a56bbed6dbf02311b3a2720083747f8e12ac47cb3640e7988478fa4c1246",
+      "idSource": "generated",
+      "scorerVersion": "1",
+      "implementationHash": "e7bbecce714aee050f28c1174c0869464245102a39106b9735d13b5999a6ec73",
+      "label": "toolCallCountUnder",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "advisory"
+    },
+    "definitionHash": "ea803390d3b6171e8bd74d974ae311db2f73113784841b9a0877354e7e0133c1"
+  },
+  {
+    "id": "call.parameters",
+    "preset": {
+      "type": "argumentsMatchToolSchema",
+      "role": "advisory",
+      "severity": "warn"
+    },
+    "definition": {
+      "scorerId": "predicate:argumentsMatchToolSchema#6be0a8786760ca8d57f97e38b9c4b41fa83f14196c23e7ecc6685ca836d2ea3a",
+      "idSource": "generated",
+      "scorerVersion": "1",
+      "implementationHash": "9086090b1a4209966003c756ef932200104f00c5e392b33fba8fe6eeccc12a4d",
+      "label": "argumentsMatchToolSchema",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "advisory"
+    },
+    "definitionHash": "20d203a6dbabcaef3ada1ce26f3e10abf2956d6ab071c68796ec73587fa6e599"
+  },
+  {
+    "id": "call.repeated",
+    "preset": {
+      "type": "noRepeatedIdenticalCall",
+      "role": "advisory",
+      "severity": "warn"
+    },
+    "definition": {
+      "scorerId": "predicate:noRepeatedIdenticalCall#04bb20d27c843da545fe5435ff19ded95c377fe75605bf6a04d2bee841d92c46",
+      "idSource": "generated",
+      "scorerVersion": "1",
+      "implementationHash": "7b7b44c38502047aa587f31a9dd56ee6b558035e3b2bf9ead0b1850b795d85ab",
+      "label": "noRepeatedIdenticalCall",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "advisory"
+    },
+    "definitionHash": "eed9326f3175898a4b559f08b8247a3470201fb4e7f5da4b321df6c2aa6b9b7f"
+  },
+  {
+    "id": "response.performance",
+    "preset": {
+      "type": "toolLatencyUnder",
+      "ms": 5000,
+      "role": "advisory",
+      "severity": "warn"
+    },
+    "definition": {
+      "scorerId": "predicate:toolLatencyUnder#9fadd0f1df3a43b9140c3a7e1f6b05896cd7acde277172ee0ab53a96113b7aa0",
+      "idSource": "generated",
+      "scorerVersion": "1",
+      "implementationHash": "50cf6ce1ccbc9afade74848d3d1cbe659d15d2b003c28ec93314c0a0614d6816",
+      "label": "toolLatencyUnder",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "advisory"
+    },
+    "definitionHash": "b4b2adfeaf1f959328377ea5c4897d261a92055b85257d3e02fcc2bcd8cdc291"
+  },
+  {
+    "id": "response.size",
+    "preset": {
+      "type": "toolResultSizeUnder",
+      "maxBytes": 64000,
+      "role": "advisory",
+      "severity": "warn"
+    },
+    "definition": {
+      "scorerId": "predicate:toolResultSizeUnder#aab5a29190dd6e4b0c887436e9f2776661be700040997980fb1f6b53b38f747f",
+      "idSource": "generated",
+      "scorerVersion": "1",
+      "implementationHash": "e8f48402e39fec986307f96cc226cc6b14d164a89223a60f434e8adf131f95aa",
+      "label": "toolResultSizeUnder",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "advisory"
+    },
+    "definitionHash": "76d4a4c69a4531c4a91df7624d1c25899f470886346be40cf868dc07dd1d4597"
+  },
+  {
+    "id": "response.errors",
+    "preset": {
+      "type": "noToolErrors",
+      "role": "advisory",
+      "severity": "warn"
+    },
+    "definition": {
+      "scorerId": "predicate:noToolErrors#104b90cbd8e5d359363bef949ef7abb6bea6c550c9578f691b56705f3e384ffc",
+      "idSource": "generated",
+      "scorerVersion": "1",
+      "implementationHash": "c41bce037b27a48947f07b2fa20a96fee23a59c24bc0b82b10c547147289b744",
+      "label": "noToolErrors",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "advisory"
+    },
+    "definitionHash": "e689bdc3d4c200927186e82be29d8bfb33b9827aaefa0c31c009b50ab79617c1"
+  },
+  {
+    "id": "response.recovery",
+    "preset": {
+      "type": "toolErrorNamesInput",
+      "role": "advisory",
+      "severity": "warn"
+    },
+    "definition": {
+      "scorerId": "predicate:toolErrorNamesInput#d366358f5f2b94941da1a699322ca0639448277077a25f481870ebe5f720885c",
+      "idSource": "generated",
+      "scorerVersion": "1",
+      "implementationHash": "afbbd9e38945d489e4b0cef98d695f06d1c940d809342ccffce1b9995e94cb65",
+      "label": "toolErrorNamesInput",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "advisory"
+    },
+    "definitionHash": "6ad2e8311d70560b0c9c7e41ab26732d0e81f0acbfd8fe1ef168ae63211630cd"
+  },
+  {
+    "id": "response.pagination",
+    "preset": {
+      "type": "fullPageHasContinuation",
+      "role": "advisory",
+      "severity": "warn"
+    },
+    "definition": {
+      "scorerId": "predicate:fullPageHasContinuation#33ac569df9e4131dcd107499c398aa98c355f7ad61dac2b6e78be8ad8d396f64",
+      "idSource": "generated",
+      "scorerVersion": "1",
+      "implementationHash": "1781e400110064e5e62873d5ee4d3ea3e1840a140b023940d8dbbc971dae1f9f",
+      "label": "fullPageHasContinuation",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "advisory"
+    },
+    "definitionHash": "f6f6483b12113b44dc87c08e10ecc68e1148928fda3b04d252f8ccf8f2bbfe25"
+  },
+  {
+    "id": "userValue.turns",
+    "preset": {
+      "type": "turnCountUnder",
+      "turns": 6,
+      "role": "advisory",
+      "severity": "warn"
+    },
+    "definition": {
+      "scorerId": "predicate:turnCountUnder#385eed71590144fed35a0ed360bc65555cf3ed5254d1016541ccb3fb10cf5b4d",
+      "idSource": "generated",
+      "scorerVersion": "1",
+      "implementationHash": "27baabad292aa80e95e7a443c88472317be3fe1f19053b5fccc5838f91aa18f8",
+      "label": "turnCountUnder",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "advisory"
+    },
+    "definitionHash": "c16850a7849ba0f3fd32cee1d595227f604ffc51d65268f653c40eda3da3e4af"
+  }
+]
