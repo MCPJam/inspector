@@ -36,7 +36,7 @@
     "cross-env": "^10.1.0",
     "prettier": "^3.6.2",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "vite": "^7.3.1",
     "vite-plugin-singlefile": "^2.3.0"
   },
