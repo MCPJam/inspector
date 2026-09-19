@@ -167,3 +167,70 @@ describe("parseRef", () => {
     expect(parseRef("#e3")).toBeNull();
   });
 });
+
+describe("refs inside a frame", () => {
+  it("carry the frame in the MAP, not in the ref string", () => {
+    // The ref stays `e1..eN` across the whole forest. A frame-qualified ref
+    // string would change every line of every tree that has an iframe, and
+    // the model would have to parse provenance out of a handle whose only job
+    // is to be handed back.
+    const tree = {
+      role: "RootWebArea",
+      children: [
+        { role: "button", name: "Outside", backendDOMNodeId: 10 },
+        {
+          role: "Iframe",
+          name: "Payment",
+          backendDOMNodeId: 77,
+          children: [
+            {
+              role: "textbox",
+              name: "Card number",
+              backendDOMNodeId: 500,
+              frameId: "child-1",
+              sessionFrameId: "child-1",
+            },
+          ],
+        },
+      ],
+    };
+    const refs = assignRefs(tree);
+    expect([...refs.keys()]).toEqual(["e1", "e2", "e3"]);
+    // The main-document entry is byte-identical to what it was before frames
+    // were read at all — no `frameId`, no `sessionFrameId`.
+    expect(refs.get("e1")).toEqual({
+      backendDOMNodeId: 10,
+      role: "button",
+      name: "Outside",
+    });
+    expect(refs.get("e3")).toEqual({
+      backendDOMNodeId: 500,
+      role: "textbox",
+      name: "Card number",
+      frameId: "child-1",
+      sessionFrameId: "child-1",
+    });
+  });
+
+  it("omits sessionFrameId for a same-process child", () => {
+    // It lives in frame X and is answered by the PAGE's session, and absent is
+    // how "the page's session" is spelled.
+    const refs = assignRefs({
+      role: "RootWebArea",
+      children: [
+        {
+          role: "textbox",
+          name: "Search",
+          backendDOMNodeId: 9,
+          frameId: "child-1",
+        },
+      ],
+    });
+    expect(refs.get("e1")).toEqual({
+      backendDOMNodeId: 9,
+      role: "textbox",
+      name: "Search",
+      frameId: "child-1",
+    });
+  });
+});

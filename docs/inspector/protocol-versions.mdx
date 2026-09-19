@@ -56,6 +56,13 @@ If a client row was saved before this filtering was introduced — or was hand-e
 
 The 2026 RC applies the stateless model across transports. MCPJam's initial preview client is narrower: it currently supports the RC over Streamable HTTP POST. The per-server dropdown hides the RC option for STDIO and legacy SSE servers; if a host-level RC default reaches a non-HTTP server, the inspector fails the connection with a clear transport error instead of silently attempting the wrong protocol.
 
+When you pin a client to a version that none of its servers advertise, a warning appears below the dropdown:
+
+- **Stateless pin (e.g. `2026-07-28`) not advertised** — the warning notes that the pin requires servers that offer this revision and has no legacy fallback. The draft saves successfully, but sessions against servers that don't speak this revision will fail at connect time. Pick **Automatic** unless you are specifically testing that revision.
+- **Stateful pin (e.g. `2025-11-25`) not advertised** — the warning notes that saving will fail. Pick an advertised version, or add the version to `supportedProtocolVersions` in the JSON editor below.
+
+If a per-server override stores a version string that is not one of the named dropdown options, the picker shows it as **Pinned (…)** rather than **Client default**, so you can see that a pin is in effect.
+
 ## Setting the host default
 
 <Frame>

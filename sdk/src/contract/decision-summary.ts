@@ -17,7 +17,7 @@
  *
  * ── It EXPLAINS the verdict; it never DECIDES it ─────────────────────────────
  *
- * Nothing here aggregates trials into a verdict. Under verdict policy v2 the
+ * Nothing here aggregates trials into a verdict. Under per-case grading the
  * authority is the run's own {@link EvalVerdictDecision}: its verdict, its
  * rates, its validity phase, its reasons, its per-case stability and mixed-
  * verdict flags are COPIED after validation and never recomputed from the
@@ -1118,10 +1118,24 @@ export const EVAL_RUN_DECISION_VERDICT_LABELS = Object.freeze({
   notEstablished: "no verdict established",
 } satisfies Record<EvalRunDecisionVerdict, string>);
 
-/** @see EVAL_RUN_DECISION_VERDICT_SOURCES */
+/**
+ * @see EVAL_RUN_DECISION_VERDICT_SOURCES
+ *
+ * The words name WHICH CRITERION decided the run, not which version of the
+ * platform produced it. `policyV2` and `legacy` are wire spellings and stay
+ * that way; what a reader sees is the question each one answered, because that
+ * is the fact they need in order to trust the counts beside it.
+ *
+ * "verdict policy v2" and "legacy percent-threshold run" told a reader their
+ * run was decided by something old — which is not a difference they can act on
+ * — while hiding the difference they must act on: one is a per-case rate over
+ * each case's own iterations, the other one suite-wide percentage over the
+ * whole run. Two runs of the same suite with the same evidence can disagree
+ * across that line, and "legacy" does not say so.
+ */
 export const EVAL_RUN_DECISION_VERDICT_SOURCE_LABELS = Object.freeze({
-  policyV2: "verdict policy v2",
-  legacy: "legacy percent-threshold run",
+  policyV2: "per-case grading",
+  legacy: "suite accuracy threshold",
   none: "no verdict source",
 } satisfies Record<EvalRunDecisionVerdictSource, string>);
 
@@ -1144,7 +1158,7 @@ export const EVAL_RUN_DECISION_UNDECIDED_REASON_LABELS = Object.freeze({
     "the run stopped before it finished, so its recorded counts describe a sample rather than the run",
   runResultNotAVerdict: "the run finished without recording a verdict",
   verdictSummaryUnavailable:
-    "the run was decided under verdict policy v2 and its decision could not be read",
+    "the run was decided by per-case grading and its decision could not be read",
 } satisfies Record<EvalRunDecisionUndecidedReason, string>);
 
 /** The unit's word for `count`, singular or plural. */

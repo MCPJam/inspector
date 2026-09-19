@@ -1,3 +1,5 @@
+import { planPlatformSuiteGradingUpdate } from "@mcpjam/sdk";
+import type { EvalGradingPolicyEdit } from "@mcpjam/sdk/contract";
 import { fetchArtifactBytes } from "../lib/download-screenshot.js";
 import {
   existsSync,
@@ -26,6 +28,8 @@ import {
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
+  backtestEvalRunOperation,
+  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
@@ -102,7 +106,12 @@ import {
   type StructuredRunReport,
   type SuiteFileFailureStage,
 } from "@mcpjam/sdk";
-import { composeSuiteGateWithBaseReport } from "@mcpjam/sdk/contract";
+import {
+  EVAL_SUITE_SCHEMA_VERSION,
+  EVAL_SUITE_SCHEMA_VERSIONS,
+  composeSuiteGateWithBaseReport,
+  type EvalSuiteSchemaVersion,
+} from "@mcpjam/sdk/contract";
 import type {
   SuiteGateComposedOutcome,
   SuiteGateReportV1,
@@ -130,6 +139,10 @@ import {
   looksLikeVersionedSuiteFile,
   MAX_APPROVAL_REASON_LENGTH,
 } from "../lib/eval-run-file.js";
+import {
+  caseFromWire,
+  negotiateEvalVocabulary,
+} from "../lib/eval-vocabulary.js";
 import {
   CORPUS_DRIFT_EXIT_CODE,
   CORPUS_INCOMPLETE_EXIT_CODE,
@@ -227,8 +240,8 @@ type CreateOptions = PlatformOptions & {
  * The client selector, from `--client` or the deprecated `--host`.
  *
  * Both-at-once is a usage ERROR, not a precedence rule — the same call
- * `clients.ts` makes for its own pair and the one `--repetitions` /
- * `--iterations` makes here. A precedence rule is invisible: a script that
+ * `clients.ts` makes for its own pair and the one `--iterations` /
+ * `--repetitions` makes here. A precedence rule is invisible: a script that
  * passes both because someone half-finished a migration keeps running,
  * launching against whichever of two possibly-different clients this happened
  * to prefer, and PAYING for the run.
@@ -997,13 +1010,82 @@ async function executeOp<TInput, TOutput>(
       quiet: globalOptions.quiet,
     }
   );
-  writeResult(result, globalOptions.format);
+  if (result !== undefined) writeResult(result, globalOptions.format);
+}
+
+/**
+ * Parse grading flags before any request. The canonical planner maps these
+ * edits to the current scope's fields and units after reading the suite.
+ * --min-accuracy retains its raw suite-wide percentage compatibility field.
+ */
+function applyGradingFlags(
+  options: Record<string, any>,
+  settings: Record<string, any>
+): EvalGradingPolicyEdit {
+  const edit: EvalGradingPolicyEdit = {};
+  if (
+    options.minAccuracy !== undefined &&
+    options.passThreshold !== undefined
+  ) {
+    throw usageError(
+      "Use either --min-accuracy or --pass-threshold, not both: --min-accuracy is one suite-wide percentage over the whole run and --pass-threshold is the fraction each case must pass on its own. They are different criteria, not two units of one number."
+    );
+  }
+  if (options.minIterations !== undefined && options.iterations !== undefined) {
+    throw usageError(
+      "Use either --min-iterations or --iterations, not both: --min-iterations is a floor that raises a case's own count and --iterations is the default that replaces it."
+    );
+  }
+  if (options.minAccuracy !== undefined) {
+    const percent = Number(options.minAccuracy);
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+      throw usageError("--min-accuracy must be a percentage from 0 to 100.");
+    }
+    settings.minimumAccuracy = percent;
+  }
+  if (options.passThreshold !== undefined) {
+    const fraction = Number(options.passThreshold);
+    // A FRACTION. `--pass-threshold 90` would reach the wire as a 9000%
+    // per-case bar, which the route refuses — but only after the request, and
+    // the error would name a field the caller did spell correctly.
+    if (!Number.isFinite(fraction) || fraction < 0 || fraction > 1) {
+      throw usageError(
+        "--pass-threshold must be a fraction from 0 to 1 (0.9, not 90)."
+      );
+    }
+    edit.passThreshold = fraction;
+  }
+  if (options.minIterations !== undefined) {
+    if (options.minIterations === "off") {
+      // NULL, not undefined. `undefined` is "leave this alone" all the way
+      // down the stack, so writing it here would make `--min-iterations off`
+      // a no-op that reports success.
+      edit.minimumIterations = null;
+    } else {
+      const floor = Number(options.minIterations);
+      if (!Number.isInteger(floor) || floor < 1 || floor > 10) {
+        throw usageError(
+          '--min-iterations must be a whole number from 1 to 10, or "off".'
+        );
+      }
+      edit.minimumIterations = floor;
+    }
+  }
+  if (options.iterations !== undefined) {
+    const count = Number(options.iterations);
+    if (!Number.isInteger(count) || count < 1 || count > 100) {
+      throw usageError("--iterations must be a whole number from 1 to 100.");
+    }
+    edit.iterations = count;
+  }
+  return edit;
 }
 
 /** Merge `eval update` flags onto an optional --file/--json suite-update body. */
-function buildSuiteUpdateInput(
-  options: Record<string, any>
-): Record<string, unknown> {
+function buildSuiteUpdateInput(options: Record<string, any>): {
+  input: Record<string, unknown>;
+  edit: EvalGradingPolicyEdit;
+} {
   const input: Record<string, any> = { ...loadBodyObject(options) };
   input.suite = options.suite;
   if (options.project !== undefined) input.project = options.project;
@@ -1044,24 +1126,16 @@ function buildSuiteUpdateInput(
   if (Object.keys(exec).length > 0) input.executionConfig = exec;
 
   const settings = { ...(input.settings ?? {}) };
-  if (options.minAccuracy !== undefined)
-    settings.minimumAccuracy = Number(options.minAccuracy);
-  if (options.minIterations !== undefined) {
-    if (options.minIterations === "off") {
-      // NULL, not undefined. `undefined` is "leave this alone" all the way
-      // down the stack, so writing it here would make `--min-iterations off`
-      // a no-op that reports success.
-      settings.minimumIterations = null;
-    } else {
-      const iterations = Number(options.minIterations);
-      if (!Number.isInteger(iterations) || iterations < 1 || iterations > 10) {
-        throw usageError(
-          '--min-iterations must be a whole number from 1 to 10, or "off".'
-        );
-      }
-      settings.minimumIterations = iterations;
-    }
+  // Compatibility percentage stays on the raw body; other edits use the planner.
+  const edit = applyGradingFlags(options, settings);
+  // Flags override the corresponding body values even when the planned edit
+  // is unchanged and therefore produces no settings patch.
+  if (edit.passThreshold !== undefined) {
+    delete settings.passThreshold;
+    delete settings.minimumAccuracy;
   }
+  if (edit.iterations !== undefined) delete settings.repetitions;
+  if (edit.minimumIterations !== undefined) delete settings.minimumIterations;
   const mo = { ...(settings.matchOptions ?? {}) };
   if (options.toolCallOrder !== undefined)
     mo.toolCallOrder = options.toolCallOrder;
@@ -1090,8 +1164,9 @@ function buildSuiteUpdateInput(
   }
   if (Object.keys(judge).length > 0) settings.judge = judge;
   if (Object.keys(settings).length > 0) input.settings = settings;
+  else delete input.settings;
 
-  return input;
+  return { input, edit };
 }
 
 /**
@@ -1230,7 +1305,8 @@ function collectRepeatable(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
-const DEFAULT_RUN_WAIT_TIMEOUT_MS = 600_000;
+// 30-minute eval run default plus grading extension headroom.
+const DEFAULT_RUN_WAIT_TIMEOUT_MS = 35 * 60_000;
 const RUN_POLL_INTERVAL_MS = 3000;
 
 /**
@@ -1409,7 +1485,8 @@ function gateReportCase(
   };
 }
 
-const DEFAULT_GATE_WAIT_TIMEOUT_MS = 600_000;
+// 30-minute eval run default plus grading extension headroom.
+const DEFAULT_GATE_WAIT_TIMEOUT_MS = 35 * 60_000;
 
 async function runEvalGate(
   options: PlatformOptions &
@@ -2300,9 +2377,11 @@ async function runEvalCompare(
 
         // The compare wire's run sides are a COMPARISON projection: they carry
         // `result` and `summary` but no `status` and no `verdictSummary`, so
-        // assembling a decision from one would report a policy-v2 run as a
-        // legacy percent-threshold run — a claim about where its verdict came
-        // from that would simply be false. One small read gets the real thing;
+        // assembling a decision from one would report a per-case-graded run as
+        // one decided by the suite accuracy threshold — a claim about which
+        // criterion decided it that would simply be false, and one that moves
+        // the population its counts are in from cases to iterations. One small
+        // read gets the real thing;
         // the diagnostics still come from the walk already performed, which is
         // more complete than a single endpoint page.
         const compareRunDetail = await client
@@ -2988,17 +3067,36 @@ async function runEvalValidate(
  * fail-closed pagination guard: a suite whose cases do not fit one page refuses
  * rather than exporting a file that silently holds fewer tests than the suite.
  */
+function isEvalSuiteSchemaVersion(
+  value: string
+): value is EvalSuiteSchemaVersion {
+  return (EVAL_SUITE_SCHEMA_VERSIONS as readonly string[]).includes(value);
+}
+
 async function runEvalExport(
   options: PlatformOptions & {
     suite: string;
     project?: string;
     out?: string;
     force?: boolean;
+    schemaVersion?: string;
   },
   command: Command
 ): Promise<void> {
   const globalOptions = getGlobalOptions(command);
   const resolved = resolveCloudProjectArgs(options);
+
+  // The dialect is the author's choice, never inferred: an offline file has no
+  // capability handshake with whatever will read it, so the conservative
+  // default stays dialect 1 and dialect 2 is written only when asked for.
+  const schemaVersion = options.schemaVersion ?? EVAL_SUITE_SCHEMA_VERSION;
+  if (!isEvalSuiteSchemaVersion(schemaVersion)) {
+    throw usageError(
+      `--schema-version must be ${EVAL_SUITE_SCHEMA_VERSIONS.map(
+        (v) => `"${v}"`
+      ).join(" or ")} (received ${JSON.stringify(schemaVersion)}).`
+    );
+  }
 
   // Checked BEFORE the fetch when the caller named the path: refusing to
   // overwrite is not worth a round trip. With no `--out` the path is derived
@@ -3017,10 +3115,31 @@ async function runEvalExport(
           : {}),
         suite: options.suite,
       };
-      const [detail, page] = await Promise.all([
-        getEvalSuiteOperation.execute(selector, { client, signal }),
-        listEvalCasesOperation.execute(selector, { client, signal }),
-      ]);
+      // The suite first, on the caller's client: it resolves the project the
+      // selector names, and the project id is what the vocabulary handshake
+      // needs. The cases then come back in whatever vocabulary the deployment
+      // advertised and are settled onto the CLI's model at the boundary, so
+      // `buildSuiteFileFromPlatform` reads one shape whichever it was.
+      const detail = await getEvalSuiteOperation.execute(selector, {
+        client,
+        signal,
+      });
+      const negotiated = detail.projectId
+        ? await negotiateEvalVocabulary(client, {
+            projectId: detail.projectId,
+            signal,
+          })
+        : { vocabulary: 1 as const, client };
+      const wirePage = await listEvalCasesOperation.execute(selector, {
+        client: negotiated.client,
+        signal,
+      });
+      const page = {
+        ...wirePage,
+        items: wirePage.items.map((row) =>
+          caseFromWire(negotiated.vocabulary, row)
+        ),
+      };
 
       // Same guard as `eval pull`, same reason: the cases endpoint returns the
       // whole suite today and the client has no cursor to follow. A truncated
@@ -3056,7 +3175,7 @@ async function runEvalExport(
     { projectScope: resolved.projectScope }
   );
 
-  const built = buildSuiteFileFromPlatform(fetched);
+  const built = buildSuiteFileFromPlatform(fetched, { schemaVersion });
   if (!built.ok) {
     writeExportRefusal(built.findings, globalOptions.format);
     return;
@@ -3340,12 +3459,12 @@ export function registerEvalCommands(program: Command): void {
       "Run EVERY attached environment (or, if none, every attached host) — one PAID RUN per target"
     )
     .option(
-      "--repetitions <n>",
+      "--iterations <n>",
       "Run each case this many times under verdict policy 2 (1-10)",
-      (v) => parseIntOption(v, "--repetitions")
+      (v) => parseIntOption(v, "--iterations")
     )
-    .option("--iterations <n>", "Deprecated alias for --repetitions", (v) =>
-      parseIntOption(v, "--iterations")
+    .option("--repetitions <n>", "Legacy spelling of --iterations", (v) =>
+      parseIntOption(v, "--repetitions")
     )
     .option(
       "--case <id-or-title...>",
@@ -3483,11 +3602,11 @@ export function registerEvalCommands(program: Command): void {
           throw usageError("Provide --suite <id-or-name> or --file <path>.");
         }
         if (
-          options.repetitions !== undefined &&
-          options.iterations !== undefined
+          options.iterations !== undefined &&
+          options.repetitions !== undefined
         ) {
           throw usageError(
-            "Use either --repetitions or its deprecated --iterations alias, not both."
+            "Use --iterations or --repetitions, not both — they are two spellings of one flag."
           );
         }
         // One selector from here down: `--client` is canonical under
@@ -3595,11 +3714,11 @@ export function registerEvalCommands(program: Command): void {
                         : {}),
                       ...(clientSelectors ? { host: clientSelectors } : {}),
                       ...(options.allTargets ? { allTargets: true } : {}),
-                      ...(options.repetitions !== undefined ||
-                      options.iterations !== undefined
+                      ...(options.iterations !== undefined ||
+                      options.repetitions !== undefined
                         ? {
-                            repetitions:
-                              options.repetitions ?? options.iterations,
+                            iterations:
+                              options.iterations ?? options.repetitions,
                           }
                         : {}),
                       ...(options.case?.length ? { case: options.case } : {}),
@@ -3645,10 +3764,14 @@ export function registerEvalCommands(program: Command): void {
                     ),
                     ...selectorField("client", "clients", clientSelectors),
                     ...(options.allTargets ? { allAttached: true } : {}),
-                    ...(options.repetitions !== undefined
-                      ? { repetitions: options.repetitions }
-                      : options.iterations !== undefined
-                      ? { iterations: options.iterations }
+                    // One canonical key on the wire whichever flag was typed;
+                    // the op accepts `iterations` and folds it to the run's
+                    // `iterationOverride`.
+                    ...(options.iterations !== undefined ||
+                    options.repetitions !== undefined
+                      ? {
+                          iterations: options.iterations ?? options.repetitions,
+                        }
                       : {}),
                     ...(options.case?.length ? { cases: options.case } : {}),
                     ...(options.excludeSkills ? { excludeSkills: true } : {}),
@@ -4352,7 +4475,7 @@ export function registerEvalCommands(program: Command): void {
     descriptionExperiment
       .command("propose")
       .description(
-        "Draft a rewritten tool description from a finished run's failed trials. Spends a small model budget; poll `description-experiment get` rather than re-proposing."
+        "Draft a rewritten tool description from a finished run's failed trials. Included with MCPJam; no customer credits consumed; subject to MCPJam's daily analysis budget. Poll `description-experiment get` rather than re-proposing."
       )
       .requiredOption("--run <id>", "Source eval run ID")
       .requiredOption("--tool <name>", "Catalog tool name to rewrite")
@@ -4406,38 +4529,44 @@ export function registerEvalCommands(program: Command): void {
       )
       .requiredOption("--experiment <id>", "Description-experiment ID")
       .option("--case-scope <scope>", "Which cases to replay: all or affected")
-      // `--repetitions` everywhere it means repetitions. This flag's own help
-      // text already said "Repetitions", and `--iterations` means "please stop
-      // using this" on `eval run` one command over. `--max-trials` beside it is
-      // left alone: it caps the PRODUCT of cases and repetitions, which really
-      // is trials.
-      .option("--repetitions <n>", "Repetitions per case per arm (1–10)")
-      .option("--iterations <n>", "Deprecated alias for --repetitions (1–10)")
+      .option("--iterations <n>", "Iterations per case per arm (1–10)")
+      .option("--repetitions <n>", "Legacy spelling of --iterations (1–10)")
       .option(
-        "--max-trials <n>",
-        "Refuse if plannedTrials exceeds this (max 400)"
+        "--max-iterations <n>",
+        "Refuse if the planned total (cases × iterations × arms) exceeds this (max 400)"
       )
+      .option("--max-trials <n>", "Legacy spelling of --max-iterations")
   ).action(
     async (
       options: PlatformOptions & {
         project?: string;
         experiment: string;
         caseScope?: string;
-        repetitions?: string;
         iterations?: string;
+        repetitions?: string;
+        maxIterations?: string;
         maxTrials?: string;
       },
       command
     ) => {
       if (
-        options.repetitions !== undefined &&
-        options.iterations !== undefined
+        options.iterations !== undefined &&
+        options.repetitions !== undefined
       ) {
         throw usageError(
-          "Use either --repetitions or its deprecated --iterations alias, not both."
+          "Use --iterations or --repetitions, not both — they are two spellings of one flag."
         );
       }
-      const repetitions = options.repetitions ?? options.iterations;
+      if (
+        options.maxIterations !== undefined &&
+        options.maxTrials !== undefined
+      ) {
+        throw usageError(
+          "Use --max-iterations or --max-trials, not both — they are two spellings of one flag."
+        );
+      }
+      const iterations = options.iterations ?? options.repetitions;
+      const maxIterations = options.maxIterations ?? options.maxTrials;
       // The operation's own schema holds the documented limits (iterations
       // 1..10, max trials ≤ 400, case scope all|affected); validating here
       // turns an out-of-range flag into a usage error instead of a request.
@@ -4446,21 +4575,23 @@ export function registerEvalCommands(program: Command): void {
         ...(options.caseScope !== undefined
           ? { caseScope: options.caseScope }
           : {}),
-        ...(repetitions !== undefined
+        ...(iterations !== undefined
           ? {
               iterationOverride: parsePositiveInteger(
-                repetitions,
-                options.repetitions !== undefined
-                  ? "--repetitions"
-                  : "--iterations"
+                iterations,
+                options.iterations !== undefined
+                  ? "--iterations"
+                  : "--repetitions"
               ),
             }
           : {}),
-        ...(options.maxTrials !== undefined
+        ...(maxIterations !== undefined
           ? {
               maxTrials: parsePositiveInteger(
-                options.maxTrials,
-                "--max-trials"
+                maxIterations,
+                options.maxIterations !== undefined
+                  ? "--max-iterations"
+                  : "--max-trials"
               ),
             }
           : {}),
@@ -4535,12 +4666,96 @@ export function registerEvalCommands(program: Command): void {
 
   addProjectOption(
     evals
+      .command("judge-backtest")
+      .description(
+        "Preview draft grading instructions on recorded evidence (uses credits)"
+      )
+      .requiredOption("--run <id>", "Terminal eval run ID")
+      .requiredOption(
+        "--json <request>",
+        "JSON or @file with rubric and optional continuation"
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        run: string;
+        json: string;
+      },
+      command
+    ) => {
+      const body = new JsonInputContext().parseJsonInputRecord(
+        options.json,
+        "--json"
+      );
+      const input = validateOpInput(
+        backtestEvalRunJudgeOperation,
+        { ...body, runId: options.run, project: options.project },
+        { projectOptional: true }
+      );
+      await executeOp(backtestEvalRunJudgeOperation, input, options, command);
+    }
+  );
+
+  addProjectOption(
+    evals
+      .command("backtest")
+      .description(
+        "Preview assertion changes on stored evidence without changing results"
+      )
+      .requiredOption("--run <id>", "Terminal eval run ID")
+      .requiredOption(
+        "--json <draft>",
+        "Draft JSON (or @file, or -); assertions has mode and list"
+      )
+      .option(
+        "--continuation <json>",
+        "Continuation object from the previous preview response"
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        run: string;
+        json: string;
+        continuation?: string;
+      },
+      command
+    ) => {
+      const draft = new JsonInputContext().parseJsonInputRecord(
+        options.json,
+        "--json"
+      );
+      const input = validateOpInput(
+        backtestEvalRunOperation,
+        {
+          runId: options.run,
+          project: options.project,
+          draft,
+          ...(options.continuation
+            ? {
+                continuation: new JsonInputContext().parseJsonInputRecord(
+                  options.continuation,
+                  "--continuation"
+                ),
+              }
+            : {}),
+        },
+        { projectOptional: true }
+      );
+      await executeOp(backtestEvalRunOperation, input, options, command);
+    }
+  );
+
+  addProjectOption(
+    evals
       .command("judge")
       .description(
         "Grade a finished eval run with LLM as Judge (SPENDS your model budget)"
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
   )
+    .option("--scope <all|failed>", "Regrade all or retry only failed grading")
     .option("--force", "Re-grade a run that already has a judge result")
     .option(
       "--enable",
@@ -4554,6 +4769,7 @@ export function registerEvalCommands(program: Command): void {
           project?: string;
           run: string;
           force?: boolean;
+          scope?: string;
           enable?: boolean;
           judgeModel?: string;
           judgeThreshold?: string;
@@ -4568,6 +4784,10 @@ export function registerEvalCommands(program: Command): void {
           requestEvalRunJudgeOperation,
           {
             runId: options.run,
+            // Preserved when explicitly supplied, even empty: dropping an
+            // empty value would silently grade everything when the person
+            // asked for something and mistyped it.
+            ...(options.scope !== undefined ? { scope: options.scope } : {}),
             ...(options.project === undefined
               ? {}
               : { project: options.project }),
@@ -4756,8 +4976,11 @@ export function registerEvalCommands(program: Command): void {
       "Minimum share of iterations that must pass, as a percentage"
     )
     .option(
+      // The FLAG keeps its name. It is a published CI contract — renaming it
+      // breaks every pipeline that spells it — and it names the quality gate,
+      // not an assertion's policy role. Only the help text moves.
       "--no-gating-score-errors",
-      "Fail if any gating scorer errored during the run"
+      "Fail if any required scorer errored during the run"
     )
     .option(
       "--min-scorer-pass-rate <scorerId=percent>",
@@ -4789,7 +5012,7 @@ export function registerEvalCommands(program: Command): void {
     )
     .option(
       "--gate-deterministic-regressions",
-      "Fail if a deterministic gating scorer flipped from passed to failed; requires --baseline or --baseline-sha"
+      "Fail if a deterministic required scorer flipped from passed to failed; requires --baseline or --baseline-sha"
     )
     .option(
       "--max-p95-latency-increase-ms <ms>",
@@ -4908,7 +5131,7 @@ export function registerEvalCommands(program: Command): void {
     )
     .option(
       "--gate-deterministic-regressions",
-      "Fail if a deterministic gating scorer flipped from passed to failed"
+      "Fail if a deterministic required scorer flipped from passed to failed"
     )
     .option(
       "--max-p95-latency-increase-ms <ms>",
@@ -4980,6 +5203,10 @@ export function registerEvalCommands(program: Command): void {
       "Where to write (default .mcpjam/evals/<suite-id>.yaml)"
     )
     .option("--force", "Replace an existing file at the output path")
+    .option(
+      "--schema-version <1|2>",
+      "Suite-file dialect to write: 1 (repetitions, checks — the default) or 2 (iterations, assertions)"
+    )
     .action(
       async (
         options: PlatformOptions & {
@@ -4987,6 +5214,7 @@ export function registerEvalCommands(program: Command): void {
           project?: string;
           out?: string;
           force?: boolean;
+          schemaVersion?: string;
         },
         command
       ) => {
@@ -5271,7 +5499,6 @@ export function registerEvalCommands(program: Command): void {
           return;
         }
 
-
         // JSON without --out: structured screenshot URLs, no image bytes.
         if (isJson) {
           writeResult({ ...base, items: shots });
@@ -5406,9 +5633,7 @@ export function registerEvalCommands(program: Command): void {
           writeResult({ ...base, videoUrl, ...metaFields });
           return;
         }
-        process.stdout.write(
-          `${videoUrl}${summary ? `\n${summary}\n` : "\n"}`
-        );
+        process.stdout.write(`${videoUrl}${summary ? `\n${summary}\n` : "\n"}`);
       }
     );
 
@@ -5459,10 +5684,26 @@ export function registerEvalCommands(program: Command): void {
     .option("--model <id>", "Execution model id")
     .option("--system-prompt <text>", "Execution system prompt")
     .option("--temperature <n>", "Execution temperature")
-    .option("--min-accuracy <pct>", "Minimum accuracy, 0–100")
+    // The criterion, in the units its scope takes. A suite has ONE of these,
+    // and `mcpjam evals get` reports which under `settings.policy`; passing
+    // both is refused rather than resolved by precedence.
+    .option(
+      "--min-accuracy <pct>",
+      "Suite accuracy threshold: one percentage, 0–100, over the whole run"
+    )
+    .option(
+      "--pass-threshold <0-1>",
+      "Pass threshold, 0–1, preserving the current criterion (suite-wide writes a percentage)"
+    )
+    // How many times each case runs. Same shape: a floor that RAISES a case's
+    // own count, or a default that REPLACES it.
     .option(
       "--min-iterations <1-10|off>",
-      "Floor on per-case iterations; off removes the floor"
+      "Minimum iterations per case: a floor that raises a case's own count; off removes it"
+    )
+    .option(
+      "--iterations <n>",
+      "Iterations per case: the suite default, which a case can override"
     )
     .option("--tool-call-order <any|in-order|exact>", "Tool call order")
     .option("--arguments <ignore|partial|exact>", "Argument matching")
@@ -5474,11 +5715,62 @@ export function registerEvalCommands(program: Command): void {
     .option("--judge-model <id>", "Judge model id")
     .option("--judge-threshold <0-1>", "Judge pass threshold, 0–1")
     .action(async (options: PlatformOptions & Record<string, any>, command) => {
-      const input = validateOpInput(
-        updateEvalSuiteOperation,
-        buildSuiteUpdateInput(options)
+      const built = buildSuiteUpdateInput(options);
+      const input = validateOpInput(updateEvalSuiteOperation, built.input);
+      const edit = built.edit;
+      await executeOp(
+        {
+          ...updateEvalSuiteOperation,
+          async execute(input, context) {
+            if (Object.keys(edit).length > 0) {
+              const detail = await getEvalSuiteOperation.execute(
+                input,
+                context
+              );
+              const plan = planPlatformSuiteGradingUpdate({
+                settings: detail.settings,
+                revisionNumber: detail.revisionNumber,
+                edit,
+              });
+              if (!plan.ok) throw usageError(plan.message);
+              input.settings = { ...input.settings, ...plan.body.settings };
+              if (plan.body.expectedRevisionNumber !== undefined) {
+                // Preserve an explicit caller precondition (for example a
+                // reviewed quality-gate body) rather than replacing it.
+                input.expectedRevisionNumber ??=
+                  plan.body.expectedRevisionNumber;
+              }
+              if (plan.noop) {
+                const hasOtherEdits = Object.entries(input).some(
+                  ([key, value]) =>
+                    ![
+                      "project",
+                      "suite",
+                      "expectedRevisionNumber",
+                      "revisionNote",
+                    ].includes(key) &&
+                    value !== undefined &&
+                    (key !== "settings" ||
+                      Object.keys(input.settings ?? {}).length > 0)
+                );
+                const message =
+                  "No grading change: the suite already has these values.";
+                const format = getGlobalOptions(command).format;
+                if (!hasOtherEdits) {
+                  if (format === "human") process.stdout.write(`${message}\n`);
+                  else writeResult({ noop: true, message }, format);
+                  return undefined;
+                }
+                process.stderr.write(`${message}\n`);
+              }
+            }
+            return updateEvalSuiteOperation.execute(input, context);
+          },
+        },
+        input,
+        options,
+        command
       );
-      await executeOp(updateEvalSuiteOperation, input, options, command);
     });
 
   evals
@@ -5685,12 +5977,12 @@ export function registerEvalCommands(program: Command): void {
       "Deprecated alias for --client. NOT the host-compat catalog id `mcpjam tools --host` takes."
     )
     .option(
-      "--repetitions <n>",
+      "--iterations <n>",
       "Run the case this many times under verdict policy 2 (1-10)",
-      (v) => parseIntOption(v, "--repetitions")
+      (v) => parseIntOption(v, "--iterations")
     )
-    .option("--iterations <n>", "Deprecated alias for --repetitions", (v) =>
-      parseIntOption(v, "--iterations")
+    .option("--repetitions <n>", "Legacy spelling of --iterations", (v) =>
+      parseIntOption(v, "--repetitions")
     )
     .option(
       "--idempotency-key <key>",
@@ -5758,11 +6050,11 @@ export function registerEvalCommands(program: Command): void {
         command
       ) => {
         if (
-          options.repetitions !== undefined &&
-          options.iterations !== undefined
+          options.iterations !== undefined &&
+          options.repetitions !== undefined
         ) {
           throw usageError(
-            "Use either --repetitions or its deprecated --iterations alias, not both."
+            "Use --iterations or --repetitions, not both — they are two spellings of one flag."
           );
         }
         const clientSelector = clientSelectorOf<string>(options);
@@ -5780,10 +6072,9 @@ export function registerEvalCommands(program: Command): void {
                   ? { environment: options.environment }
                   : {}),
                 ...(clientSelector ? { client: clientSelector } : {}),
-                ...(options.repetitions !== undefined
-                  ? { repetitions: options.repetitions }
-                  : options.iterations !== undefined
-                  ? { iterations: options.iterations }
+                ...(options.iterations !== undefined ||
+                options.repetitions !== undefined
+                  ? { iterations: options.iterations ?? options.repetitions }
                   : {}),
                 ...(options.idempotencyKey
                   ? { idempotencyKey: options.idempotencyKey }
@@ -5861,7 +6152,7 @@ export function registerEvalCommands(program: Command): void {
   cases
     .command("generate")
     .description(
-      "AI-generate test cases from the suite's tools (spends credits)"
+      "AI-generate test cases from the suite's tools (included with MCPJam; no customer credits consumed; counts against the organization's daily generation quota)"
     )
     .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
     .option("--project <id-or-name>", PROJECT_OPT)
