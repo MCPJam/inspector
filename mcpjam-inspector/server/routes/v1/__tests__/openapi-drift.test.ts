@@ -167,6 +167,19 @@ const KNOWN_UNDOCUMENTED = new Set([
   "get /projects/{projectId}/eval-runs/{runId}/route-facts",
   // Server-facts GET landed with the contract; same follow-up.
   "get /projects/{projectId}/eval-runs/{runId}/server-facts",
+  // Durable agent turns. The pair is inert unless DURABLE_AGENT_TURNS_ENABLED
+  // is set — both answer FEATURE_NOT_SUPPORTED otherwise — so this is a
+  // feature enforced per deployment, which `docs/README.md` says must stay out
+  // of openapi.json until the flag comes off. Same posture as the harness
+  // capability probe above. Document them when durable turns ship on.
+  "get /projects/{projectId}/agent/jobs/{jobId}",
+  "post /projects/{projectId}/agent/jobs/{jobId}/cancel",
+  // Shared eval authoring jobs, reachable only through surfaces gated by the
+  // `eval-authoring-import-v1` flag (and, for generation,
+  // EVAL_AUTHORING_GENERATION_V1_ENABLED). Same rule and the same follow-up:
+  // document the pair when the flag comes off.
+  "get /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}",
+  "post /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}/commit",
 ]);
 
 /**

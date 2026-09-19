@@ -250,6 +250,7 @@ export function TranscriptThread({
   showInlineEdit = true,
   minimalMode = false,
   interactive = true,
+  widgetPolicy = "live",
   reasoningDisplayMode = "inline",
   mcpToolResultImageRendering,
   focusMessageId = null,
@@ -573,6 +574,7 @@ export function TranscriptThread({
               showInlineEdit={showInlineEdit}
               minimalMode={minimalMode}
               interactive={interactive}
+              widgetPolicy={widgetPolicy}
               reasoningDisplayMode={reasoningDisplayMode}
               mcpToolResultImageRendering={mcpToolResultImageRendering}
               claudeFooterMode={claudeFooterMode}

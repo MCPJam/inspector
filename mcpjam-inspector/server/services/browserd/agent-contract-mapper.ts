@@ -315,6 +315,13 @@ export function toDaemonAction(command: BrowserAgentCommand): MappedAction {
 }
 
 /**
+ * Daemon act verbs the public contract deliberately does not publish. A parity
+ * test requires this to equal the daemon's verbs minus the contract's, so each
+ * new daemon verb must be listed here or published.
+ */
+export const DAEMON_ONLY_ACT_VERBS = ["fill_form"] as const;
+
+/**
  * Which published op covers this daemon action — the REVERSE exhaustive check.
  *
  * Nothing calls this to do work. It exists so that adding a verb to

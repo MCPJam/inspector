@@ -1,3 +1,4 @@
+import { useAppNavigate } from "@/lib/app-navigation";
 type AccountApiKeySectionProps = {
   projectId: string | null;
   projectName: string | null;
@@ -14,6 +15,7 @@ type AccountApiKeySectionProps = {
 export function AccountApiKeySection({
   projectName,
 }: AccountApiKeySectionProps) {
+  const navigate = useAppNavigate();
   return (
     <div className="flex flex-col gap-1 px-4 py-3 rounded-md border border-border/40">
       <span className="text-sm text-muted-foreground">
@@ -21,12 +23,27 @@ export function AccountApiKeySection({
         {projectName ? ` · ${projectName}` : ""}
       </span>
       <span className="text-muted-foreground text-xs">
-        Retired — project API keys (mcpjam_…) no longer work and can no longer
-        be generated. Everything they did now runs on MCPJam API keys (sk_…)
-        from Settings → API keys, including saving SDK eval results: set
-        MCPJAM_API_KEY to an sk_… key and reports land in this project&apos;s
-        Evals dashboard.
+        Project API keys are retired. Use a personal API key for SDK and CI
+        access.
       </span>
+      <a
+        href="/settings/api-keys"
+        className="self-start text-sm text-primary underline underline-offset-4 hover:text-primary/80"
+        onClick={(event) => {
+          if (
+            event.button === 0 &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            !event.shiftKey &&
+            !event.altKey
+          ) {
+            event.preventDefault();
+            navigate("/settings/api-keys");
+          }
+        }}
+      >
+        Manage API keys
+      </a>
     </div>
   );
 }
