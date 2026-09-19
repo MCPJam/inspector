@@ -1,14 +1,16 @@
 import type { FormEvent } from "react";
+import { SCORE_DEMO_SERVER_URL } from "./score-design-walkthrough";
 import { ScoreSiteShell } from "./ScoreSiteShell";
 import {
   scoreRunnerBusyLabel,
+  scoreRunnerCopyStage,
   scoreRunnerHeadline,
   scoreRunnerLead,
   type ScoreRunnerPhase,
 } from "./score-runner-view-model";
 
 /**
- * Where "Debug these failures in MCPJam" sends a visitor.
+ * Where "Debug in MCPJam" sends a visitor.
  *
  * A plain link, deliberately. Carrying the guest project across would need
  * the guest promotion proof, and that proof is a bearer credential that can
@@ -31,8 +33,6 @@ export type ScoreRunnerViewProps = {
   formDisabled: boolean;
   appReadyMessage: string | null;
   resultUrl: string | null;
-  copied: boolean;
-  onCopy: () => void;
   showAuthorize: boolean;
   onAuthorize: () => void;
   authorizeBusy: boolean;
@@ -160,11 +160,15 @@ function DeliveryEmailForm({
   );
 }
 
-const FEATURED_SCORES = [
+const LIVE_FEATURED_SCORES = [
   ["https://mcp.linear.app/mcp", "71"],
   ["https://api.githubcopilot.com/mcp/", "84"],
   ["https://mcp.notion.com/mcp", "77"],
 ] as const;
+
+const FEATURED_SCORES = import.meta.env.DEV
+  ? ([[SCORE_DEMO_SERVER_URL, "84"], ...LIVE_FEATURED_SCORES] as const)
+  : LIVE_FEATURED_SCORES;
 
 function FeaturedScoreContents({
   server,
@@ -240,121 +244,112 @@ export function ScoreRunnerView({
   formDisabled,
   appReadyMessage,
   resultUrl,
-  copied,
-  onCopy,
   showAuthorize,
   onAuthorize,
   authorizeBusy,
 }: ScoreRunnerViewProps) {
   const headline = scoreRunnerHeadline(phase);
   const lead = scoreRunnerLead(phase);
+  const copyStage = scoreRunnerCopyStage(phase);
   const showUrlForm =
     phase !== "email" && phase !== "authorizing" && phase !== "done";
   const showEmailForm = phase === "email";
-  const showFeatured = phase === "form" || phase === "email";
+  const showFeatured = phase === "form";
 
   return (
     <ScoreSiteShell
-      compactPreview={phase === "authorizing" || phase === "done"}
-      atmosphere={phase === "email" ? "email" : "landing"}
+      compactPreview={phase === "authorizing"}
+      previewStage={phase === "done" ? "gone" : "card"}
     >
       <div className="flex w-full flex-col items-start gap-6">
-        <div className="flex w-full max-w-[720px] flex-col gap-5 pt-10 md:px-12 md:pt-20">
-          <h1 className="max-w-[624px] font-[family-name:var(--font-score-display)] text-[clamp(2.5rem,5vw,3.5rem)] font-extrabold leading-[60px] tracking-[-0.04em] text-[var(--score-fg)]">
+        <div
+          key={copyStage}
+          className={`${copyStage === "form" ? "" : "score-copy-enter "}flex w-full max-w-[720px] flex-col gap-5 pt-10 md:px-12 md:pt-20`}
+        >
+          <h1 className="score-copy-headline min-h-[120px] max-w-[624px] font-[family-name:var(--font-score-display)] text-[clamp(2.5rem,5vw,3.5rem)] font-extrabold leading-[60px] tracking-[-0.04em] text-[var(--score-fg)]">
             {headline}
           </h1>
-          <p className="max-w-[624px] text-lg leading-7 text-[var(--score-fg)]">
+          <p className="score-copy-lead max-w-[624px] text-lg leading-7 text-[var(--score-fg)]">
             {lead}
           </p>
 
-          {showUrlForm && (
-            <ServerUrlForm
-              urlInput={urlInput}
-              onUrlChange={onUrlChange}
-              onSubmit={onSubmit}
-              phase={phase}
-              error={error}
-              busy={busy}
-              formDisabled={formDisabled}
-            />
-          )}
+          <div className="score-copy-slot flex w-full flex-col gap-5">
+            {showUrlForm && (
+              <ServerUrlForm
+                urlInput={urlInput}
+                onUrlChange={onUrlChange}
+                onSubmit={onSubmit}
+                phase={phase}
+                error={error}
+                busy={busy}
+                formDisabled={formDisabled}
+              />
+            )}
 
-          {showEmailForm && (
-            <DeliveryEmailForm
-              emailInput={emailInput}
-              onEmailChange={onEmailChange}
-              onEmailSubmit={onEmailSubmit}
-              error={error}
-              formDisabled={formDisabled}
-            />
-          )}
+            {showEmailForm && (
+              <DeliveryEmailForm
+                emailInput={emailInput}
+                onEmailChange={onEmailChange}
+                onEmailSubmit={onEmailSubmit}
+                error={error}
+                formDisabled={formDisabled}
+              />
+            )}
 
-          {appReadyMessage && (
-            <p className="text-[13px] leading-[18px] text-[var(--score-muted)]">
-              {appReadyMessage}
-            </p>
-          )}
+            {appReadyMessage && (
+              <p className="text-[13px] leading-[18px] text-[var(--score-muted)]">
+                {appReadyMessage}
+              </p>
+            )}
 
-          {showAuthorize && (
-            <button
-              type="button"
-              onClick={onAuthorize}
-              disabled={authorizeBusy}
-              className="h-12 w-fit rounded-sm bg-[var(--score-primary)] px-5 text-[15px] font-semibold text-[var(--score-primary-fg)] disabled:opacity-60"
-            >
-              {authorizeBusy ? "Redirecting…" : "Authorize and continue"}
-            </button>
-          )}
-
-          {phase === "done" && (
-            <>
-              {resultUrl && (
-                <div className="flex w-full max-w-[624px] flex-col gap-2 sm:flex-row">
-                  <label className="sr-only" htmlFor="score-result-url">
-                    Private result link
-                  </label>
-                  <input
-                    id="score-result-url"
-                    readOnly
-                    value={resultUrl}
-                    className="h-12 min-w-0 shrink-0 truncate rounded-sm border border-[var(--score-border)] bg-[var(--score-surface)] px-4 font-[family-name:var(--font-score-mono)] text-sm text-[var(--score-muted)] sm:flex-1"
-                  />
-                  <button
-                    type="button"
-                    onClick={onCopy}
-                    aria-label={
-                      copied ? "Copied result link" : "Copy result link"
-                    }
-                    className="h-12 shrink-0 rounded-sm border border-[var(--score-border)] bg-[var(--score-surface)] px-5 text-[15px] font-semibold text-[var(--score-primary)]"
-                  >
-                    {copied ? "Copied" : "Copy"}
-                  </button>
-                </div>
-              )}
-              <a
-                href={SCORE_DEBUG_HREF}
-                className="inline-flex h-12 w-fit items-center rounded-sm bg-[var(--score-primary)] px-5 text-[15px] font-semibold text-[var(--score-primary-fg)]"
+            {showAuthorize && (
+              <button
+                type="button"
+                onClick={onAuthorize}
+                disabled={authorizeBusy}
+                className="h-12 w-fit rounded-sm bg-[var(--score-primary)] px-5 text-[15px] font-semibold text-[var(--score-primary-fg)] disabled:opacity-60"
               >
-                Debug these failures in MCPJam
-              </a>
-            </>
-          )}
+                {authorizeBusy ? "Redirecting…" : "Authorize and continue"}
+              </button>
+            )}
 
-          {error && (
-            <div
-              id="score-runner-error"
-              role="alert"
-              className="w-full max-w-[624px] rounded-sm border border-[#C45A3A]/40 bg-[#C45A3A]/10 px-3 py-2 text-[13px] leading-[18px] text-[#E8B4A8]"
-            >
-              {error}
-            </div>
-          )}
+            {phase === "done" && (
+              <div className="flex w-full max-w-[624px] flex-col gap-2 sm:flex-row">
+                {resultUrl && (
+                  <a
+                    href={resultUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-12 shrink-0 items-center rounded-sm bg-[var(--score-primary)] px-5 text-[15px] font-semibold text-[var(--score-primary-fg)]"
+                  >
+                    View in browser
+                  </a>
+                )}
+                <a
+                  href={SCORE_DEBUG_HREF}
+                  className="inline-flex h-12 shrink-0 items-center rounded-sm border border-[var(--score-border)] bg-[var(--score-surface)] px-5 text-[15px] font-semibold text-[var(--score-primary)]"
+                >
+                  Debug in MCPJam
+                </a>
+              </div>
+            )}
 
-          {busy && (
-            <p role="status" className="sr-only">
-              {scoreRunnerBusyLabel(phase) ?? "Working"}
-            </p>
-          )}
+            {error && (
+              <div
+                id="score-runner-error"
+                role="alert"
+                className="w-full max-w-[624px] rounded-sm border border-[#C45A3A]/40 bg-[#C45A3A]/10 px-3 py-2 text-[13px] leading-[18px] text-[#E8B4A8]"
+              >
+                {error}
+              </div>
+            )}
+
+            {busy && (
+              <p role="status" className="sr-only">
+                {scoreRunnerBusyLabel(phase) ?? "Working"}
+              </p>
+            )}
+          </div>
         </div>
 
         {showFeatured && (
