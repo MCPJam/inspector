@@ -9,7 +9,7 @@
  *
  * Counts come from the rows the scorecard already renders, never from a second
  * routing pass, so the line under a card and the list beside it cannot
- * disagree about how many gates a stage has.
+ * disagree about how many required assertions a stage has.
  */
 
 import { stageEmptyIsGap } from "@/components/evals/suite-grading-model";
@@ -21,9 +21,8 @@ import type { CaseScorecard } from "./case-scorecard-model";
 import type { Suggestion } from "./suggest-from-run";
 
 export type StageCoverage = {
-  gates: number;
-  warn: number;
-  report: number;
+  required: number;
+  advisory: number;
   /** The judge grades this stage on this case. */
   judge: boolean;
   /** Nothing is authorable here — the runner observes it. */
@@ -38,9 +37,8 @@ export function coverageForCase(
   const out = {} as Record<UserValueStage, StageCoverage>;
   for (const stage of USER_VALUE_STAGES) {
     out[stage] = {
-      gates: 0,
-      warn: 0,
-      report: 0,
+      required: 0,
+      advisory: 0,
       judge: false,
       runner: false,
     };
@@ -49,32 +47,34 @@ export function coverageForCase(
   for (const group of card.groups) {
     for (const row of group.rows) {
       if (row.provenance === "judge") continue;
-      // The route counts as one Selection gate only when it actually asserts
-      // a route; "any route, graded by the checks below" asserts nothing.
+      // The route counts as one required Selection rule only when it actually
+      // asserts a route; "any route, graded by the checks below" asserts
+      // nothing.
       if (row.provenance === "route") {
         const kind = row.route?.kind;
         if (kind === "tools" || kind === "noTool") {
-          out.selection.gates += 1;
+          out.selection.required += 1;
         }
         continue;
       }
       const bucket = out[row.stage];
       if (!bucket) continue;
-      if (row.role === "gate") bucket.gates += 1;
-      else if (row.role === "warn") bucket.warn += 1;
-      else bucket.report += 1;
+      if (row.role === "advisory") bucket.advisory += 1;
+      else bucket.required += 1;
     }
   }
 
-  if (card.judge.judge?.runsForCase) out.userValue.judge = true;
+  // Coverage describes configured evaluators, even while scheduling policy is
+  // loading or execution is paused. It does not promise a grading attempt.
+  const judge = card.judge.judge;
+  if (judge && judge.suiteMode !== "off" && !judge.skippedForCase) {
+    out.userValue.judge = true;
+  }
 
   for (const stage of USER_VALUE_STAGES) {
     const entry = out[stage];
     const empty =
-      entry.gates === 0 &&
-      entry.warn === 0 &&
-      entry.report === 0 &&
-      !entry.judge;
+      entry.required === 0 && entry.advisory === 0 && !entry.judge;
     // The suite settings page's own rule for which links are observed rather
     // than authored, so a case and a suite agree about where a gap can exist.
     entry.runner = empty && !stageEmptyIsGap(stage);
@@ -93,7 +93,7 @@ export function coverageDetail(
       toneClass: STAGE_CHIP_TONE_CLASS.unmeasured,
     };
   }
-  const configured = formatStageConfigLine(coverage as never);
+  const configured = formatStageConfigLine(coverage);
   if (configured || coverage.judge) {
     const parts = [configured, coverage.judge ? "judge" : ""].filter(Boolean);
     return {
@@ -105,12 +105,15 @@ export function coverageDetail(
   }
   if (suggestionsAtStage > 0) {
     return {
-      label: `Nothing checks this · ${suggestionsAtStage} suggested`,
+      label: `No assertion here · ${suggestionsAtStage} suggested`,
       toneClass: STAGE_CHIP_TONE_CLASS.mixed,
     };
   }
   // A gap this release cannot fill. Neutral, because there is nothing to do.
-  return { label: "No grader", toneClass: STAGE_CHIP_TONE_CLASS.unmeasured };
+  return {
+    label: "No evaluator",
+    toneClass: STAGE_CHIP_TONE_CLASS.unmeasured,
+  };
 }
 
 export function coverageDetailByStage(

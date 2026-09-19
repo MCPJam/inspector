@@ -1,25 +1,11 @@
 /**
- * Which page tool produced this card, read FROM THE CARD.
- *
- * The obvious implementation is a lookup: keep the turn's page tools in a
- * store, and resolve `webmcp_bookSlot` against it when rendering. That is
- * exactly what must not happen. A store answers for the browser as it is NOW —
- * so a conversation scrolled back after the model navigated elsewhere would
- * attribute an old card to whatever tool happens to carry that name today, or
- * to nothing at all once the page is gone. The card would change its own
- * history under the reader.
- *
- * So attribution rides INSIDE the tool result, where the server put it. A tool
- * result is message content: it persists in the transcript for free, survives a
- * reload, and still says the right thing a week later.
- *
- * There is no second source. Every page-tool result the server produces — a
- * success, a refused argument, a stale binding, a transport failure, a
- * tombstone — carries its attribution, so a card with none is a card for
- * something that was not a page tool. The live store is never consulted, and
- * the turn's persisted `pageToolsAtTurn` record is for the Raw view (what the
- * turn advertised), not for cards.
+ * A card's page-tool identity comes from the call itself, never the live page.
+ * Inspector aliases carry attribution in call metadata (including pending and
+ * approval states) and results. Agent-browser tools carry it in their results.
+ * Both survive navigation and reopening the saved conversation.
  */
+import { isPageToolAlias } from "@/shared/client-fulfilled-tools";
+import { readPageToolAttributionMetadata } from "@/shared/mcp-tool-origin-metadata";
 import {
   isWebmcpPageToolName,
   safeDeclaredOrigin,
@@ -87,14 +73,21 @@ export function pageToolAttributionFrom(
 }
 
 /**
- * Attribution for one rendered tool part: the RESULT (a fact about this call),
- * and never the live browser (a fact about right now, which is the wrong
- * question).
+ * Attribution for one rendered tool part, from its recorded call or result.
+ * The live browser can already be on another page.
  */
 export function resolvePageToolAttribution(args: {
   toolName: string;
   output: unknown;
+  callProviderMetadata?: unknown;
 }): PageToolAttribution | undefined {
+  if (isPageToolAlias(args.toolName)) {
+    return (
+      pageToolAttributionFrom({
+        pageTool: readPageToolAttributionMetadata(args.callProviderMetadata),
+      }) ?? pageToolAttributionFrom(args.output)
+    );
+  }
   if (!isWebmcpPageToolName(args.toolName)) return undefined;
   // THE PREFIX IS THE NAMESPACE.
   //

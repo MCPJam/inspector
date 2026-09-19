@@ -18,6 +18,7 @@ import { useCallback, useSyncExternalStore } from "react";
 import { HOSTED_MODE } from "@/lib/config";
 import {
   clearStoredLocalBrowserConsent,
+  rememberLocalBrowserOnboarding,
   loadStoredLocalBrowserConsent,
   enableLocalBrowserForAllClients,
   localBrowserSetupPending,
@@ -73,6 +74,7 @@ export function useLocalBrowserConsent(): LocalBrowserConsent {
     // it is also SCOPED to the token being forgotten, so on the server side a
     // delayed revoke can't sever a capability a newer grant rotated in.
     const stored = loadStoredLocalBrowserConsent()?.token ?? null;
+    rememberLocalBrowserOnboarding("dismissed");
     clearStoredLocalBrowserConsent();
     await revokeLocalBrowserConsentOnServer(stored);
   }, []);

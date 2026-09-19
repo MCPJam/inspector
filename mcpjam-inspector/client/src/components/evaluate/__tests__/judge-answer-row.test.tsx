@@ -127,7 +127,7 @@ describe("JudgeAnswerRow", () => {
     ).toBeTruthy();
   });
 
-  it("says Gate when the suite earned one", () => {
+  it("says Required when the suite earned one", () => {
     render(
       <JudgeAnswerRow
         state={{
@@ -138,7 +138,7 @@ describe("JudgeAnswerRow", () => {
         }}
       />,
     );
-    expect(screen.getByText("Gate")).toBeTruthy();
+    expect(screen.getByText("Required")).toBeTruthy();
   });
 
   it("distinguishes a near miss from a flat no", () => {
@@ -183,7 +183,7 @@ describe("JudgeAnswerRow", () => {
     // A score the judge did not produce from evidence is a non-answer.
     expect(screen.queryByTestId("judge-answer-word")).toBeNull();
     expect(
-      screen.getByText("The judge could not grade this trial"),
+      screen.getByText("The judge could not grade this iteration"),
     ).toBeTruthy();
   });
 
@@ -223,8 +223,25 @@ describe("blind review", () => {
         hidden: true,
         skippedForCase: true,
         judgeEnabledOnSuite: false,
+        judgeCase: scored(),
       }).kind,
     ).toBe("withheld");
+  });
+
+  it("withholds nothing when the judge never graded the trial", () => {
+    // No verdict to leak, and the label control that lifts the mask only
+    // mounts beside one — so "hidden until you label" would never clear.
+    expect(
+      judgeAnswerState({
+        ...base,
+        hidden: true,
+        runJudgeStatus: "failed",
+        judgeCase: null,
+      }).kind,
+    ).toBe("failed");
+    expect(
+      judgeAnswerState({ ...base, hidden: true, judgeCase: null }).kind,
+    ).toBe("notRun");
   });
 
   it("prints no score when withheld", () => {
@@ -236,9 +253,9 @@ describe("blind review", () => {
   it("still hosts the review control, which is the point", () => {
     render(
       <JudgeAnswerRow state={{ kind: "withheld" }}>
-        <button>Label this trial</button>
+        <button>Label this iteration</button>
       </JudgeAnswerRow>,
     );
-    expect(screen.getByText("Label this trial")).toBeTruthy();
+    expect(screen.getByText("Label this iteration")).toBeTruthy();
   });
 });

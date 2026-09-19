@@ -36,6 +36,7 @@ import {
   readAppSignInReturnPath,
   writeAppSignInReturnPath,
 } from "../lib/app-signin-return-path";
+import { getGuestSessionRefusal } from "../lib/guest-session";
 
 /** Convex-shaped project ids for the cross-organization switch cases. */
 const ORG_A_PROJECT_ID = "k57aaaaaaaaaaaaaaaaaaaaaaaa1";
@@ -325,6 +326,7 @@ vi.mock("../lib/guest-session", () => ({
   }),
   getGuestBearerToken: mockGetGuestBearerToken,
   getCachedGuestSession: vi.fn(() => null),
+  getGuestSessionRefusal: vi.fn(() => null),
   getOrCreateGuestSession: vi.fn(async () => null),
   subscribeGuestSessionChanges: vi.fn(() => () => {}),
 }));
@@ -367,6 +369,10 @@ vi.mock("../components/ChatTabV2", () => ({
 vi.mock("../components/EvalsTab", () => ({
   EvalsTab: () => <div data-testid="evals-tab">Evals Tab</div>,
 }));
+vi.mock("../components/EvaluateTab", () => ({
+  EvaluateTab: () => <div data-testid="evaluate-tab">Evaluate</div>,
+}));
+
 vi.mock("../components/CiEvalsTab", () => ({
   CiEvalsTab: () => <div data-testid="ci-evals-tab">CI Evals Tab</div>,
 }));
@@ -530,6 +536,7 @@ describe("App hosted OAuth callback handling", () => {
     mockWorkOsAuthState.signIn = vi.fn();
     mockWorkOsAuthState.user = null;
     mockWorkOsAuthState.isLoading = false;
+    vi.mocked(getGuestSessionRefusal).mockReturnValue(null);
     mockCompleteHostedOAuthCallback.mockReset();
     mockHandleOAuthCallback.mockReset();
     mockGetGuestBearerToken.mockReset();
@@ -1165,10 +1172,10 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("keeps the sidebar-selected org active when navigating back to servers", async () => {
+  it("keeps the sidebar-selected org active when returning from settings to the app", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
-    window.history.replaceState({}, "", "/organizations/org-a");
+    window.history.replaceState({}, "", "/servers");
 
     const setActiveOrganizationIdSpy = vi.fn();
     mockUseAppState.mockImplementation(() => {
@@ -1229,17 +1236,14 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
-      expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
       expect(window.location.pathname).toBe("/organizations/org-b");
     });
 
-    act(() => {
-      getLastSidebarProps().onNavigate?.("servers");
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Back to app" }));
 
     await waitFor(() => {
       expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
-      expect(window.location.pathname).toBe("/servers");
+      expect(window.location.pathname).toBe("/home");
     });
   });
 
@@ -1249,7 +1253,7 @@ describe("App hosted OAuth callback handling", () => {
     // just put in the pathname, so it stays a project in the new org.
     clearHostedOAuthPendingState();
     clearScenarioSession();
-    window.history.replaceState({}, "", "/organizations/org-a");
+    window.history.replaceState({}, "", "/servers");
 
     const setActiveOrganizationIdSpy = vi.fn();
     mockUseAppState.mockImplementation(() => {
@@ -1367,10 +1371,10 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.hash).toBe("#settings");
   });
 
-  it("lands on the target org's project when switching from org models", async () => {
+  it("lands on the target org's project when switching from the main sidebar", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
-    window.history.replaceState({}, "", "/organizations/org-a/models");
+    window.history.replaceState({}, "", "/servers");
 
     const setActiveOrganizationIdSpy = vi.fn();
     (mockUseAppState as any).mockImplementation(() => {
@@ -1656,16 +1660,16 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.pathname).toBe("/servers");
   });
 
-  it("keeps sidebar project creation enabled for uncapped free routed orgs", async () => {
+  it("keeps sidebar project creation enabled for uncapped free selected orgs", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
-    window.history.replaceState({}, "", "/organizations/org-3");
+    window.history.replaceState({}, "", "/servers");
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
-      activeOrganizationId: "org-1",
+      activeOrganizationId: "org-3",
     }));
     mockUseQuery.mockImplementation((name: string, args?: any) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1951,7 +1955,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(`${window.location.pathname}${window.location.search}`).toBe(
-        `/p/${currentProjectId}/evals?view=runs`,
+        `/p/${currentProjectId}/evaluate?view=runs`,
       );
       expect(window.location.hash).toBe("#case-3");
     });
@@ -2412,6 +2416,33 @@ describe("App hosted OAuth callback handling", () => {
       ),
     ).toBe(true);
   });
+
+  it.each(["", "?surface=preview"])(
+    "waits for the account before restoring a scenario return: %s",
+    async (query) => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      sessionStorage.clear();
+      const destination = `/user-testing/demo/token-123${query}`;
+      writeScenarioSignInReturnPath(destination);
+      window.history.replaceState({}, "", "/callback?code=oauth-code");
+      mockConvexAuthState.isAuthenticated = true;
+      mockConvexAuthState.isLoading = false;
+      mockWorkOsAuthState.user = null;
+      mockWorkOsAuthState.isLoading = true;
+      const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+      const view = render(<App />);
+      expect(window.location.pathname).toBe("/callback");
+      expect(readScenarioSignInReturnPath()).toBe(destination);
+      mockWorkOsAuthState.user = { id: "workos-user-1" };
+      mockWorkOsAuthState.isLoading = false;
+      view.rerender(<App />);
+      await waitFor(() => {
+        expect(replaceStateSpy).toHaveBeenCalledWith({}, "", destination);
+      });
+      expect(readScenarioSignInReturnPath()).toBeNull();
+    },
+  );
 
   it("prefers scenario callback restoration over billing callback restoration", async () => {
     clearHostedOAuthPendingState();
@@ -3137,6 +3168,16 @@ describe("App hosted OAuth callback handling", () => {
   it("navigates back to the User Testing tab after callback completion", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
+    // This suite runs as a WorkOS guest by default, and since REEV-6 that
+    // means `/user-testing` renders the gated preview rather than the tab.
+    // The actor here is a project owner who has just authorized a server for
+    // their own scenario — a signed-in action by definition — so give the
+    // test the identity its scenario actually has. The subject under test is
+    // the return-path routing, not the gate.
+    mockUseAuth.mockReturnValue({
+      ...mockWorkOsAuthState,
+      user: { id: "user_owner" },
+    });
     writeHostedOAuthPendingMarker({
       surface: "scenario",
       projectId: "ws_1",
@@ -3492,7 +3533,9 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("does not flash Home while hosted guest auth is unresolved on the default route", async () => {
+  // Auth finished with no WorkOS user and no guest (refused, retries used up,
+  // or token rejected) is terminal, not loading: holding it spun forever.
+  it("renders Home for a signed-out visitor once hosted auth has settled", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -3506,12 +3549,70 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
     });
 
     expect(window.location.pathname).toBe("/");
-    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("hosted-oauth-loading")).not.toBeInTheDocument();
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
+  });
+
+  it("shows the sign-in banner on Home when the guest session was refused", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockHandleOAuthCallback.mockReset();
+    mockHostedShellGateState.value = "ready";
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = false;
+    mockWorkOsAuthState.user = null;
+    // One stable object: the banner reads it as a useSyncExternalStore snapshot.
+    const refusal = { until: Date.now() + 540_000 };
+    vi.mocked(getGuestSessionRefusal).mockReturnValue(refusal);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("guest-session-refused-banner"),
+      ).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+    expect(screen.queryByTestId("hosted-oauth-loading")).not.toBeInTheDocument();
+  });
+
+  it("keeps holding Home for a signed-in user whose Convex auth has not landed", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = true;
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
+    // Derive the gate from the real resolver so this state is one production
+    // can actually reach, not a hand-picked "ready".
+    const { resolveHostedShellGateState } = await vi.importActual<
+      typeof import("../components/hosted/hosted-shell-gate-state")
+    >("../components/hosted/hosted-shell-gate-state");
+    mockHostedShellGateState.value = resolveHostedShellGateState({
+      hostedMode: true,
+      isConvexAuthLoading: mockConvexAuthState.isLoading,
+      isConvexAuthenticated: mockConvexAuthState.isAuthenticated,
+      isWorkOsLoading: mockWorkOsAuthState.isLoading,
+      hasWorkOsUser: !!mockWorkOsAuthState.user,
+    });
+    expect(mockHostedShellGateState.value).toBe("auth-loading");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
   });
 
   it("does not flash Home while hosted project and server state hydrate on the default route", async () => {
@@ -3601,13 +3702,13 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("renders Suites mode on /evals", async () => {
+  it("renders legacy Suites mode when enabled", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/evals");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui",
+      (flag: string) => flag === "playground-enabled" || flag === "evaluate-enabled",
     );
 
     render(<App />);
@@ -3620,16 +3721,13 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
-  it("renders Runs mode on /evals/runs with no flag gate", async () => {
-    // Runs used to sit behind `evaluate-ci` at its own /ci-evals tab. It is a
-    // mode under Evaluate now and ships to everyone, so there is no flag read,
-    // no "Loading Runs..." spinner, and no redirect back to Suites.
+  it("renders legacy Runs mode when enabled", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/evals/runs");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui",
+      (flag: string) => flag === "playground-enabled" || flag === "evaluate-enabled",
     );
 
     render(<App />);

@@ -71,6 +71,8 @@ After installing the package, you should see a link to `localhost`. Open that li
 
 <Info>
   **Widget rendering (Chromium):** On first startup, Inspector automatically downloads and installs the Playwright Chromium browser needed to render widgets. This happens in the background — you'll see download progress in the terminal. No manual `playwright install` step is required. Docker images already include Chromium and are unaffected.
+
+  If the download fails, the browser pane shows the reason and retries automatically (after 30 seconds, then 2 minutes, then 10 minutes). You can also click **Retry now** at any time to restart the download immediately. After three automatic retries, only **Retry now** will trigger another attempt.
 </Info>
 
 ### From your editor (VS Code, Cursor, Windsurf)

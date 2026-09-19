@@ -1,3 +1,4 @@
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCallToolResultError } from "@mcpjam/sdk";
 import type { EvalTraceSpan, EvalTraceSpanStatus } from "@/shared/eval-trace";
 import {
@@ -50,6 +51,7 @@ type StepSpanMeta = {
 export type AiSdkEvalTraceContext = {
   runStartedAt: number;
   recordedSpans: EvalTraceSpan[];
+  recordedRequestPayloads: LiveChatTraceRequestPayloadEntry[];
   openSteps: Map<
     number,
     {
@@ -180,6 +182,7 @@ export function createAiSdkEvalTraceContext(
   return {
     runStartedAt,
     recordedSpans: [],
+    recordedRequestPayloads: [],
     openSteps: new Map(),
     openTools: new Map(),
     lastPrepareStepNumber: -1,

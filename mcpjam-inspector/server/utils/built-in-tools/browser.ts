@@ -56,7 +56,12 @@ import {
 } from "@/shared/client-fulfilled-tools";
 import { needsApprovalFor, type ApprovalFloor } from "@/shared/tool-approval";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
-import { webmcpPageToolsMode } from "../../config.js";
+import {
+  browserShapeRedactionEnabled,
+  webmcpPageToolsMode,
+} from "../../config.js";
+import { redactSecretShapes } from "@/shared/secret-shape-redaction";
+import { capText } from "../../services/browserd/daemon/observation-budget.js";
 import { logger } from "../logger.js";
 import { observedToolBinding } from "../../services/browser-tool-binding";
 import { parkForHandoff } from "./browser-handoff.js";
@@ -65,10 +70,12 @@ import { buildResolvedModelRequestPayload } from "../model-request-payload.js";
 import { MAX_SESSION_VIEWPORT } from "@/shared/browser-viewport";
 import {
   DEFAULT_QUEUE_KEY,
+  isBrowserCommandCorrelation,
   isPointInViewport,
   type BrowserAction,
   type BrowserActTarget,
   type BrowserCommand,
+  type BrowserCommandCorrelation,
   type ObservationStateToken,
   type WebMcpToolsRevision,
 } from "../../services/browserd/protocol.js";
@@ -82,7 +89,10 @@ import type {
 } from "@/shared/declared-tools";
 import { buildWebmcpPageTools, type PeekedPageTool } from "./page-tools.js";
 import { pageToolsFromObservation } from "@/shared/browser-page-tools";
-import type { BrowserSessionHandle } from "../../services/browserd/browser-session.js";
+import {
+  BrowserProtocolMismatchError,
+  type BrowserSessionHandle,
+} from "../../services/browserd/browser-session.js";
 import type { BrowserContextMode } from "../../services/browserd/browser-sessions-client.js";
 import { BrowserSessionService } from "../../services/browserd/session-service.js";
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
@@ -96,6 +106,11 @@ import {
   provisionPlaygroundSandbox,
   wakePlaygroundSandbox,
 } from "../computers/control-plane-client.js";
+import { planSecretPlaceholders } from "../secrets/secret-placeholders.js";
+import {
+  createSecretScrubber,
+  MIN_SCRUBBABLE_LENGTH,
+} from "../../../shared/secret-scrubber";
 
 // Re-exported so the server's existing importers keep their one import site;
 // the value itself now lives in `shared/client-fulfilled-tools.ts` beside the
@@ -122,8 +137,42 @@ export { BROWSER_BUILT_IN_TOOL_ID };
  * host-configuration hash — so dragging a panel would invalidate every cached
  * tool manifest, several times a second.
  */
+/** Bound on a daemon error string before it reaches a model's context. */
+const MODEL_ERROR_MAX_BYTES = 4_000;
+
+/**
+ * Cap, then scrub credential shapes from, an error message bound for the model.
+ * Needed server-side because hosted daemons are reused across deploys and an
+ * older one does not scrub. Capping first keeps a redaction from being cut.
+ */
+function forModel(text: string): string {
+  const capped = capText(text, MODEL_ERROR_MAX_BYTES);
+  return browserShapeRedactionEnabled() ? redactSecretShapes(capped) : capped;
+}
+
 const VIEWPORT_MAX_W = MAX_SESSION_VIEWPORT.width;
 const VIEWPORT_MAX_H = MAX_SESSION_VIEWPORT.height;
+
+/**
+ * Act verbs offered to the model: published contract minus the tab verbs
+ * (the model passes `tabId` instead) plus daemon-only verbs. The parity test
+ * checks this formula.
+ */
+export const BROWSER_ACT_TOOL_VERBS = [
+  "click",
+  "type",
+  "press",
+  "scroll",
+  "hover",
+  "drag",
+  "select",
+  "fill_form",
+  "accept_dialog",
+  "dismiss_dialog",
+] as const;
+
+/** The published verbs the model tool deliberately withholds. @see BROWSER_ACT_TOOL_VERBS */
+export const MODEL_WITHHELD_ACT_VERBS = ["close_tab", "activate_tab"] as const;
 
 /**
  * How approval reaches the user for this turn — the thing a surface must
@@ -178,6 +227,27 @@ export interface BrowserToolsOptions {
   /** Project whose computer this turn drives. */
   projectId: string;
   executionScope?: ExecutionScope;
+  /**
+   * Surface ids echoed onto ledger rows, never interpreted. `toolCallId` is
+   * added per call.
+   */
+  correlation?: BrowserCommandCorrelation;
+  /**
+   * Credentials the model may type as `{{secret:NAME}}` without reading them.
+   * The value travels beside the command and the daemon substitutes it. Absent
+   * means every placeholder is refused.
+   */
+  secrets?: {
+    /** Materialized `{name, value}` pairs, already resolved for this turn. */
+    available: ReadonlyArray<{ name: string; value: string }>;
+    /**
+     * Brokered names: injected at egress, so never typeable. Kept separate so
+     * the refusal can say why.
+     */
+    brokered?: readonly string[];
+    /** Fired with the NAMES (never values) that actually reached a browser. */
+    onDelivered?: (names: readonly string[]) => void;
+  };
   /**
    * The host's Tool Approval switch.
    *
@@ -442,7 +512,11 @@ interface CommandSender {
   sendCommand(
     command: BrowserCommand,
     expectedBootId?: string,
-    options?: { timeoutMs?: number; signal?: AbortSignal },
+    options?: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      secrets?: ReadonlyArray<{ name: string; value: string }>;
+    },
   ): Promise<{
     status: string;
     result?: {
@@ -515,7 +589,9 @@ function unwrapCommand(response: {
   if (!result.ok) {
     return {
       ok: false,
-      error: result.error ?? "the browser could not complete the action",
+      error: forModel(
+        result.error ?? "the browser could not complete the action",
+      ),
       stateToken: result.stateToken,
       output: result.output,
       ...(result.webmcpTools ? { webmcpTools: result.webmcpTools } : {}),
@@ -950,6 +1026,41 @@ export function buildBrowserTools(
   const readOnly = policy?.mode === "read_only";
   let handoffDeadline: number | undefined;
   const engine: BrowserEngine = opts.engine ?? "hosted";
+  /**
+   * Secret names (never values) offered to the model, hosted engine only: the
+   * local engine would ship a credential to a machine we do not run. An empty
+   * `secretNote` keeps descriptions, and the host-config hash, unchanged.
+   */
+  const secretNames =
+    engine === "hosted"
+      ? (opts.secrets?.available ?? [])
+          // A value too short to scrub is refused on use, so it is not offered.
+          .filter((secret) => secret.value.length >= MIN_SCRUBBABLE_LENGTH)
+          .map((secret) => secret.name)
+      : [];
+  const secretNote =
+    secretNames.length > 0
+      ? " To fill in a credential you have not been given, write " +
+        `{{secret:NAME}} — available: ${secretNames.join(", ")}. The value is ` +
+        "substituted inside the browser and never shown to you; it works on " +
+        "`type` and `fill_form` only. While a page you typed one into is " +
+        "still open, its screenshots come back as `screenshotSuppressed: " +
+        "true` with no image — a site that does not mask the field would " +
+        "draw the value into the picture, where no scrub can reach it. Read " +
+        "the tree instead: it names the field and says `{{secret:NAME}}`. " +
+        "Pictures resume once the page moves on."
+      : "";
+  /**
+   * Server-side backstop to the daemon's scrub of typed values, for daemons
+   * that predate it or lost their registry on relaunch. Null without secrets.
+   */
+  const serverScrubber =
+    secretNames.length > 0
+      ? createSecretScrubber(opts.secrets?.available ?? [], {
+          // Match the daemon's placeholder spelling.
+          replacement: (name) => `{{secret:${name}}}`,
+        })
+      : null;
   // DERIVED, never configured. A surface that can ask a person is interactive
   // and keeps its logins; one that cannot is unattended and must start blank.
   // Letting these be set independently is how an eval ends up running against
@@ -1169,9 +1280,30 @@ export function buildBrowserTools(
        * the observation the act was decided from.
        */
       raw?: boolean;
+      /** AI SDK tool call id; absent for the server's own internal reads. */
+      toolCallId?: string;
+      /**
+       * Placeholder values, kept out of the action because the action is
+       * persisted to the ledger and trace.
+       */
+      secrets?: ReadonlyArray<{ name: string; value: string }>;
     },
   ): Promise<CommandOutcome & { tabId: string }> => {
-    const handle = await state.handle(args.signal);
+    let handle: BrowserSessionHandle;
+    try {
+      handle = await state.handle(args.signal);
+    } catch (error) {
+      // A protocol mismatch (after a failed relaunch) becomes a readable
+      // refusal; any other error still propagates.
+      if (error instanceof BrowserProtocolMismatchError) {
+        return {
+          ok: false,
+          error: error.message,
+          tabId: args.tabId ?? "@session",
+        };
+      }
+      throw error;
+    }
     lastBootId = handle.bootId;
     const recovering = args.recovering === true;
     const tabId = args.tabId ?? "@session";
@@ -1179,9 +1311,19 @@ export function buildBrowserTools(
       ? state.tokenFor(args.tabId, handle.bootId)
       : undefined;
     const commandId = randomUUID();
+    const correlation: BrowserCommandCorrelation | undefined = (() => {
+      const merged = {
+        ...(opts.correlation ?? {}),
+        ...(args.toolCallId ? { toolCallId: args.toolCallId } : {}),
+      };
+      if (Object.keys(merged).length === 0) return undefined;
+      // An invalid map is dropped whole rather than failing the command.
+      return isBrowserCommandCorrelation(merged) ? merged : undefined;
+    })();
     const command: BrowserCommand = {
       commandId,
       source: unattended ? "eval" : "chat",
+      ...(correlation ? { correlation } : {}),
       ...(args.tabId ? { tabId: args.tabId } : {}),
       action:
         pinned && action.kind === "act"
@@ -1288,16 +1430,57 @@ export function buildBrowserTools(
               command.source,
             )
           : undefined;
+      // An older daemon would type the literal placeholder and report
+      // success, so check its features first.
+      if (args.secrets?.length) {
+        try {
+          const status = await handle.client.status({
+            ...(args.signal ? { signal: args.signal } : {}),
+          });
+          if (
+            status.kind !== "ok" ||
+            !status.features?.includes("secret-placeholders")
+          )
+            return {
+              ok: false,
+              error:
+                "secret_unsupported_daemon: this browser is running an older " +
+                "build that cannot fill in a {{secret:...}} placeholder, so " +
+                "nothing was typed. Ask the user to restart the browser " +
+                "session, or have them type the credential themselves.",
+              tabId,
+            };
+        } catch (error) {
+          return {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+            tabId,
+          };
+        }
+      }
       let response;
       try {
         // Approval, handoff and queue waits may outlive the grant checked at
         // handle resolution. Re-check immediately before sending control.
         await state.verifyConsent();
+        // Fired before the await: the value may reach the daemon even if the
+        // reply fails, and a false "never delivered" is the dangerous error.
+        if (args.secrets?.length) {
+          try {
+            opts.secrets?.onDelivered?.(
+              args.secrets.map((secret) => secret.name),
+            );
+          } catch {
+            // Best-effort; must not fail the command.
+          }
+        }
         response = await client.sendCommand(
           { ...command, responsiveViewport: true },
           handle.bootId,
           {
             ...(args.signal ? { signal: args.signal } : {}),
+            // Beside the command, never in it: the command is persisted.
+            ...(args.secrets?.length ? { secrets: args.secrets } : {}),
           },
         );
       } catch (error) {
@@ -1438,8 +1621,8 @@ export function buildBrowserTools(
   // The refresher owns the advertised set once it exists (it starts from the
   // minted one), so asking it is the same question asked of whoever can
   // answer it.
-  const presented = (outcome: CommandOutcome & { tabId: string }) =>
-    present(outcome, {
+  const presented = (outcome: CommandOutcome & { tabId: string }) => {
+    const shown = present(outcome, {
       advertised:
         (refresher ? refresher.current().length : page.minted.length) > 0,
       arriving: refresher !== undefined,
@@ -1447,6 +1630,14 @@ export function buildBrowserTools(
       listVerb: built.includes("browser_webmcp_tools"),
       invokeVerb: built.includes("browser_webmcp_invoke"),
     });
+    if (!serverScrubber) return shown;
+    // Skip the base64 screenshot; a value cannot occur in it.
+    const { screenshot, ...rest } = shown;
+    return {
+      ...serverScrubber.scrubDeep(rest),
+      ...(screenshot === undefined ? {} : { screenshot }),
+    };
+  };
 
   const tools: ToolSet = {};
   // The verb names actually built, in order — what a page tool may not be
@@ -1490,7 +1681,10 @@ export function buildBrowserTools(
           .describe("Open in a NEW tab; requires an unused tabId."),
       }),
       needsApproval,
-      execute: async ({ url, action, tabId, newTab }, { abortSignal }) => {
+      execute: async (
+        { url, action, tabId, newTab },
+        { abortSignal, toolCallId },
+      ) => {
         const verb = action ?? "goto";
         if (verb === "goto" && !url) return { error: "navigate needs a url" };
         if (url && policy && !isOriginAllowed(url, policy.originAllowlist)) {
@@ -1524,7 +1718,7 @@ export function buildBrowserTools(
             // a whole extra call getting the refs — the round trip refs exist
             // to remove.
             { ...browserAction, observe: "both" },
-            { tabId, signal: abortSignal },
+            { tabId, signal: abortSignal, toolCallId },
           ),
         );
       },
@@ -1545,18 +1739,7 @@ export function buildBrowserTools(
         "resized while you work, so take its size from the `viewport` on your " +
         "last observation; a coordinate outside it is refused, not clamped.",
       inputSchema: z.object({
-        verb: z.enum([
-          "click",
-          "type",
-          "press",
-          "scroll",
-          "hover",
-          "drag",
-          "select",
-          "fill_form",
-          "accept_dialog",
-          "dismiss_dialog",
-        ]),
+        verb: z.enum(BROWSER_ACT_TOOL_VERBS),
         selector: z.string().optional().describe("CSS selector to target."),
         x: z
           .number()
@@ -1576,7 +1759,8 @@ export function buildBrowserTools(
           .describe(
             'Text to type, key to press ("Enter"), scroll amount ("down"/"up"/pixels), ' +
               'drag destination ("x,y" in the same viewport coordinates), or option ' +
-              "value to select.",
+              "value to select." +
+              secretNote,
           ),
         ref: z
           .string()
@@ -1588,7 +1772,7 @@ export function buildBrowserTools(
         fields: z
           .array(z.object({ selector: z.string(), value: z.string() }))
           .optional()
-          .describe("For fill_form: fields to fill, in order."),
+          .describe("For fill_form: fields to fill, in order." + secretNote),
         submit: z
           .boolean()
           .optional()
@@ -1602,7 +1786,7 @@ export function buildBrowserTools(
       needsApproval,
       execute: async (
         { verb, ref, selector, x, y, value, fields, submit, observe, tabId },
-        { abortSignal },
+        { abortSignal, toolCallId },
       ) => {
         if (
           x !== undefined &&
@@ -1627,6 +1811,25 @@ export function buildBrowserTools(
               "was clicked. Coordinates are CSS pixels with (0, 0) at the " +
               "top-left — re-read the screenshot, take the page's size from its " +
               "`viewport`, and pick a point inside it.",
+          };
+        }
+        // Plan placeholders before building the command so an unusable name
+        // is refused before anything is typed.
+        const secretPlan = planSecretPlaceholders({
+          verb,
+          ...(value !== undefined ? { value } : {}),
+          ...(fields ? { fields } : {}),
+          available: opts.secrets?.available ?? [],
+          ...(opts.secrets?.brokered ? { brokered: opts.secrets.brokered } : {}),
+        });
+        if (secretPlan.refusal) return { error: secretPlan.refusal.message };
+        const withSecrets = secretPlan.deliver.length > 0;
+        if (withSecrets && engine !== "hosted") {
+          return {
+            error:
+              "secret_engine_unsupported: this browser runs on the user's own " +
+              "machine, where a project credential cannot be filled in for " +
+              "you; nothing was typed. Ask the user to type it themselves.",
           };
         }
         // REF FIRST. It is the only target the model did not have to invent:
@@ -1657,10 +1860,23 @@ export function buildBrowserTools(
               // about what today's act plus its follow-up observe already
               // costs, with one fewer round trip. Flip this to "a11y" once
               // acts accept refs.
-              observe: observe ?? "both",
+              //
+              // No screenshot after typing a secret: an unmasked field would
+              // draw the value into the image, which cannot be scrubbed.
+              observe: withSecrets
+                ? observe === "none"
+                  ? "none"
+                  : "a11y"
+                : observe ?? "both",
             },
             // Pin to the observation the model actually saw (L3).
-            { tabId, signal: abortSignal, expectedState: true },
+            {
+              tabId,
+              signal: abortSignal,
+              toolCallId,
+              expectedState: true,
+              ...(withSecrets ? { secrets: secretPlan.deliver } : {}),
+            },
           ),
         );
       },
@@ -1678,14 +1894,14 @@ export function buildBrowserTools(
         tabId: z.string().describe("The tab to act on."),
       }),
       needsApproval,
-      execute: async ({ action, tabId }, { abortSignal }) =>
+      execute: async ({ action, tabId }, { abortSignal, toolCallId }) =>
         presented(
           await send(
             {
               kind: "act",
               verb: action === "activate" ? "activate_tab" : "close_tab",
             },
-            { tabId, signal: abortSignal },
+            { tabId, signal: abortSignal, toolCallId },
           ),
         ),
     }),
@@ -1749,7 +1965,7 @@ export function buildBrowserTools(
       needsApproval: observationNeedsApproval,
       execute: async (
         { mode, filter, rootRef, rootSelector, requestId, tabId },
-        { abortSignal },
+        { abortSignal, toolCallId },
       ) =>
         presented(
           await send(
@@ -1761,7 +1977,7 @@ export function buildBrowserTools(
               ...(rootSelector ? { rootSelector } : {}),
               ...(requestId ? { requestId } : {}),
             },
-            { tabId, signal: abortSignal },
+            { tabId, signal: abortSignal, toolCallId },
           ),
         ),
     }),
@@ -1775,11 +1991,11 @@ export function buildBrowserTools(
         "let you act through their own API instead of clicking; most pages offer none.",
       inputSchema: z.object({ tabId: z.string().optional() }),
       needsApproval: observationNeedsApproval,
-      execute: async ({ tabId }, { abortSignal }) =>
+      execute: async ({ tabId }, { abortSignal, toolCallId }) =>
         presented(
           await send(
             { kind: "observe", mode: "webmcp_tools" },
-            { tabId, signal: abortSignal },
+            { tabId, signal: abortSignal, toolCallId },
           ),
         ),
     }),
@@ -1807,7 +2023,10 @@ export function buildBrowserTools(
         tabId: z.string().optional(),
       }),
       needsApproval,
-      execute: async ({ toolName, input, tabId }, { abortSignal }) => {
+      execute: async (
+        { toolName, input, tabId },
+        { abortSignal, toolCallId },
+      ) => {
         if (
           policy?.mode === "allowlist" &&
           policy.toolAllowlist?.length &&
@@ -1822,7 +2041,7 @@ export function buildBrowserTools(
         return presented(
           await send(
             { kind: "webmcp_invoke", toolKey: toolName, input },
-            { tabId, signal: abortSignal },
+            { tabId, signal: abortSignal, toolCallId },
           ),
         );
       },
@@ -2806,9 +3025,9 @@ export function toBrowserModelOutput({ output }: { output: unknown }): {
       value: [{ type: "text", text: JSON.stringify(output ?? null) }],
     };
   }
-  const rest: Record<string, unknown> = {
+  const rest: Record<string, unknown> = scrubPageMessages({
     ...(output as Record<string, unknown>),
-  };
+  });
   const shot = takeScreenshot(rest);
   if (shot) {
     value.push({
@@ -2828,6 +3047,41 @@ export function toBrowserModelOutput({ output }: { output: unknown }): {
     value.push({ type: "text", text: fencePageContent(page, originOf(rest)) });
   }
   return { type: "content", value };
+}
+
+/**
+ * Scrub credential shapes from `console[].text` and `network[].failure` only;
+ * page content is left alone because a false positive would hide what the
+ * model reads. Duplicates the daemon's idempotent scrub for older daemons.
+ */
+function scrubPageMessages(
+  rest: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!browserShapeRedactionEnabled()) return rest;
+  const console_ = rest.console;
+  if (Array.isArray(console_)) {
+    rest.console = console_.map((entry) =>
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as { text?: unknown }).text === "string"
+        ? { ...entry, text: redactSecretShapes((entry as { text: string }).text) }
+        : entry,
+    );
+  }
+  const network = rest.network;
+  if (Array.isArray(network)) {
+    rest.network = network.map((row) =>
+      typeof row === "object" &&
+      row !== null &&
+      typeof (row as { failure?: unknown }).failure === "string"
+        ? {
+            ...row,
+            failure: redactSecretShapes((row as { failure: string }).failure),
+          }
+        : row,
+    );
+  }
+  return rest;
 }
 
 /**
@@ -3036,7 +3290,8 @@ function present(
 ): Record<string, unknown> {
   if (!outcome.ok) {
     return {
-      error: outcome.error,
+      // Also covers errors from local catch blocks and refusals.
+      error: forModel(outcome.error),
       ...(outcome.output !== undefined ? { page: outcome.output } : {}),
     };
   }
