@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
+import { authoringRequest } from "@/lib/apis/eval-authoring-api";
+import { followAuthoringJob } from "@/lib/mcpjam-agent/eval-workspace";
+import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -24,12 +28,20 @@ export function ImportDatasetDialog({
   projectId,
   suiteId,
 }: ImportDatasetDialogProps) {
+  const sharedAuthoring =
+    useFeatureFlagEnabled("eval-authoring-import-v1") === true;
   const [file, setFile] = useState<File | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "extracting">("idle");
+  // The limit dialog already opened on the refusal; the inline line only has
+  // to say why the import stopped. The wire sentence ("… Use BYOK or try
+  // again tomorrow.") is authored by a Convex backend outside this repo, so
+  // matching the other two case-creation surfaces has to happen here.
+  const errorText = error ? describeMCPJamLimitMessage(error) ?? error : null;
   const controller = useRef<AbortController | null>(null);
   const generation = useRef(0);
+  const startIdentity = useRef({ file: null as File | null, key: "" });
   const busy = useRef(false);
   const input = useRef<HTMLInputElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -72,7 +84,7 @@ export function ImportDatasetDialog({
       return;
     }
     if (candidate.size > MAX_MARKDOWN_BYTES) {
-      setError("Split the file into documents of at most 100 KiB.");
+      setError("Split the file into documents of at most 100 KB.");
       return;
     }
     setFile(candidate);
@@ -91,6 +103,32 @@ export function ImportDatasetDialog({
       );
       if (!markdown.trim()) throw new Error("The file is empty.");
       if (current !== generation.current) return;
+      if (sharedAuthoring) {
+        const result = await authoringRequest(
+          {
+            operation: "start",
+            input: {
+              source: "markdown",
+              markdown,
+              fileName: file.name,
+              projectId,
+              suiteId,
+              requestKey: (() => {
+                if (startIdentity.current.file !== file)
+                  startIdentity.current = { file, key: crypto.randomUUID() };
+                return startIdentity.current.key;
+              })(),
+            },
+          },
+          abort.signal,
+        );
+        // The job is started either way, but a response that lost its race
+        // must not close a dialog the user already reopened on another suite.
+        if (current !== generation.current) return;
+        void followAuthoringJob({ projectId, suiteId }, result.jobId);
+        onOpenChange(false);
+        return;
+      }
       const response = await extractMarkdownCases(
         { markdown, fileName: file.name, projectId, suiteId },
         abort.signal,
@@ -144,10 +182,12 @@ export function ImportDatasetDialog({
             returnFocus.current.focus();
           }
         }}
-        className="max-h-[85vh] overflow-y-auto sm:max-w-2xl"
+        className="max-h-[85vh] gap-6 overflow-y-auto p-6 sm:max-w-2xl"
       >
-        <DialogHeader>
-          <DialogTitle>Import test cases</DialogTitle>
+        <DialogHeader className="gap-3">
+          <DialogTitle className="text-xl font-semibold">
+            Import test cases
+          </DialogTitle>
           <DialogDescription>
             AI turns your Markdown into draft test cases. Review them before
             saving.
@@ -170,7 +210,7 @@ export function ImportDatasetDialog({
           <button
             type="button"
             disabled={phase !== "idle"}
-            className="w-full rounded-lg border border-dashed border-border p-8 text-sm"
+            className="min-h-24 w-full rounded-lg border border-dashed border-border px-6 py-8 text-sm transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
             data-testid="import-dataset-dropzone"
             onClick={() => input.current?.click()}
             onDragOver={(event) => event.preventDefault()}
@@ -179,12 +219,12 @@ export function ImportDatasetDialog({
               if (phase === "idle") selectFile(event.dataTransfer.files);
             }}
           >
-            Drop one Markdown file here or click to select. Up to 100 KiB.
+            Drop one Markdown file here or click to select. Up to 100 KB.
           </button>
           {file && (
             <div className="flex items-center justify-between gap-2 text-sm">
               <span>
-                {file.name} · {(file.size / 1024).toFixed(1)} KiB
+                {file.name} · {(file.size / 1024).toFixed(1)} KB
               </span>
               <Button
                 variant="ghost"
@@ -207,12 +247,12 @@ export function ImportDatasetDialog({
             ))}
           </ul>
         )}
-        {error && (
+        {errorText && (
           <p
             role="alert"
             className="rounded bg-destructive/10 p-3 text-sm text-destructive"
           >
-            {error}
+            {errorText}
           </p>
         )}
         {phase === "extracting" && <p role="status">Extracting cases…</p>}

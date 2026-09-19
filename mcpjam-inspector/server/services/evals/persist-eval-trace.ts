@@ -1,3 +1,5 @@
+import { capRequestPayloadsForPersist } from "../../utils/live-chat-trace-stream";
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ConvexHttpClient } from "convex/browser";
 import type { ModelMessage } from "ai";
 import type {
@@ -193,6 +195,7 @@ export async function persistEvalTraceFanout(args: {
   modelSource?: "mcpjam" | "byok" | "local_byok";
   messages: ModelMessage[];
   spans: EvalTraceSpan[] | undefined;
+  requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   prompts: PromptTraceSummary[] | undefined;
   /**
    * Eval widget snapshots captured via `captureMcpAppWidgetSnapshots`.
@@ -323,6 +326,17 @@ export async function persistEvalTraceFanout(args: {
             turnEndedAt: now,
             sessionMessages: sanitizeForConvexTransport(turn.sessionMessages),
             spans: sanitizeForConvexTransport(turn.spans),
+            ...(args.requestPayloads?.length
+              ? {
+                  requestPayloadsJson: JSON.stringify(
+                    capRequestPayloadsForPersist(
+                      args.requestPayloads.filter(
+                        (entry) => entry.promptIndex === turn.promptIndex,
+                      ),
+                    ),
+                  ),
+                }
+              : {}),
             ...(turn.prompts.length > 0
               ? { prompts: sanitizeForConvexTransport(turn.prompts) }
               : {}),

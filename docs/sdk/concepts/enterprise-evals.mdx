@@ -1,0 +1,86 @@
+---
+title: "Reliable evals in CI"
+description: "Bound execution, preserve evidence, and distinguish an eval verdict from successful reporting."
+---
+
+An iteration finishing, its evaluators passing, and its results reaching MCPJam are three separate outcomes. Use the shared gate engine for local acceptance and a reporting receipt for persistence. A hosted `pending` decision, including a run waiting for its judge, is not a passing decision.
+
+## Run with explicit limits
+
+```typescript
+import {
+  EvalSuite, EvalTest, assertion, assertGate,
+  gateInputFromSuiteResult, formatRunSummaryTable,
+  type HostExecutor,
+} from "@mcpjam/sdk";
+
+export async function runProjectEvals(executor: HostExecutor) {
+  const suite = new EvalSuite({
+    name: "Project discovery",
+    defaults: {
+      iterations: 3,
+      evaluators: [assertion({ type: "noToolErrors" })],
+    },
+    mcpjam: {
+      apiKey: process.env.MCPJAM_API_KEY,
+      strict: true,
+      transport: { timeoutMs: 15_000, operationTimeoutMs: 60_000 },
+    },
+  });
+  suite.add(new EvalTest({
+    id: "projects-list",
+    name: "Find projects",
+    execute: async (executor) => { await executor.run("List my projects"); },
+  }));
+  const result = await suite.run(executor, {
+    concurrency: 2, timeoutMs: 30_000, runTimeoutMs: 120_000,
+    evaluatorConcurrency: 2, evaluatorTimeoutMs: 10_000,
+  });
+  console.log(formatRunSummaryTable(result, suite.getReportingReceipt()));
+  assertGate(gateInputFromSuiteResult(result), { minimumPassRate: 1 });
+  return { result, receipt: suite.getReportingReceipt() };
+}
+```
+
+`execute` completing supplies the existing driver observation. Add assertions and judges that establish the behavior you actually need; completion alone does not establish user-value correctness. Use exactly one of canonical `execute` or legacy `test`. Legacy imports and stored definition hashes remain supported. Case evaluator overrides use `{ mode: "inherit" | "extend" | "replace", list }`; replacement with an empty list disables suite evaluator inheritance. Old and new concurrency/timeout option spellings cannot be supplied together.
+
+Cancellation bounds SDK queues and waits. Execution cancellation still reports the planned iterations, including explicit cancelled outcomes; use a separate `mcpjam.transport.signal` to cancel reporting itself. Custom code should cooperate with `ctx.signal`; a timed-out promise cannot change a committed result, but JavaScript cannot stop arbitrary external side effects. Progress and failure callback exceptions are recorded separately from measurements. Retries execute one planned iteration again and retain the final attempt's evidence.
+
+## Require persistence explicitly
+
+`getReportingReceipt()` returns `not_requested`, `pending`, `persisted`, or `failed`. `getLastReport()` returns a validated hosted report or `null`, and both reset on every run. Reporting failure preserves completed local results. `strict: true` rejects failed reporting and missing API keys. An explicitly disabled reporter remains local-only.
+
+For manual reporting, `reportEvalResultsWithReceipt(input)` always resolves with a receipt. On a chunked failure, acknowledgement counts can be `null`: earlier chunks might have committed before the response was lost. Do not translate unknown counts into zero or accept a local fallback as persisted evidence.
+
+For streaming, use `finalizeWithReceipt()` and configure `queueLimits: { maxCount: 1000, maxBytes: 16 * 1024 * 1024 }`. The queue rejects new entries when full. `exportPendingResults()` provides an in-memory recovery copy; it is not a durable journal. For an intentionally incomplete run, call `finalizeWithReceipt({ terminalStatus: "cancelled" })` (or `"timed_out"`). This retains the planned count and records a non-passing terminal outcome; it requires the backend `evalsRunTermination: 1` capability. Unsupported deployments return an explicit reporting failure. Reuse external run and iteration IDs with identical content when recovering. Changed content under an existing identity is a conflict. New SDK runs abandoned for 24 hours, or older than seven days, time out server-side.
+
+Transport defaults are a 15-second attempt deadline, 60-second budget per HTTP request operation (including its retries), 5 MiB request limit, 4 MiB response limit, and 16 MiB standalone artifact limit. Each chunk receives its own bounded request budget; a large upload does not share one 60-second deadline. Deadlines cover response bodies and retry delays. Widget HTML stays inline for eval ingestion so identical retries retain identical content; the authenticated backend stores it after validation. A result whose widget snapshots are too large to send inline is automatically offloaded to blob storage before the retry loop, so retries still resend identical bytes. Caller-supplied blob IDs remain immutable evidence references.
+
+## Provenance and data handling
+
+Suite `tags` and run `runTags` are different. Optional `runName`, `runTags`, `runMetadata`, and expanded CI fields require the target deployment's authenticated metadata capability. If the capability is absent, those optional fields are omitted and the report and receipt expose a `RUN_METADATA_OMITTED` warning; core evidence still uploads, including in strict mode. A stale capability followed by a validation refusal retries once without optional metadata, preserving the same run identity, evidence, and policy. Run metadata supports at most 64 flat string, finite number, or boolean values and 16 KiB; run names are limited to 200 characters and run tags to 32 values of 64 characters each.
+
+`MCPJAM_RUN_NAME`, comma-separated `MCPJAM_RUN_TAGS`, and JSON `MCPJAM_RUN_METADATA` provide fallbacks. Explicit metadata replaces environment metadata; tags combine explicit values first. Malformed optional environment metadata is omitted with a sanitized diagnostic. Metadata is stored as authored: do not put secrets or customer payloads in labels.
+
+CI values take explicit fields first, then detected CI fields, then bounded local Git discovery. An explicit `ci: {}` opts out. `MCPJAM_CI_AUTODETECT=false` disables detection; `MCPJAM_GIT_AUTODETECT=false` disables just Git subprocesses. Git state is read afresh for each run. Automatically detected and explicitly requested expanded fields are omitted with a structured warning when support cannot be confirmed. URL fields accept absolute HTTP(S) links without embedded credentials.
+
+## Selection and advisory measurements
+
+`evalTestVariants(entries, makeConfig)` requires persistent declared IDs. A variant's phrasing and display label do not generate its identity. `suite.subset(caseIds)` preserves the source inventory and freezes selected coverage before execution. A full-suite gate refuses a subset; `selectionScope: "selected"` explicitly gates the selected population. Hosted subset reporting is refused until a persisted selection contract is supported. Empty selection means no execution.
+
+Declare `reported` measurements with an ID and producer version, then call `ctx.report(id, value)` from the driver. Booleans and finite values in `[0,1]` are accepted. Invalid values become evaluator errors; unreported declarations stay skipped. These observations are advisory by default.
+
+`selectionStability()` and `argumentConsistency(toolName)` evaluate repeated iterations of one case. Their separate `runEvaluation` envelope includes eligible/excluded coverage and does not change iteration verdicts. Consistency is not correctness. Hosted persistence requires `evalsRunEvaluations: 1`. If it is unavailable, `RUN_EVALUATIONS_OMITTED` records that these advisory values remain local. A later advisory upload failure produces `RUN_EVALUATIONS_NOT_CONFIRMED`; the core run keeps its acknowledged persistence receipt. Check `receipt.warnings` when those optional additions matter to your workflow.
+
+`responseCloseTo` measures normalized Unicode code-point edit distance, not semantic similarity. Each input is limited to 100,000 characters. Normalized equality is checked directly; common prefixes and suffixes are removed before a maximum of 4 million edit-distance cells are evaluated, while the score denominator retains the original code-point length. Long unequal inputs that exceed that budget produce an unscored error. Hosted authoring is enabled only after the backend and eligible runners support it. Backtest previews read a frozen, bounded evidence population and never rewrite stored verdicts; missing evidence stays ungradable. Judge previews use the existing billed path.
+
+The standalone `@mcpjam/evaluators` package runs pure assertions, matching, and injected evaluators without SDK or model-provider initialization. Message normalization distinguishes complete, partial, unsupported, and invalid evidence; missing tool capture cannot become an empty successful transcript.
+
+Use `@mcpjam/vitest` for native test registration, visible skips, executor cleanup, and the same shared gate engine. Its default summary is a table; the SDK default is no summary. CI rejects focused `.only` tests. Local execution-variant and pairwise helpers are advisory, report coverage and preference counts, and do not produce statistical confidence intervals.
+
+Deterministic previews return a `continuation` object when their bounded page budget is reached. Pass it unchanged with the same draft to `backtestEvalRun`, or use **Load more evidence** in settings. New assertion previews have a one-minute cooldown independent of judge previews; pagination reuses the reservation. Stored SDK and hosted evaluator identities remain distinct, so changing a hosted content-derived assertion appears as an added and removed observation rather than a guessed outcome flip.
+
+
+## Rollout order
+
+Deploy backend expansion before publishing the SDK or enabling hosted re-grade and new assertion support. An old or default-off backend still accepts core SDK results; optional metadata and case-run results degrade to explicit warnings. Backtest routes and explicit partial-run terminalization require their corresponding deployed backend contracts. Publish `@mcpjam/evaluators` before the SDK and verify the hosted image contains its runtime artifacts.

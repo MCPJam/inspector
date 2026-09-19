@@ -6,14 +6,11 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import {
-  SIGNALS_VERSION_WITH_THEMES,
   type SankeyStage,
   type UsageBreakdown,
 } from "@/hooks/useUsageInsights";
 import { type InsightsSelection } from "@/hooks/scenario-usage-filters";
-import { ClusterTuningControl } from "@/components/shared/usage-insights/ClusterTuningControl";
 import { FlowSankeyDiagram } from "@/components/shared/usage-insights/flow-sankey-diagram";
-import type { ClusterTuning } from "@/lib/cluster-tuning";
 import {
   STAGE_ORDER,
   STAGE_TITLES,
@@ -35,10 +32,6 @@ interface SessionFlowSankeyProps {
    * control at all — the header is shared with surfaces that only ever want
    * the plain rebuild affordance.
    */
-  onApplyTuning?: (
-    tuning: ClusterTuning,
-    opts?: { force?: boolean },
-  ) => void;
   /**
    * This surface starts its own analysis, so a MISSING run means one is being
    * arranged rather than waiting to be asked for (BB-196) — a working state,
@@ -50,6 +43,7 @@ interface SessionFlowSankeyProps {
   analysisIsAutomatic?: boolean;
   /** False for scopes with no topic map, where link distance means nothing. */
   showLinkThreshold?: boolean;
+  goalGroupsByJourney?: boolean;
   /**
    * Per-stage header overrides. Defaults come from `STAGE_TITLES`; callers
    * can rename a column without forking the chart.
@@ -125,9 +119,6 @@ export function SessionFlowSankey({
   onSelectLink,
   onRebuild,
   rebuildBusy,
-  onApplyTuning,
-  analysisIsAutomatic = false,
-  showLinkThreshold,
   stageTitles,
   headerActions,
   fillHeight = false,
@@ -135,19 +126,18 @@ export function SessionFlowSankey({
 }: SessionFlowSankeyProps) {
   const sankey = breakdown?.sankey;
   const scan = breakdown?.scan;
-  const signalsVersion = breakdown?.latestRun?.signalsVersion ?? null;
-  const latestRun = breakdown?.latestRun ?? null;
 
   /**
    * Hoisted above the early returns: the empty-flow branch below needs it too.
    * Offering "Rebuild clusters" while a rebuild is already running was always
    * wrong there, and on a self-analyzing surface it is the whole bug.
    */
-  const analysisInFlight =
-    latestRun?.status === "queued" ||
-    latestRun?.status === "running" ||
-    // No run at all, on a surface that starts its own: one is being arranged.
-    (analysisIsAutomatic && latestRun === null);
+  const analysisInFlight = breakdown?.analysis
+    ? breakdown.analysis.pending +
+        breakdown.analysis.running -
+        breakdown.analysis.deferred >
+      0
+    : false;
   // What the first column is called on this surface, for banner copy —
   // "journeys" on the swarm panel, "goals" on the scenario one.
   const goalNoun = (stageTitles?.goal ?? STAGE_TITLES.goal).toLowerCase();
@@ -166,16 +156,6 @@ export function SessionFlowSankey({
    * flow to look at" hides them precisely when they are most useful. It seeds
    * from the defaults when there is no run to read.
    */
-  const tuningControl = onApplyTuning ? (
-    <ClusterTuningControl
-      value={latestRun?.tuning}
-      onApply={onApplyTuning}
-      busy={rebuildBusy}
-      showLinkThreshold={showLinkThreshold}
-      sessionCount={latestRun?.sessionCount}
-    />
-  ) : null;
-
   if (!breakdown) {
     return (
       <div
@@ -184,15 +164,12 @@ export function SessionFlowSankey({
           fillHeight
             ? "h-full px-0 py-6"
             : scrollLayout
-              ? "px-0 py-10"
-              : "px-5 py-10",
+            ? "px-0 py-10"
+            : "px-5 py-10",
         )}
       >
         <span className="flex-1 text-center">Loading session flow…</span>
-        <div className="flex items-center gap-2">
-          {headerActions}
-          {tuningControl}
-        </div>
+        <div className="flex items-center gap-2">{headerActions}</div>
       </div>
     );
   }
@@ -205,8 +182,8 @@ export function SessionFlowSankey({
           fillHeight
             ? "h-full justify-center px-0 py-6"
             : scrollLayout
-              ? "px-0 py-10"
-              : "px-5 py-10",
+            ? "px-0 py-10"
+            : "px-5 py-10",
         )}
       >
         {analysisInFlight ? (
@@ -220,31 +197,19 @@ export function SessionFlowSankey({
         <p className="max-w-md text-xs text-muted-foreground">
           {analysisInFlight
             ? `Grouping ${goalNoun}s, behaviors, outcomes, and sentiment. This can take a few minutes.`
-            : signalsVersion === null
-              ? "The last rebuild ran before session signals existed. Rebuild clusters to extract and group goals, behaviors, outcomes, and sentiment."
-              : "Rebuild clusters once there are enough sessions to cluster."}
+            : "Sessions appear here as analysis completes."}
         </p>
         <div className="flex items-center gap-2">
           {headerActions}
-          {/* An analysis already on its way needs no button to start it — and
-              on a self-analyzing surface there is never a resting state where
-              one is required. The tuning control stays: choosing HOW to
-              cluster is still a thing to ask for. */}
-          {analysisInFlight ? null : (
-            <RebuildButton
-              onRebuild={onRebuild}
-              busy={rebuildBusy}
-              label="Rebuild clusters"
-            />
-          )}
-          {tuningControl}
+          {/* No voluntary rebuild here (#5277). Analysis runs on its own as
+              sessions settle; the one place to ask for a re-analysis is the
+              freshness chip's popover, so this empty state does not grow a
+              second door. */}
         </div>
       </div>
     );
   }
 
-  const needsThemeRebuild =
-    signalsVersion !== null && signalsVersion < SIGNALS_VERSION_WITH_THEMES;
   const selectedKeys = new Set(
     (selection?.themes ?? []).map(
       (theme) => `${theme.dimension}:${theme.clusterId}`,
@@ -258,13 +223,13 @@ export function SessionFlowSankey({
         fillHeight
           ? "h-full min-h-0 overflow-hidden px-0 py-1"
           : scrollLayout
-            ? // Scroll layout: the diagram bleeds to its already-padded owning
-              // container (no extra px-5) and drops the card border-b, which
-              // belonged to the old locked-viewport chrome.
-              "px-0 py-1"
-            : // Embedded in a document/opt-in card (BenchReport, the
-              // explanatory opt-in): keep the padded, divided card chrome.
-              "border-b px-5 py-4",
+          ? // Scroll layout: the diagram bleeds to its already-padded owning
+            // container (no extra px-5) and drops the card border-b, which
+            // belonged to the old locked-viewport chrome.
+            "px-0 py-1"
+          : // Embedded in a document/opt-in card (BenchReport, the
+            // explanatory opt-in): keep the padded, divided card chrome.
+            "border-b px-5 py-4",
       )}
       data-testid="scenario-insights-sankey"
       data-fill-height={fillHeight ? "true" : undefined}
@@ -298,10 +263,9 @@ export function SessionFlowSankey({
             </TooltipContent>
           </Tooltip>
         </div>
-        {headerActions || tuningControl ? (
+        {headerActions ? (
           <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
             {headerActions}
-            {tuningControl}
           </div>
         ) : null}
       </div>
@@ -333,12 +297,9 @@ export function SessionFlowSankey({
           className="flex shrink-0 items-start gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
         >
           <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />
-          <span>
-            Analyzing sessions &mdash; grouping {goalNoun}s, behaviors,
-            outcomes, and sentiment. This can take a few minutes.
-          </span>
+          <span>Analyzing sessions…</span>
         </div>
-      ) : latestRun === null ? (
+      ) : !breakdown?.analysis ? (
         <div
           role="status"
           className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
@@ -352,21 +313,6 @@ export function SessionFlowSankey({
             onRebuild={onRebuild}
             busy={rebuildBusy}
             label="Analyze sessions"
-          />
-        </div>
-      ) : needsThemeRebuild ? (
-        <div
-          role="status"
-          className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
-        >
-          <span>
-            These sessions were analyzed before every column was clustered, so
-            only the goal column has themes.
-          </span>
-          <RebuildButton
-            onRebuild={onRebuild}
-            busy={rebuildBusy}
-            label="Rebuild for themes"
           />
         </div>
       ) : null}

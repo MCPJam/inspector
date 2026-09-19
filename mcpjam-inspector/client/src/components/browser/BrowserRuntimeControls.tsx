@@ -12,16 +12,22 @@ import { usePlaygroundChatHistoryBridge } from "@/components/playground/playgrou
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
 import { HOSTED_MODE } from "@/lib/config";
+import { useAppNavigate } from "@/lib/app-navigation";
+import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
 
 export function BrowserRuntimeControls({
   projectId,
   compact = false,
   settings = false,
+  hostId = null,
 }: {
   projectId: string | null;
   compact?: boolean;
   settings?: boolean;
+  /** When set with `compact`, links to this client's Browser settings tab. */
+  hostId?: string | null;
 }) {
+  const navigate = useAppNavigate();
   const engine = useBrowserEngine(
     projectId,
     settings ? "preference" : "conversation",
@@ -158,6 +164,18 @@ export function BrowserRuntimeControls({
         <p role="status" className="text-muted-foreground">
           {visibleReason}
         </p>
+      ) : null}
+      {compact && hostId ? (
+        <div className="border-t border-border pt-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-auto w-full justify-start px-1 py-1 text-xs font-normal text-muted-foreground"
+            onClick={() => navigate(buildHostFocusTabPath(hostId, "browser"))}
+          >
+            Browser settings
+          </Button>
+        </div>
       ) : null}
     </div>
   );

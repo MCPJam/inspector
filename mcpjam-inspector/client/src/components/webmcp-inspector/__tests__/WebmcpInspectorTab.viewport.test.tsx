@@ -8,20 +8,22 @@ vi.mock("@/hooks/useLocalBrowserConsent", () => ({
 import { StrictMode } from "react";
 import { waitFor } from "@testing-library/react";
 /**
- * The pane's two jobs: ask for frames only while someone is looking, and show
- * SOMETHING whatever the server can do.
+ * The pane's two jobs: ask for frames only while someone is looking, and tell
+ * the viewer what to do when none arrive.
  *
- * The fallback is the part worth pinning down. A server too old to know
- * `set_screencast` answers 400, and the person running it should see their page
- * via the screenshot poll rather than an empty box and an error about a command
- * they never typed.
+ * There is no screenshot poll behind the stream any more. A session whose
+ * frames never come says so in the shell's notice strip and points at the
+ * Screenshot button, rather than sitting on "Waiting for the first frame…".
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { ReactNode } from "react";
 import { render, screen, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { WebmcpInspectorTab } from "../WebmcpInspectorTab";
-import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
+import {
+  useWebmcpInspectorStore,
+  webmcpFrameChannel,
+} from "@/stores/webmcp-inspector-store";
 import {
   frameStatsReport,
   resetFrameStatsFlagForTests,
@@ -56,6 +58,8 @@ class TestImage {
     loadedImages.push(this);
   }
 }
+/** The pane draws decoded frames straight onto its canvas. */
+let drawImage = vi.fn();
 const panelRenders = vi.hoisted(() => ({ activity: 0, tools: 0 }));
 vi.mock("../ActivityTimeline", async (original) => {
   const actual = await original<typeof import("../ActivityTimeline")>();
@@ -105,20 +109,22 @@ function session(
   };
 }
 
-/** A `liveFrame` in the store's normalized shape. */
-function liveFrame(src: string, seq = 1, scale = 1) {
-  return {
-    src,
-    rung: "ws" as const,
+/**
+ * Put a decoded picture on the channel, as the frame socket does.
+ *
+ * A bitmap rather than bytes: the socket decodes through the shared reader, so
+ * by the time the pane sees a frame there is nothing left to load — which is
+ * why these assert on the canvas rather than on an `<img>`.
+ */
+function publishFrame(seq = 1, scale = 1) {
+  webmcpFrameChannel.publish({
+    bitmap: { close: () => {} } as unknown as ImageBitmap,
     deviceWidth: 1280 * scale,
     deviceHeight: 800 * scale,
-    // The page's own coordinate space, which is what the pane lays out and
-    // scales clicks against however many device pixels the capture used.
-    cssWidth: 1280,
-    cssHeight: 800,
+    scale,
     ts: 1,
     seq,
-  };
+  });
 }
 
 /** Spies for the two store actions the pane drives. */
@@ -135,9 +141,11 @@ describe("WebmcpInspectorTab — viewport", () => {
     vi.useRealTimers();
     loadedImages.length = 0;
     vi.stubGlobal("Image", TestImage);
+    drawImage = vi.fn();
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
-      drawImage: vi.fn(),
+      drawImage,
     } as never);
+    webmcpFrameChannel.publish(null);
     useWebmcpInspectorStore.setState({
       session: session(),
       tools: [],
@@ -145,7 +153,6 @@ describe("WebmcpInspectorTab — viewport", () => {
       pending: [],
       starting: false,
       error: undefined,
-      liveFrame: undefined,
       frameTransport: { rung: "none", attempts: 0, latched: false },
       lastScreenshot: undefined,
       chatEnabled: false,
@@ -174,16 +181,17 @@ describe("WebmcpInspectorTab — viewport", () => {
       render(<WebmcpInspectorTab />);
       await act(async () => {});
       const before = { ...panelRenders };
+      drawImage.mockClear();
       for (let seq = 1; seq <= 30; seq++) {
         await act(async () => {
-          useWebmcpInspectorStore.setState({
-            liveFrame: liveFrame(`frame-${seq}`, seq),
-          });
+          publishFrame(seq);
         });
       }
       expect(panelRenders.activity - before.activity).toBe(0);
       expect(panelRenders.tools - before.tools).toBe(0);
-      await waitFor(() => expect(loadedImages.at(-1)?.src).toBe("frame-30"));
+      // …and every one of them reached the canvas. The frames are not merely
+      // isolated from the workspace; they are still being drawn.
+      expect(drawImage).toHaveBeenCalledTimes(30);
     },
   );
 
@@ -203,25 +211,6 @@ describe("WebmcpInspectorTab — viewport", () => {
     // A session left encoding frames for a pane nobody is looking at is
     // exactly what demand-driving exists to avoid.
     expect(setScreencast).toHaveBeenLastCalledWith(false);
-  });
-
-  it("falls back to the screenshot poll when the server refuses the command", async () => {
-    vi.useFakeTimers();
-    const { setScreencast, captureScreenshot } = stubViewportActions({
-      screencastAccepted: false,
-    });
-
-    render(<WebmcpInspectorTab />);
-    await act(async () => {});
-
-    expect(setScreencast).toHaveBeenCalledWith(true);
-    // One immediately, so the pane is not blank for a whole second…
-    expect(captureScreenshot).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      vi.advanceTimersByTime(2_100);
-    });
-    // …then on the interval.
-    expect(captureScreenshot.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
   it("neither streams nor polls for a hosted session — it has a live view", async () => {
@@ -270,18 +259,6 @@ describe("WebmcpInspectorTab — viewport", () => {
     expect(screen.getByText(/Live view is off/)).toBeInTheDocument();
   });
 
-  it("polls down the silent path, not the error-clearing one", async () => {
-    const { captureScreenshot } = stubViewportActions({
-      screencastAccepted: false,
-    });
-    render(<WebmcpInspectorTab />);
-    await act(async () => {});
-    // What that flag then protects — an error banner surviving a poll — is the
-    // store's behaviour and is asserted there, against the real action rather
-    // than this spy.
-    expect(captureScreenshot).toHaveBeenCalledWith({ silent: true });
-  });
-
   it("stops asking once Live view is switched off", async () => {
     const { setScreencast } = stubViewportActions({ screencastAccepted: true });
     render(<WebmcpInspectorTab />);
@@ -307,44 +284,12 @@ describe("WebmcpInspectorTab — viewport", () => {
       expect(loadedImages.at(-1)?.src).toBe("data:image/jpeg;base64,manual"),
     );
 
+    // Then the first real frame arrives, decoded, and the canvas takes over.
+    drawImage.mockClear();
     await act(async () => {
-      useWebmcpInspectorStore.setState({
-        liveFrame: liveFrame("data:image/jpeg;base64,paint"),
-      });
+      publishFrame();
     });
-    await waitFor(() =>
-      expect(loadedImages.at(-1)?.src).toBe("data:image/jpeg;base64,paint"),
-    );
-    view.unmount();
-  });
-
-  it("renders the frame's src verbatim, whatever transport minted it", async () => {
-    stubViewportActions({ screencastAccepted: true });
-    const view = render(<WebmcpInspectorTab />);
-    await act(async () => {});
-
-    // A blob URL from the binary socket. The pane must not re-wrap it as a
-    // data URI, and must not know which transport produced it — that
-    // indifference is what lets the transport change without touching the
-    // letterbox and coordinate arithmetic below it.
-    await act(async () => {
-      useWebmcpInspectorStore.setState({
-        liveFrame: liveFrame("blob:http://localhost/abc-123"),
-      });
-    });
-    await waitFor(() =>
-      expect(loadedImages.at(-1)?.src).toBe("blob:http://localhost/abc-123"),
-    );
-
-    // …and a data URI from SSE, through the same prop.
-    await act(async () => {
-      useWebmcpInspectorStore.setState({
-        liveFrame: liveFrame("data:image/jpeg;base64,sse", 2),
-      });
-    });
-    await waitFor(() =>
-      expect(loadedImages.at(-1)?.src).toBe("data:image/jpeg;base64,sse"),
-    );
+    expect(drawImage).toHaveBeenCalled();
     view.unmount();
   });
 
@@ -373,9 +318,9 @@ describe("WebmcpInspectorTab — viewport", () => {
         viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
       }),
       sendInput,
-      liveFrame: liveFrame("data:image/jpeg;base64,paint"),
     });
     stubViewportActions({ screencastAccepted: true });
+    publishFrame();
 
     render(<WebmcpInspectorTab />);
     await act(async () => {});
@@ -402,9 +347,7 @@ describe("WebmcpInspectorTab — viewport", () => {
     await act(async () => {
       // A frame captured at two device pixels per CSS pixel: 2560x1600 of
       // picture describing a 1280x800 page.
-      useWebmcpInspectorStore.setState({
-        liveFrame: liveFrame("data:image/jpeg;base64,retina", 1, 2),
-      });
+      publishFrame(1, 2);
     });
 
     const pane = screen.getByLabelText(
@@ -414,7 +357,7 @@ describe("WebmcpInspectorTab — viewport", () => {
       name: "Live view of the inspected page",
     });
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1280, height: 800 } as DOMRect);
+      ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
 
     await act(async () => {
       mouseDown(image, { clientX: 640, clientY: 400, button: 0 });
@@ -431,16 +374,16 @@ describe("WebmcpInspectorTab — viewport", () => {
   });
 
   /**
-   * The badge that says the pane is not on the path it should be.
+   * What the pane says when the socket has given up.
    *
-   * Everything about the fallback ladder is silent by design — that is what
-   * keeps a pane painting through a dead socket — which leaves a session
-   * quietly running on the slowest transport it has and nobody any the wiser.
-   * The badge is the one place that shows up.
+   * The retries are silent by design — that is what keeps a pane showing the
+   * last picture it was given through a reconnect — which leaves a session
+   * with no live view and nobody any the wiser once they are spent. This is
+   * the one place that shows up, and it points at the remedy that still works.
    */
-  describe("transport badge", () => {
+  describe("live view notice", () => {
     async function renderWith(frameTransport: {
-      rung: "ws" | "sse-frames" | "poll" | "none";
+      rung: "ws" | "none";
       attempts: number;
       latched: boolean;
     }) {
@@ -462,105 +405,66 @@ describe("WebmcpInspectorTab — viewport", () => {
 
     it("says nothing while the socket is carrying frames", async () => {
       await renderWith({ rung: "ws", attempts: 0, latched: false });
-      expect(screen.queryByText(/^Frames:/)).toBeNull();
+      expect(screen.queryByText(/Live view is unavailable/)).toBeNull();
     });
 
     it("says nothing while the ladder is still retrying", async () => {
-      // Degraded, but about to be fine. A badge that flickered on every
-      // reconnect would train people to ignore it.
-      await renderWith({ rung: "sse-frames", attempts: 2, latched: false });
-      expect(screen.queryByText(/^Frames:/)).toBeNull();
+      // Degraded, but about to be fine, and the pane is still holding the last
+      // picture it was given. A notice that flickered on every reconnect would
+      // train people to ignore it.
+      await renderWith({ rung: "none", attempts: 2, latched: false });
+      expect(screen.queryByText(/Live view is unavailable/)).toBeNull();
     });
 
-    it("names the fallback once the ladder has given up", async () => {
-      await renderWith({ rung: "sse-frames", attempts: 4, latched: true });
-      const badge = screen.getByText("Frames: SSE");
-      // The attempt count rides in the tooltip rather than the badge: the
-      // number matters to whoever is diagnosing it, not to the person reading
-      // the header.
-      expect(badge).toHaveAttribute("title", expect.stringContaining("4"));
+    it("points at the Screenshot button once the socket has given up", async () => {
+      await renderWith({ rung: "none", attempts: 4, latched: true });
+      expect(
+        screen.getByText(/Live view is unavailable for this session/),
+      ).toBeInTheDocument();
     });
 
-    it("names the screenshot poll", async () => {
-      await renderWith({ rung: "poll", attempts: 0, latched: false });
-      expect(screen.getByText("Frames: polling")).toBeInTheDocument();
+    it("says the same when nothing ever paints, socket or no socket", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        // The ladder is fine and the socket is carrying: this is the session
+        // whose daemon never selects a tab, so `set_screencast` keeps coming
+        // back refused. Waiting it out is right — but not forever, and
+        // "Waiting for the first frame…" offers nothing to click.
+        await renderWith({ rung: "ws", attempts: 0, latched: false });
+        expect(screen.queryByText(/Live view is unavailable/)).toBeNull();
+
+        await act(async () => {
+          vi.advanceTimersByTime(6_000);
+        });
+        expect(
+          screen.getByText(/Live view is unavailable for this session/),
+        ).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
     });
-  });
 
-  it("tells the store when it falls back to polling screenshots", async () => {
-    // The server refuses `set_screencast` — every server older than it does —
-    // and the pane starts its own screenshot loop. Without this report the
-    // store would describe a pane painting from screenshots as one with no
-    // transport at all.
-    useWebmcpInspectorStore.setState({
-      session: session({
-        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
-      }),
+    it("stays quiet when a frame arrives before the wait is up", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        await renderWith({ rung: "ws", attempts: 0, latched: false });
+        await act(async () => {
+          webmcpFrameChannel.publish({
+            bitmap: undefined,
+            data: "painted",
+            deviceWidth: 1280,
+            deviceHeight: 800,
+            scale: 1,
+            ts: 1,
+            seq: 1,
+          });
+          vi.advanceTimersByTime(6_000);
+        });
+        expect(screen.queryByText(/Live view is unavailable/)).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
     });
-    stubViewportActions({ screencastAccepted: false });
-    const view = render(<WebmcpInspectorTab />);
-    await act(async () => {});
-
-    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("poll");
-
-    view.unmount();
-    await act(async () => {});
-    // And stops saying so when the pane goes away, or the next session would
-    // inherit a poll that is not running.
-    expect(useWebmcpInspectorStore.getState().frameTransport.rung).not.toBe(
-      "poll",
-    );
-  });
-
-  it("stops an inherited poll when the next session can stream", async () => {
-    // ONE pair of store actions for the whole test, deliberately: they are
-    // dependencies of the poll effect too, so restubbing them mid-test would
-    // re-run it for the wrong reason and pass with the session dependency
-    // removed. The session is the only thing that changes here.
-    const captureScreenshot = vi.fn(async () => {});
-    const setScreencast = vi.fn(
-      async () =>
-        useWebmcpInspectorStore.getState().session?.sessionId ===
-        "session-streams",
-    );
-    const streamKind = {
-      kind: "frame-stream" as const,
-      width: 1280,
-      height: 800,
-    };
-    useWebmcpInspectorStore.setState({
-      setScreencast,
-      captureScreenshot,
-      // The first session's browser refuses `set_screencast` — every server
-      // older than the command does — so the pane runs its own screenshot loop.
-      session: session({
-        sessionId: "session-refuses",
-        viewportTransport: streamKind,
-      }),
-    });
-    render(<WebmcpInspectorTab />);
-    await act(async () => {});
-    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("poll");
-    const polledForFirstSession = captureScreenshot.mock.calls.length;
-
-    // A new session with the same transport KIND, so every other input to the
-    // effect is unchanged — and a browser that streams perfectly well.
-    useWebmcpInspectorStore.setState({
-      session: session({
-        sessionId: "session-streams",
-        viewportTransport: streamKind,
-      }),
-    });
-    await act(async () => {});
-
-    // The interval belonged to the session that needed it. Left running, it
-    // would fire a screenshot a second at a session that is streaming, and the
-    // badge would read "Frames: polling" over a working socket.
-    expect(setScreencast).toHaveBeenLastCalledWith(true);
-    expect(useWebmcpInspectorStore.getState().frameTransport.rung).not.toBe(
-      "poll",
-    );
-    expect(captureScreenshot.mock.calls.length).toBe(polledForFirstSession);
   });
 
   it("does not stop the replacement session's stream on the way out", async () => {
@@ -601,9 +505,7 @@ describe("WebmcpInspectorTab — viewport", () => {
   });
 
   it("leaves a native-window session view-only", async () => {
-    useWebmcpInspectorStore.setState({
-      liveFrame: liveFrame("data:image/jpeg;base64,paint"),
-    });
+    publishFrame();
     stubViewportActions({ screencastAccepted: true });
 
     render(<WebmcpInspectorTab />);
@@ -661,10 +563,10 @@ describe("WebmcpInspectorTab — viewport", () => {
       session: session({
         viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
       }),
-      liveFrame: liveFrame("scroll-frame"),
       sendInput,
     });
     stubViewportActions({ screencastAccepted: true });
+    publishFrame();
     const view = render(
       <StrictMode>
         <WebmcpInspectorTab />
@@ -672,15 +574,13 @@ describe("WebmcpInspectorTab — viewport", () => {
     );
     await act(async () => {});
     await act(async () => {
-      useWebmcpInspectorStore.setState({
-        liveFrame: liveFrame("scroll-frame"),
-      });
+      publishFrame(2);
     });
     const canvas = screen.getByRole("img", {
       name: "Live view of the inspected page",
     });
     canvas.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1280, height: 800 } as DOMRect);
+      ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
     const wheel = new WheelEvent("wheel", {
       bubbles: true,
       cancelable: true,
