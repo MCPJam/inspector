@@ -217,7 +217,8 @@ export const RUN_ORIGIN_META: Record<RunOrigin, RunOriginMeta> = {
 };
 
 const DECLARED_SUFFIX = " — declared by the launching client";
-const VERIFIED_SUFFIX = " — verified from the credential the run authenticated with";
+const VERIFIED_SUFFIX =
+  " — verified from the credential the run authenticated with";
 
 /**
  * The tooltip for one origin, saying whether it is a claim or a proof.
@@ -275,6 +276,25 @@ export const RUN_ORIGIN_FILTERS: Array<{
     origins: ["github_check", "github_action"],
   },
 ];
+
+/**
+ * The chips for surfaces that are not public yet, gated behind
+ * `platform-post-launch`. Chip VALUES rather than origins: the filter list is
+ * what gets trimmed, and `originsForFilters` keeps working off whatever
+ * survives, so nothing here needs to know that `github` spans two origins.
+ */
+export const POST_LAUNCH_RUN_ORIGIN_FILTER_VALUES: ReadonlySet<string> =
+  new Set(["mcp", "schedule", "github"]);
+
+/** The chips to show — the full list only once `platform-post-launch` is on. */
+export function visibleRunOriginFilters(
+  postLaunchEnabled: boolean,
+): typeof RUN_ORIGIN_FILTERS {
+  if (postLaunchEnabled) return RUN_ORIGIN_FILTERS;
+  return RUN_ORIGIN_FILTERS.filter(
+    (filter) => !POST_LAUNCH_RUN_ORIGIN_FILTER_VALUES.has(filter.value),
+  );
+}
 
 /** The backend `origins` argument for a set of selected chips. */
 export function originsForFilters(selected: readonly string[]): RunOrigin[] {

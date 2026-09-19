@@ -464,7 +464,10 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
   });
 
   it("narrows the request_payload trace tools via prepareAdvertisedTools (step 0)", () => {
-    streamTextMock.mockReturnValueOnce(defaultStreamTextReturn());
+    streamTextMock.mockImplementationOnce((options) => {
+      options.prepareStep({ stepNumber: 0 });
+      return defaultStreamTextReturn();
+    });
     let payloadTools: Record<string, unknown> | undefined;
     runDirectChatTurn({
       llmModel: { id: "mock" } as any,
@@ -490,6 +493,51 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     // The request_payload trace must reflect the narrowed step-0 advertised set
     // (regression: previously it emitted the full tools map).
     expect(payloadTools && Object.keys(payloadTools)).toEqual(["search"]);
+  });
+
+  it("records every prepared request identically for streaming persistence and headless callers", async () => {
+    let options: any;
+    streamTextMock.mockImplementationOnce((value) => {
+      options = value;
+      return defaultStreamTextReturn();
+    });
+    const onPersist = vi.fn();
+    const onRequestPayload = vi.fn();
+    const initial = [{ role: "user", content: "hi" }];
+    const handle = runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: initial as any,
+      systemPrompt: "original",
+      tools: {
+        search: { description: "Search" },
+        computer: { description: "Computer" },
+      } as any,
+      prepareAdvertisedTools: ({ stepIndex }) =>
+        stepIndex === 0 ? ["search"] : ["computer"],
+      traceEvents: { onRequestPayload },
+      onPersist,
+    });
+    options.prepareStep({ stepNumber: 0, messages: initial });
+    const next = [...initial, { role: "assistant", content: "search result" }];
+    options.prepareStep({ stepNumber: 1, messages: next });
+    next.push({ role: "assistant", content: "after request" });
+    await options.onFinish({ steps: [], totalUsage: {}, finishReason: "stop" });
+    const result = await consumeDirectChatTurnHeadless(handle);
+    expect(onRequestPayload).toHaveBeenCalledTimes(2);
+    expect(result.turnTrace.requestPayloads).toEqual(
+      onPersist.mock.calls[0][0].turnTrace.requestPayloads,
+    );
+    expect(result.turnTrace.requestPayloads).toHaveLength(2);
+    expect(
+      Object.keys(result.turnTrace.requestPayloads![0].payload.tools!),
+    ).toEqual(["search"]);
+    expect(
+      Object.keys(result.turnTrace.requestPayloads![1].payload.tools!),
+    ).toEqual(["computer"]);
+    expect(result.turnTrace.requestPayloads![1].payload.messages).toHaveLength(
+      2,
+    );
   });
 
   it("flips `isAborted` true when the abort signal fires", async () => {

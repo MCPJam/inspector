@@ -12,7 +12,11 @@ export {
   type ErrorCatalogSlug,
   type ErrorOrigin,
 } from "./catalog.js";
+export { extractNodeErrno, RETRYABLE_NODE_ERROR_CODES } from "./node-errno.js";
 export {
-  extractNodeErrno,
-  RETRYABLE_NODE_ERROR_CODES,
-} from "./node-errno.js";
+  bodyKindFromContentType,
+  summarizeBearerChallenge,
+  type BearerChallengeSummary,
+} from "./challenge.js";
+
+export { mcpjamLimitSlugForMessage } from "./describe.js";

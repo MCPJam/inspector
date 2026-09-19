@@ -155,9 +155,9 @@ export type WriteSimpleCaseView = {
  * and `stepsToPromptTurns` both skip an advisory `toolCalledWith`, so an
  * advisory one never becomes a matcher expectation — the runner grades it as
  * an ordinary predicate instead. Treating it as the route here would show a
- * Gate route on a case the backend does not route, which is the one thing the
- * tool question exists to answer. It files as a step scorer instead
- * (`isStepCheckAssert`), wearing its own Warn or Report role.
+ * Required route on a case the backend does not route, which is the one thing
+ * the tool question exists to answer. It files as a step scorer instead
+ * (`isStepCheckAssert`), wearing its own Advisory role.
  */
 export function isToolCalledWithAssert(step: TestStep): boolean {
   return (
