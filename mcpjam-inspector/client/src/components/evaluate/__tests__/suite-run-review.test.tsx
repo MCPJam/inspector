@@ -191,10 +191,10 @@ describe("suite run review", () => {
       />,
     );
     expect(
-      screen.queryByRole("link", { name: "Edit Suite Settings" }),
+      screen.queryByRole("link", { name: "Configure suite evaluators" }),
     ).toBeNull();
     await user.click(
-      screen.getByRole("button", { name: "Edit Suite Settings" }),
+      screen.getByRole("button", { name: "Configure suite evaluators" }),
     );
     expect(onClose).toHaveBeenCalledOnce();
     expect(onEditSettings).toHaveBeenCalledOnce();

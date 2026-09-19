@@ -362,9 +362,9 @@ describe("states", () => {
 
 describe("vocabulary", () => {
   it("never borrows run-state words for a config state", () => {
-    // Settings has observed nothing. "Not measured" and "no grader" describe a
-    // run and an ungraded stage respectively; either would state something
-    // nobody looked at.
+    // Settings has observed nothing. "Not measured" and "No evaluator"
+    // describe a run and an ungraded stage respectively; either would state
+    // something nobody looked at.
     const variants: StageFactsTargetInput[] = [
       target(),
       target({ isHosted: false }),
@@ -392,7 +392,7 @@ describe("vocabulary", () => {
         .join(" ")
         .toLowerCase();
       expect(text).not.toContain("not measured");
-      expect(text).not.toContain("no grader");
+      expect(text).not.toContain("no evaluator");
       expect(text).not.toContain("passed");
     }
   });

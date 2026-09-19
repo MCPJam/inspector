@@ -26,6 +26,9 @@
 import type { EvalMatchOptions } from "@/shared/eval-matching";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import {
+  EVAL_ITERATION_RULE_LABELS,
+  EVAL_PASS_CRITERION_SCOPE_LABELS,
+  describeEvalPassCriterion,
   normalizeSuiteGatePolicy,
   type SuiteGatePolicyV1,
 } from "@mcpjam/sdk/contract";
@@ -535,7 +538,10 @@ export function describeChange(
     case "defaultPassCriteria":
       return {
         key,
-        label: "Minimum accuracy",
+        // The SUITE-WIDE criterion, named from the shared grading vocabulary so
+        // the review dialog, the settings row, revision history and the CLI all
+        // say the same words about the same number.
+        label: EVAL_PASS_CRITERION_SCOPE_LABELS.suiteWide,
         before:
           before.defaultPassCriteria === undefined
             ? "Not set"
@@ -548,9 +554,12 @@ export function describeChange(
     case "minIterations":
       return {
         key,
-        label: "Minimum iterations",
-        before: before.minIterations?.toString() ?? "Case default",
-        after: after.minIterations?.toString() ?? "Case default",
+        label: EVAL_ITERATION_RULE_LABELS.caseCountWithFloor,
+        // "No minimum", not "Case default": the absent floor is the suite's
+        // real state. "Case default" read as though some other default applied,
+        // which is what the per-case rule does and this one does not.
+        before: before.minIterations?.toString() ?? "No minimum",
+        after: after.minIterations?.toString() ?? "No minimum",
       };
     case "computerEnvironmentId":
       return {
@@ -569,7 +578,7 @@ export function describeChange(
     case "defaultPredicates":
       return {
         key,
-        label: "Scorers",
+        label: "Assertions",
         before: describePredicates(before.defaultPredicates),
         after: describePredicates(after.defaultPredicates),
       };
@@ -583,31 +592,36 @@ export function describeChange(
     case "judgeRubric":
       return {
         key,
-        label: "Judge criteria",
+        label: "Grading instructions",
         before: summarizeRubric(before.judgeRubric),
         after: summarizeRubric(after.judgeRubric),
       };
     case "verdictPolicyVersion":
       return {
         key,
-        label: "Quality gate",
-        before: describePolicyVersion(before),
-        after: describePolicyVersion(after),
+        // "Pass criteria", not "Quality gate": this key records which
+        // criterion decides the suite's runs, and the quality gate is the
+        // separate comparison against a baseline. Three keys used to review
+        // under two spellings of "Quality gate", so a reviewer reading a diff
+        // could not tell which of the three had changed.
+        label: "Pass criteria",
+        before: describeCriterionScope(before),
+        after: describeCriterionScope(after),
       };
     case "verdictPolicyDefaults":
-      // The whole object, not just `.validity`: an edit to repetitions or
-      // the threshold used to review as "Validity: Contract defaults →
-      // Contract defaults", a row that named the wrong setting and showed
-      // no change.
+      // The whole object, not just `.validity`: an edit to the count or the
+      // threshold used to review as "Validity: Contract defaults → Contract
+      // defaults", a row that named the wrong setting and showed no change.
       return {
         key,
-        label: "Quality gate defaults",
+        label: "Pass criteria and iterations",
         before: describePolicyDefaults(before.verdictPolicyDefaults),
         after: describePolicyDefaults(after.verdictPolicyDefaults),
       };
     case "gatePolicy":
       return {
         key,
+        // The one key that IS the quality gate.
         label: "Quality gate",
         before: describeGatePolicy(before.gatePolicy),
         after: describeGatePolicy(after.gatePolicy),
@@ -616,31 +630,43 @@ export function describeChange(
 }
 
 /**
- * The policy row's sentence, which has to carry BOTH halves of an upgrade.
+ * Which criterion decides this suite, as the sentence a reviewer checks.
  *
- * A version bump on its own reads as "legacy → v2" and hides the numbers the
- * suite will actually be graded against, which is the part a reviewer needs to
- * check. So the defaults ride along in the same line.
+ * Says what the bar IS, not which version names it. It read "Legacy 90% → v2:
+ * 3 iterations, 90% threshold", where the two 90s are different numbers over
+ * different populations — so the one row whose job is to show a reviewer that
+ * the bar moved displayed a bar that looked unchanged. The sentences come from
+ * the shared vocabulary's own composer, so both sides name their scope and
+ * their population and cannot be mistaken for each other.
  */
-function describePolicyVersion(values: SuiteSettingsValues): string {
+function describeCriterionScope(values: SuiteSettingsValues): string {
   if (values.verdictPolicyVersion !== 2) {
     const rate = values.defaultPassCriteria?.minimumPassRate;
-    return rate === undefined ? "Legacy" : `Legacy ${rate}%`;
+    if (rate === undefined) return "Not set";
+    return describeEvalPassCriterion({
+      scope: "suiteWide",
+      thresholdPercent: rate,
+      // The population and the empty-population rate the hosted run finalizer
+      // uses, which is what decides a run configured this way.
+      population: "iterations",
+      emptyPopulationRate: 1,
+    });
   }
   const defaults = values.verdictPolicyDefaults;
-  if (!defaults) return "v2";
-  return `v2: ${defaults.repetitions} repetition${
-    defaults.repetitions === 1 ? "" : "s"
-  }, ${formatFraction(defaults.passThreshold)} threshold`;
+  if (!defaults) return "Not set";
+  return describeEvalPassCriterion({
+    scope: "perCase",
+    threshold: defaults.passThreshold,
+  });
 }
 
-/** Repetitions, threshold, and the validity ceilings when any are set. */
+/** Iterations, threshold, and the validity ceilings when any are set. */
 function describePolicyDefaults(
   defaults: SuiteVerdictPolicyDefaults | undefined,
 ): string {
   if (!defaults) return "None";
   const parts = [
-    `${defaults.repetitions} repetition${defaults.repetitions === 1 ? "" : "s"}`,
+    `${defaults.repetitions} iteration${defaults.repetitions === 1 ? "" : "s"}`,
     `${formatFraction(defaults.passThreshold)} threshold`,
   ];
   if (defaults.validity) parts.push(`validity: ${describeValidity(defaults)}`);
