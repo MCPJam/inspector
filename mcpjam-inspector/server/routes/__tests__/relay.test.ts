@@ -128,6 +128,10 @@ describe("posthog relay proxy", () => {
       method: "POST",
       body: "{}",
       headers: {
+        "x-mcpjam-edge-secret": "current",
+        "x-mcpjam-edge-secret-previous": "previous",
+        "cf-ray": "test-ray",
+        "x-inspector-service-token": "service",
         Cookie: "mcpjam_session=secret",
         "X-MCP-Session-Auth": "token",
         "User-Agent": "test-agent",
@@ -137,6 +141,7 @@ describe("posthog relay proxy", () => {
     });
 
     const headers = new Headers(mockedFetchInit().headers);
+    for (const name of ["x-mcpjam-edge-secret", "x-mcpjam-edge-secret-previous", "cf-connecting-ip", "cf-ray", "x-inspector-service-token"]) expect(headers.get(name)).toBeNull();
     expect(headers.get("cookie")).toBeNull();
     expect(headers.get("x-mcp-session-auth")).toBeNull();
     expect(headers.get("host")).toBeNull();

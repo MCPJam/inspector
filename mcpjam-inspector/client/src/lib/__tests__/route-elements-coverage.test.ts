@@ -167,23 +167,10 @@ describe("the router mounts every route it registers", () => {
     expect(valid.headers.get("Location")).toBe(`/p/${VALID_PROJECT_ID}/hosts`);
   });
 
-  it("does not redirect a malformed project's /ci-evals to itself", async () => {
-    // The rewrite is an anchored `^/ci-evals`, which matches nothing in
-    // `/p/none/ci-evals`. The loader handed back the path it was given, so the
-    // route redirected to itself — a loop rather than the unavailable state.
-    const loader = projectLoader("ci-evals/*");
-    const request = new Request("http://localhost/p/none/ci-evals/abc");
-    expect(await loader({ params: { projectId: "none" }, request })).toBeNull();
-
-    const valid = (await loader({
-      params: { projectId: VALID_PROJECT_ID },
-      request: new Request(
-        `http://localhost/p/${VALID_PROJECT_ID}/ci-evals/abc`
-      ),
-    })) as Response;
-    expect(valid.headers.get("Location")).toBe(
-      `/p/${VALID_PROJECT_ID}/evals/runs/abc`
-    );
+  it("handles CI redirects inside the project boundary rather than an escaping loader", () => {
+    const route = projectSubtree().children?.find((child) => child.path === "ci-evals/*");
+    expect(route?.loader).toBeUndefined();
+    expect(route?.element).toBeTruthy();
   });
 
   it("mounts the GitHub install callback", () => {

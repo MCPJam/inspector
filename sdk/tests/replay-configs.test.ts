@@ -1,9 +1,9 @@
 const reportEvalResultsMocks = vi.hoisted(() => ({
-  reportEvalResultsSafely: vi.fn(),
+  reportEvalResults: vi.fn(),
 }));
 
 vi.mock("../src/report-eval-results.js", () => ({
-  reportEvalResultsSafely: reportEvalResultsMocks.reportEvalResultsSafely,
+  reportEvalResults: reportEvalResultsMocks.reportEvalResults,
 }));
 
 import { EvalSuite } from "../src/EvalSuite";
@@ -56,8 +56,14 @@ function createReplayAwareAgent() {
 
 describe("server replay config auto-save wiring", () => {
   beforeEach(() => {
-    reportEvalResultsMocks.reportEvalResultsSafely.mockReset();
-    reportEvalResultsMocks.reportEvalResultsSafely.mockResolvedValue(null);
+    reportEvalResultsMocks.reportEvalResults.mockReset();
+    reportEvalResultsMocks.reportEvalResults.mockResolvedValue({
+      suiteId: "suite",
+      runId: "run",
+      status: "completed",
+      result: "passed",
+      summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
+    });
   });
 
   it("exposes replay configs from HostRunner when a client manager is attached", () => {
@@ -99,7 +105,7 @@ describe("server replay config auto-save wiring", () => {
       },
     });
 
-    expect(reportEvalResultsMocks.reportEvalResultsSafely).toHaveBeenCalledWith(
+    expect(reportEvalResultsMocks.reportEvalResults).toHaveBeenCalledWith(
       expect.objectContaining({
         serverReplayConfigs: [
           {
@@ -134,10 +140,8 @@ describe("server replay config auto-save wiring", () => {
       },
     });
 
-    expect(
-      reportEvalResultsMocks.reportEvalResultsSafely
-    ).toHaveBeenCalledTimes(1);
-    expect(reportEvalResultsMocks.reportEvalResultsSafely).toHaveBeenCalledWith(
+    expect(reportEvalResultsMocks.reportEvalResults).toHaveBeenCalledTimes(1);
+    expect(reportEvalResultsMocks.reportEvalResults).toHaveBeenCalledWith(
       expect.objectContaining({
         serverReplayConfigs: [
           {
@@ -168,7 +172,7 @@ describe("server replay config auto-save wiring", () => {
       },
     });
 
-    expect(reportEvalResultsMocks.reportEvalResultsSafely).toHaveBeenCalledWith(
+    expect(reportEvalResultsMocks.reportEvalResults).toHaveBeenCalledWith(
       expect.objectContaining({
         serverReplayConfigs: [
           {

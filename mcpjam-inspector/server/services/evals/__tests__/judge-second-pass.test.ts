@@ -21,6 +21,7 @@ import {
 } from "../judge-second-pass.js";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import { hostedCriterionId } from "../score-definitions.js";
+import { authoredRequiredRole } from "@mcpjam/sdk/contract";
 
 // =============================================================================
 // The second pass is the only component that WRITES because of a judge, so the
@@ -145,15 +146,20 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("the mode is checked before anything is read or written", () => {
-  test("env off: not even the run is read", async () => {
+describe("no-op modes settle fanout without grading", () => {
+  test("env off: reads job ids and settles without deriving", async () => {
     process.env[ENV_KEY] = "off";
     const { value } = ports();
     const result = await runJudgeSecondPass("run1", value);
     expect(result).toMatchObject({ noop: true, reason: "mode_off", graded: 0 });
-    expect(value.fetchRun).not.toHaveBeenCalled();
+    expect(value.fetchRun).toHaveBeenCalledWith("run1");
     expect(value.applyDerivation).not.toHaveBeenCalled();
-    expect(value.markFanout).not.toHaveBeenCalled();
+    expect(value.markFanout).toHaveBeenCalledWith({
+      runId: "run1",
+      goalCompletionJobId: "job1",
+      outcomes: [],
+      noop: true,
+    });
   });
 
   test("an absent env var behaves as off", async () => {
@@ -163,10 +169,10 @@ describe("the mode is checked before anything is read or written", () => {
       noop: true,
       reason: "mode_off",
     });
-    expect(value.fetchRun).not.toHaveBeenCalled();
+    expect(value.fetchRun).toHaveBeenCalledWith("run1");
   });
 
-  test("the run's snapshot says shadow: read, then write nothing", async () => {
+  test("the run's snapshot says shadow: settle without derivation", async () => {
     const { value } = ports({
       fetchRun: vi.fn(async () =>
         runRow({ configSnapshot: { gradingEngine: { mode: "shadow" } } }),
@@ -175,7 +181,12 @@ describe("the mode is checked before anything is read or written", () => {
     const result = await runJudgeSecondPass("run1", value);
     expect(result).toMatchObject({ noop: true, reason: "mode_shadow" });
     expect(value.applyDerivation).not.toHaveBeenCalled();
-    expect(value.markFanout).not.toHaveBeenCalled();
+    expect(value.markFanout).toHaveBeenCalledWith({
+      runId: "run1",
+      goalCompletionJobId: "job1",
+      outcomes: [],
+      noop: true,
+    });
   });
 
   test("the run's snapshot wins over env: env dual_write, suite off", async () => {
@@ -189,6 +200,52 @@ describe("the mode is checked before anything is read or written", () => {
       reason: "mode_off",
     });
     expect(value.applyDerivation).not.toHaveBeenCalled();
+  });
+});
+
+describe("no-op fanout completion", () => {
+  test.each(["off", "shadow", "dual_write"] as const)(
+    "%s settles both empty fanouts",
+    async (mode) => {
+      const { value } = ports({
+        fetchRun: vi.fn(async () =>
+          runRow({
+            configSnapshot: { gradingEngine: { mode } },
+            metadataAttributionJobId: "metadata1",
+            iterations: [],
+          }),
+        ),
+      });
+      await runJudgeSecondPass("run1", value);
+      expect(value.applyDerivation).not.toHaveBeenCalled();
+      expect(value.applyMetadataAttributionDerivation).not.toHaveBeenCalled();
+      expect(value.markFanout).toHaveBeenCalledWith({
+        runId: "run1",
+        goalCompletionJobId: "job1",
+        outcomes: [],
+        noop: true,
+      });
+      expect(value.markMetadataAttributionFanout).toHaveBeenCalledWith({
+        runId: "run1",
+        metadataAttributionJobId: "metadata1",
+        outcomes: [],
+        noop: true,
+      });
+    },
+  );
+
+  test("an incomplete empty read cannot claim successful completion", async () => {
+    const { value } = ports({
+      fetchRun: vi.fn(async () => runRow({ iterations: [], incomplete: true })),
+    });
+    await runJudgeSecondPass("run1", value);
+    expect(value.markFanout).toHaveBeenCalledWith({
+      runId: "run1",
+      goalCompletionJobId: "job1",
+      outcomes: [],
+      noop: true,
+      failed: true,
+    });
   });
 });
 
@@ -211,7 +268,12 @@ describe("what it declines to grade", () => {
     const result = await runJudgeSecondPass("run1", value);
     expect(result).toMatchObject({ noop: true, reason: "no_judge_verdicts" });
     expect(value.applyDerivation).not.toHaveBeenCalled();
-    expect(value.markFanout).not.toHaveBeenCalled();
+    expect(value.markFanout).toHaveBeenCalledWith({
+      runId: "run1",
+      goalCompletionJobId: "job1",
+      outcomes: [],
+      noop: true,
+    });
   });
 
   test("a cancelled iteration is skipped even with a verdict", async () => {
@@ -411,7 +473,9 @@ describe("the write it does make", () => {
       noop: true,
       reason: "no_judge_verdicts",
     });
-    expect(reports).toHaveLength(0);
+    expect(reports).toEqual([
+      { runId: "run1", goalCompletionJobId: "job1", outcomes: [], noop: true },
+    ]);
   });
 
   test("a config conflict stops the pass and reports failure", async () => {
@@ -1191,12 +1255,12 @@ describe("the projected judge definition carries the run's role", () => {
     );
   }
 
-  test("a gating verdict projects a gating definition and a failing row", async () => {
+  test("a required verdict projects a required definition and a failing row", async () => {
     const { value, applied } = ports({ fetchRun: withRole("gating") });
     await runJudgeSecondPass("run1", value);
 
     const body = applied[0]!.body;
-    expect(judgeDefinition(body)?.role).toBe("gating");
+    expect(judgeDefinition(body)?.role).toBe(authoredRequiredRole());
     // The judge scored 0.2 against a 0.8 threshold, so the row fails — and on
     // a gating definition that row now counts.
     expect(judgeRow(body)?.passed).toBe(false);
@@ -1205,6 +1269,19 @@ describe("the projected judge definition carries the run's role", () => {
     expect(body).not.toHaveProperty("status");
     expect(body).not.toHaveProperty("result");
     expect(body).not.toHaveProperty("passed");
+  });
+
+  test("both spellings of a required verdict project one definition", async () => {
+    // The backend stamped `"gating"` before the rename and stamps `"required"`
+    // after it, and this pass reads historical evidence. The projection has to
+    // read both, or every hosted judge on one side of that line stops gating.
+    const legacy = ports({ fetchRun: withRole("gating") });
+    await runJudgeSecondPass("run1", legacy.value);
+    const canonical = ports({ fetchRun: withRole("required") });
+    await runJudgeSecondPass("run1", canonical.value);
+    expect(judgeDefinition(canonical.applied[0]!.body)).toEqual(
+      judgeDefinition(legacy.applied[0]!.body),
+    );
   });
 
   test("an advisory verdict is byte-identical with or without the field", async () => {

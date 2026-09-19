@@ -31,7 +31,7 @@ new HostRunner(options: HostRunnerOptions)
 | `tools`           | `Record<string, Tool>`           | Yes      | -           | MCP tools from `manager.getTools()`                           |
 | `model`           | `string`                         | Yes      | -           | Model identifier in `provider/model` format                   |
 | `apiKey`          | `string`                         | Yes      | -           | API key for the LLM provider                                  |
-| `systemPrompt`    | `string`                         | No       | `undefined` | System prompt for the LLM                                     |
+| `systemPrompt`    | `string`                         | No       | `undefined` | System prompt for the LLM. An empty string (`""`) is treated as "none given" and falls back to `"You are a helpful assistant."`. |
 | `temperature`     | `number`                         | No       | `undefined` | Sampling temperature (0-2). If undefined, uses model default. |
 | `maxSteps`        | `number`                         | No       | `10`        | Maximum agentic loop iterations                               |
 | `customProviders` | `Record<string, CustomProvider>` | No       | `undefined` | Custom LLM provider definitions                               |
@@ -255,7 +255,7 @@ apiKey: process.env.ANTHROPIC_API_KEY;
 
 ### systemPrompt
 
-Optional system prompt to guide the LLM's behavior.
+Optional system prompt to guide the LLM's behavior. An empty string (`""`) is treated the same as omitting the field — both fall back to `"You are a helpful assistant."`. This matters for saved MCPJam clients, which store a missing prompt as `""`.
 
 ```typescript
 systemPrompt: "You are a task management assistant. Be concise.";

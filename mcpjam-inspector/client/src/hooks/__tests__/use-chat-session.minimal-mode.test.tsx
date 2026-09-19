@@ -926,6 +926,43 @@ describe("useChatSession minimal mode parity", () => {
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
+  // A caller that pins a model through `executionConfig.modelId` gets it
+  // resolved against the list THIS hook builds. An org-key model is only in
+  // that list when the org config is passed in; otherwise the pinned id is
+  // missing, `createLockedInitialModel` guesses the provider from the bare id
+  // as `ollama`, and that is what the server then asks the org to resolve.
+  it("resolves a pinned org-key model only when the org config is forwarded", async () => {
+    const orgConfig = {
+      providers: [
+        {
+          providerKey: "anthropic",
+          enabled: true,
+          hasSecret: true,
+        },
+      ],
+    };
+    const pinned = {
+      selectedServers: [] as string[],
+      executionConfig: { modelId: orgAnthropicModel.id },
+      hostedContext: { projectId: "project-1", selectedServerIds: [] },
+    };
+
+    const { result: withoutConfig } = renderHook(() =>
+      useChatSession(pinned)
+    );
+    expect(withoutConfig.current.selectedModel).toMatchObject({
+      id: orgAnthropicModel.id,
+      provider: "ollama",
+      disabled: true,
+    });
+
+    const { result: withConfig } = renderHook(() =>
+      useChatSession({ ...pinned, hostedOrgModelConfig: orgConfig })
+    );
+    expect(withConfig.current.selectedModel).toEqual(orgAnthropicModel);
+    expect(withConfig.current.selectedModel.provider).toBe("anthropic");
+  });
+
   it("uses org config and the org-aware route for BYOK in non-hosted local dev", async () => {
     mockModelState.selectedModelId = orgAnthropicModel.id;
     mockGetAccessToken.mockResolvedValue(null);

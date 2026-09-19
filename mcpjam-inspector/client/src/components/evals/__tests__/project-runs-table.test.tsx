@@ -18,6 +18,21 @@ const mocks = vi.hoisted(() => ({
   /** Whether the fake backend honours `origins`; off by default so tests
    *  about the loaded page see it unfiltered. */
   backendFiltersOrigins: false,
+  /** `testSuites:getTestSuitesOverview` — only the suites' servers matter here. */
+  suiteOverview: {
+    current: undefined as
+      | Array<{
+          suite: {
+            _id: string;
+            environment: { servers: string[] };
+            hostAttachments?: Array<{ resolvedServerNames: string[] }>;
+          };
+        }>
+      | undefined,
+  },
+  /** `platform-post-launch`. On by default so the chip tests below keep
+   *  reaching MCP/Scheduled/GitHub. */
+  platformPostLaunchEnabled: true,
 }));
 
 const convexClient = { query: mocks.query };
@@ -28,6 +43,13 @@ vi.mock("@/hooks/useClients", () => ({
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => true,
+}));
+
+// The existing platform-chip tests drive MCP/Scheduled/GitHub, which only
+// exist once `platform-post-launch` is on. Flag-off chip trimming has its own
+// test below.
+vi.mock("@/hooks/usePlatformPostLaunchEnabled", () => ({
+  usePlatformPostLaunchEnabled: () => mocks.platformPostLaunchEnabled,
 }));
 
 vi.mock("convex/react", () => ({
@@ -46,6 +68,8 @@ vi.mock("convex/react", () => ({
       ),
     };
   },
+  useQuery: (_fn: unknown, args: unknown) =>
+    args === "skip" ? undefined : mocks.suiteOverview.current,
   useConvex: () => convexClient,
 }));
 
@@ -57,7 +81,9 @@ function latestQueryArgs(): Record<string, unknown> {
 import {
   ProjectRunsTable,
   PROJECT_RUNS_PAGE_SIZE,
+  SUITE_HEALTH_AUTO_PAGES,
 } from "../project-runs-table";
+import { GroupSummaryRow } from "../project-run-suite-groups";
 import {
   formatRunHistoryDate,
   formatRunHistoryDateRange,
@@ -108,9 +134,39 @@ beforeEach(() => {
   mocks.query.mockReset();
   mocks.queryArgs.length = 0;
   mocks.backendFiltersOrigins = false;
+  mocks.suiteOverview.current = undefined;
+  mocks.platformPostLaunchEnabled = true;
 });
 
 describe("ProjectRunsTable", () => {
+  it("gives each project a fresh auto-loading budget without remounting", () => {
+    setRows([makeRow()], "CanLoadMore");
+    const loadMore = mocks.paginated.current.loadMore;
+    const onSelectRun = vi.fn();
+    const view = (projectId: string) => (
+      <ProjectRunsTable projectId={projectId} onSelectRun={onSelectRun} evaluateLayout />
+    );
+    const { rerender } = render(view("project-a"));
+    for (let page = 1; page < SUITE_HEALTH_AUTO_PAGES; page += 1) {
+      mocks.paginated.current.status = "LoadingMore";
+      rerender(view("project-a"));
+      mocks.paginated.current.status = "CanLoadMore";
+      rerender(view("project-a"));
+    }
+    expect(loadMore).toHaveBeenCalledTimes(SUITE_HEALTH_AUTO_PAGES);
+    mocks.paginated.current.status = "LoadingMore";
+    rerender(view("project-a"));
+    mocks.paginated.current.status = "CanLoadMore";
+    rerender(view("project-a"));
+    expect(loadMore).toHaveBeenCalledTimes(SUITE_HEALTH_AUTO_PAGES);
+
+    // Readiness stays the same: projectId itself must trigger the reset/load.
+    rerender(view("project-b"));
+    expect(latestQueryArgs().projectId).toBe("project-b");
+    expect(loadMore).toHaveBeenCalledTimes(SUITE_HEALTH_AUTO_PAGES + 1);
+    expect(loadMore).toHaveBeenLastCalledWith(PROJECT_RUNS_PAGE_SIZE);
+  });
+
   it("filters embedded history and keeps pagination available for more matches", async () => {
     const user = userEvent.setup();
     mocks.backendFiltersOrigins = true;
@@ -132,12 +188,11 @@ describe("ProjectRunsTable", () => {
       screen.getByRole("menuitemcheckbox", { name: "SDK", exact: true }),
     );
     await user.keyboard("{Escape}");
-    // Sent to the query, not applied to the loaded page: the backend answers
-    // with the SDK runs alone, so there is no "of the loaded runs" caveat.
-    expect(latestQueryArgs().origins).toEqual(["sdk"]);
-    expect(screen.getByText(/1 of 1 loaded runs/)).toBeInTheDocument();
+    // Filtering keeps the loaded feed stable so other facet options survive.
+    expect(latestQueryArgs()).not.toHaveProperty("origins");
+    expect(screen.getByText(/1 of 2 loaded runs/)).toBeInTheDocument();
     expect(inTable().queryByText("UI")).toBeNull();
-    expect(screen.queryByText(/Filtering the .* most recent runs/)).toBeNull();
+    expect(screen.getByText(/Filtering the .* most recent runs/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: /Load more/ }));
     expect(mocks.paginated.current.loadMore).toHaveBeenCalledWith(
       PROJECT_RUNS_PAGE_SIZE,
@@ -201,7 +256,7 @@ describe("ProjectRunsTable", () => {
     expect(table.queryByText("Accuracy")).not.toBeNull();
   });
 
-  it("filters by origin THROUGH THE QUERY, not over the loaded page", async () => {
+  it("filters loaded origins without changing the feed", async () => {
     const user = userEvent.setup();
     setRows([
       makeRow({ _id: "run_sdk1", source: "sdk", suiteName: "CI suite" }),
@@ -224,14 +279,48 @@ describe("ProjectRunsTable", () => {
       screen.getByRole("menuitemcheckbox", { name: "SDK", exact: true }),
     );
     await user.keyboard("{Escape}");
-    expect(latestQueryArgs().origins).toEqual(["sdk"]);
+    expect(latestQueryArgs()).not.toHaveProperty("origins");
 
-    // …and the rows the query returned are rendered as they came. A second,
-    // client-side predicate would be free to disagree with the one that chose
-    // the page — which is exactly how "No runs match these filters" came to be
-    // shown for a suite whose GitHub runs were simply further down.
+    // Only matching loaded rows render; pagination can reveal older matches.
     expect(inTable().getByText("CI suite")).toBeTruthy();
-    expect(inTable().getByText("Playground suite")).toBeTruthy();
+    expect(inTable().queryByText("Playground suite")).toBeNull();
+  });
+
+  it("hides the unlaunched platform chips until platform-post-launch is on", async () => {
+    const user = userEvent.setup();
+    mocks.platformPostLaunchEnabled = false;
+    setRows([makeRow({ source: "sdk" })]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Filter by platform" }),
+    );
+    const chips = screen
+      .getAllByRole("menuitemcheckbox")
+      .map((chip) => chip.textContent);
+    expect(chips).toEqual(["SDK", "UI", "API", "CLI"]);
+  });
+
+  it("drops a selected chip when platform-post-launch goes off mid-session", async () => {
+    const user = userEvent.setup();
+    setRows([makeRow({ source: "github_check" })]);
+    const onSelectRun = vi.fn();
+    const view = render(
+      <ProjectRunsTable projectId="proj_1" onSelectRun={onSelectRun} />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Filter by platform" }),
+    );
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "GitHub" }));
+    await user.keyboard("{Escape}");
+    expect(latestQueryArgs()).not.toHaveProperty("origins");
+    // The chip leaves the menu, so the filter it stood for has to go with it.
+    mocks.platformPostLaunchEnabled = false;
+    view.rerender(
+      <ProjectRunsTable projectId="proj_1" onSelectRun={onSelectRun} />,
+    );
+    await waitFor(() => expect(latestQueryArgs().origins).toBeUndefined());
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   });
 
   it("maps the GitHub chip onto both stored GitHub origins", async () => {
@@ -245,37 +334,53 @@ describe("ProjectRunsTable", () => {
     await user.click(screen.getByRole("menuitemcheckbox", { name: "GitHub" }));
     // A PR check and an Actions job are the same thing to the person
     // filtering, and were never distinguishable in the badge either.
-    expect(latestQueryArgs().origins).toEqual([
-      "github_check",
-      "github_action",
-    ]);
+    expect(latestQueryArgs()).not.toHaveProperty("origins");
   });
 
-  it("keeps the chips reachable when a filter matches nothing", async () => {
+  it("keeps Git columns hidden for non-GitHub platform filters", async () => {
     const user = userEvent.setup();
-    mocks.backendFiltersOrigins = true;
-    setRows([makeRow({ source: "sdk" })]);
+    setRows([
+      makeRow({ source: "sdk" }),
+      makeRow({ _id: "run_github", source: "github_check" }),
+    ]);
     render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
 
     await user.click(
       screen.getByRole("button", { name: "Filter by platform" }),
     );
-    await user.click(screen.getByRole("menuitemcheckbox", { name: "CLI" }));
-    await user.click(screen.getByRole("menuitemcheckbox", { name: "MCP" }));
+    await user.click(
+      screen.getByRole("menuitemcheckbox", { name: "SDK", exact: true }),
+    );
     await user.keyboard("{Escape}");
 
-    // The full-page "No runs yet" would both lie about the project and take
-    // away the control needed to undo the filter.
-    expect(latestQueryArgs().origins).toEqual([
-      "cli",
-      "mcp",
-      "slack",
-      "discord",
-    ]);
     expect(
-      screen.getByRole("button", { name: "Filter by platform" }),
-    ).toBeTruthy();
-    expect(screen.getByText("No runs match these filters.")).toBeTruthy();
+      inTable().queryByRole("columnheader", { name: "Commit" }),
+    ).toBeNull();
+    expect(inTable().queryByRole("columnheader", { name: "PR" })).toBeNull();
+    expect(
+      inTable().queryByRole("columnheader", { name: "Branch" }),
+    ).toBeNull();
+  });
+
+  it("keeps a selected platform clearable when its rows disappear", async () => {
+    const user = userEvent.setup();
+    setRows([makeRow({ source: "sdk" })]);
+    const view = render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Filter by platform" }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "CLI" })).toBeVisible();
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "SDK" }));
+    await user.keyboard("{Escape}");
+    setRows([makeRow({ source: "ui" })]);
+    view.rerender(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+    expect(screen.getByText("No runs match these filters.")).toBeVisible();
+    await user.click(screen.getByLabelText("Filter by suite"));
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["All suites"]);
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Filter by platform" }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "SDK" })).toBeChecked();
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "SDK" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByText("No runs match these filters.")).toBeNull();
   });
 
   it("uses legacy suite provenance consistently and clears combined filters", async () => {
@@ -301,15 +406,16 @@ describe("ProjectRunsTable", () => {
     await user.click(screen.getByLabelText("Filter by suite"));
     await user.click(screen.getByRole("option", { name: "Beta" }));
     expect(inTable().queryByText("Alpha")).toBeNull();
-    expect(screen.getByText("1 of 2 loaded runs")).toBeVisible();
-    // Then the platform: that one is a query argument, and the backend now
-    // answers with the legacy row alone, which the suite filter hides.
+    // The picked suite is the pool, so the other suite's run is not counted.
+    expect(screen.getByText("1 of 1 loaded runs")).toBeVisible();
+    // The platform choices narrow to the selected suite.
     await user.click(
       screen.getByRole("button", { name: "Filter by platform" }),
     );
-    await user.click(screen.getByRole("menuitemcheckbox", { name: "SDK" }));
+    expect(screen.queryByRole("menuitemcheckbox", { name: "SDK" })).toBeNull();
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "UI" }));
     await user.keyboard("{Escape}");
-    expect(inTable().getByText("No runs match these filters.")).toBeVisible();
+    expect(inTable().getByText("Beta")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(inTable().getByText("Alpha")).toBeVisible();
     expect(inTable().getByText("Beta")).toBeVisible();
@@ -322,7 +428,7 @@ describe("ProjectRunsTable", () => {
     await user.keyboard("{Escape}");
     expect(inTable().getByText("SDK")).toBeVisible();
     expect(inTable().queryByText("Beta")).toBeNull();
-    expect(screen.getByText("1 of 1 loaded runs")).toBeVisible();
+    expect(screen.getByText("1 of 2 loaded runs")).toBeVisible();
   });
 
   it("filters by suite", async () => {
@@ -355,7 +461,7 @@ describe("ProjectRunsTable", () => {
     });
   });
 
-  it("loads more pages, and no longer hedges about what the filter covered", async () => {
+  it("keeps pagination available and explains the loaded filter scope", async () => {
     const user = userEvent.setup();
     setRows([makeRow({ source: "sdk" })], "CanLoadMore");
 
@@ -364,17 +470,15 @@ describe("ProjectRunsTable", () => {
     // Unfiltered: no caveat needed.
     expect(document.body.textContent).not.toContain("loaded so far");
 
-    // Filtered by platform with pages outstanding: the chips are a query
-    // argument, so an empty answer is a fact about the project, and the
-    // "loaded so far" hedge must not appear for them.
+    // Platform filters also cover loaded pages, so show the pagination caveat.
     await user.click(
       screen.getByRole("button", { name: "Filter by platform" }),
     );
     await user.click(
-      screen.getByRole("menuitemcheckbox", { name: "UI", exact: true }),
+      screen.getByRole("menuitemcheckbox", { name: "SDK", exact: true }),
     );
     await user.keyboard("{Escape}");
-    expect(document.body.textContent).not.toContain("loaded so far");
+    expect(document.body.textContent).toContain("loaded so far");
 
     await user.click(screen.getByRole("button", { name: /Load more/ }));
     expect(mocks.paginated.current.loadMore).toHaveBeenCalledWith(
@@ -479,6 +583,59 @@ describe("project run history metrics", () => {
       };
     });
   }
+
+  it("renders Ding Dong as flat runs with Suite Health", async () => {
+    arrangeHistory();
+    const onSelectRun = vi.fn();
+    render(
+      <ProjectRunsTable
+        projectId="proj_1"
+        onSelectRun={onSelectRun}
+        historyMetricsEnabled
+        evaluateLayout
+      />,
+    );
+    await waitFor(() => expect(inTable().getByText("50%")).toBeVisible());
+    expect(
+      inTable()
+        .getAllByRole("columnheader")
+        .map((cell) => cell.textContent),
+    ).toEqual([
+      "Run",
+      "Suite",
+      "Client",
+      "Model",
+      "Result",
+      "Rate",
+      "Platform",
+      "Commit",
+      "Date",
+      "Latency",
+      "Tokens",
+      "Calls",
+    ]);
+    expect(screen.queryByTestId("project-run-history-metrics")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Collapse suite/ })).toBeNull();
+    const runRows = inTable().getAllByRole("button", { name: /^Open run #/ });
+    expect(runRows).toHaveLength(2);
+    expect(runRows[0]).toHaveTextContent("UI suite");
+    const user = userEvent.setup();
+    const bars = await screen.findAllByTestId("suite-health-bar");
+    const newestBar = bars[bars.length - 1];
+    await user.hover(newestBar);
+    expect(runRows[0]).toHaveAttribute("data-highlighted", "true");
+    expect(runRows[1]).not.toHaveAttribute("data-highlighted");
+    await user.unhover(newestBar);
+    expect(runRows[0]).not.toHaveAttribute("data-highlighted");
+    await user.click(newestBar);
+    expect(onSelectRun).toHaveBeenLastCalledWith({ suiteId: "suite_1", runId: "new" });
+    onSelectRun.mockClear();
+    await userEvent.setup().click(runRows[0]);
+    expect(onSelectRun).toHaveBeenCalledWith({
+      suiteId: "suite_1",
+      runId: "new",
+    });
+  });
 
   it("renders the grouped table shell on the first page load", () => {
     setRows([], "LoadingFirstPage");
@@ -715,14 +872,77 @@ describe("project run history metrics", () => {
     await user.click(
       screen.getByRole("combobox", { name: "Filter by server" }),
     );
-    await user.click(
-      screen.getByRole("option", { name: "Gamma", exact: true }),
-    );
-    expect(screen.getByText("No runs match these filters.")).toBeVisible();
-    expect(screen.queryByTestId("project-run-history-metrics")).toBeNull();
+    expect(screen.queryByRole("option", { name: "Gamma", exact: true })).toBeNull();
+    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(screen.getByText(/2 of 2 loaded runs/)).toBeVisible();
     expect(screen.getByTestId("project-run-history-metrics")).toBeVisible();
+  });
+
+  it("counts loaded runs within the picked suite, not the whole page", async () => {
+    arrangeHistory();
+    const user = userEvent.setup();
+    render(
+      <ProjectRunsTable
+        projectId="proj_1"
+        onSelectRun={vi.fn()}
+        historyMetricsEnabled
+      />,
+    );
+    await screen.findByTestId("project-run-history-metrics");
+    expect(screen.getByText(/2 of 2 loaded runs/)).toBeVisible();
+    await user.click(screen.getByLabelText("Filter by suite"));
+    await user.click(await screen.findByRole("option", { name: "SDK suite" }));
+    expect(screen.getByText(/1 of 1 loaded runs/)).toBeVisible();
+  });
+
+  it("names a GitHub check's server after its suite, not the throwaway row", async () => {
+    arrangeHistory();
+    const original = mocks.query.getMockImplementation()!;
+    setRows([makeRow({ _id: "new", source: "github_check", createdAt: 2000 })]);
+    // A check runs the pull request's own build, so the name it freezes is the
+    // ephemeral `servers` row the worker made for it — an id, not a name any
+    // reader chose. One per check run would fill the filter with ids.
+    mocks.query.mockImplementation(async (name, args: any) => {
+      const result = await original(name, args);
+      return name === "testSuites:getTestSuiteRun"
+        ? {
+            ...result,
+            configSnapshot: {
+              tests: [],
+              environment: { servers: ["gh-check-p57h0dafyahm32m3s38vp"] },
+            },
+          }
+        : result;
+    });
+    // A suite that picks its servers through a host attachment leaves the
+    // legacy flat list empty — the shape that made this read "PR server".
+    mocks.suiteOverview.current = [
+      {
+        suite: {
+          _id: "suite_1",
+          environment: { servers: [] },
+          hostAttachments: [{ resolvedServerNames: ["bart"] }],
+        },
+      },
+    ];
+    const user = userEvent.setup();
+    render(
+      <ProjectRunsTable
+        projectId="proj_1"
+        onSelectRun={vi.fn()}
+        historyMetricsEnabled
+      />,
+    );
+    await screen.findByTestId("project-run-history-metrics");
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by server" }),
+    );
+    expect(screen.getByRole("option", { name: "bart" })).toBeVisible();
+    expect(screen.queryByText(/^gh-check-/)).toBeNull();
+    // And it still filters: the substituted name is what the row matches on.
+    await user.click(screen.getByRole("option", { name: "bart" }));
+    expect(screen.getByText(/1 of 1 loaded runs/)).toBeVisible();
   });
 
   it("shows one complete run per row, preserves pairings when filtering, and opens its report", async () => {
@@ -783,9 +1003,9 @@ describe("project run history metrics", () => {
     ).toBeNull();
     expect(screen.getByText("1 of 1 loaded runs")).toBeVisible();
     expect(within(run).getByText(/Cursor/)).toBeVisible();
-    expect(within(run).getByText(/claude-fable-5/)).toBeVisible();
+    expect(within(run).getByText(/Claude Fable 5/)).toBeVisible();
     expect(within(run).getByText(/ChatGPT/)).toBeVisible();
-    expect(within(run).getByText(/gpt-5.1/)).toBeVisible();
+    expect(within(run).getByText(/GPT-5.1/)).toBeVisible();
     expect(
       within(run).queryByRole("button", { name: /Client model mapping/ }),
     ).toBeNull();
@@ -954,8 +1174,119 @@ describe("project run history metrics", () => {
 });
 
 describe("GitHub run context", () => {
+  it("groups platform badges by resolved origin and keeps their provenance", () => {
+    render(
+      <table>
+        <tbody>
+          <GroupSummaryRow
+            rows={[
+              makeRow({
+                source: "api",
+                launcher: { kind: "cli" },
+              }),
+              makeRow({
+                _id: "run_bbbbbbbbbbbb",
+                source: "api",
+                launcher: { kind: "cli" },
+              }),
+              makeRow({
+                _id: "run_cccccccccccc",
+                source: "api",
+                attribution: { surface: "mcp" },
+              }),
+            ]}
+            details={new Map()}
+            historyRows={new Map()}
+            showGitContext={false}
+            label="#1"
+          />
+        </tbody>
+      </table>,
+    );
+
+    expect(screen.getAllByText("CLI")).toHaveLength(1);
+    expect(screen.getByText("CLI").getAttribute("title")).toContain("declared");
+    expect(screen.getByText("MCP").getAttribute("title")).toContain("verified");
+    expect(screen.queryByText("API")).toBeNull();
+  });
+
+  it("shows only Git values shared by every run in a grouped launch", () => {
+    const common = {
+      commitSha: "abcdef123456",
+      repositoryUrl: "https://github.com/acme/server",
+      prUrl: "https://github.com/acme/server/pull/4764",
+    };
+    render(
+      <table>
+        <tbody>
+          <GroupSummaryRow
+            rows={[
+              makeRow({
+                source: "github_check",
+                ciMetadata: {
+                  ...common,
+                  branch: "feature/one",
+                  branchUrl:
+                    "https://github.com/acme/server/tree/feature%2Fone",
+                },
+              }),
+              makeRow({
+                _id: "run_bbbbbbbbbbbb",
+                source: "github_check",
+                ciMetadata: {
+                  ...common,
+                  branch: "feature/two",
+                  branchUrl:
+                    "https://github.com/acme/server/tree/feature%2Ftwo",
+                },
+              }),
+            ]}
+            details={new Map()}
+            historyRows={new Map()}
+            showGitContext
+            label="#1"
+          />
+        </tbody>
+      </table>,
+    );
+
+    expect(screen.getByRole("link", { name: "abcdef1" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "#4764" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: /feature\// })).toBeNull();
+  });
+
+  it("keeps Git values blank on suite summary rows", () => {
+    render(
+      <table>
+        <tbody>
+          <GroupSummaryRow
+            rows={[
+              makeRow({
+                source: "github_check",
+                ciMetadata: {
+                  commitSha: "abcdef123456",
+                  repositoryUrl: "https://github.com/acme/server",
+                  branch: "main",
+                  branchUrl: "https://github.com/acme/server/tree/main",
+                  prUrl: "https://github.com/acme/server/pull/4764",
+                },
+              }),
+            ]}
+            details={new Map()}
+            historyRows={new Map()}
+            showGitContext
+            label="Checkout suite"
+            suite
+          />
+        </tbody>
+      </table>,
+    );
+
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
   it.each([false, true])(
-    "shows a PR link in the Platform cell (metrics: %s) without opening the eval run",
+    "shows a PR link in its own column (metrics: %s) without opening the eval run",
     async (historyMetricsEnabled) => {
       const user = userEvent.setup();
       const onSelectRun = vi.fn();
@@ -980,9 +1311,17 @@ describe("GitHub run context", () => {
           historyMetricsEnabled={historyMetricsEnabled}
         />,
       );
+      await user.click(
+        screen.getByRole("button", { name: "Filter by platform" }),
+      );
+      await user.click(
+        screen.getByRole("menuitemcheckbox", { name: "GitHub" }),
+      );
+      await user.keyboard("{Escape}");
       expect(
         inTable().getByRole("columnheader", { name: "Platform" }),
       ).toBeVisible();
+      expect(inTable().getByRole("columnheader", { name: "PR" })).toBeVisible();
       expect(
         screen.getByRole("button", { name: "Filter by platform" }),
       ).toBeVisible();
@@ -994,7 +1333,7 @@ describe("GitHub run context", () => {
         "href",
         "https://github.com/acme/server/pull/4674",
       );
-      expect(within(link.closest("td")!).getByText("GitHub")).toBeVisible();
+      expect(within(link.closest("td")!).queryByText("GitHub")).toBeNull();
       await user.click(link);
       link.focus();
       await user.keyboard("{Enter}");
@@ -1032,9 +1371,16 @@ describe("GitHub run context", () => {
       }),
     ]);
     render(<ProjectRunsTable projectId="proj_1" onSelectRun={onSelectRun} />);
-    expect(inTable().getByText("Git / CI")).toBeVisible();
-    expect(inTable().getByText("Not recorded")).toBeVisible();
-    expect(inTable().getByText("main")).toBeVisible();
+    expect(inTable().queryByText("Commit")).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Filter by platform" }),
+    );
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "GitHub" }));
+    await user.keyboard("{Escape}");
+    expect(inTable().getByText("Commit")).toBeVisible();
+    expect(inTable().getByText("PR")).toBeVisible();
+    expect(inTable().getByText("Branch")).toBeVisible();
+    expect(inTable().getByRole("link", { name: "main" })).toBeVisible();
     expect(inTable().getByText("abcdef1")).toBeVisible();
     // Link clicks and keyboard activation must not also navigate to the eval run.
     const link = screen.getByRole("link", { name: "abcdef1" });
@@ -1066,8 +1412,8 @@ describe("GitHub run context", () => {
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(screen.getByText(/3 of 3 loaded runs/)).toBeVisible();
     expect(
-      screen.getByRole("textbox", { name: "Filter by commit" }),
-    ).toHaveValue("");
+      screen.queryByRole("textbox", { name: "Filter by commit" }),
+    ).toBeNull();
   });
 });
 
