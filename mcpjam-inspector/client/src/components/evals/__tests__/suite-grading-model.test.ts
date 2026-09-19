@@ -246,7 +246,7 @@ describe("STAGE_EMPTY_COPY", () => {
     }
     for (const stage of ["selection", "response", "userValue"] as const) {
       expect(stageEmptyIsGap(stage), stage).toBe(true);
-      expect(STAGE_EMPTY_COPY[stage]).toBe("No grader");
+      expect(STAGE_EMPTY_COPY[stage]).toBe("No evaluator");
     }
   });
 });
@@ -264,61 +264,54 @@ describe("stageConfigStates", () => {
     return states.find((row) => row.stage === stage);
   }
 
-  it("reads the default suite as runner / gated / gap / judge on request", () => {
+  it("shows unavailable grading state until the backend resolves inheritance", () => {
     const states = statesFor({ predicates: [] });
     expect(stateOf(states, "connection")).toMatchObject({
       state: "runner",
-      gates: 0,
-      warn: 0,
-      report: 0,
+      required: 0,
+      advisory: 0,
     });
     expect(stateOf(states, "discovery")).toMatchObject({
       state: "runner",
-      gates: 0,
-      warn: 0,
-      report: 0,
+      required: 0,
+      advisory: 0,
     });
     expect(stateOf(states, "selection")).toMatchObject({
       state: "gated",
-      gates: 2,
-      warn: 0,
-      report: 0,
+      required: 2,
+      advisory: 0,
     });
     expect(stateOf(states, "call")).toMatchObject({
       state: "gated",
-      gates: 1,
-      warn: 0,
-      report: 0,
+      required: 1,
+      advisory: 0,
     });
     expect(stateOf(states, "response")).toMatchObject({
       state: "gap",
-      gates: 0,
-      warn: 0,
-      report: 0,
+      required: 0,
+      advisory: 0,
     });
     expect(stateOf(states, "userValue")).toMatchObject({
-      state: "judgeOnRequest",
-      gates: 0,
-      warn: 0,
-      report: 0,
-      judge: "manual",
+      state: "judgeUnknown",
+      required: 0,
+      advisory: 0,
+      judge: "unknown",
     });
   });
 
-  it("counts warn and report separately from gates", () => {
+  it("counts advisory rows together, severity or not, apart from required", () => {
     const states = statesFor({
       predicates: [
-        // Both advisory, both at userValue — `noToolErrors` files at
-        // `response` since analyzer 11, so a Warn/Report split asserted over
-        // one stage needs two kinds that actually land there.
+        // Both advisory, both at userValue. One carries `severity: "warn"`
+        // and one does not: they used to be two tiers and are now one, which
+        // is exactly what this asserts.
         { type: "responseMatches", pattern: "hi", role: "advisory", severity: "warn" },
         { type: "responseContains", needle: "hi", role: "advisory" },
       ],
     });
     expect(stateOf(states, "userValue")).toMatchObject({
-      gates: 0,
-      warn: 1,
-      report: 1,
+      required: 0,
+      advisory: 2,
     });
   });
 
@@ -328,8 +321,14 @@ describe("stageConfigStates", () => {
     const states = statesFor({
       predicates: [{ type: "noToolErrors", role: "advisory", severity: "warn" }],
     });
-    expect(stateOf(states, "response")).toMatchObject({ gates: 0, warn: 1 });
-    expect(stateOf(states, "userValue")).toMatchObject({ gates: 0, warn: 0 });
+    expect(stateOf(states, "response")).toMatchObject({
+      required: 0,
+      advisory: 1,
+    });
+    expect(stateOf(states, "userValue")).toMatchObject({
+      required: 0,
+      advisory: 0,
+    });
   });
 
   it("autoRun: true is judgeAutomatic", () => {
@@ -367,11 +366,12 @@ describe("stageConfigStates", () => {
 
   it("a userValue predicate beside a manual judge is gated with judge: manual", () => {
     const states = statesFor({
+      judgeConfig: { goalCompletion: { autoRun: false } },
       predicates: [samplePredicate("responseContains")],
     });
     expect(stateOf(states, "userValue")).toMatchObject({
       state: "gated",
-      gates: 1,
+      required: 1,
       judge: "manual",
     });
   });

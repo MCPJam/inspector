@@ -32,7 +32,17 @@ export type LiveChatTraceTurnSummary = {
   actualToolCalls?: LiveChatTraceToolCall[];
 };
 
+export type PersistedRequestPayloadEntry = Omit<
+  LiveChatTraceRequestPayloadEntry,
+  "payload"
+> & {
+  payload: Partial<ResolvedModelRequestPayload>;
+  inherits?: { system?: true; tools?: true };
+};
+
 export type LiveChatTraceRequestPayloadEntry = {
+  truncated?: true;
+  messageCount?: number;
   turnId: string;
   promptIndex: number;
   stepIndex: number;
@@ -176,4 +186,49 @@ export function rebaseTraceSpans(
     startMs: span.startMs + offsetMs,
     endMs: span.endMs + offsetMs,
   }));
+}
+
+/** Expand within each turn; inherited fields never cross a turn boundary. */
+export function expandPersistedRequestPayloads(
+  entries: PersistedRequestPayloadEntry[],
+): LiveChatTraceRequestPayloadEntry[] {
+  const previous = new Map<string, ResolvedModelRequestPayload>();
+  return entries.map((entry) => {
+    const prior = previous.get(entry.turnId);
+    const payload = {
+      system: entry.inherits?.system
+        ? (prior?.system ?? "")
+        : (entry.payload.system ?? ""),
+      tools: entry.inherits?.tools
+        ? (prior?.tools ?? {})
+        : (entry.payload.tools ?? {}),
+      messages: entry.payload.messages ?? [],
+    };
+    previous.set(entry.turnId, payload);
+    const { inherits: _inherits, ...expanded } = entry;
+    return { ...expanded, payload };
+  });
+}
+
+/** Blob/HTTP envelopes carry arrays; Convex actions carry lossless JSON. */
+export function readTraceRequestPayloads(
+  trace: unknown,
+): LiveChatTraceRequestPayloadEntry[] {
+  if (!trace || typeof trace !== "object" || Array.isArray(trace)) return [];
+  const envelope = trace as {
+    requestPayloads?: PersistedRequestPayloadEntry[];
+    requestPayloadsJson?: string;
+  };
+  try {
+    const entries =
+      envelope.requestPayloads ??
+      (envelope.requestPayloadsJson
+        ? JSON.parse(envelope.requestPayloadsJson)
+        : undefined);
+    return Array.isArray(entries)
+      ? expandPersistedRequestPayloads(entries)
+      : [];
+  } catch {
+    return [];
+  }
 }

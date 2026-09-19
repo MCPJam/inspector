@@ -1,3 +1,4 @@
+import { guestIpForwardHeaders } from "./guest-spend-ip.js";
 import {
   isConvexProvisioningUnavailable,
   provisionGuestAuthConfigToConvex,
@@ -48,6 +49,8 @@ export type GuestSessionFetchResult =
       kind: "error";
       status: number;
       setCookies: string[];
+      /** Seconds from the upstream `Retry-After` header on a 429. */
+      retryAfterSeconds?: number;
     };
 
 function getConvexHttpUrl(): string {
@@ -91,7 +94,7 @@ function readSetCookies(headers: Headers): string[] {
 
 function buildForwardedHeaders(
   context: GuestSessionFetchContext | undefined,
-  extra: Record<string, string>
+  extra: Record<string, string>,
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -103,14 +106,12 @@ function buildForwardedHeaders(
   if (context?.userAgent) {
     headers["User-Agent"] = context.userAgent;
   }
-  if (context?.ipHash) {
-    headers["x-mcpjam-guest-ip-hash"] = context.ipHash;
-  }
+  Object.assign(headers, guestIpForwardHeaders(context?.ipHash));
   return headers;
 }
 
 function buildRequestBody(
-  context: GuestSessionFetchContext | undefined
+  context: GuestSessionFetchContext | undefined,
 ): string {
   const body: GuestSessionRequestBody = {};
   if (context?.body?.mode) body.mode = context.body.mode;
@@ -134,11 +135,17 @@ function parseSessionPayload(raw: unknown): RemoteGuestSession | null {
   };
 }
 
+function parseRetryAfterSeconds(raw: string | null): number | undefined {
+  if (!raw) return undefined;
+  const seconds = Number.parseInt(raw, 10);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
+}
+
 async function performGuestSessionFetch(
   url: string,
   init: RequestInit,
   source: "Convex" | "MCPJam",
-  mode: "lookup_or_create" | "lookup_only" | undefined
+  mode: "lookup_or_create" | "lookup_only" | undefined,
 ): Promise<GuestSessionFetchResult> {
   try {
     const response = await fetch(url, init);
@@ -158,9 +165,18 @@ async function performGuestSessionFetch(
 
     if (!response.ok) {
       logger.warn(
-        `[guest-auth] Failed to fetch ${source} guest session: ${response.status} ${response.statusText}`
+        `[guest-auth] Failed to fetch ${source} guest session: ${response.status} ${response.statusText}`,
       );
-      return { kind: "error", status: response.status, setCookies };
+      const retryAfterSeconds =
+        response.status === 429
+          ? parseRetryAfterSeconds(response.headers.get("retry-after"))
+          : undefined;
+      return {
+        kind: "error",
+        status: response.status,
+        setCookies,
+        ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+      };
     }
 
     let body: unknown;
@@ -173,19 +189,19 @@ async function performGuestSessionFetch(
     const session = parseSessionPayload(body);
     if (!session) {
       logger.warn(
-        `[guest-auth] ${source} guest session response was missing token or expiresAt`
+        `[guest-auth] ${source} guest session response was missing token or expiresAt`,
       );
       return { kind: "error", status: 503, setCookies };
     }
 
     logger.info(
-      `[guest-auth] Fetched guest token from ${source} guest session`
+      `[guest-auth] Fetched guest token from ${source} guest session`,
     );
     return { kind: "session", session, setCookies };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     logger.warn(
-      `[guest-auth] Failed to fetch ${source} guest session: ${errMsg}`
+      `[guest-auth] Failed to fetch ${source} guest session: ${errMsg}`,
     );
     return { kind: "error", status: 503, setCookies: [] };
   }
@@ -198,7 +214,7 @@ const DEFAULT_GUEST_FETCH_TIMEOUT_MS = 10_000;
 
 export async function fetchRemoteGuestSession(
   context?: GuestSessionFetchContext,
-  timeoutMs: number = DEFAULT_GUEST_FETCH_TIMEOUT_MS
+  timeoutMs: number = DEFAULT_GUEST_FETCH_TIMEOUT_MS,
 ): Promise<GuestSessionFetchResult> {
   return performGuestSessionFetch(
     getRemoteGuestSessionUrl(),
@@ -209,20 +225,20 @@ export async function fetchRemoteGuestSession(
       signal: AbortSignal.timeout(timeoutMs),
     },
     "MCPJam",
-    context?.body?.mode
+    context?.body?.mode,
   );
 }
 
 export async function fetchConvexGuestSession(
   context?: GuestSessionFetchContext,
-  timeoutMs: number = DEFAULT_GUEST_FETCH_TIMEOUT_MS
+  timeoutMs: number = DEFAULT_GUEST_FETCH_TIMEOUT_MS,
 ): Promise<GuestSessionFetchResult> {
   try {
     await provisionGuestAuthConfigToConvex();
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     logger.warn(
-      `[guest-auth] Failed to provision Convex guest auth env: ${errMsg}`
+      `[guest-auth] Failed to provision Convex guest auth env: ${errMsg}`,
     );
     return { kind: "error", status: 503, setCookies: [] };
   }
@@ -245,7 +261,7 @@ export async function fetchConvexGuestSession(
       signal: AbortSignal.timeout(timeoutMs),
     },
     "Convex",
-    context?.body?.mode
+    context?.body?.mode,
   );
 }
 
@@ -304,7 +320,7 @@ export type GuestSessionRevokeResult = {
 async function performGuestSessionRevoke(
   url: string,
   init: RequestInit,
-  source: "Convex" | "MCPJam"
+  source: "Convex" | "MCPJam",
 ): Promise<GuestSessionRevokeResult> {
   try {
     const response = await fetch(url, init);
@@ -320,28 +336,28 @@ async function performGuestSessionRevoke(
     }
     if (!response.ok) {
       logger.warn(
-        `[guest-auth] ${source} guest session revoke returned ${response.status} ${response.statusText}`
+        `[guest-auth] ${source} guest session revoke returned ${response.status} ${response.statusText}`,
       );
     }
     return { status: response.status, setCookies, body };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     logger.warn(
-      `[guest-auth] Failed to revoke guest session via ${source}: ${errMsg}`
+      `[guest-auth] Failed to revoke guest session via ${source}: ${errMsg}`,
     );
     return { status: 503, setCookies: [], body: null };
   }
 }
 
 export async function fetchConvexGuestSessionRevoke(
-  context?: GuestSessionFetchContext
+  context?: GuestSessionFetchContext,
 ): Promise<GuestSessionRevokeResult> {
   try {
     await provisionGuestAuthConfigToConvex();
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     logger.warn(
-      `[guest-auth] Failed to provision Convex guest auth env: ${errMsg}`
+      `[guest-auth] Failed to provision Convex guest auth env: ${errMsg}`,
     );
     return { status: 503, setCookies: [], body: null };
   }
@@ -359,12 +375,12 @@ export async function fetchConvexGuestSessionRevoke(
       }),
       signal: AbortSignal.timeout(10_000),
     },
-    "Convex"
+    "Convex",
   );
 }
 
 export async function fetchRemoteGuestSessionRevoke(
-  context?: GuestSessionFetchContext
+  context?: GuestSessionFetchContext,
 ): Promise<GuestSessionRevokeResult> {
   return performGuestSessionRevoke(
     getRemoteGuestSessionRevokeUrl(),
@@ -373,7 +389,7 @@ export async function fetchRemoteGuestSessionRevoke(
       headers: buildForwardedHeaders(context, {}),
       signal: AbortSignal.timeout(10_000),
     },
-    "MCPJam"
+    "MCPJam",
   );
 }
 
@@ -389,7 +405,7 @@ export type GuestPromotionProofResult =
 async function performGuestPromotionProofFetch(
   url: string,
   init: RequestInit,
-  source: "Convex" | "MCPJam"
+  source: "Convex" | "MCPJam",
 ): Promise<GuestPromotionProofResult> {
   try {
     const response = await fetch(url, init);
@@ -409,13 +425,13 @@ async function performGuestPromotionProofFetch(
         // fall through
       }
       logger.warn(
-        `[guest-auth] ${source} guest promotion proof returned 403 ${response.statusText}`
+        `[guest-auth] ${source} guest promotion proof returned 403 ${response.statusText}`,
       );
       return { kind: "error", status: 403 };
     }
     if (!response.ok) {
       logger.warn(
-        `[guest-auth] ${source} guest promotion proof returned ${response.status} ${response.statusText}`
+        `[guest-auth] ${source} guest promotion proof returned ${response.status} ${response.statusText}`,
       );
       return { kind: "error", status: response.status };
     }
@@ -434,7 +450,7 @@ async function performGuestPromotionProofFetch(
       typeof (body as Record<string, unknown>).expiresAt !== "number"
     ) {
       logger.warn(
-        `[guest-auth] ${source} guest promotion proof response was missing token or expiresAt`
+        `[guest-auth] ${source} guest promotion proof response was missing token or expiresAt`,
       );
       return { kind: "error", status: 503 };
     }
@@ -455,21 +471,21 @@ async function performGuestPromotionProofFetch(
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     logger.warn(
-      `[guest-auth] Failed to fetch ${source} guest promotion proof: ${errMsg}`
+      `[guest-auth] Failed to fetch ${source} guest promotion proof: ${errMsg}`,
     );
     return { kind: "error", status: 503 };
   }
 }
 
 export async function fetchConvexGuestPromotionProof(
-  context?: GuestSessionFetchContext
+  context?: GuestSessionFetchContext,
 ): Promise<GuestPromotionProofResult> {
   try {
     await provisionGuestAuthConfigToConvex();
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     logger.warn(
-      `[guest-auth] Failed to provision Convex guest auth env: ${errMsg}`
+      `[guest-auth] Failed to provision Convex guest auth env: ${errMsg}`,
     );
     return { kind: "error", status: 503 };
   }
@@ -487,12 +503,12 @@ export async function fetchConvexGuestPromotionProof(
       }),
       signal: AbortSignal.timeout(10_000),
     },
-    "Convex"
+    "Convex",
   );
 }
 
 export async function fetchRemoteGuestPromotionProof(
-  context?: GuestSessionFetchContext
+  context?: GuestSessionFetchContext,
 ): Promise<GuestPromotionProofResult> {
   return performGuestPromotionProofFetch(
     getRemoteGuestPromotionProofUrl(),
@@ -501,7 +517,7 @@ export async function fetchRemoteGuestPromotionProof(
       headers: buildForwardedHeaders(context, {}),
       signal: AbortSignal.timeout(10_000),
     },
-    "MCPJam"
+    "MCPJam",
   );
 }
 

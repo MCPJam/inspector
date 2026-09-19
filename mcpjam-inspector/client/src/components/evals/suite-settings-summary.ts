@@ -6,6 +6,7 @@
  * never claim a case uses them.
  */
 
+import { isRequiredRole } from "@mcpjam/sdk/predicates";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { SuiteGatePolicyV1 } from "@mcpjam/sdk/contract";
 import { PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
@@ -55,7 +56,7 @@ export function describeJudge(value: EvalJudgeConfig | undefined): string {
   const goal = value?.goalCompletion;
   if (!goal) return "Not configured";
   if (goal.enabled === false) return "Off";
-  const bits = [goal.role === "gating" ? "Gating" : "Advisory"];
+  const bits = [isRequiredRole(goal.role) ? "Required" : "Advisory"];
   if (goal.autoRun) bits.push("runs automatically");
   if (goal.judgeModel) bits.push(goal.judgeModel);
   if (goal.threshold !== undefined) {
@@ -79,7 +80,9 @@ export function describeValidity(
   }
   if (validity.maxEvaluatorErrorRate !== undefined) {
     parts.push(
-      `at most ${formatFraction(validity.maxEvaluatorErrorRate)} grader errors`,
+      `at most ${formatFraction(
+        validity.maxEvaluatorErrorRate,
+      )} evaluator errors`,
     );
   }
   return parts.length > 0 ? parts.join(", ") : "Contract defaults";
@@ -123,15 +126,18 @@ export function describeGatePolicy(
     parts.push(`${policy.maximumP95LatencyIncreaseMs}ms p95 increase`);
   }
   if (policy.noGatingScoreErrors === true) {
-    parts.push("any gating scorer errored");
+    parts.push("any required evaluator errored");
   }
   return parts.length > 0 ? parts.join(", ") : "None";
 }
 
 export function summarizeRubric(rubric: EvalJudgeRubric | undefined): string {
   const criteria = rubric?.criteria ?? [];
-  if (criteria.length === 0) return "None";
-  return criteria.map((criterion) => criterion.label).join(", ");
+  return (
+    [rubric?.instructions, ...criteria.map((criterion) => criterion.label)]
+      .filter(Boolean)
+      .join(", ") || "None"
+  );
 }
 
 const CONNECTION_LABEL: Record<GithubCheckConnectionStatus, string> = {
@@ -179,7 +185,9 @@ export function summarizeGithubChecks(input: {
   }
   return {
     state: "ready",
-    text: `${connected.length} repositor${connected.length === 1 ? "y" : "ies"}`,
+    text: `${connected.length} repositor${
+      connected.length === 1 ? "y" : "ies"
+    }`,
     tone: connected.some(
       (row) => !row.enabled || row.connectionStatus !== "verified",
     )

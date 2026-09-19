@@ -23,6 +23,10 @@
 type GuestRule = { pattern: RegExp; methods?: readonly string[] };
 
 const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
+  // Static Browser schemas, with no session creation or page/user data.
+  // Guests can use local Browser after consent and need the same catalog
+  // as members. Execution and page reads retain their separate gates.
+  { pattern: /^\/built-in-tools\/browser\/definitions$/, methods: ["GET"] },
   // Harness built-in tool catalog: static published-package metadata (no
   // project/user data), read by the first-party UI to show a harness host's
   // native tools. Safe for guests (local mode + share-link previews); GET-only.
