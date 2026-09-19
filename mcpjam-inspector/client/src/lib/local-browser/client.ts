@@ -95,7 +95,14 @@ export interface LocalBrowserStatus {
   install: {
     status: "idle" | "installing" | "ready" | "failed";
     percent?: number;
+    /** One line, human-readable, when `failed`. */
     error?: string;
+    /** The installer's last output, when `failed`, for a details block. */
+    details?: string;
+    /** Epoch ms of the next automatic attempt, when one is booked. */
+    retryAt?: number;
+    /** Failed attempts so far in this server process. */
+    attempts?: number;
   };
   running: boolean;
   leaseHeld: boolean;

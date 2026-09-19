@@ -20,6 +20,7 @@ import {
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import { SwarmAgentError } from "../../services/swarm-agent.js";
+import { upstreamRefusalRouteError } from "../../services/upstream-refusal.js";
 import {
   generateSwarmJourneys,
   generateSwarmPersona,
@@ -100,6 +101,7 @@ const generatePersonaSchema = generateBaseSchema
 
 const generateJourneysSchema = generateBaseSchema
   .extend({
+    swarmRefId: z.string().trim().min(1).optional(),
     persona: z.object({
       name: z.string().min(1),
       role: z.string().min(1),
@@ -107,21 +109,6 @@ const generateJourneysSchema = generateBaseSchema
     }),
   })
   .refine(exactlyOneGroundingSource.check, exactlyOneGroundingSource.params);
-
-/** Error codes for the 4xx statuses the backend generation routes return, so
- * code-based clients get the standard handling for each (a 429 quota rejection
- * must read as RATE_LIMITED, not a malformed request). Anything else keeps
- * VALIDATION_ERROR. */
-const FORWARDED_ERROR_CODES: Record<
-  number,
-  (typeof ErrorCode)[keyof typeof ErrorCode]
-> = {
-  401: ErrorCode.UNAUTHORIZED,
-  403: ErrorCode.FORBIDDEN,
-  404: ErrorCode.NOT_FOUND,
-  409: ErrorCode.CONFLICT,
-  429: ErrorCode.RATE_LIMITED,
-};
 
 /** Redacted copy for a masked 5xx. Carries no transport detail; the
  * correlation id appended below is what makes it actionable. */
@@ -168,18 +155,27 @@ function upstreamErrorCode(bodyText: string): string | undefined {
  */
 export function rethrowAsRouteError(c: Context, err: unknown): never {
   if (err instanceof SwarmAgentError && err.status >= 400 && err.status < 500) {
-    const routeError = new WebRouteError(
-      err.status,
-      FORWARDED_ERROR_CODES[err.status] ?? ErrorCode.VALIDATION_ERROR,
-      err.message || "Generation request was rejected."
-    );
-    // The 429 above is the backend's burst brake or its daily cap, and both
-    // told us when they lift. Forwarding the status without the header left
-    // the caller with a code that means "retry" and nothing to say when — so
-    // every client either hammered or gave up.
-    throw err.retryAfter
-      ? routeError.withHeaders({ "Retry-After": err.retryAfter })
-      : routeError;
+    // Shared with the eval generation adapters, which had the same bug in a
+    // worse form (no forwarding at all). It owns the status -> code table, the
+    // `Retry-After` the 429 arrived with — the backend's burst brake and its
+    // daily cap both tell us when they lift, and a code that means "retry"
+    // with nothing to say when leaves every client to hammer or give up — and
+    // the refusal `code` in `details`, which a caller needs to tell MCPJam's
+    // own exhausted budget (`platform_capacity`, nothing to buy) from the
+    // caller's allowance (`user_rate_limit`, top-up offered).
+    //
+    // `err.message` is passed rather than re-derived: `services/swarm-generate.ts`
+    // already chose between the backend's copy and a generic sentence, and
+    // that choice is its redaction policy, not a default.
+    const routeError = upstreamRefusalRouteError({
+      status: err.status,
+      bodyText: err.bodyText,
+      message: err.message || undefined,
+      fallbackMessage: "Generation request was rejected.",
+      retryAfter: err.retryAfter,
+    });
+    // Only `undefined` outside 4xx, which the guard above already excluded.
+    if (routeError) throw routeError;
   }
   if (err instanceof SwarmAgentError) {
     const requestId = c.var.requestLogContext?.requestId;
@@ -251,6 +247,7 @@ swarmGenerate.post("/generate/journeys", async (c) =>
     try {
       return await generateSwarmJourneys(convexHttpUrl, bearerToken, {
         projectId: body.projectId,
+        ...(body.swarmRefId ? { swarmRefId: body.swarmRefId } : {}),
         ...(body.serverAttachmentId
           ? { serverAttachmentId: body.serverAttachmentId }
           : {}),

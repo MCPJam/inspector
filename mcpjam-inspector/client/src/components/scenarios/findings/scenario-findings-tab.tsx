@@ -28,8 +28,8 @@ import {
   useGoalOutcomeDrilldown,
   useUsageInsights,
 } from "@/hooks/useUsageInsights";
-import { useEnsureFirstAnalysis } from "@/hooks/useInsightsFlowController";
 import { withHideSynthetic } from "@/components/scenarios/user-testing-traffic";
+import { SectionLabel } from "@/components/shared/section-label";
 import { FindingsSummaryCard } from "@/components/swarms/findings/findings-summary-card";
 import { FindingsPersonaTabs } from "@/components/swarms/findings/findings-persona-tabs";
 import { FindingsPersonaCard } from "@/components/swarms/findings/findings-persona-card";
@@ -74,17 +74,11 @@ export function ScenarioFindingsTab({
    * the only honest signal for the former. Same hook and same one-attempt
    * discipline as the Insights workbench.
    */
-  const { breakdown, rebuild } = useUsageInsights({
+  const { breakdown } = useUsageInsights({
     scope: { kind: "scenario", scenarioId },
     filters,
     threadsEnabled: false,
     breakdownEnabled: true,
-  });
-  const { failed: firstAnalysisRefused } = useEnsureFirstAnalysis({
-    enabled: true,
-    cohortKey: scenarioId,
-    breakdown,
-    rebuild,
   });
   /**
    * Is an analysis on its way? Same rule the session-flow diagram applies: on
@@ -95,11 +89,12 @@ export function ScenarioFindingsTab({
    * flash "analyzing" at a study that has simply never been analyzed and never
    * will be.
    */
-  const latestRun = breakdown?.latestRun ?? null;
   const analysisInFlight =
-    latestRun?.status === "queued" ||
-    latestRun?.status === "running" ||
-    (!firstAnalysisRefused && Boolean(breakdown) && latestRun === null);
+    !!breakdown?.analysis &&
+    breakdown.analysis.pending +
+      breakdown.analysis.running -
+      breakdown.analysis.deferred >
+      0;
 
   const model = useMemo(
     () =>
@@ -231,7 +226,7 @@ export function ScenarioFindingsTab({
   const selectedStage: JourneyStageId =
     stageChoice && stageChoice.goalId === expandedGoal?.runId
       ? stageChoice.stage
-      : (expandedGoal?.defaultStage ?? "value");
+      : expandedGoal?.defaultStage ?? "value";
 
   // Goal-scoped, so it is only shown while that goal is open and it names the
   // goal it is about. The study-level footnotes describe a different
@@ -272,8 +267,8 @@ export function ScenarioFindingsTab({
         {model.unanalyzedCount === 0
           ? "No sessions in this study yet."
           : analysisInFlight
-            ? "Analyzing sessions — grouping goals, behaviors, outcomes, and sentiment. This can take a few minutes."
-            : "No session has been analyzed yet."}
+          ? "Analyzing sessions — grouping goals, behaviors, outcomes, and sentiment. This can take a few minutes."
+          : "No session has been analyzed yet."}
       </div>
     );
   }
@@ -295,9 +290,7 @@ export function ScenarioFindingsTab({
         summary={summary}
         footnotes={cardFootnotes}
       />
-      <p className="mb-2.5 mt-7 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground">
-        Choose a persona
-      </p>
+      <SectionLabel className="mb-2.5 mt-7">Choose a persona</SectionLabel>
       <div className="mb-3">
         <FindingsPersonaTabs
           personas={model.personas}

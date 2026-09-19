@@ -139,6 +139,7 @@ export function resolvePageToolAlias(
 export interface McpToolResult {
   content: { type: "text"; text: string }[];
   isError?: boolean;
+  pageTool?: { rawName: string; origin: string };
 }
 
 function textResult(text: string, isError = false): McpToolResult {
@@ -304,6 +305,12 @@ export async function fulfillApprovedPageToolCall(options: {
       }`,
       true,
     );
+  }
+  if (entry) {
+    output = {
+      ...output,
+      pageTool: { rawName: entry.rawName, origin: entry.origin },
+    };
   }
   logWebMcpTraffic({
     ...logContext,
