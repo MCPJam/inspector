@@ -1,11 +1,11 @@
 /**
- * The "Scorers and judges" section, and the policy controls beside it.
+ * The "Evaluators" section, and the policy controls beside it.
  *
  * Two properties are worth a test rather than a reading:
  *
  *   - an EMPTY stage says the right kind of nothing. `connection`, `discovery`
  *     and `call` have no authorable grader on this page — the runner measures
- *     them on every trial — so "No grader" there would read as a gap somebody
+ *     them on every iteration — so "No evaluator" there would read as a gap somebody
  *     should close. And neither answer may borrow `notMeasured`, which is a
  *     RUN-state word for a stage nobody observed.
  *   - the threshold field is a PERCENT over a stored FRACTION. Typing 80 must
@@ -14,12 +14,12 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SuitePassOrFailSection } from "../suite-pass-or-fail-section";
 import {
-  VerdictPolicyUpgradeButton,
-  VerdictPolicyV2Controls,
+  PerCaseIterationsControl,
+  PerCasePassThresholdControl,
 } from "../suite-policy-controls";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 
@@ -81,45 +81,67 @@ describe("SuitePassOrFailSection", () => {
     }
   });
 
-  it("says 'No grader' for an unconfigured response stage", () => {
+  it("says 'No evaluator' for an unconfigured response stage", () => {
     const { container } = renderSection();
-    expect(emptyCopy(container, "response")).toBe("No grader");
+    // The stage lists its standard assertions as off rows, none of them on.
+    const rows = Array.from(
+      container.querySelectorAll(
+        '[data-stage-group="response"] [data-scorer-row]',
+      ),
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(
+      rows.every(
+        (row) =>
+          row.getAttribute("data-scorer-row") === "preset" &&
+          row.getAttribute("data-scorer-enabled") === "false",
+      ),
+    ).toBe(true);
   });
 
   it("never tells a reader connection or discovery is ungraded", () => {
     const { container } = renderSection();
     for (const stage of ["connection", "discovery"]) {
       const copy = emptyCopy(container, stage) ?? "";
-      expect(copy, stage).toContain("Observed by the runner");
-      expect(copy.toLowerCase(), stage).not.toContain("no grader");
+      expect(copy, stage).toContain("Required");
+      expect(copy.toLowerCase(), stage).not.toContain("no evaluator");
       // The run-state word. Settings has observed nothing, so claiming a
       // measurement did not happen states something nobody looked at.
       expect(copy.toLowerCase(), stage).not.toContain("not measured");
     }
   });
 
-  it("marks the judge advisory by default and gating when the role says so", () => {
+  it("marks the judge advisory by default and required when the role says so", () => {
     const advisory = renderSection();
+    fireEvent.click(
+      within(advisory.container).getByRole("button", {
+        name: "Goal completion judge",
+      }),
+    );
     expect(
-      advisory.container.querySelector(
-        '[data-testid="stage-chain-card-userValue"]',
-      )?.textContent,
-    ).toContain("Judge on request");
+      within(
+        advisory.container.querySelector(
+          '[data-scorer-id="judge:goalCompletion"]',
+        ) as HTMLElement,
+      ).getByText("Advisory"),
+    ).toBeTruthy();
     advisory.unmount();
 
     const gating = renderSection({
       judgeConfig: { goalCompletion: { role: "gating" } },
     });
-    const card = gating.container.querySelector(
-      '[data-testid="stage-chain-card-userValue"]',
-    );
-    expect(card?.textContent).toContain("Gated");
     const group = gating.container.querySelector(
       '[data-stage-group="userValue"]',
     ) as HTMLElement;
+    // The row's control reads Required; it sits on the row itself.
+    fireEvent.click(
+      within(group).getByRole("button", { name: "Goal completion judge" }),
+    );
     const judgeRole = group.querySelector('[aria-label="Judge role"]');
     expect(
-      within(judgeRole as HTMLElement).getByRole("button", { name: "Gate" }),
+      within(judgeRole as HTMLElement).getByRole("button", {
+        name: "Required",
+      }),
     ).toHaveAttribute("aria-pressed", "true");
   });
 
@@ -140,7 +162,7 @@ describe("SuitePassOrFailSection", () => {
     const rubricRow = container.querySelector(
       '[data-setting-key="judgeRubric"]',
     );
-    expect(rubricRow?.textContent).toContain("Judge criteria");
+    expect(rubricRow?.textContent).toContain("Grading instructions");
   });
 
   it("keeps one Add-scorer affordance for the whole section", () => {
@@ -153,12 +175,12 @@ describe("SuitePassOrFailSection", () => {
   });
 });
 
-describe("VerdictPolicyV2Controls", () => {
+describe("PerCasePassThresholdControl", () => {
   it("renders a stored fraction as a percent and drafts a fraction back", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(
-      <VerdictPolicyV2Controls
+      <PerCasePassThresholdControl
         defaults={{ repetitions: 3, passThreshold: 0.5 }}
         onChange={onChange}
       />,
@@ -181,7 +203,7 @@ describe("VerdictPolicyV2Controls", () => {
 
   it("shows how many passes the case decision rule needs", () => {
     render(
-      <VerdictPolicyV2Controls
+      <PerCasePassThresholdControl
         defaults={{ repetitions: 3, passThreshold: 0.8 }}
         onChange={vi.fn()}
       />,
@@ -195,7 +217,7 @@ describe("VerdictPolicyV2Controls", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(
-      <VerdictPolicyV2Controls
+      <PerCasePassThresholdControl
         defaults={{ repetitions: 1, passThreshold: 1 }}
         onChange={onChange}
       />,
@@ -212,40 +234,52 @@ describe("VerdictPolicyV2Controls", () => {
   });
 });
 
-describe("VerdictPolicyUpgradeButton", () => {
-  it("is disabled, with the reason, until the deployment says otherwise", () => {
-    render(
-      <VerdictPolicyUpgradeButton
-        disabledReason="Not available on this deployment"
-        proposal={{ repetitions: 1, passThreshold: 1 }}
-        onUpgrade={vi.fn()}
-      />,
-    );
-    const button = screen.getByRole("button", {
-      name: /switch to verdict policy v2/i,
-    });
-    // The backend refuses the upgrade on a deployment whose ceiling is off, so
-    // an enabled button here would have exactly one outcome: an error.
-    expect(button).toBeDisabled();
-    expect(screen.getByText("Not available on this deployment")).toBeTruthy();
-  });
-
-  it("proposes the legacy bar restated in v2 terms", async () => {
+describe("PerCaseIterationsControl", () => {
+  it("drafts the count without touching the threshold", async () => {
+    // The two are separate rows now, and each writes back the WHOLE stored
+    // object — so a count edit that dropped the threshold would look like a
+    // threshold reset nobody made.
     const user = userEvent.setup();
-    const onUpgrade = vi.fn();
+    const onChange = vi.fn();
     render(
-      <VerdictPolicyUpgradeButton
-        proposal={{ repetitions: 3, passThreshold: 0.8 }}
-        onUpgrade={onUpgrade}
+      <PerCaseIterationsControl
+        defaults={{ repetitions: 3, passThreshold: 0.8 }}
+        onChange={onChange}
       />,
     );
-    expect(screen.getByText(/3 repetitions, 80% threshold/)).toBeTruthy();
-    await user.click(
-      screen.getByRole("button", { name: /switch to verdict policy v2/i }),
+    await user.selectOptions(
+      screen.getByLabelText(
+        /iterations per case unless the case overrides it/i,
+      ),
+      "5",
     );
-    expect(onUpgrade).toHaveBeenCalledWith({
-      repetitions: 3,
+    expect(onChange).toHaveBeenCalledWith({
+      repetitions: 5,
       passThreshold: 0.8,
     });
   });
+
+  it("names the count a DEFAULT, never a minimum", () => {
+    // A case at 7 resolves to 7 under a floor of 3 and to 3 under a default of
+    // 3. The word is the only thing telling a reader which rule they are
+    // editing.
+    render(
+      <PerCaseIterationsControl
+        defaults={{ repetitions: 3, passThreshold: 0.8 }}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Iterations per case")).toBeTruthy();
+    expect(screen.queryByText(/minimum iterations/i)).toBeNull();
+  });
 });
+
+// ── Deliberately gone: the scope-switch button ───────────────────────────────
+//
+// `VerdictPolicyUpgradeButton` was tested here for its disabled reason and for
+// proposing "the legacy bar restated in v2 terms". That restatement divided the
+// stored percent by 100 — which preserves the NUMBER and moves the BAR for
+// every suite with more than one case, because a suite-wide percent and a
+// per-case fraction are measured over different populations. Changing the
+// scope is API-only until an explicit operation ships in a follow-up, so there
+// is no scope-change component here to test.

@@ -10,6 +10,8 @@ import { WebApiError } from "./base";
  * shown a second time.
  */
 export interface ApiKey {
+  organizationId?: string | null;
+  owner?: { id: string; name: string; email: string };
   id: string;
   name: string;
   obfuscated_value: string;
@@ -41,8 +43,13 @@ async function parseError(response: Response): Promise<never> {
   throw new WebApiError(response.status, code, message);
 }
 
-export async function listApiKeys(): Promise<ApiKey[]> {
-  const response = await authFetch("/api/web/api-keys", { method: "GET" });
+export async function listApiKeys(organizationId?: string): Promise<ApiKey[]> {
+  const response = await authFetch(
+    organizationId
+      ? `/api/web/api-keys/organization/${encodeURIComponent(organizationId)}`
+      : "/api/web/api-keys",
+    { method: "GET" },
+  );
   if (!response.ok) await parseError(response);
   const body = (await response.json()) as { items?: ApiKey[] };
   return Array.isArray(body.items) ? body.items : [];

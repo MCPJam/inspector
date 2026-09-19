@@ -1,3 +1,4 @@
+import { resolveThemeMode } from "./theme-mode";
 import {
   THEME_MODE_KEY,
   THEME_PRESET_KEY,
@@ -5,18 +6,24 @@ import {
 import {
   THEME_PRESET_OPTIONS,
   ThemeMode,
+  ThemePreference,
   ThemePreset,
 } from "@/types/preferences/theme";
 
 // Utility to get the initial theme mode from localStorage or fallback to 'light'.
-export function getInitialThemeMode(): ThemeMode {
+export function getInitialThemePreference(): ThemePreference {
   try {
     const stored = localStorage.getItem(THEME_MODE_KEY);
-    if (stored === "dark" || stored === "light") return stored;
+    if (stored === "dark" || stored === "light" || stored === "system")
+      return stored;
   } catch (error) {
     console.warn("Cannot access localStorage for theme mode:", error);
   }
   return "light";
+}
+
+export function getInitialThemeMode(): ThemeMode {
+  return resolveThemeMode(getInitialThemePreference());
 }
 
 export function updateThemeMode(value: ThemeMode) {

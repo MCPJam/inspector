@@ -115,7 +115,9 @@ export interface InsufficientScopeChallenge {
  * applicable one (an `insufficient_scope` challenge must not be hidden by a
  * later realm-only Bearer under last-challenge-wins).
  */
-function parseBearerChallenges(header?: string): Array<Record<string, string>> {
+export function parseBearerChallenges(
+  header?: string,
+): Array<Record<string, string>> {
   if (!header) {
     return [];
   }
