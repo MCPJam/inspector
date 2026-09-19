@@ -36,15 +36,14 @@ export type StageResultRow = {
 };
 
 export type ChatSessionStageStatus =
-  | "pending"
-  | "deriving"
-  | "completed"
-  | "failed";
+  "pending" | "deriving" | "completed" | "failed";
 
 export type ChatSessionStageDerivation = {
   status: ChatSessionStageStatus;
   generation: number;
   source: ChatSessionStageSource;
+  /** Backend evidence-version freshness; never inferred from a grade. */
+  evidenceStale?: boolean;
   requestedAt: number;
   attempts: number;
   stageResults?: StageResultRow[];
@@ -110,6 +109,7 @@ export function chainPresentation(
   derivation: ChatSessionStageDerivation | null | undefined
 ): ChainPresentation {
   if (!derivation) return "absent";
+  if (derivation.evidenceStale) return "stale";
   if (derivation.status === "completed" && derivation.stageResults) {
     return "current";
   }

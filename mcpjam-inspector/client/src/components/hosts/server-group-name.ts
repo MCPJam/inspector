@@ -1,14 +1,12 @@
-import { isLocalOnlyMcpServerConfig } from "@/shared/local-only-mcp";
-import type { ConnectionStatus } from "@/state/app-types";
-
 /**
- * Default name and selection for a new server group, derived from its contents.
+ * Default name for a new server group, derived from its contents.
  *
  * The picker's rows show only a name and a count, and groups cannot be renamed
  * (there is no update mutation yet), so a name that says what is inside it is
  * worth more here than usual. Pure so the numbering rule — collisions, case,
  * off-by-one — is testable without a popover and a Convex mock.
  */
+import type { ConnectionStatus } from "@/state/app-types";
 
 /** Trimmed and lowercased, for collision checks that ignore padding and case. */
 function normalize(name: string): string {
@@ -54,22 +52,6 @@ export function deriveServerGroupName(
   return `${base} ${suffix}`;
 }
 
-/** Above this, "all of them" stops being the obvious answer. */
-const PRESELECT_MAX = 3;
-
-/** A server as the picker knows it — id to select by, name to derive from. */
-export interface GroupDraftServer {
-  _id: string;
-  name: string;
-  command?: unknown;
-  url?: unknown;
-  /**
-   * Live connection status, when the caller can see it. Only `failed` blocks
-   * preselection — `disconnected` is what every server reads on a fresh load.
-   */
-  status?: ConnectionStatus;
-}
-
 /**
  * Is a status a reading, or just the default? `disconnected` is what every
  * server reads on a fresh load and after a project switch, so drawing it would
@@ -79,27 +61,4 @@ export function isObservedStatus(
   status: ConnectionStatus | undefined,
 ): status is Exclude<ConnectionStatus, "disconnected"> {
   return status !== undefined && status !== "disconnected";
-}
-
-/** The state a brand-new group form opens in: a small pool arrives already answered. */
-export function newGroupDraft(
-  pool: readonly GroupDraftServer[],
-  existingGroupNames: readonly string[],
-): { serverIds: string[]; name: string } {
-  // Ticking either of these builds a group that fails the moment it is
-  // attached: a local server cannot run in the cloud, and a server whose last
-  // attempt failed is already known not to answer (BB-49). Offer, never pick.
-  const reachable = pool.filter(
-    (server) =>
-      !isLocalOnlyMcpServerConfig(server) && server.status !== "failed",
-  );
-  const preselected =
-    reachable.length > 0 && reachable.length <= PRESELECT_MAX ? reachable : [];
-  return {
-    serverIds: preselected.map((server) => server._id),
-    name: deriveServerGroupName(
-      preselected.map((server) => server.name),
-      existingGroupNames,
-    ),
-  };
 }

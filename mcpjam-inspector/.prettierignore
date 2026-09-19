@@ -25,3 +25,5 @@ coverage
 
 # MCP Apps Spec
 apps.mdx
+# Exact backend contract mirror, pinned by convex/lib/mirrors.json.
+shared/swarm-grounding.ts

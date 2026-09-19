@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check } from "lucide-react";
+import { Check, SquareCheck } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Popover,
@@ -29,8 +29,22 @@ import { cn } from "@/lib/utils";
  * Nothing here can be read as "this tester failed task 3".
  *
  * **Hidden when the study has no tasks.** The caller decides that by not
- * rendering this; an empty checklist behind a "0 left" button would be a
- * control that only ever says nothing.
+ * rendering this; an empty checklist behind an "All checked" button would be
+ * a control that only ever says nothing.
+ *
+ * **One name, said once.** The button and the popover heading are both "What
+ * to try". They used to disagree — the popover opened on "Optional things to
+ * try" over a footnote leading with "Try any, in any order" — which made the
+ * list sound skippable every single time it was opened. The list being
+ * optional is true and still holds (nothing here gates the composer or reports
+ * completion); it is just not the headline.
+ *
+ * The footnote's other half stayed: "This checklist is only for you" is not
+ * framing, it is the one thing about this control a tester cannot work out by
+ * looking at it.
+ *
+ * The count beside the name stays worded as checkbox state ("2 unchecked")
+ * with a checkbox glyph, so it cannot be read as credits or a limit.
  */
 export function ScenarioTaskChecklist({
   scenarioId,
@@ -53,7 +67,7 @@ export function ScenarioTaskChecklist({
 
   // Counted against the tasks the study CURRENTLY has, not against everything
   // ever stored: a creator who removes a task must not leave the tester on
-  // "4 left" out of three.
+  // "4 unchecked" out of three.
   const completed = tasks.reduce(
     (total, task) => (checked.has(task.id) ? total + 1 : total),
     0,
@@ -90,7 +104,7 @@ export function ScenarioTaskChecklist({
           <span className="font-medium">What to try</span>
           <span
             className={cn(
-              "text-xs",
+              "inline-flex items-center gap-1 text-xs",
               allDone ? "text-muted-foreground" : "font-semibold text-primary",
             )}
             // Ticking an item changes this number, and the tester is looking
@@ -99,12 +113,15 @@ export function ScenarioTaskChecklist({
             aria-live="polite"
             data-testid="scenario-tasks-remaining"
           >
+            <SquareCheck aria-hidden className="size-3.5" />
             {remainingLabel}
           </span>
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-70 p-4">
-        <p className="text-sm font-semibold text-foreground">What to try</p>
+        <p className="text-sm font-semibold text-foreground">
+          What to try
+        </p>
         <ul className="mt-2 flex flex-col gap-0.5">
           {tasks.map((task) => {
             const isChecked = checked.has(task.id);
@@ -159,11 +176,12 @@ export function ScenarioTaskChecklist({
             );
           })}
         </ul>
-        {/* Says the list is not an exam, at the one moment a tester might
-            assume it was. */}
+        {/* What the tester cannot see for themselves: their ticks are local
+            bookkeeping, not something the creator is reading. Kept when "Try
+            any, in any order" was dropped — that sentence was framing, this
+            one is a fact about where the data goes. */}
         <p className="mt-3 text-[11px] leading-snug text-muted-foreground">
-          Any order, and you can skip anything. Ticking items off is just for
-          you.
+          This checklist is only for you.
         </p>
       </PopoverContent>
     </Popover>

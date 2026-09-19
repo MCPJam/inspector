@@ -39,6 +39,8 @@ const FLAG_ATTRS = [
   "required",
   "focused",
   "readonly",
+  /** A scroll container. Appended last so existing flag order is unchanged. */
+  "scrollable",
 ] as const;
 
 /**
