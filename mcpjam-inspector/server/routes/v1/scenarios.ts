@@ -260,6 +260,11 @@ scenarios.put(
 // `deleted: false` rather than 404. A caller cleaning up should not have to
 // know whether the thing it is removing exists.
 //
+// `?scenarioId=` names WHICH study to take down. An environment may back
+// several, and the backend refuses to guess between them rather than deleting
+// whichever an index yielded first — so a caller with more than one on a setup
+// has to say. Omitted is still the whole contract for the single-study case.
+//
 // NOT behind the beta flag — taking a live scenario down must keep working for
 // an org that has lost the flag. See lib/sandboxesGate.ts on why exposure-
 // reducing writes are ungated.
@@ -268,6 +273,7 @@ scenarios.delete(
   async (c) => {
     const projectId = c.req.param("projectId");
     const environmentId = c.req.param("environmentId");
+    const scenarioId = c.req.query("scenarioId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
     await requireEnvironmentInProject(client, projectId, environmentId);
 
@@ -275,7 +281,7 @@ scenarios.delete(
     try {
       result = (await client.mutation(
         "scenarios:unpublishEnvironmentScenario" as never,
-        { environmentId } as never
+        { environmentId, ...(scenarioId ? { scenarioId } : {}) } as never
       )) as { deleted: boolean; scenarioId?: string };
     } catch (error) {
       throw translateConvexWriteError(error, {

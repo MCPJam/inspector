@@ -18,6 +18,7 @@ import webRoutes from "./routes/web/index.js";
 import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
+import internalAgentTurns from "./routes/internal/agent-turns.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
 import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
@@ -335,6 +336,7 @@ export async function createHonoApp() {
   // judge doorbell above — the ring is a wake-up, and the pass claims from the
   // backend's own queue rather than from anything the caller named.
   app.route("/api/internal/chat-stage", internalChatStageDerivations);
+  app.route("/api/internal/agent-turns", internalAgentTurns);
   // W1 hosted-browser debug probe. Mounted ONLY when explicitly enabled — it
   // provisions a desktop and boots browserd end to end — and, like the other
   // internal routes, gated by the service token. Mirror of the mount in
@@ -387,7 +389,7 @@ export async function createHonoApp() {
     );
     app.get(
       "/api/web/computers/local-browser/frames",
-      createLocalBrowserFramesWsHandler(upgradeWebSocket)
+      createLocalBrowserFramesWsHandler(upgradeWebSocket),
     );
   }
   // WebMCP Inspector frame stream WebSocket. Never mounted hosted — there is no
@@ -646,8 +648,9 @@ export async function createHonoApp() {
           })
         ) {
           try {
-            const { session, setCookies } =
-              await mintGuestSessionForDocument(c);
+            const { session, setCookies } = await mintGuestSessionForDocument(
+              c,
+            );
             if (session && session.expiresAt > Date.now()) {
               const bootstrapScript = buildGuestBootstrapScript(session);
               html = html.replace("</head>", `${bootstrapScript}</head>`);

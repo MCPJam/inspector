@@ -122,20 +122,22 @@ The Apps Extension tab contains two independent capability matrices that never c
 5. Click **Save**.
 
 <Note>
-  Server selection is project-wide, not per-client. Use the **Auto-connect**
-  toggle in the Servers tab header to enroll all project servers for
-  auto-connection. Per-server overrides (headers, timeout) are also configured
-  there.
+  The **Auto-connect** switch in the Connect tab header is project-wide: it
+  connects every project server for you in this browser, whichever Client is
+  active. It is a personal setting, not a project one. Which servers an eval
+  suite or swarm run actually uses is chosen per run through its
+  [server attachment](#server-attachments). Per-server overrides (headers,
+  timeout) are configured on the Connect tab too.
 </Note>
 
 The canvas on the left shows a live diagram of the Client — the model, attached servers, and any per-server overrides. Cards flash briefly when you switch between Clients so you can see what changed.
 
-While the Connect canvas is open, a **client selector** is pinned to the top-left of the canvas. It shows two controls:
+The Connect section has a **client selector** in the top-left of each view's header row. Its controls vary by view:
 
-- **Add client** pill — opens the Create client dialog. Quick-add buttons for Claude, ChatGPT, and Copilot appear alongside it so you can spin up a template client without filling in the form.
-- **Switcher pill** — shows the active client's logo, name, and its position in the list (e.g. `2 / 3`). Click to open a dropdown listing all clients; select one to switch the canvas to it. A delete button appears on hover for each client (disabled on the last remaining client).
-
-The header client bar hides itself while the canvas is open to avoid duplicating the control.
+- **Servers view** — Shows a switcher pill only. The switcher displays the active client's logo, name, and its position in the list (e.g. `2 / 3`). Click to open a dropdown listing all clients; select one to switch the active client without navigating away. A delete button appears on hover for each client (disabled on the last remaining client).
+- **Client view** — Shows the full selector with two controls:
+  - **Add client** pill — opens the Create client dialog. Quick-add buttons for Claude, ChatGPT, and Copilot appear alongside it so you can spin up a template client without filling in the form.
+  - **Switcher pill** — same as the Servers view switcher, but switching also updates the canvas URL.
 
 ## Using a Client
 

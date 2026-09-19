@@ -54,9 +54,13 @@ function describe(observations: ObservationState): {
       return {
         tone: "info",
         text:
-          observations.reason === "billing_limit_reached"
-            ? "AI observations were skipped: this organization has reached its MCPJam model limit. The grade below is complete without them."
-            : "AI observations were skipped for a billing reason. The grade below is complete without them.",
+          observations.reason === "platform_cap_reached"
+            ? // MCPJam pays for observations, so this is MCPJam's budget running
+              // out — never the customer's, and nothing they can buy clears it.
+              "AI observations were skipped: MCPJam's daily budget for them is used up. Nothing was charged, and the grade below is complete without them."
+            : observations.reason === "billing_limit_reached"
+              ? "AI observations were skipped: this organization has reached its MCPJam model limit. The grade below is complete without them."
+              : "AI observations were skipped for a billing reason. The grade below is complete without them.",
       };
     case "provider-failed":
       return {

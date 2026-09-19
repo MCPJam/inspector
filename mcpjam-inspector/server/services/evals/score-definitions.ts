@@ -68,6 +68,8 @@ export {
   HOSTED_TOOL_MATCH_SCORER_ID,
   HOSTED_JUDGE_SCORER_ID,
 } from "@/shared/hosted-criterion-id";
+import { authoredRequiredRole } from "@mcpjam/sdk/contract";
+import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
 /**
  * Version of the hosted predicate projection — the "predicate evaluator
@@ -150,7 +152,7 @@ export function hostedToolMatchScoreDefinition(args: {
     label: "expected tool calls",
     deterministic: true,
     passThreshold: 1,
-    role: "gating",
+    role: authoredRequiredRole(),
   };
 }
 
@@ -171,13 +173,21 @@ export function hostedJudgeScoreDefinition(args: {
   model?: string;
   /**
    * What the RUN's frozen config said this judge was allowed to do, read off
-   * the verdict the backend stamped. Absent, or anything but the literal
-   * `"gating"`, is advisory — the default has to fail closed, because a role
-   * this build does not recognise must never be read as licence to fail a run.
+   * the verdict the backend stamped. Absent, or anything the build does not
+   * recognise, is advisory — the default has to fail closed, because a role
+   * this build cannot read must never be read as licence to fail a run.
+   *
+   * BOTH spellings of the required role are recognised. The backend stamped
+   * `"gating"` before the rename and stamps `"required"` after it, and this
+   * field is read off historical evidence, so "recognised" has to mean both
+   * forever — a comparator that took only one would un-gate every judge on one
+   * side of that line, silently.
    */
-  role?: "advisory" | "gating";
+  role?: ScorerRole;
 }): ScoreDefinition {
-  const role = args.role ?? "advisory";
+  const role: ScorerRole = isRequiredRole(args.role)
+    ? authoredRequiredRole()
+    : "advisory";
   return {
     scorerId: HOSTED_JUDGE_SCORER_ID,
     idSource: "platform",
@@ -206,6 +216,31 @@ export function hostedJudgeScoreDefinition(args: {
   };
 }
 
+/**
+ * Emitted only when the agent-activity guard fired, so a normal run's
+ * `evaluationConfigHash` stays unchanged.
+ */
+export const HOSTED_AGENT_ACTIVITY_SCORER_ID = "platform:agentActivity";
+
+export const HOSTED_AGENT_ACTIVITY_VERSION = "1";
+
+export function hostedAgentActivityScoreDefinition(): ScoreDefinition {
+  return {
+    scorerId: HOSTED_AGENT_ACTIVITY_SCORER_ID,
+    idSource: "platform",
+    scorerVersion: HOSTED_AGENT_ACTIVITY_VERSION,
+    implementationHash: canonicalDigest({
+      evaluatorVersion: HOSTED_AGENT_ACTIVITY_VERSION,
+    }),
+    label: "agent activity",
+    deterministic: true,
+    passThreshold: 1,
+    // Gating, so the row lands in `unresolvedScorerIds` ("not measured")
+    // rather than as a failed criterion.
+    role: "gating",
+  };
+}
+
 export type HostedScoreDefinitionInputs = {
   /** One entry per graded predicate, in the order the runner evaluated them. */
   predicates?: ReadonlyArray<{ predicate: Predicate; scope?: PredicateScope }>;
@@ -225,6 +260,8 @@ export type HostedScoreDefinitionInputs = {
     /** From the run's frozen config, via the stamped verdict. Fails closed. */
     role?: "advisory" | "gating";
   };
+  /** A boolean, not the assessment, so the detail never affects the scorer's hash. */
+  agentActivityFired?: boolean;
 };
 
 /**
@@ -251,6 +288,9 @@ export function buildHostedScoreDefinitions(
   }
   if (inputs.judge) {
     definitions.push(hostedJudgeScoreDefinition(inputs.judge));
+  }
+  if (inputs.agentActivityFired) {
+    definitions.push(hostedAgentActivityScoreDefinition());
   }
   const byId = new Map<string, ResolvedScoreDefinition>();
   for (const definition of definitions) {

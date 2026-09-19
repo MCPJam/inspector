@@ -5,10 +5,9 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
-  setFramePresenterForTests,
   useWebmcpInspectorStore,
+  webmcpFrameChannel,
 } from "../webmcp-inspector-store";
-import { createFramePresenter } from "@/lib/webmcp-inspector/frame-presenter";
 import * as sessionToken from "@/lib/session-token";
 import {
   frameStatsReport,
@@ -16,7 +15,11 @@ import {
   noteInputSent,
   resetFrameStatsFlagForTests,
 } from "@/lib/webmcp-inspector/frame-stats";
-import { encodeWebMcpBinaryFrame } from "@/shared/webmcp-inspector-protocol";
+import {
+  encodeFrameStreamRecord,
+  FRAME_STREAM_KIND,
+  type FrameStreamFrame,
+} from "@/shared/browserd-frame-stream";
 import type {
   WebMcpActivityEntry,
   WebMcpEvent,
@@ -24,25 +27,56 @@ import type {
   WebMcpToolDescriptor,
 } from "@/shared/webmcp-inspector-protocol";
 
-// Socket messages and display ticks are separate. Existing transport tests
-// advance a display tick with each frame; burst coalescing has dedicated tests.
-let displayId = 0;
-const displayCallbacks = new Map<number, FrameRequestCallback>();
-function paintTick() {
-  const callbacks = [...displayCallbacks.values()];
-  displayCallbacks.clear();
-  for (const callback of callbacks) callback(performance.now());
+/**
+ * Every bitmap the shared reader decoded, so a test can assert that the one a
+ * frame replaced was released.
+ *
+ * jsdom has neither `createImageBitmap` nor `ImageBitmap`, and the reader the
+ * socket now uses decodes through it — so this stands in for the browser's
+ * image pipeline, and records the closes the pane's memory story depends on.
+ */
+interface FakeBitmap {
+  closed: boolean;
+  close(): void;
 }
+let bitmaps: FakeBitmap[] = [];
 beforeEach(() => {
-  displayCallbacks.clear();
-  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-    displayCallbacks.set(++displayId, callback);
-    return displayId;
+  bitmaps = [];
+  vi.stubGlobal("createImageBitmap", async () => {
+    const bitmap: FakeBitmap = {
+      closed: false,
+      close() {
+        this.closed = true;
+      },
+    };
+    bitmaps.push(bitmap);
+    return bitmap;
   });
-  vi.stubGlobal("cancelAnimationFrame", (id: number) =>
-    displayCallbacks.delete(id),
-  );
 });
+
+/**
+ * Let the decode settle.
+ *
+ * `createImageBitmap` is a promise, so a frame pushed into the socket reaches
+ * the channel a microtask later rather than synchronously. Two turns: one for
+ * the decode, one for the `finally` that starts any pending record behind it.
+ */
+async function decoded(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+/**
+ * Let a socket the store has decided to open actually appear.
+ *
+ * `openFrameSocket` mints a single-use nonce first, so a timer that arms a
+ * retry only STARTS the work — the `FakeWebSocket` lands a few microtasks
+ * later, and fake timers do not advance those.
+ */
+async function socketOpened(): Promise<void> {
+  for (let i = 0; i < 20; i += 1) await Promise.resolve();
+}
 
 /** Captured EventSource instances, so a test can push frames at the store. */
 class FakeEventSource {
@@ -93,7 +127,10 @@ class FakeWebSocket {
   sent: string[] = [];
   closedByClient = false;
 
-  constructor(readonly url: string, readonly protocols?: string[]) {
+  constructor(
+    readonly url: string,
+    readonly protocols?: string[],
+  ) {
     FakeWebSocket.instances.push(this);
   }
 
@@ -112,21 +149,23 @@ class FakeWebSocket {
     this.onopen?.();
   }
 
-  emitFrame(
-    frame: Parameters<typeof encodeWebMcpBinaryFrame>[0],
-    paint = true,
+  /** Push one frame record and, by default, wait for its decode. */
+  async emitFrame(
+    frame: Omit<FrameStreamFrame, "kind" | "scale"> & { scale?: number },
+    settle = true,
   ) {
-    const encoded = encodeWebMcpBinaryFrame(frame);
+    const encoded = encodeFrameStreamRecord({
+      kind: FRAME_STREAM_KIND.frame,
+      scale: 1,
+      ...frame,
+    });
     this.onmessage?.({
       data: encoded.buffer.slice(
         encoded.byteOffset,
         encoded.byteOffset + encoded.byteLength,
       ),
     });
-    if (paint) {
-      paintTick();
-      if (vi.isFakeTimers()) vi.advanceTimersByTime(17);
-    }
+    if (settle) await decoded();
   }
 
   emitClose(code: number, reason = "") {
@@ -151,7 +190,10 @@ const FRAME_SESSION: WebMcpSessionPublic = {
 
 const JPEG = new Uint8Array([0xff, 0xd8, 0x11, 0x22]);
 
-function binaryFrame(seq: number, overrides: Record<string, unknown> = {}) {
+function binaryFrame(
+  seq: number,
+  overrides: Partial<Omit<FrameStreamFrame, "kind">> = {},
+) {
   return {
     deviceWidth: 1280,
     deviceHeight: 800,
@@ -182,20 +224,17 @@ const TOOL: WebMcpToolDescriptor = {
   registrationKind: "imperative",
 };
 
-/** A `liveFrame` in the store's normalized shape. */
-function liveFrame(data: string, seq = 2) {
-  return {
-    src: `data:image/jpeg;base64,${data}`,
-    rung: "ws" as const,
+/** A picture already on screen, as the channel holds it. */
+function paintChannel(seq = 2) {
+  webmcpFrameChannel.publish({
+    bitmap: undefined,
+    data: "paint",
     deviceWidth: 1280,
     deviceHeight: 800,
-    // Same numbers at scale 1, and deliberately still stated: the pane lays
-    // out and scales clicks against these, not the device ones.
-    cssWidth: 1280,
-    cssHeight: 800,
+    scale: 1,
     ts: 1,
     seq,
-  };
+  });
 }
 
 function activityEvent(entry: WebMcpActivityEntry, seq = 1): WebMcpEvent {
@@ -249,6 +288,8 @@ async function openSession(session: WebMcpSessionPublic = SESSION) {
     new Response(JSON.stringify(session), { status: 201 }),
   );
   await useWebmcpInspectorStore.getState().startSession("https://shop.test/");
+  // The stream is a fetch body and the frame socket's nonce is a request, so
+  // neither transport exists at the turn `startSession` resolves on.
   for (let i = 0; i < 20; i++) await Promise.resolve();
   return FakeEventSource.instances.at(-1)!;
 }
@@ -260,9 +301,6 @@ async function openFrameSession(sessionId = "session-1") {
 }
 
 describe("webmcp inspector store", () => {
-  let urls: string[] = [];
-  let revoked: string[] = [];
-
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -279,21 +317,6 @@ describe("webmcp inspector store", () => {
     (
       window as unknown as { __MCP_SESSION_TOKEN__?: string }
     ).__MCP_SESSION_TOKEN__ = "test-token";
-    // jsdom has no object-URL plumbing, and the store's default presenter
-    // reaches for it on the first WS frame.
-    urls = [];
-    revoked = [];
-    setFramePresenterForTests(
-      createFramePresenter({
-        createUrl: () => {
-          const url = `blob:frame-${urls.length}`;
-          urls.push(url);
-          return url;
-        },
-        revokeUrl: (url) => revoked.push(url),
-        defer: (fn) => fn(),
-      }),
-    );
     vi.restoreAllMocks();
     useWebmcpInspectorStore.setState({
       session: undefined,
@@ -302,7 +325,6 @@ describe("webmcp inspector store", () => {
       pending: [],
       starting: false,
       error: undefined,
-      liveFrame: undefined,
       frameTransport: { rung: "none", attempts: 0, latched: false },
       lastScreenshot: undefined,
       chatEnabled: false,
@@ -319,22 +341,6 @@ describe("webmcp inspector store", () => {
     expect(state.tools).toHaveLength(1);
     expect(state.activity.map((entry) => entry.id)).toEqual(["a1"]);
     expect(state.pending.map((item) => item.invokeId)).toEqual(["inv-1"]);
-  });
-
-  it("keeps an active browser during shared setup, but closes it on device revoke", () => {
-    const key = "mcp-local-browser-consent-v1";
-    localStorage.setItem(key, JSON.stringify({ token: "existing-browser-capability", grantedAt: "now" }));
-    window.dispatchEvent(new CustomEvent("local-browser-consent-changed"));
-    useWebmcpInspectorStore.setState({ session: SESSION });
-    const close = vi.spyOn(useWebmcpInspectorStore.getState(), "closeSession").mockResolvedValue(undefined);
-    localStorage.setItem("mcp-local-browser-setup-pending-v1", "true");
-    window.dispatchEvent(new CustomEvent("local-browser-consent-changed"));
-    localStorage.removeItem("mcp-local-browser-setup-pending-v1");
-    window.dispatchEvent(new CustomEvent("local-browser-consent-changed"));
-    expect(close).not.toHaveBeenCalled();
-    localStorage.removeItem(key);
-    window.dispatchEvent(new StorageEvent("storage", { key }));
-    expect(close).toHaveBeenCalledOnce();
   });
 
   it("clears pending once an invocation settles", async () => {
@@ -358,32 +364,6 @@ describe("webmcp inspector store", () => {
     const state = useWebmcpInspectorStore.getState();
     expect(state.activity.map((entry) => entry.id)).toEqual(["a1", "a2"]);
     expect(state.pending).toEqual([]);
-  });
-
-  it("clears the timeline without resurrecting dismissed rows or pending", async () => {
-    const source = await openSession();
-    await source.emit(activityEvent(started("a1", "inv-1")));
-    await source.emit(activityEvent(settled("a2", "inv-1"), 2));
-    await source.emit(activityEvent(started("a3", "inv-2"), 3));
-
-    useWebmcpInspectorStore.getState().clearActivity();
-
-    const afterClear = useWebmcpInspectorStore.getState();
-    expect(afterClear.activity).toEqual([]);
-    // Clearing the log is not cancelling a running tool.
-    expect(afterClear.pending.map((item) => item.invokeId)).toEqual(["inv-2"]);
-
-    // EventSource reconnects replay the ring. Forgetting seen ids would put
-    // every dismissed row back the next time the stream hiccups.
-    await source.emit(activityEvent(started("a1", "inv-1")));
-    await source.emit(activityEvent(settled("a2", "inv-1"), 2));
-    expect(useWebmcpInspectorStore.getState().activity).toEqual([]);
-
-    await source.emit(activityEvent(settled("a4", "inv-2"), 4));
-    expect(useWebmcpInspectorStore.getState().activity.map((entry) => entry.id)).toEqual(
-      ["a4"],
-    );
-    expect(useWebmcpInspectorStore.getState().pending).toEqual([]);
   });
 
   it("does not resurrect pending when only the start is replayed", async () => {
@@ -550,12 +530,6 @@ describe("webmcp inspector store", () => {
     );
   });
 
-  it("treats a live session as page-tools-live", async () => {
-    await openSession();
-    expect(useWebmcpInspectorStore.getState().pageToolsLive()).toBe(true);
-    expect(useWebmcpInspectorStore.getState().chatEnabled).toBe(false);
-  });
-
   it("resets the chat opt-in when the session closes", async () => {
     await openSession();
     useWebmcpInspectorStore.getState().setChatEnabled(true);
@@ -685,44 +659,60 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().tools).toEqual([]);
   });
 
-  it("keeps the newest frame, and keeps it out of the timeline", async () => {
+  it("clears the timeline without resurrecting dismissed rows or pending", async () => {
     const source = await openSession();
+    await source.emit(activityEvent(started("a1", "inv-1")));
+    await source.emit(activityEvent(settled("a2", "inv-1"), 2));
+    await source.emit(activityEvent(started("a3", "inv-2"), 3));
+
+    useWebmcpInspectorStore.getState().clearActivity();
+
+    const afterClear = useWebmcpInspectorStore.getState();
+    expect(afterClear.activity).toEqual([]);
+    // Clearing the log is not cancelling a running tool.
+    expect(afterClear.pending.map((item) => item.invokeId)).toEqual(["inv-2"]);
+
+    // Stream reconnects replay the ring. Forgetting seen ids would put every
+    // dismissed row back the next time the stream hiccups.
+    await source.emit(activityEvent(started("a1", "inv-1")));
+    await source.emit(activityEvent(settled("a2", "inv-1"), 2));
+    expect(useWebmcpInspectorStore.getState().activity).toEqual([]);
+
+    await source.emit(activityEvent(settled("a4", "inv-2"), 4));
+    expect(
+      useWebmcpInspectorStore.getState().activity.map((entry) => entry.id),
+    ).toEqual(["a4"]);
+    expect(useWebmcpInspectorStore.getState().pending).toEqual([]);
+  });
+
+  it("ignores a frame event on the timeline stream", async () => {
+    const source = await openSession();
+    // The event stream carried pixels once, in a coalesced slot beside the
+    // timeline. It no longer does — they have their own socket — and a server
+    // that somehow sent one must not be able to put a filmstrip into the
+    // record the session exists to produce.
     await source.emit({
       type: "frame",
       seq: 2,
       frame: { data: "one", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
     });
-    await source.emit({
-      type: "frame",
-      seq: 3,
-      frame: { data: "two", deviceWidth: 640, deviceHeight: 400, ts: 2 },
-    });
 
-    const state = useWebmcpInspectorStore.getState();
-    expect(state.liveFrame).toMatchObject({
-      src: "data:image/jpeg;base64,two",
-      deviceWidth: 640,
-      seq: 3,
-    });
-    // Frames are transient. The timeline is what the session exists to
-    // produce, and it must not turn into a filmstrip.
-    expect(state.activity).toEqual([]);
+    expect(useWebmcpInspectorStore.getState().activity).toEqual([]);
+    expect(webmcpFrameChannel.latest()).toBeNull();
   });
 
   it("keeps the live frame separate from the manual screenshot", async () => {
-    const source = await openSession();
+    const { ws } = await openFrameSession();
+    ws.open();
     useWebmcpInspectorStore.setState({ lastScreenshot: "manual-capture" });
-    await source.emit({
-      type: "frame",
-      seq: 2,
-      frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
-    });
-    // Two slots on purpose: one is the live picture, the other a snapshot
-    // someone asked for. Collapsing them would make the invoke pane's thumbnail
-    // flicker with every paint.
-    const state = useWebmcpInspectorStore.getState();
-    expect(state.lastScreenshot).toBe("manual-capture");
-    expect(state.liveFrame?.src).toBe("data:image/jpeg;base64,paint");
+    await ws.emitFrame(binaryFrame(2));
+    // Two places on purpose: one is the live picture on its own channel, the
+    // other a snapshot someone asked for in the store. Collapsing them would
+    // make the invoke pane's thumbnail flicker with every paint.
+    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe(
+      "manual-capture",
+    );
+    expect(webmcpFrameChannel.latest()?.seq).toBe(2);
   });
 
   it("ignores an event type it does not know, without losing the stream", async () => {
@@ -747,14 +737,12 @@ describe("webmcp inspector store", () => {
     await source.emit({ type: "session_gone", error: "That session is gone." });
     // Nothing is going to correct that picture now, so showing it would be a
     // page the viewer believes is current and is not.
-    expect(useWebmcpInspectorStore.getState().liveFrame).toBeUndefined();
+    expect(webmcpFrameChannel.latest()).toBeNull();
   });
 
-  it("reports an old server's 400 as a screencast the client must fall back from", async () => {
+  it("reports a refused screencast without putting it in the banner", async () => {
     await openSession();
-    useWebmcpInspectorStore.setState({
-      liveFrame: liveFrame("paint"),
-    });
+    paintChannel();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ error: "Invalid command." }), {
         status: 400,
@@ -766,10 +754,11 @@ describe("webmcp inspector store", () => {
       .setScreencast(true);
 
     expect(accepted).toBe(false);
-    expect(useWebmcpInspectorStore.getState().liveFrame).toBeUndefined();
-    // NOT surfaced in the error banner: the pane is about to start working via
-    // the poll fallback, and "Invalid command." in front of someone whose
-    // server is simply older is a bug report we would rather not receive.
+    expect(webmcpFrameChannel.latest()).toBeNull();
+    // NOT surfaced in the error banner: a refusal here is a lifecycle fact for
+    // the pane to act on, and "Invalid command." in front of someone whose
+    // pane is about to start working anyway is a bug report we would rather
+    // not receive.
     expect(useWebmcpInspectorStore.getState().error).toBeUndefined();
   });
 
@@ -788,14 +777,12 @@ describe("webmcp inspector store", () => {
       true,
     );
 
-    useWebmcpInspectorStore.setState({
-      liveFrame: liveFrame("paint"),
-    });
+    paintChannel();
     // False after a stop is the honest answer: nothing is flowing now.
     expect(await useWebmcpInspectorStore.getState().setScreencast(false)).toBe(
       false,
     );
-    expect(useWebmcpInspectorStore.getState().liveFrame).toBeUndefined();
+    expect(webmcpFrameChannel.latest()).toBeNull();
   });
 
   it("omits display entirely for a window session", async () => {
@@ -927,24 +914,22 @@ describe("webmcp inspector store", () => {
     });
   });
 
-  it("treats a 200 with streaming:false as a screencast to fall back from", async () => {
+  it("treats a 200 with streaming:false as nothing flowing yet", async () => {
     await openSession();
-    useWebmcpInspectorStore.setState({
-      liveFrame: liveFrame("paint"),
-    });
+    paintChannel();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ ok: true, streaming: false }), {
         status: 200,
       }),
     );
 
-    // The server understood the command and the browser still cannot stream.
-    // Reading only the status here would leave the pane waiting for frames that
-    // are never coming.
+    // The server understood the command and no frames are flowing — the daemon
+    // has no tab selected yet. Reading only the status would leave the pane
+    // claiming a live picture it is not receiving.
     expect(await useWebmcpInspectorStore.getState().setScreencast(true)).toBe(
       false,
     );
-    expect(useWebmcpInspectorStore.getState().liveFrame).toBeUndefined();
+    expect(webmcpFrameChannel.latest()).toBeNull();
   });
 
   it("does not carry one session's screenshot into the next", async () => {
@@ -961,7 +946,7 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().lastScreenshot).toBeUndefined();
   });
 
-  it("does not let the background screenshot poll clear an error banner", async () => {
+  it("clears the error banner, because a person pressed the button", async () => {
     await openSession();
     useWebmcpInspectorStore.setState({
       error: { message: "That page could not be reached." },
@@ -972,32 +957,23 @@ describe("webmcp inspector store", () => {
       }),
     );
 
-    await useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
-    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("shot");
-    // The poll runs once a second. Clearing here would wipe a navigation or
-    // invocation failure within a second of it appearing — usually before
-    // anyone had read it.
-    expect(useWebmcpInspectorStore.getState().error?.message).toBe(
-      "That page could not be reached.",
-    );
-
-    // The MANUAL button still clears it: that is a person acting on the banner.
+    // Every capture is a person acting on the banner now. The `silent` mode
+    // that kept the once-a-second poll out of it went with the poll: nothing
+    // else calls this, so nothing can wipe a navigation or invocation failure
+    // before anyone has read it.
     await useWebmcpInspectorStore.getState().captureScreenshot();
+    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("shot");
     expect(useWebmcpInspectorStore.getState().error).toBeUndefined();
   });
 
-  it("does not land a poll's screenshot in the session that replaced it", async () => {
+  it("does not land a capture in the session that replaced it", async () => {
     await openSession();
     const { fetchSpy, release } = deferredFetch();
 
-    const polling = useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
+    const capturing = useWebmcpInspectorStore.getState().captureScreenshot();
     await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
-    // The poll runs once a second and its request outlives a close, so the
-    // session turning over underneath one is routine, not exotic.
+    // A capture's request outlives a close, so the session turning over
+    // underneath one is routine: press Screenshot, then close the page.
     useWebmcpInspectorStore.setState({
       session: { ...SESSION, sessionId: "session-2" },
     });
@@ -1006,12 +982,12 @@ describe("webmcp inspector store", () => {
         status: 200,
       }),
     );
-    await polling;
+    await capturing;
 
     // The pane falls back to `lastScreenshot` before its first frame, so this
     // would hang the PREVIOUS page's paint in the new session's live view —
-    // where no later poll would correct it, because it is not stale, it is
-    // simply the wrong page.
+    // where nothing would correct it, because it is not stale, it is simply
+    // the wrong page.
     expect(useWebmcpInspectorStore.getState().lastScreenshot).toBeUndefined();
   });
 
@@ -1023,8 +999,8 @@ describe("webmcp inspector store", () => {
     await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
     useWebmcpInspectorStore.setState({
       session: { ...SESSION, sessionId: "session-2" },
-      liveFrame: liveFrame("fresh"),
     });
+    paintChannel(77);
     release(
       new Response(JSON.stringify({ error: "Invalid command." }), {
         status: 400,
@@ -1035,9 +1011,7 @@ describe("webmcp inspector store", () => {
     // The refusal belongs to the session that asked. Acting on it here would
     // blank a pane that is streaming perfectly well, and nothing would repaint
     // it until the page next changed on its own.
-    expect(useWebmcpInspectorStore.getState().liveFrame?.src).toBe(
-      "data:image/jpeg;base64,fresh",
-    );
+    expect(webmcpFrameChannel.latest()?.seq).toBe(77);
   });
 
   it("splits an input batch past the route's cap, in order", async () => {
@@ -1076,15 +1050,11 @@ describe("webmcp inspector store", () => {
         }),
     );
 
-    // Two captures in flight at once — routine, because the poll keeps its
-    // once-a-second cadence rather than queueing behind a slow capture.
-    const first = useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
+    // Two captures in flight at once — a second press while the first is
+    // still out, which a slow page makes easy to do.
+    const first = useWebmcpInspectorStore.getState().captureScreenshot();
     await vi.waitFor(() => expect(releases).toHaveLength(1));
-    const second = useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
+    const second = useWebmcpInspectorStore.getState().captureScreenshot();
     await vi.waitFor(() => expect(releases).toHaveLength(2));
 
     // The NEWER one answers first…
@@ -1103,8 +1073,8 @@ describe("webmcp inspector store", () => {
       }),
     );
     await first;
-    // Applying it would step the pane backwards a frame, and a manual capture
-    // someone just asked for is exactly what a slow poll would overwrite.
+    // Applying it would step the pane backwards a picture, onto the page as
+    // it was before the one the person is already looking at.
     expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("newer");
   });
 
@@ -1118,17 +1088,12 @@ describe("webmcp inspector store", () => {
         }),
     );
 
-    const first = useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
+    const first = useWebmcpInspectorStore.getState().captureScreenshot();
     await vi.waitFor(() => expect(releases).toHaveLength(1));
-    const second = useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
+    const second = useWebmcpInspectorStore.getState().captureScreenshot();
     await vi.waitFor(() => expect(releases).toHaveLength(2));
 
-    // The newer capture FAILS — a poll hitting a blip, which is why the poll
-    // exists once a second rather than once.
+    // The newer capture FAILS — a blip on the second press.
     releases[1](new Response("{}", { status: 500 }));
     await second;
     releases[0](
@@ -1144,62 +1109,7 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("older");
   });
 
-  it("carries the server's capture time beside the picture", async () => {
-    await openSession();
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      async () =>
-        new Response(
-          JSON.stringify({ screenshotBase64: "shot", capturedAt: 1_234 }),
-          { status: 200 },
-        ),
-    );
-
-    await useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
-
-    // The measurement needs the same definition of "captured" a streamed
-    // frame's `ts` carries. Timed from arrival here instead, the poll's
-    // percentile would exclude the capture and the round trip — a different
-    // quantity sharing a table with the socket's.
-    const state = useWebmcpInspectorStore.getState();
-    expect(state.lastScreenshot).toBe("shot");
-    expect(state.lastScreenshotAt).toBe(1_234);
-  });
-
-  it("dates the poll's picture and not the button's", async () => {
-    await openSession();
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      async () =>
-        new Response(
-          JSON.stringify({
-            ok: true,
-            screenshotBase64: "shot",
-            capturedAt: 1_234,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-    );
-
-    await useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
-    expect(useWebmcpInspectorStore.getState().lastScreenshotAt).toBe(1_234);
-
-    // Somebody presses the Screenshot button. The picture changes; the poll
-    // timestamp must not survive it, and the manual capture must not acquire
-    // one — what the measurement records is a TRANSPORT, and a person pressing
-    // a button is not the pane polling. Left dated, a session that never
-    // polled would grow a `byTransport.poll` bucket, and a headless one —
-    // where the button is the only way to see the page — would report every
-    // capture as polling.
-    await useWebmcpInspectorStore.getState().captureScreenshot();
-
-    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("shot");
-    expect(useWebmcpInspectorStore.getState().lastScreenshotAt).toBeUndefined();
-  });
-
-  it("keeps the picture when a poll answers without one", async () => {
+  it("keeps the picture when a capture answers without one", async () => {
     await openSession();
     const releases: Array<(response: Response) => void> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(
@@ -1209,26 +1119,20 @@ describe("webmcp inspector store", () => {
         }),
     );
 
-    const first = useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
+    const first = useWebmcpInspectorStore.getState().captureScreenshot();
     await vi.waitFor(() => expect(releases).toHaveLength(1));
-    const second = useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
+    const second = useWebmcpInspectorStore.getState().captureScreenshot();
     await vi.waitFor(() => expect(releases).toHaveLength(2));
 
     // 200, and no picture: the provider holds outstanding captures at one, so
-    // a browser slower than the poll's one-second cadence answers the next
-    // tick this way. It is "nothing to show you right now", NOT "the page is
-    // blank".
+    // the second press answers this way while the first is still out. It is
+    // "nothing to show you right now", NOT "the page is blank".
     releases[1](new Response("{}", { status: 200 }));
     await second;
 
     // The real capture, still on its way when that landed. Had the empty
-    // answer claimed the slot, this would be rejected as stale — and with a
-    // browser that stays slow, so would every one after it, leaving the pane
-    // blank for as long as it lasted.
+    // answer claimed the slot, this would be rejected as stale and the pane
+    // would stay blank until somebody pressed again.
     releases[0](
       new Response(JSON.stringify({ screenshotBase64: "real" }), {
         status: 200,
@@ -1354,8 +1258,6 @@ describe("webmcp inspector store", () => {
  * failure modes worth pinning, and both are invisible in a happy-path test.
  */
 describe("webmcp inspector store — frame transport", () => {
-  let urls: string[] = [];
-
   beforeEach(() => {
     useWebmcpInspectorStore.getState().disconnect();
     FakeEventSource.instances = [];
@@ -1363,18 +1265,6 @@ describe("webmcp inspector store — frame transport", () => {
     (
       window as unknown as { __MCP_SESSION_TOKEN__?: string }
     ).__MCP_SESSION_TOKEN__ = "test-token";
-    urls = [];
-    setFramePresenterForTests(
-      createFramePresenter({
-        createUrl: () => {
-          const url = `blob:frame-${urls.length}`;
-          urls.push(url);
-          return url;
-        },
-        revokeUrl: () => {},
-        defer: (fn) => fn(),
-      }),
-    );
     vi.restoreAllMocks();
     useWebmcpInspectorStore.setState({
       session: undefined,
@@ -1383,11 +1273,11 @@ describe("webmcp inspector store — frame transport", () => {
       pending: [],
       starting: false,
       error: undefined,
-      liveFrame: undefined,
       frameTransport: { rung: "none", attempts: 0, latched: false },
       lastScreenshot: undefined,
       chatEnabled: false,
     });
+    webmcpFrameChannel.publish(null);
   });
 
   afterEach(() => {
@@ -1471,7 +1361,11 @@ describe("webmcp inspector store — frame transport", () => {
     await vi.advanceTimersByTimeAsync(5001);
     await pending;
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(sse.url).toContain("frames=off");
+    // The FRAME stream is untouched by an input timeout: pixels and gestures
+    // fail independently, and demoting the picture because a gesture went
+    // unanswered would turn one silent batch into a dead pane.
+    expect(sse.url).not.toContain("frames");
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("ws");
     const count = ws.sent.length;
     await useWebmcpInspectorStore
       .getState()
@@ -1505,204 +1399,136 @@ describe("webmcp inspector store — frame transport", () => {
     );
   });
 
-  it("opens the socket and takes frames off SSE, for a frame-stream session", async () => {
+  it("opens the socket, and never asks the event stream for pixels", async () => {
     const { sse, ws } = await openFrameSession();
 
-    // Frames move to the socket, so SSE is told not to send them — from
-    // connect time, not after the first one arrives.
-    expect(sse.url).toContain("frames=off");
+    // The event stream carries the session, its tools and its timeline. It has
+    // never been asked for frames since the socket became the only picture.
+    expect(sse.url).not.toContain("frames");
     expect(ws.url).toBe(
       "ws://localhost:3000/api/web/webmcp/sessions/session-1/frames",
     );
-    // The token rides the subprotocol so it never lands in an access log.
+    // The nonce rides the subprotocol so it never lands in an access log —
+    // and it is the nonce the route just minted, never the ambient session
+    // token, which would be a long-lived credential on a viewer's socket.
     expect(ws.protocols).toEqual(["test-nonce"]);
     expect(ws.binaryType).toBe("arraybuffer");
   });
 
-  it("opens no socket, and no frames param, for any other session", async () => {
-    // A native-window session drives a real browser the person is looking at,
-    // and a hosted one paints in a datacenter. Neither has pixels to carry.
-    const sse = await openSession();
-    expect(FakeWebSocket.instances).toHaveLength(0);
-    expect(sse.url).not.toContain("frames=");
-  });
+  it.each([{ kind: "native-window" as const }, { kind: "headless" as const }])(
+    "streams a $kind session's live view over the socket too",
+    async (viewportTransport) => {
+      // The server paints these as well — the pane mirrors the page — and the
+      // socket is now the only thing that carries pixels. Keyed on
+      // `frame-stream` alone, these panes would wait forever.
+      const sse = await openSession({ ...SESSION, viewportTransport });
+      expect(sse.url).not.toContain("frames");
+      const ws = FakeWebSocket.instances.at(-1);
+      expect(ws).toBeDefined();
+      ws!.open();
+      await ws!.emitFrame(binaryFrame(3));
+      expect(webmcpFrameChannel.latest()).toMatchObject({ seq: 3 });
+    },
+  );
 
-  it("stays on SSE frames when there is no token to open the socket with", async () => {
-    // The token IS the auth on that socket, so without one the handshake could
-    // only ever be refused — and an empty subprotocol entry is a constructor
-    // SyntaxError rather than a close code, so "just try it" would throw out
-    // of `connect()` and take the SSE stream with it.
-    // The real token is cached in its own module for the tab's lifetime, so
-    // clearing `window` is not enough — this asks the question the store asks.
-    vi.spyOn(sessionToken, "hasSessionToken").mockReturnValue(false);
-    const { sse } = await openFrameSession();
-    expect(FakeWebSocket.instances).toHaveLength(0);
-    expect(sse.url).not.toContain("frames=off");
+  it.each([
+    { kind: "remote-interactive-url" as const, url: "https://computer.test/" },
+    { kind: "electron-native" as const, bootId: "boot-1" },
+  ])(
+    "opens no socket for a $kind session, which paints itself",
+    async (viewportTransport) => {
+      const sse = await openSession({ ...SESSION, viewportTransport });
+      expect(FakeWebSocket.instances).toHaveLength(0);
+      expect(sse.url).not.toContain("frames=");
+    },
+  );
 
-    await sse.emit({
-      type: "frame",
-      seq: 2,
-      frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
-    });
-    expect(useWebmcpInspectorStore.getState().liveFrame?.src).toBe(
-      "data:image/jpeg;base64,paint",
-    );
-  });
-
-  it("renders a binary frame as a blob URL with its own metadata", async () => {
+  it("decodes a frame through the shared reader and publishes it, not a store update", async () => {
     const { ws } = await openFrameSession();
     ws.open();
-    ws.emitFrame(binaryFrame(7, { deviceWidth: 1024, deviceHeight: 640 }));
+    const changed = vi.fn();
+    const unsubscribe = useWebmcpInspectorStore.subscribe(changed);
+    await ws.emitFrame(
+      binaryFrame(7, { deviceWidth: 1024, deviceHeight: 640 }),
+    );
 
-    expect(useWebmcpInspectorStore.getState().liveFrame).toEqual({
-      src: "blob:frame-0",
+    expect(webmcpFrameChannel.latest()).toMatchObject({
       deviceWidth: 1024,
       deviceHeight: 640,
-      cssWidth: 1024,
-      cssHeight: 640,
+      scale: 1,
       ts: 5_000,
       seq: 7,
-      // The transport this frame came in on, carried WITH it: a frame decodes
-      // for tens of milliseconds and the ladder can move in that window.
-      rung: "ws",
     });
+    // Already decoded, off the main thread, by the same reader the Playground
+    // panes use — there is no second decode waiting in the component.
+    expect(webmcpFrameChannel.latest()?.bitmap).toBeDefined();
+    // AND NOT A STORE UPDATE. The whole point of the channel: thirty frames a
+    // second must not re-render a workspace of panels that do not draw them.
+    expect(changed).not.toHaveBeenCalled();
+    unsubscribe();
   });
 
-  it("stamps each frame with the transport that delivered it", async () => {
-    const { sse, ws } = await openFrameSession();
-    ws.open();
-    ws.emitFrame(binaryFrame(7));
-    expect(useWebmcpInspectorStore.getState().liveFrame?.rung).toBe("ws");
-
-    // The socket dies; the same session's next frame arrives on SSE. Reading
-    // the CURRENT transport when this paints would file it under whichever
-    // rung the ladder had reached by then.
-    ws.emitClose(1006);
-    await FakeEventSource.instances.at(-1)!.emit({
-      type: "frame",
-      seq: 8,
-      frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
-    });
-    expect(useWebmcpInspectorStore.getState().liveFrame?.rung).toBe(
-      "sse-frames",
-    );
-  });
-
-  it("reports a scaled frame's CSS size, so clicks stay in the page's units", async () => {
+  it("closes the bitmap a newer frame replaces, and the last one on teardown", async () => {
     const { ws } = await openFrameSession();
     ws.open();
-    ws.emitFrame(
+    await ws.emitFrame(binaryFrame(1));
+    await ws.emitFrame(binaryFrame(2));
+
+    // An ImageBitmap holds a decoded surface the garbage collector cannot see
+    // the cost of; a stream at 30fps that kept them all would hold a second of
+    // decoded video at all times.
+    expect(bitmaps.map((b) => b.closed)).toEqual([true, false]);
+
+    useWebmcpInspectorStore.getState().disconnect();
+    expect(bitmaps.every((b) => b.closed)).toBe(true);
+  });
+
+  it("carries the capture scale, so the pane can put clicks in the page's units", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    await ws.emitFrame(
       binaryFrame(7, { deviceWidth: 2560, deviceHeight: 1600, scale: 2 }),
     );
 
-    const frame = useWebmcpInspectorStore.getState().liveFrame;
     // The picture is 2560 pixels wide and the page is 1280 CSS pixels wide.
     // Scaling a click against the former sends it to twice the coordinate the
-    // person pointed at.
-    expect(frame).toMatchObject({
+    // person pointed at, so the ratio has to survive the wire — the pane does
+    // the division.
+    expect(webmcpFrameChannel.latest()).toMatchObject({
       deviceWidth: 2560,
       deviceHeight: 1600,
-      cssWidth: 1280,
-      cssHeight: 800,
+      scale: 2,
     });
-  });
-
-  it("tags an SSE frame as SSE even while a screenshot poll runs", async () => {
-    const { sse, ws } = await openFrameSession();
-    ws.open();
-    // An older server produces both at once: a socket that will not open and a
-    // refused `set_screencast`. A frame that arrived on the event stream did
-    // not arrive on the poll, whatever else is running.
-    useWebmcpInspectorStore.getState().noteScreenshotPolling(true);
-    await sse.emit({
-      type: "frame",
-      seq: 9,
-      frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
-    });
-
-    expect(useWebmcpInspectorStore.getState().liveFrame?.rung).toBe(
-      "sse-frames",
-    );
-    useWebmcpInspectorStore.getState().noteScreenshotPolling(false);
   });
 
   it("reads a missing or nonsense scale as 1", async () => {
-    const { sse, ws } = await openFrameSession();
+    const { ws } = await openFrameSession();
     ws.open();
-    // No scale at all: every server older than the field, and every provider
+    // No scale at all: every writer older than the field, and every provider
     // that does not capture above CSS resolution.
-    ws.emitFrame(binaryFrame(7, { deviceWidth: 1280, deviceHeight: 800 }));
-    expect(useWebmcpInspectorStore.getState().liveFrame).toMatchObject({
-      cssWidth: 1280,
-      cssHeight: 800,
-    });
+    await ws.emitFrame(binaryFrame(7));
+    expect(webmcpFrameChannel.latest()?.scale).toBe(1);
 
     // Zero would divide the geometry into infinity and put the pane's box
     // somewhere no click could reach.
-    ws.emitFrame(
-      binaryFrame(8, { deviceWidth: 1280, deviceHeight: 800, scale: 0 }),
-    );
-    expect(useWebmcpInspectorStore.getState().liveFrame).toMatchObject({
-      cssWidth: 1280,
-      cssHeight: 800,
-    });
-
-    await sse.emit({
-      type: "frame",
-      seq: 9,
-      frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
-    });
-    expect(useWebmcpInspectorStore.getState().liveFrame).toMatchObject({
-      src: "data:image/jpeg;base64,paint",
-      cssWidth: 1280,
-      cssHeight: 800,
-    });
+    await ws.emitFrame(binaryFrame(8, { scale: 0 }));
+    expect(webmcpFrameChannel.latest()?.scale).toBe(1);
   });
 
-  it("drops an out-of-order frame on the socket too", async () => {
+  it("drops an out-of-order frame on the socket", async () => {
     const { ws } = await openFrameSession();
     ws.open();
-    ws.emitFrame(binaryFrame(10));
-    // The guard is on BOTH paths, not just the SSE one: a replayed frame on a
-    // reconnected socket can be older than what the previous socket already
-    // delivered, and painting it would move the pane backwards.
-    ws.emitFrame(binaryFrame(9, { ts: 1 }));
-    expect(useWebmcpInspectorStore.getState().liveFrame?.seq).toBe(10);
-    ws.emitFrame(binaryFrame(10, { ts: 2 }));
-    expect(useWebmcpInspectorStore.getState().liveFrame?.ts).toBe(5_000);
+    await ws.emitFrame(binaryFrame(10));
+    // A replayed frame on a reconnected socket can be older than what the
+    // previous socket already delivered, and painting it would move the pane
+    // backwards — taking the click mapping with it.
+    await ws.emitFrame(binaryFrame(9, { ts: 1 }));
+    expect(webmcpFrameChannel.latest()?.seq).toBe(10);
+    await ws.emitFrame(binaryFrame(10, { ts: 2 }));
+    expect(webmcpFrameChannel.latest()?.ts).toBe(5_000);
 
-    ws.emitFrame(binaryFrame(11, { ts: 3 }));
-    expect(useWebmcpInspectorStore.getState().liveFrame?.seq).toBe(11);
-  });
-
-  it("drops a straggling SSE frame that predates the socket's newest", async () => {
-    const { sse, ws } = await openFrameSession();
-    ws.open();
-    ws.emitFrame(binaryFrame(10));
-    // The exact overlap the ladder creates: SSE frames are flipped back on
-    // while a frame from the socket is already on screen. Painting the older
-    // one would drag the pane backwards, with nothing to correct it.
-    await sse.emit({
-      type: "frame",
-      seq: 9,
-      frame: { data: "older", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
-    });
-
-    expect(useWebmcpInspectorStore.getState().liveFrame?.seq).toBe(10);
-    expect(useWebmcpInspectorStore.getState().liveFrame?.src).toBe(
-      "blob:frame-0",
-    );
-
-    // …and a NEWER SSE frame is still accepted, which is what makes the
-    // fallback work at all.
-    await sse.emit({
-      type: "frame",
-      seq: 11,
-      frame: { data: "newer", deviceWidth: 1280, deviceHeight: 800, ts: 2 },
-    });
-    expect(useWebmcpInspectorStore.getState().liveFrame?.src).toBe(
-      "data:image/jpeg;base64,newer",
-    );
+    await ws.emitFrame(binaryFrame(11, { ts: 3 }));
+    expect(webmcpFrameChannel.latest()?.seq).toBe(11);
   });
 
   it("reports the socket once it is open, and nothing before that", async () => {
@@ -1731,23 +1557,27 @@ describe("webmcp inspector store — frame transport", () => {
     // the ladder starts retrying: degraded, but NOT settled, so nothing should
     // be telling the person about it yet.
     ws.emitClose(1006);
-    expect(transport()).toMatchObject({ rung: "sse-frames", latched: false });
+    // Nothing is carrying pixels — this socket never opened — but the ladder
+    // is still retrying, and `latched: false` is what says so. That is the
+    // distinction the pane's notice reads: not "is there a stream right now",
+    // but "is one still coming".
+    expect(transport()).toMatchObject({ rung: "none", latched: false });
 
     for (const [attempt, delay] of [
       [2, 500],
       [3, 1_000],
       [4, 2_000],
     ] as const) {
-      await vi.advanceTimersByTimeAsync(delay);
+      vi.advanceTimersByTime(delay);
       expect(transport().attempts).toBe(attempt);
       FakeWebSocket.instances.at(-1)!.emitClose(1006);
     }
 
     // The fourth failure exhausts the ladder. THIS is the state worth showing:
-    // the pane is on the slower path and nothing will move it back for the
-    // rest of the session.
+    // nothing is carrying pixels and nothing will for the rest of the session,
+    // which is what the pane's notice says.
     expect(transport()).toEqual({
-      rung: "sse-frames",
+      rung: "none",
       attempts: 4,
       latched: true,
     });
@@ -1759,54 +1589,18 @@ describe("webmcp inspector store — frame transport", () => {
     // either, so the ladder stops here rather than spending its budget.
     ws.emitClose(4401);
     expect(useWebmcpInspectorStore.getState().frameTransport).toEqual({
-      rung: "sse-frames",
+      rung: "none",
       attempts: 1,
       latched: true,
     });
     expect(FakeWebSocket.instances).toHaveLength(1);
   });
 
-  it("leaves the screenshot poll's state to the surface that owns it", async () => {
-    const { ws } = await openFrameSession();
-    ws.open();
-    useWebmcpInspectorStore.getState().noteScreenshotPolling(true);
-    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("poll");
-
-    // A second session starts while the pane is still mounted and still
-    // polling. Its interval outlives the teardown, so clearing the flag here
-    // would report `none` for a pane visibly painting screenshots — the
-    // surface says when its poll actually stops.
-    await openFrameSession("session-2");
-    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("poll");
-
-    useWebmcpInspectorStore.getState().noteScreenshotPolling(false);
-    expect(useWebmcpInspectorStore.getState().frameTransport.rung).not.toBe(
-      "poll",
-    );
-  });
-
-  it("reports the screenshot poll as the transport it is", async () => {
-    const { ws } = await openFrameSession();
-    ws.open();
-    useWebmcpInspectorStore.getState().noteScreenshotPolling(true);
-    // A server too old to screencast at all. Whatever the socket ladder is
-    // doing, what is on screen came from a screenshot.
-    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("poll");
-
-    useWebmcpInspectorStore.getState().noteScreenshotPolling(false);
-    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("ws");
-  });
-
-  it("puts frames back on SSE at once, then retries three times and latches", async () => {
+  it("retries three times, then latches", async () => {
     vi.useFakeTimers();
     const { ws } = await openFrameSession();
-    expect(FakeEventSource.instances.at(-1)!.url).toContain("frames=off");
 
-    // 1006 is what an old server's 404 upgrade looks like from here.
     ws.emitClose(1006);
-    // Immediately, not after the ladder: a pane blank for two and a half
-    // seconds would be a worse regression than the lag being fixed.
-    expect(FakeEventSource.instances.at(-1)!.url).not.toContain("frames=off");
     expect(FakeWebSocket.instances).toHaveLength(1);
 
     for (const [attempt, delay] of [
@@ -1814,17 +1608,20 @@ describe("webmcp inspector store — frame transport", () => {
       [3, 1_000],
       [4, 2_000],
     ] as const) {
-      await vi.advanceTimersByTimeAsync(delay - 1);
+      vi.advanceTimersByTime(delay - 1);
+      await socketOpened();
       expect(FakeWebSocket.instances).toHaveLength(attempt - 1);
-      await vi.advanceTimersByTimeAsync(1);
+      vi.advanceTimersByTime(1);
+      await socketOpened();
       expect(FakeWebSocket.instances).toHaveLength(attempt);
       FakeWebSocket.instances.at(-1)!.emitClose(1006);
     }
 
-    // FOUR attempts total, then never again for this session: the failure this
-    // ladder is really for is structural, and a socket churning forever behind
-    // a pane that works fine on SSE helps nobody.
-    await vi.advanceTimersByTimeAsync(60_000);
+    // FOUR attempts total, then never again for this session: a socket
+    // churning forever in the background helps nobody, and the pane says
+    // plainly that live view is unavailable rather than pretending.
+    vi.advanceTimersByTime(60_000);
+    await socketOpened();
     expect(FakeWebSocket.instances).toHaveLength(4);
   });
 
@@ -1836,17 +1633,18 @@ describe("webmcp inspector store — frame transport", () => {
     let current = ws;
     for (let i = 0; i < 3; i += 1) {
       current.emitClose(1006);
-      await vi.advanceTimersByTimeAsync(500);
+      vi.advanceTimersByTime(500);
+      await socketOpened();
       current = FakeWebSocket.instances.at(-1)!;
       current.open();
     }
     expect(FakeWebSocket.instances).toHaveLength(4);
 
     // Without the reset, the fourth close would exhaust a budget meant for the
-    // structural case and latch a session that has been working all along —
-    // reverting it to the SSE latency this change exists to remove.
+    // structural case and latch a session that has been working all along.
     current.emitClose(1006);
-    await vi.advanceTimersByTimeAsync(500);
+    vi.advanceTimersByTime(500);
+    await socketOpened();
     expect(FakeWebSocket.instances).toHaveLength(5);
     FakeWebSocket.instances.at(-1)!.open();
   });
@@ -1858,50 +1656,16 @@ describe("webmcp inspector store — frame transport", () => {
     // answers 1006 every time and never opens, so the ladder still stops.
     ws.emitClose(1006);
     for (const delay of [500, 1_000, 2_000]) {
-      await vi.advanceTimersByTimeAsync(delay);
+      vi.advanceTimersByTime(delay);
+      await socketOpened();
       FakeWebSocket.instances.at(-1)!.emitClose(1006);
     }
-    await vi.advanceTimersByTimeAsync(60_000);
+    vi.advanceTimersByTime(60_000);
+    await socketOpened();
     expect(FakeWebSocket.instances).toHaveLength(4);
   });
 
-  it("flips SSE back to frames=off when a retry succeeds", async () => {
-    vi.useFakeTimers();
-    const { ws } = await openFrameSession();
-    ws.emitClose(1006);
-    expect(FakeEventSource.instances.at(-1)!.url).not.toContain("frames=off");
-
-    await vi.advanceTimersByTimeAsync(500);
-    const retried = FakeWebSocket.instances.at(-1)!;
-    retried.open();
-    expect(FakeEventSource.instances.at(-1)!.url).toContain("frames=off");
-
-    retried.emitFrame(binaryFrame(3));
-    expect(useWebmcpInspectorStore.getState().liveFrame?.seq).toBe(3);
-  });
-
-  it("does not reset the seq guard or the frame across an SSE flip", async () => {
-    vi.useFakeTimers();
-    const { ws } = await openFrameSession();
-    ws.open();
-    ws.emitFrame(binaryFrame(12));
-    const before = useWebmcpInspectorStore.getState().liveFrame;
-
-    ws.emitClose(1006);
-
-    // Reset #1: replacing the EventSource touches NOTHING. A transient flip
-    // that blanked the pane — or that revoked the blob it is painted from —
-    // would make the ladder visible as a flicker.
-    expect(useWebmcpInspectorStore.getState().liveFrame).toBe(before);
-    await FakeEventSource.instances.at(-1)!.emit({
-      type: "frame",
-      seq: 11,
-      frame: { data: "stale", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
-    });
-    expect(useWebmcpInspectorStore.getState().liveFrame).toBe(before);
-  });
-
-  it("does not retry or flip SSE on 4404 or 1000", async () => {
+  it("does not retry on 4404 or 1000", async () => {
     vi.useFakeTimers();
     for (const code of [4404, 1000]) {
       FakeWebSocket.instances = [];
@@ -1911,15 +1675,12 @@ describe("webmcp inspector store — frame transport", () => {
 
       // The session is over, or we asked for this. The SSE stream carries the
       // story either way, and there is nothing left to stream.
-      expect(FakeEventSource.instances.at(-1)!.url, String(code)).toContain(
-        "frames=off",
-      );
-      await vi.advanceTimersByTimeAsync(60_000);
+      vi.advanceTimersByTime(60_000);
       expect(FakeWebSocket.instances, String(code)).toHaveLength(1);
     }
   });
 
-  it("falls back to SSE frames without retrying on 4401 and 4503", async () => {
+  it("latches without retrying on 4401 and 4503", async () => {
     vi.useFakeTimers();
     for (const code of [4401, 4503]) {
       FakeWebSocket.instances = [];
@@ -1927,12 +1688,8 @@ describe("webmcp inspector store — frame transport", () => {
       const { ws } = await openFrameSession(`session-${code}`);
       ws.emitClose(code);
 
-      // Auth, or the feature being off, is not something a retry fixes — but
-      // the pane still has to show the page.
-      expect(FakeEventSource.instances.at(-1)!.url, String(code)).not.toContain(
-        "frames=off",
-      );
-      await vi.advanceTimersByTimeAsync(60_000);
+      // Auth, or the feature being off, is not something a retry fixes.
+      vi.advanceTimersByTime(60_000);
       expect(FakeWebSocket.instances, String(code)).toHaveLength(1);
     }
   });
@@ -1948,7 +1705,7 @@ describe("webmcp inspector store — frame transport", () => {
 
     // Nothing is left armed…
     expect(vi.getTimerCount()).toBe(0);
-    await vi.advanceTimersByTimeAsync(60_000);
+    vi.advanceTimersByTime(60_000);
     // …and had one somehow fired, the generation it captured no longer
     // matches, so it could not have opened a socket for the dead session.
     expect(FakeWebSocket.instances).toHaveLength(newSocketCount);
@@ -1962,37 +1719,64 @@ describe("webmcp inspector store — frame transport", () => {
     await openFrameSession("session-new");
     const current = FakeWebSocket.instances.at(-1)!;
     current.open();
-    current.emitFrame(binaryFrame(4));
-    const painted = useWebmcpInspectorStore.getState().liveFrame;
+    await current.emitFrame(binaryFrame(4));
+    const painted = webmcpFrameChannel.latest();
 
     // A message already dispatched when the session turned over, and a close
     // event racing our own close(). Both belong to a generation that is gone.
-    stale.emitFrame(binaryFrame(99));
+    await stale.emitFrame(binaryFrame(99));
     stale.emitClose(1006);
 
-    expect(useWebmcpInspectorStore.getState().liveFrame).toBe(painted);
-    await vi.advanceTimersByTimeAsync(60_000);
+    expect(webmcpFrameChannel.latest()).toBe(painted);
+    vi.advanceTimersByTime(60_000);
     expect(FakeWebSocket.instances.at(-1)).toBe(current);
   });
 
-  it("ignores a text frame and drops one it cannot decode", async () => {
+  it("ignores a text message, and holds a partial record rather than throwing", async () => {
     const { ws } = await openFrameSession();
     ws.open();
-    ws.emitFrame(binaryFrame(3));
-    const painted = useWebmcpInspectorStore.getState().liveFrame;
+    await ws.emitFrame(binaryFrame(3));
+    const painted = webmcpFrameChannel.latest();
 
     // A pong is control traffic, not a paint.
     expect(() =>
       ws.onmessage?.({ data: JSON.stringify({ type: "pong" }) }),
     ).not.toThrow();
-    // And a truncated message is dropped rather than thrown: a throw in a
-    // `message` handler takes the whole socket down over one bad paint.
-    const encoded = encodeWebMcpBinaryFrame(binaryFrame(4));
+    // A record split across messages is the NORMAL case on this wire — a
+    // 256 KiB JPEG does not fit in one WebSocket frame — so the reader buffers
+    // the head and waits rather than throwing inside a `message` handler.
+    const encoded = encodeFrameStreamRecord({
+      kind: FRAME_STREAM_KIND.frame,
+      scale: 1,
+      ...binaryFrame(4),
+    });
     expect(() =>
       ws.onmessage?.({ data: encoded.buffer.slice(0, 12) }),
     ).not.toThrow();
+    await decoded();
 
-    expect(useWebmcpInspectorStore.getState().liveFrame).toBe(painted);
+    expect(webmcpFrameChannel.latest()).toBe(painted);
+  });
+
+  it("drops the connection on a record it cannot make sense of", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    // A reader that has lost its place in a byte stream can never find it
+    // again — there is no framing marker to resynchronise against — so the
+    // honest answer is to drop the socket and let the ladder decide.
+    const corrupt = encodeFrameStreamRecord({
+      kind: FRAME_STREAM_KIND.frame,
+      scale: 1,
+      ...binaryFrame(4),
+    });
+    corrupt[1] = 9; // a kind no reader knows
+    ws.onmessage?.({
+      data: corrupt.buffer.slice(
+        corrupt.byteOffset,
+        corrupt.byteOffset + corrupt.byteLength,
+      ),
+    });
+    expect(ws.closedByClient).toBe(true);
   });
 
   it("pings while open, and stops once the socket closes", async () => {
@@ -2000,14 +1784,14 @@ describe("webmcp inspector store — frame transport", () => {
     const { ws } = await openFrameSession();
     ws.open();
 
-    await vi.advanceTimersByTimeAsync(30_000);
+    vi.advanceTimersByTime(30_000);
     expect(ws.sent).toEqual([JSON.stringify({ type: "ping" })]);
 
     // The keepalive is a timer on a socket that is gone otherwise — and on the
     // server it is also what refreshes the session's idle deadline, so a
     // stopped one is a session reaped under a pane nobody closed.
     ws.emitClose(1006);
-    await vi.advanceTimersByTimeAsync(120_000);
+    vi.advanceTimersByTime(120_000);
     expect(ws.sent).toHaveLength(1);
   });
 
@@ -2030,31 +1814,45 @@ describe("webmcp inspector store — frame transport", () => {
       // existed anywhere in the browser. Hidden already means "not watching"
       // to the rest of this feature: the pane stops the screencast on the very
       // same signal.
-      await vi.advanceTimersByTimeAsync(120_000);
+      vi.advanceTimersByTime(120_000);
       expect(ws.sent).toHaveLength(0);
 
       // The socket stayed open, so coming back needs no handshake and is at
       // most one interval from telling the server someone is watching again.
       setVisibility("visible");
-      await vi.advanceTimersByTimeAsync(30_000);
+      vi.advanceTimersByTime(30_000);
       expect(ws.sent).toEqual([JSON.stringify({ type: "ping" })]);
     } finally {
       delete (document as { visibilityState?: unknown }).visibilityState;
     }
   });
 
-  it("clears the frame and its blob when the stream stops", async () => {
-    const revokedUrls: string[] = [];
-    setFramePresenterForTests(
-      createFramePresenter({
-        createUrl: () => "blob:only",
-        revokeUrl: (url) => revokedUrls.push(url),
-        defer: (fn) => fn(),
-      }),
-    );
+  it("clears the channel BEFORE the teardown releases the bitmap", async () => {
     const { ws } = await openFrameSession();
     ws.open();
-    ws.emitFrame(binaryFrame(2));
+    await ws.emitFrame(binaryFrame(2));
+    expect(webmcpFrameChannel.latest()).not.toBeNull();
+
+    // What the channel was still handing out at the instant the surface behind
+    // it was released. Ordered the other way, a reader in that window gets a
+    // frame whose bitmap is already gone.
+    let channelAtRelease: unknown = "never released";
+    const bitmap = bitmaps.at(-1)!;
+    const release = bitmap.close.bind(bitmap);
+    bitmap.close = () => {
+      channelAtRelease = webmcpFrameChannel.latest();
+      release();
+    };
+
+    useWebmcpInspectorStore.getState().disconnect();
+    expect(channelAtRelease).toBeNull();
+    expect(bitmap.closed).toBe(true);
+  });
+
+  it("clears the frame and releases its bitmap when the stream stops", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    await ws.emitFrame(binaryFrame(2));
 
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ ok: true, streaming: false }), {
@@ -2063,39 +1861,100 @@ describe("webmcp inspector store — frame transport", () => {
     );
     await useWebmcpInspectorStore.getState().setScreencast(false);
 
-    // Reset #2: the picture is no longer current, so it goes — and the bytes
-    // behind it go with it, after React has dropped the src.
-    expect(useWebmcpInspectorStore.getState().liveFrame).toBeUndefined();
-    expect(revokedUrls).toContain("blob:only");
+    // Reset #2: the picture is no longer current, so it goes — and the surface
+    // behind it goes with it, in that order, so nothing is drawing from a
+    // bitmap that has been released.
+    expect(webmcpFrameChannel.latest()).toBeNull();
+    expect(bitmaps.every((b) => b.closed)).toBe(true);
     // The socket is NOT closed: a screencast toggle follows tab visibility,
     // and a handshake per flip is pure cost.
     expect(ws.closedByClient).toBe(false);
   });
 
-  it("does not resurrect a queued frame after live view stops", async () => {
+  it("ignores a frame that was already on the wire when live view stopped", async () => {
     const { ws } = await openFrameSession();
     ws.open();
-    ws.emitFrame(binaryFrame(2), false);
+    await ws.emitFrame(binaryFrame(2));
+    expect(webmcpFrameChannel.latest()?.seq).toBe(2);
+
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ streaming: false }), { status: 200 }),
     );
     await useWebmcpInspectorStore.getState().setScreencast(false);
-    paintTick();
-    expect(useWebmcpInspectorStore.getState().liveFrame).toBeUndefined();
+    expect(webmcpFrameChannel.latest()).toBeNull();
+
+    // Written to the socket BEFORE the stop reached the server, so it lands
+    // after the toggle has been answered. The seq guard would wave it through
+    // — its number is newer — and the pane would sit on a page it has been
+    // told it is no longer watching, with nothing coming to replace it.
+    await ws.emitFrame(binaryFrame(3));
+    expect(webmcpFrameChannel.latest()).toBeNull();
+  });
+
+  it("takes frames again once live view is asked for", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ streaming: false }), { status: 200 }),
+    );
+    await useWebmcpInspectorStore.getState().setScreencast(false);
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ streaming: true }), { status: 200 }),
+    );
+    await useWebmcpInspectorStore.getState().setScreencast(true);
+    // The toggle follows tab visibility, so coming back must paint rather than
+    // leave a pane that refuses every frame for the rest of the session.
+    await ws.emitFrame(binaryFrame(4));
+    expect(webmcpFrameChannel.latest()?.seq).toBe(4);
+  });
+
+  it("does not resurrect a frame still decoding when live view stops", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    // The decode is HELD open across the toggle. Resolving it immediately
+    // would publish the frame BEFORE the toggle and prove only that the
+    // channel was cleared — the race a person makes by closing the pane
+    // mid-scroll is a decode that lands AFTER.
+    let release!: () => void;
+    vi.stubGlobal("createImageBitmap", () => {
+      const bitmap: FakeBitmap = {
+        closed: false,
+        close() {
+          this.closed = true;
+        },
+      };
+      bitmaps.push(bitmap);
+      return new Promise<FakeBitmap>((resolve) => {
+        release = () => resolve(bitmap);
+      });
+    });
+    await ws.emitFrame(binaryFrame(2), false);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ streaming: false }), { status: 200 }),
+    );
+    await useWebmcpInspectorStore.getState().setScreencast(false);
+    expect(webmcpFrameChannel.latest()).toBeNull();
+
+    release();
+    await decoded();
+    expect(webmcpFrameChannel.latest()).toBeNull();
+    // And it is not merely withheld: nobody else will ever free this surface.
+    expect(bitmaps.at(-1)!.closed).toBe(true);
     expect(ws.closedByClient).toBe(false);
   });
 
   it("resets the seq guard on teardown, so the next session paints", async () => {
     const { ws } = await openFrameSession("session-old");
     ws.open();
-    ws.emitFrame(binaryFrame(500));
+    await ws.emitFrame(binaryFrame(500));
 
     const { ws: next } = await openFrameSession("session-new");
     next.open();
     // A new session's counter starts at 1. A guard that survived teardown
     // would swallow every frame of it, and the pane would never paint again.
-    next.emitFrame(binaryFrame(1));
-    expect(useWebmcpInspectorStore.getState().liveFrame?.seq).toBe(1);
+    await next.emitFrame(binaryFrame(1));
+    expect(webmcpFrameChannel.latest()?.seq).toBe(1);
   });
 
   it("drops pending latency samples when the session is torn down", async () => {
@@ -2104,7 +1963,7 @@ describe("webmcp inspector store — frame transport", () => {
     try {
       const { ws } = await openFrameSession("session-old");
       ws.open();
-      ws.emitFrame(binaryFrame(2));
+      await ws.emitFrame(binaryFrame(2));
       // The gesture, as `sendInput` records it. Called directly rather than
       // through the pane, because the settling half (`notePainted`) is the
       // <img>'s `onLoad` and no pane is rendered here — what this test owns is
@@ -2113,7 +1972,7 @@ describe("webmcp inspector store — frame transport", () => {
 
       const { ws: next } = await openFrameSession("session-new");
       next.open();
-      next.emitFrame(binaryFrame(9));
+      await next.emitFrame(binaryFrame(9));
 
       // `seq` restarts per session, so without teardown clearing this, the
       // next page's ninth frame settles a gesture aimed at the previous page
@@ -2129,11 +1988,11 @@ describe("webmcp inspector store — frame transport", () => {
   it("closes the socket and clears the frame when the session goes away", async () => {
     const { sse, ws } = await openFrameSession();
     ws.open();
-    ws.emitFrame(binaryFrame(2));
+    await ws.emitFrame(binaryFrame(2));
 
     await sse.emit({ type: "session_gone", error: "That session is gone." });
     expect(ws.closedByClient).toBe(true);
-    expect(useWebmcpInspectorStore.getState().liveFrame).toBeUndefined();
+    expect(webmcpFrameChannel.latest()).toBeNull();
   });
 
   it("tears the socket down on disconnect and rebuilds it on reconnect", async () => {
@@ -2144,12 +2003,12 @@ describe("webmcp inspector store — frame transport", () => {
     expect(ws.closedByClient).toBe(true);
 
     useWebmcpInspectorStore.getState().reconnect();
-    for (let i = 0; i < 20; i++) await Promise.resolve();
+    await socketOpened();
     const resumed = FakeWebSocket.instances.at(-1)!;
     expect(resumed).not.toBe(ws);
     resumed.open();
-    resumed.emitFrame(binaryFrame(1));
-    expect(useWebmcpInspectorStore.getState().liveFrame?.seq).toBe(1);
+    await resumed.emitFrame(binaryFrame(1));
+    expect(webmcpFrameChannel.latest()?.seq).toBe(1);
   });
 });
 

@@ -1,10 +1,13 @@
 import {
   DEFAULT_PLATFORM_API_BASE_URL,
+  describePlatformRefusal,
   isPlatformApiError,
   PlatformApiClient,
+  platformRefusalHint,
   RUN_LAUNCH_HEADERS,
 } from "@mcpjam/sdk/platform";
-import { detectCiMetadata, detectLauncherKind } from "@mcpjam/sdk";
+import { detectCiMetadata } from "@mcpjam/sdk";
+import { readFileSync } from "node:fs";
 import packageJson from "../../package.json" with { type: "json" };
 import { getAuthFilePath, readStoredAuth } from "./auth-store.js";
 import { CliError, cliError, usageError } from "./output.js";
@@ -23,8 +26,18 @@ export interface PlatformClientOptions {
 }
 
 export type ApiUrlInspection =
-  | { ok: true; apiUrl: string }
-  | { ok: false; error: string };
+  { ok: true; apiUrl: string } | { ok: false; error: string };
+
+function readGithubEvent(env: NodeJS.ProcessEnv): string | undefined {
+  if (!env.GITHUB_EVENT_PATH) return undefined;
+  try {
+    const payload = readFileSync(env.GITHUB_EVENT_PATH, "utf8");
+    JSON.parse(payload);
+    return payload;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Classify an explicit API URL without throwing. `cloud status` reports the
@@ -118,15 +131,21 @@ function parseHeader(raw: string, source: string): [string, string] {
   const name = raw.slice(0, separator).trim();
   const value = raw.slice(separator + 1).trim();
   if (!HEADER_NAME_RE.test(name)) {
-    throw usageError(`${source} has an invalid header name ${JSON.stringify(name)}`);
+    throw usageError(
+      `${source} has an invalid header name ${JSON.stringify(name)}`,
+    );
   }
   if (value.length === 0) {
-    throw usageError(`${source} has an empty value for ${JSON.stringify(name)}`);
+    throw usageError(
+      `${source} has an empty value for ${JSON.stringify(name)}`,
+    );
   }
   // A newline in a value is header injection, not a header. Native fetch
   // rejects it too, but a named error beats a runtime TypeError.
   if (/[\r\n]/.test(value)) {
-    throw usageError(`${source} value for ${JSON.stringify(name)} contains a line break`);
+    throw usageError(
+      `${source} value for ${JSON.stringify(name)} contains a line break`,
+    );
   }
   const lower = name.toLowerCase();
   if (RESERVED_HEADER_NAMES.has(lower)) {
@@ -201,7 +220,9 @@ export function buildPlatformClient(
   // so a staging login never silently sends its token to prod.
   let baseUrl = resolveExplicitApiUrl(options, env);
   if (!baseUrl && credential.kind === "oauth") {
-    const stored = readStoredAuth(deps.authFilePath ?? getAuthFilePath({ env }));
+    const stored = readStoredAuth(
+      deps.authFilePath ?? getAuthFilePath({ env }),
+    );
     baseUrl = stored?.apiUrl;
   }
 
@@ -218,20 +239,30 @@ export function buildPlatformClient(
     //
     // The platform stamps `source` itself and everything over the public API
     // is `api`, so a CLI run and a GitHub Actions job were the same badge.
-    // `detectLauncherKind` reads `GITHUB_ACTIONS` — the same test
-    // `report-conformance-run`'s `detectSource` uses, so a composite run and
-    // an eval run from one job never disagree about where they came from.
+    // ALWAYS `cli`, even inside CI. This used to be
+    // `detectLauncherKind(env, "cli")`, which declared `github_action` from a
+    // workflow — and in the runs table `GitHub` means the GitHub App: a check
+    // run we built and ran ourselves. A `mcpjam cloud eval run` in someone's
+    // own workflow is not that. It borrowed the App's badge and gave up its
+    // own, so the CLI chip never returned it.
+    //
+    // Where it ran is still recorded, in the `ci` envelope below.
     //
     // Declared, not proven, and the platform treats it that way: it is a
     // display label beside the stamp, never an authorization input. A secret
     // that could prove it cannot live in a public npm package.
     launcher: {
-      kind: detectLauncherKind(env, "cli"),
+      kind: "cli",
       client: "mcpjam-cli",
       version: packageJson.version,
     },
     ...(() => {
-      const ci = detectCiMetadata(env);
+      const githubEvent = readGithubEvent(env);
+      const ci = detectCiMetadata(
+        githubEvent
+          ? { ...env, MCPJAM_GITHUB_EVENT_PAYLOAD: githubEvent }
+          : env,
+      );
       return ci ? { ci } : {};
     })(),
     ...(extraHeaders ? { extraHeaders } : {}),
@@ -289,6 +320,19 @@ export function toCliError(error: unknown): CliError {
           "`suite.id` still matches the suite it created — a renamed id no longer owns it.",
         1,
         error.details,
+      );
+    }
+    // A usage-limit refusal keeps its exit code and wire code (it is not an
+    // auth or credit failure), but says when to come back and whether credits
+    // would help, and carries `retryAfterSeconds` into the JSON `details` so a
+    // script can wait instead of parsing prose.
+    const refusal = describePlatformRefusal(error);
+    if (refusal) {
+      return cliError(
+        error.code,
+        `${error.message} ${platformRefusalHint(refusal)}`,
+        1,
+        { ...(error.details ?? {}), refusal },
       );
     }
     const message =
