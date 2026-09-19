@@ -58,6 +58,32 @@ describe("pageToolAttributionFrom", () => {
 });
 
 describe("resolvePageToolAttribution", () => {
+  it("labels pending inspector calls from persisted call metadata", () => {
+    expect(
+      resolvePageToolAttribution({
+        toolName: "page_1a2b3c4d",
+        output: undefined,
+        callProviderMetadata: { mcpjam: { pageTool: RESULT.pageTool } },
+      }),
+    ).toMatchObject({
+      rawName: "add_topping",
+      origin: "https://googlechromelabs.github.io",
+    });
+  });
+
+  it("labels inspector results after the call snapshot is gone", () => {
+    expect(
+      resolvePageToolAttribution({ toolName: "page_1a2b3c4d", output: RESULT }),
+    ).toMatchObject({ rawName: "add_topping" });
+    expect(
+      resolvePageToolAttribution({
+        toolName: "page_1a2b3c4d",
+        output: {},
+        callProviderMetadata: { mcpjam: { pageTool: null } },
+      }),
+    ).toBeUndefined();
+  });
+
   it("ignores a tool that is not a page tool at all", () => {
     expect(
       resolvePageToolAttribution({

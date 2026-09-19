@@ -43,6 +43,8 @@ import {
   driveChatSessionBrowserOperation,
   observeChatSessionBrowserOperation,
   cancelEvalRunOperation,
+  backtestEvalRunOperation,
+  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
@@ -431,8 +433,8 @@ function describeComposeEvalSuiteRun(
         ? "and the composed environment is attached to the suite"
         : "and the composed environments are attached to the suite"
       : n <= 1
-        ? "ephemeral when supported; otherwise attached"
-        : "without attaching them to the suite";
+      ? "ephemeral when supported; otherwise attached"
+      : "without attaching them to the suite";
   if (n <= 1) {
     return (
       `Run eval suite ${suite} on a composed setup${hostNote}` +
@@ -1450,14 +1452,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         } against Anthropic's connector directory`,
       buttonLabel: "Run it",
       kind: "start",
-      // A FUNCTION because the hazard is in the input. The deterministic grade
-      // is free; only the opt-in model pass spends. Static `"spend"` would
-      // warn about money on every free run, and `"none"` would stay silent on
-      // the one run that costs something.
-      confirmSeverity: (input) =>
-        (input as { includeLlmObservations?: boolean }).includeLlmObservations
-          ? "spend"
-          : "none",
+      // Flat `"none"`, and it used to be a function of
+      // `includeLlmObservations` because that flag was the one thing here that
+      // spent. It is platform-paid now, so neither shape of this call touches
+      // the organization's credits and a money warning on either would be
+      // false. Still GATED: the start dials somebody else's server and
+      // persists a project row, which is what a person is approving.
+      confirmSeverity: () => "none",
       target: (input) => {
         const server = named(input, "server");
         return server ? { type: "server", selector: server } : undefined;
@@ -1465,7 +1466,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
     promptNotes: [
       "- `start_claude_readiness_run` and `start_openai_readiness_run` return a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_readiness_run` and report what it says, never the receipt.",
-      "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional paid pass ran. A run whose observations were `billing-blocked` is still a complete, valid grade — say the observations were skipped for credit, never that the server has a problem.",
+      "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional model pass ran. That pass is platform-paid, so a run whose observations were `billing-blocked` was not refused for the organization's money — it is still a complete, valid grade, and the honest report is that the observations were skipped, never that the server has a problem.",
       "- A run that FAILED produced no grade at all. Report it as a run that could not finish, and never as a verdict about the server.",
       '- When a readiness run reports `authMode: "headless"` and a lane\'s `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.',
     ],
@@ -1480,10 +1481,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         } against OpenAI's app directory`,
       buttonLabel: "Run it",
       kind: "start",
-      confirmSeverity: (input) =>
-        (input as { includeLlmObservations?: boolean }).includeLlmObservations
-          ? "spend"
-          : "none",
+      // See `start_claude_readiness_run` above: platform-paid either way, so
+      // there is no money to warn about.
+      confirmSeverity: () => "none",
       target: (input) => {
         const server = named(input, "server");
         return server ? { type: "server", selector: server } : undefined;
@@ -1581,7 +1581,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "direct",
     promptNotes: [
       "- WHEN A RUN DOES NOT PASS, READ `decisionSummary` FIRST: it states the first failed stage in the user-value chain (connection → discovery → selection → call → response → userValue), the failure category, evidence scoped to that stage, and one next action. Authored step results (`get_eval_run_steps`) come second and a full trace (`get_eval_iteration_trace`) last — do not reconstruct the chain from raw tool calls when the summary already states it.",
-      '- Read `measurementUnit` before quoting a count: under verdict policy v2 the counts are CASE-EXECUTION VARIANTS with repetitions as trials inside them, and on a legacy run they are trials, so the same suite is legitimately "3" or "15" and a count without its unit is not a fact. And `verdict: "notEstablished"` is neither a failure nor `inconclusive` — no verdict exists at all (`undecided.reason` says why), so never report it as a regression.',
+      '- Read `measurementUnit` before quoting a count: under PER-CASE GRADING the counts are CASE-EXECUTION VARIANTS with iterations as trials inside them, and under a SUITE-WIDE ACCURACY THRESHOLD they are trials, so the same suite is legitimately "3" or "15" and a count without its unit is not a fact. The two criteria are not one number in two units — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one — so never convert one into the other. And `verdict: "notEstablished"` is neither a failure nor `inconclusive` — no verdict exists at all (`undecided.reason` says why), so never report it as a regression.',
       "- `diagnostics` is one PAGE and one KIND of claim. When `diagnostics.complete` is false, more failing trials went unexamined — say so instead of presenting the page as the run's failures, and pass `diagnosticsCursor` to continue. And a diagnostic says WHERE the chain stopped, not why: `firstFailedStage` is a location and `failureCategory` a bucket, so neither authorizes proposing a server change on its own.",
     ],
   },
@@ -1615,9 +1615,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       // The document carries server-authored TOOL NAMES, DESCRIPTIONS and
       // precheck detail — third-party text, reaching a model verbatim.
       UNTRUSTED_SERVER_CONTENT_NOTE,
-      "- `get_eval_run_server_facts` describes the SERVER a run was taken against: per server the tool count, the catalog's measured size, annotation and output-schema coverage, and the deterministic tool-metadata prechecks, plus what the setup phase observed. None of it is a verdict — a large tool surface is not a defect, a slow connect is not a failure, and only a precheck with `class: \"spec_required\"` names a violation. A row marked `protocolDependent` is a rule we could not tell applied; reporting it as a defect accuses a server that may be correct.",
+      '- `get_eval_run_server_facts` describes the SERVER a run was taken against: per server the tool count, the catalog\'s measured size, annotation and output-schema coverage, and the deterministic tool-metadata prechecks, plus what the setup phase observed. None of it is a verdict — a large tool surface is not a defect, a slow connect is not a failure, and only a precheck with `class: "spec_required"` names a violation. A row marked `protocolDependent` is a rule we could not tell applied; reporting it as a defect accuses a server that may be correct.',
       "- PAYLOAD SIZE IS THREE NUMBERS and only two are here. `payload.basis` says which: `aggregated_catalog_json` is the catalog as the client assembled it, `normalized_snapshot` is what we retained after redaction (smaller — `payload.complete` says so). What the model actually saw is a host fact and is NOT in this document. Never compare across bases, and never report any of them as context consumption. Tokens are `json_chars_div_4` against a REFERENCE window; quote the estimate with its caveat or not at all.",
-      "- `state: \"unavailable\"` is answered INSIDE the document with a reason, not as an absence: `snapshotMissing`, `snapshotPartial` (the servers that answered are still listed and their numbers are real), or `setupNotObserved` (unmeasured, NOT failed). A deployment that does not serve the route is a different fact and says nothing about the run. Related conformance and readiness runs are joined by server id ALONE — a different server version or environment is not excluded by that join, and none of them is this run's verdict.",
+      '- `state: "unavailable"` is answered INSIDE the document with a reason, not as an absence: `snapshotMissing`, `snapshotPartial` (the servers that answered are still listed and their numbers are real), or `setupNotObserved` (unmeasured, NOT failed). A deployment that does not serve the route is a different fact and says nothing about the run. Related conformance and readiness runs are joined by server id ALONE — a different server version or environment is not excluded by that join, and none of them is this run\'s verdict.',
     ],
   },
   {
@@ -1696,14 +1696,39 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // session I just created" is not "show me what everyone has been saying".
   // The reads are therefore direct; widening them into enumeration would
   // reopen the exclusion by another door.
-  { operation: driveChatSessionBrowserOperation, tier: "gated", proposal: { describe: (input) => {
-    const action = input.op === "navigate" ? `Navigate to ${previewValue(input.url)}`
-      : input.op === "invoke" ? `Invoke page tool ${previewValue(input.toolKey)}`
-      : input.op === "act" ? `Act ${previewValue(input.command)}`
-      : `${String(input.op)} browser`;
-    return `${action} · session ${previewValue(input.sessionId ?? "new")} · metered desktop time`;
-  }, buttonLabel: "Continue", kind: "start", confirmSeverity: "spend" } },
-  { operation: observeChatSessionBrowserOperation, tier: "gated", proposal: { describe: () => "Observe this session browser; waking it uses metered desktop time.", buttonLabel: "Continue", kind: "start", confirmSeverity: "spend" } },
+  {
+    operation: driveChatSessionBrowserOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const action =
+          input.op === "navigate"
+            ? `Navigate to ${previewValue(input.url)}`
+            : input.op === "invoke"
+            ? `Invoke page tool ${previewValue(input.toolKey)}`
+            : input.op === "act"
+            ? `Act ${previewValue(input.command)}`
+            : `${String(input.op)} browser`;
+        return `${action} · session ${previewValue(
+          input.sessionId ?? "new",
+        )} · metered desktop time`;
+      },
+      buttonLabel: "Continue",
+      kind: "start",
+      confirmSeverity: "spend",
+    },
+  },
+  {
+    operation: observeChatSessionBrowserOperation,
+    tier: "gated",
+    proposal: {
+      describe: () =>
+        "Observe this session browser; waking it uses metered desktop time.",
+      buttonLabel: "Continue",
+      kind: "start",
+      confirmSeverity: "spend",
+    },
+  },
   {
     operation: sendChatMessageOperation,
     tier: "gated",
@@ -1770,11 +1795,12 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         `Generate eval cases for ${named(input, "suite") ?? "(unnamed)"}`,
       buttonLabel: "Generate them",
       kind: "generate",
-      // Generation calls the authoring model, so it spends credits exactly
-      // like the two run operations above. Without this the Slack and Discord
-      // approval cards omit the spend warning for the one operation whose
-      // cost is least obvious from its name.
-      confirmSeverity: "spend",
+      // The authoring model is platform-paid: no credits are consumed, so a
+      // money warning on the Slack and Discord approval cards would be false.
+      // Kept GATED rather than direct because it PERSISTS cases into the
+      // suite and takes a slice of a bounded daily quota — see
+      // TIER_EXCEPTIONS in `__tests__/agent-op-registry.test.ts`.
+      confirmSeverity: "none",
     },
   },
   {
@@ -1824,9 +1850,23 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       kind: "update",
     },
   },
-  // GATED because it SPENDS. `kind: "generate"` matches the other
-  // request-an-analysis ops: nothing starts running that a person is waiting
-  // on, an advisory result is authored in the background.
+  {
+    operation: backtestEvalRunJudgeOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Preview draft grading on run ${
+          named(input, "runId") ?? "(unnamed)"
+        } (uses model budget)`,
+      buttonLabel: "Preview grading",
+      kind: "generate",
+    },
+  },
+  // Deterministic preview only reserves a bounded cooldown; it does not spend.
+  {
+    operation: backtestEvalRunOperation,
+    tier: "direct",
+  },
   {
     operation: requestEvalRunJudgeOperation,
     tier: "gated",
@@ -1856,13 +1896,16 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "gated",
     proposal: {
       describe: (input) =>
-        `Draft a rewritten description for ${named(input, "toolName") ?? "(unnamed tool)"} from run ${named(input, "runId") ?? "(unnamed)"}`,
+        `Draft a rewritten description for ${
+          named(input, "toolName") ?? "(unnamed tool)"
+        } from run ${named(input, "runId") ?? "(unnamed)"}`,
       buttonLabel: "Propose the rewrite",
       kind: "generate",
-      confirmSeverity: "spend",
+      // Platform-paid; see `generate_eval_cases` above.
+      confirmSeverity: "none",
     },
     promptNotes: [
-      "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again spends again.",
+      "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again runs another analysis against MCPJam's daily analysis budget.",
     ],
   },
   {
@@ -1870,7 +1913,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "gated",
     proposal: {
       describe: (input) =>
-        `Launch the two-arm description experiment ${named(input, "experiment") ?? "(unnamed)"} (original + rewrite)`,
+        `Launch the two-arm description experiment ${
+          named(input, "experiment") ?? "(unnamed)"
+        } (original + rewrite)`,
       buttonLabel: "Start the experiment",
       kind: "start",
       confirmSeverity: "spend",
@@ -2157,7 +2202,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       describe: () => "Draft personas with a model",
       buttonLabel: "Draft them",
       kind: "generate",
-      confirmSeverity: "spend",
+      // Platform-paid drafting: no credits, so no money warning. Gated
+      // because it is still a model pass against a bounded daily quota.
+      confirmSeverity: "none",
     },
   },
   {
@@ -2176,7 +2223,8 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       },
       buttonLabel: "Draft them",
       kind: "generate",
-      confirmSeverity: "spend",
+      // Platform-paid; see `generate_personas` above.
+      confirmSeverity: "none",
     },
   },
   {
@@ -2187,10 +2235,15 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         `Analyze wave ${named(input, "wave") ?? "(unnamed)"} with a model`,
       buttonLabel: "Analyze it",
       kind: "generate",
-      confirmSeverity: "spend",
+      // The insight model call is on MCPJam, so there is no money to warn
+      // about. Gated because the daily insight quota it consumes is SHARED
+      // across the organization: one agent turn can take the slice a person
+      // was going to use.
+      confirmSeverity: "none",
     },
     promptNotes: [
-      "- `request_wave_insights` spends against a daily budget SHARED with user-testing insights — burning it here takes it from there. Read the run scorecards first; they are free and usually explain the failure without a model pass.",
+      "- `request_wave_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
+      "- Included operations (generation and insights) can be refused with `RATE_LIMITED`. `canTopUp` is false on those refusals: tell the user when it lifts (`retryAfterSeconds`, or 00:00 UTC for a daily budget), and do not retry sooner, suggest topping up credits, or switch identities to get around it.",
     ],
   },
 
@@ -2232,7 +2285,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         } with a model`,
       buttonLabel: "Analyze it",
       kind: "generate",
-      confirmSeverity: "spend",
+      // Platform-paid; see `request_wave_insights` above for why it stays
+      // gated on a shared quota rather than on money.
+      confirmSeverity: "none",
     },
   },
   {

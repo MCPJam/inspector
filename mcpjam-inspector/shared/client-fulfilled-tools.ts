@@ -9,7 +9,9 @@
  *     advertised.
  *   - `ui_*` — MCPJam's own browser-fulfilled tools, hand-named in the
  *     client catalog (`client/src/lib/webmcp/ui-tools-catalog.ts`) and
- *     validated server-side by `validateUiToolEntries`.
+ *     validated server-side by `validateUiToolEntries`. This namespace is the
+ *     Ask MCPJam wire format; the same tools reach browser-native agents by a
+ *     different route entirely (see below).
  *   - `page_<8hex>` — WebMCP Inspector page tools: tools a real third-party
  *     WEB PAGE registered, which the inspector's browser session invokes over
  *     CDP. Minted per (session, tool) by the inspector store and validated
@@ -17,17 +19,23 @@
  *
  * WHAT THE `ui_` PREFIX ASSERTS: only that the BROWSER resolves the call.
  * Not that the tool drives a screen — `ui_ask_user` renders a card and waits
- * for an answer — and NOT that it is a WebMCP tool: the catalog is
- * WebMCP-*shaped* but deliberately never exposed to browser-native agents
- * (`document.modelContext` / `navigator.modelContext`). Tools that ARE
- * browser-native WebMCP live under `page_` instead, and the two must not be
- * confused: `ui_` is first-party and curated, `page_` is third-party — and
- * never trusted to describe itself, whatever its annotations claim, though
- * whether a call pauses is the user's Tool Approval switch to decide (see
- * `pageToolCallNeedsApproval`). The prefixes are load bearing because they are this
- * narrow: they are the token the server's skip gate and pause predicate key
- * on, so a browser-fulfilled tool named anything else would either be executed
- * server-side or leave the stream waiting on a result nobody will send.
+ * for an answer — and not that THIS route is how it was reached. Most of the
+ * catalog is also published to browser-native WebMCP agents through
+ * `document.modelContext` (`client/src/lib/webmcp/native-tool-publisher.ts`),
+ * which never touches this wire format at all: a native call is executed in
+ * the page and answered there.
+ *
+ * `ui_` and `page_` must not be confused. `ui_` is MCPJam's OWN first-party,
+ * curated catalog — the tools this app offers, whoever is asking. `page_` is
+ * the opposite direction: tools a third-party WEB PAGE registered, which
+ * MCPJam inspects over CDP, and which are never trusted to describe
+ * themselves whatever their annotations claim — though whether a call pauses
+ * is the user's Tool Approval switch to decide (see
+ * `pageToolCallNeedsApproval`). The prefixes are load bearing because they are
+ * this narrow: they are the token the server's skip gate and pause predicate
+ * key on, so a browser-fulfilled tool named anything else would either be
+ * executed server-side or leave the stream waiting on a result nobody will
+ * send.
  *
  * Both the skip gate (`isSkippableClientFulfilledToolCall` in
  * `http-tool-calls.ts`) and the pause predicate

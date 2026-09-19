@@ -15,7 +15,7 @@ import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
-import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
+import { isHostedModelDefinition } from "../../services/hosted-model-catalog.js";
 import {
   listCloudRuntimeSkills,
   shouldEnableCloudSkillTools,
@@ -82,7 +82,7 @@ import {
   extractMcpInitializeOptions,
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
-import { getClientIp } from "../../utils/client-ip.js";
+import { getSpendClientIp } from "../../utils/client-ip.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import {
   fetchScenarioRuntimeConfig,
@@ -164,6 +164,7 @@ import {
   markRuntimeSecretsDelivered,
   toSecretEnv,
 } from "../../utils/harness/runtime-secrets.js";
+import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { logger } from "../../utils/logger.js";
 import { resolveMrtrAuthPrincipal } from "../../utils/mrtr-hosted-collector.js";
 
@@ -234,12 +235,31 @@ chatV2.post("/", async (c) => {
     // ── Convex authorization path: guest and signed-in actors ─────
     const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
     if (!c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
-      const allowed = await apiSessionWriteAllowed(rawBody.origin, async (signal) => {
-        const service = new BrowserSessionService();
-        if (!service.enabled) return { writable: true };
-        return service.agentRequest<{ writable: boolean }>("assert_web_writable", { bearer: bearerToken, projectId: hostedBody.projectId!, body: { conversationId: hostedBody.chatSessionId }, signal: AbortSignal.any([signal, c.req.raw.signal]) });
-      });
-      if (!allowed) return c.json({ code: "API_SESSION_READ_ONLY", error: "This API session is view-only in Playground. Continue it through the session API." }, 409);
+      const allowed = await apiSessionWriteAllowed(
+        rawBody.origin,
+        async (signal) => {
+          const service = new BrowserSessionService();
+          if (!service.enabled) return { writable: true };
+          return service.agentRequest<{ writable: boolean }>(
+            "assert_web_writable",
+            {
+              bearer: bearerToken,
+              projectId: hostedBody.projectId!,
+              body: { conversationId: hostedBody.chatSessionId },
+              signal: AbortSignal.any([signal, c.req.raw.signal]),
+            },
+          );
+        },
+      );
+      if (!allowed)
+        return c.json(
+          {
+            code: "API_SESSION_READ_ONLY",
+            error:
+              "This API session is view-only in Playground. Continue it through the session API.",
+          },
+          409,
+        );
     }
 
     const { initializePins, mcpProtocolVersionsByServerId } =
@@ -565,6 +585,11 @@ chatV2.post("/", async (c) => {
         // Everything else keeps the generic classification (>=500 collapses
         // to a 502 upstream failure).
         const failClosedMessage = `Couldn't load this scenario's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`;
+        if (runtime.code === "SCENARIO_SIGN_IN_REQUIRED") {
+          throw new WebRouteError(401, ErrorCode.UNAUTHORIZED, runtime.error, {
+            code: runtime.code,
+          });
+        }
         if (runtime.code === "SCENARIO_ACCESS_STALE") {
           throw new WebRouteError(
             409,
@@ -648,8 +673,8 @@ chatV2.post("/", async (c) => {
     const environmentSkills = environmentSpec
       ? environmentRuntimeSkills(environmentSpec)
       : scenarioEnvironment
-        ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
-        : undefined;
+      ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
+      : undefined;
 
     // Enterprise-managed authorization policy. Server-authoritative wherever
     // a backend host config exists (scenario / host-bound turns above — the
@@ -736,19 +761,19 @@ chatV2.post("/", async (c) => {
       !resolvedExecution.harness
         ? "emulated"
         : harnessSupportsSkills(resolvedExecution.harness)
-          ? "harness"
-          : "unsupported";
+        ? "harness"
+        : "unsupported";
     const turnProvenance = environmentSpec
       ? turnSkillProvenance(environmentSpec, { delivery: skillDeliveryMode })
       : scenarioEnvironment
-        ? turnSkillProvenance(
-            {
-              environmentRef: scenarioEnvironment.environmentRef,
-              skills: scenarioEnvironment.skills ?? [],
-            },
-            { delivery: skillDeliveryMode },
-          )
-        : undefined;
+      ? turnSkillProvenance(
+          {
+            environmentRef: scenarioEnvironment.environmentRef,
+            skills: scenarioEnvironment.skills ?? [],
+          },
+          { delivery: skillDeliveryMode },
+        )
+      : undefined;
 
     for (const entry of resolvedExecution.drift) {
       if (entry.field === "requireToolApproval") {
@@ -824,7 +849,7 @@ chatV2.post("/", async (c) => {
     // standing if the refusal were ever moved.
     const externalAccountHarnessTurn = Boolean(
       resolvedExecution.harness &&
-      harnessUsesExternalAccount(resolvedExecution.harness),
+        harnessUsesExternalAccount(resolvedExecution.harness),
     );
     // FAIL FAST on a mis-configured external-account host, BEFORE the promotion
     // below resolves anything. `resolveHostModelDefinition` asks the org's
@@ -939,6 +964,11 @@ chatV2.post("/", async (c) => {
         model: {
           id: String(modelDefinition.id),
           provider: modelDefinition.provider,
+          // The picker's own-provider stamp. Without it the gate reads a
+          // "Your providers" row whose bare id has a hosted twin as hosted,
+          // admits the harness, and the dispatch (which does honour the
+          // stamp) then runs the turn on the org's key — emulated, silently.
+          hosted: modelDefinition.hosted,
         },
         // The HOST's own configured id, kept separate from the resolved model
         // above. Only the external-account rule reads it, and only that rule
@@ -1071,10 +1101,7 @@ chatV2.post("/", async (c) => {
     // because the SAME manager (same advertised/gated tool set) drives it.
     const isEmulatedMcpjam =
       Boolean(modelDefinition.id) &&
-      isHostedCatalogModel(
-        String(modelDefinition.id),
-        modelDefinition.provider,
-      ) &&
+      isHostedModelDefinition(modelDefinition) &&
       !resolvedExecution.harness;
     const rawMrtrVersion = (rawBody as Record<string, unknown>)
       .hostedMrtrVersion;
@@ -1493,6 +1520,12 @@ chatV2.post("/", async (c) => {
           }
         : undefined;
 
+    // Reuses this turn's list; a failed read means no secrets, so every
+    // placeholder is refused.
+    const browserSecrets = await resolveBrowserSecrets({
+      resolved: runtimeSecrets ?? [],
+    });
+
     const computerSandboxMode =
       isScenarioSession && scenarioId && !resolvedExecution.harness
         ? readComputerSandboxMode(hostRuntimeConfig)
@@ -1749,6 +1782,15 @@ chatV2.post("/", async (c) => {
         projectId: hostedBody.projectId,
         ...(executionScope ? { executionScope } : {}),
         ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
+        ...(body.chatSessionId
+          ? { browserCorrelation: { chatSessionId: body.chatSessionId } }
+          : {}),
+        // Separate from `secretEnv`: these reach browser commands on the
+        // hosted engine only, never a box's environment.
+        ...(browserSecrets.length > 0 ? { browserSecrets } : {}),
+        ...(markSecretsDelivered
+          ? { onBrowserSecretDelivered: markSecretsDelivered }
+          : {}),
         isGuest: Boolean(c.get("guestId")),
         isScenarioSession,
         // Lets a spend inside a shared scenario bill the scenario OWNER instead
@@ -2143,7 +2185,7 @@ chatV2.post("/", async (c) => {
         },
         runtime: {
           authHeader: c.req.header("authorization"),
-          clientIp: getClientIp(c),
+          clientIp: getSpendClientIp(c),
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
           rpcCollector,
           elicitationBridge,

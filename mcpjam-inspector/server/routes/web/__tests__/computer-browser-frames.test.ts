@@ -68,8 +68,7 @@ function build(over: Partial<BrowserFramesDeps> & { counted?: boolean } = {}) {
     events: readonly unknown[];
   }> = [];
   let inputOutcome:
-    | { ok: true }
-    | { ok: false; status: number; error: string } = { ok: true };
+    { ok: true } | { ok: false; status: number; error: string } = { ok: true };
   /** Held open so a test can drive "a second batch while the first is out". */
   let releaseInput: (() => void) | null = null;
   const touchSession = vi.fn(async () => ({ counted }));
@@ -99,6 +98,7 @@ function build(over: Partial<BrowserFramesDeps> & { counted?: boolean } = {}) {
         ownerUserId: CLAIMS.userId,
         projectId: CLAIMS.projectId,
         providerComputerId: "sbx_1",
+        status: "ready",
       },
     })) as unknown as BrowserFramesDeps["sandboxInfo"],
     lookupSession: (async () => ({
@@ -220,6 +220,30 @@ describe("browser frames socket — who may watch", () => {
     const { ws } = await f.connect();
     expect(ws.closed?.code).toBe(4401);
     expect(f.upstreamCalls).toHaveLength(0);
+  });
+
+  it("closes 4410 — not 4503 — when the box has been reclaimed", async () => {
+    // A hosted browser is hibernated within a couple of minutes of nobody
+    // watching, so a paused box is ORDINARY. This socket cannot wake it (that
+    // is `ensure=1` on the panel route), and a generic 4503 would put a hidden
+    // pane into a 3s reconnect loop against a machine we deliberately parked.
+    for (const status of ["hibernating", "waking", "provisioning"]) {
+      const f = build({
+        sandboxInfo: (async () => ({
+          ok: true,
+          value: {
+            ownerUserId: CLAIMS.userId,
+            projectId: CLAIMS.projectId,
+            providerComputerId: "sbx_1",
+            status,
+          },
+        })) as unknown as BrowserFramesDeps["sandboxInfo"],
+      });
+      const { ws } = await f.connect();
+      expect(ws.closed).toMatchObject({ code: 4410 });
+      // Nothing was asked of a box that has no daemon answering.
+      expect(f.upstreamCalls).toHaveLength(0);
+    }
   });
 
   it("closes 4404 when no browser is running on that computer", async () => {
@@ -763,8 +787,7 @@ describe("browser frames socket — the binary wire", () => {
     f.upstreamCalls[0].onFrame(FRAME);
 
     const binary = ws.sent.find((entry) => entry instanceof Uint8Array) as
-      | Uint8Array
-      | undefined;
+      Uint8Array | undefined;
     expect(binary).toBeDefined();
     const decoded = createFrameStreamDecoder().push(binary!);
     expect(decoded.ok).toBe(true);
@@ -875,8 +898,7 @@ describe("browser frames socket — negotiating h264", () => {
       seq: 2,
     });
     const binary = ws.sent.find((entry) => entry instanceof Uint8Array) as
-      | Uint8Array
-      | undefined;
+      Uint8Array | undefined;
     expect(binary).toBeDefined();
     const decoded = createFrameStreamDecoder({ video: true }).push(binary!);
     expect(decoded.ok && decoded.records[0]).toMatchObject({

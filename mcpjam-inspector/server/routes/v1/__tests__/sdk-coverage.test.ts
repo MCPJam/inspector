@@ -64,6 +64,11 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /browser-sessions/artifact": "browserSession",
   "post /browser-sessions/close": "browserSession",
 
+  "get /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}":
+    "generateEvalCases",
+  "post /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}/commit":
+    "generateEvalCases",
+
   // Identity and catalogs
   // Spend budget — the organization's ceiling on MCPJam-billed spend.
   "get /organizations/{organizationId}/spend-budget": "getSpendBudget",
@@ -333,6 +338,9 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "undismissSwarmFinding",
   "post /projects/{projectId}/eval-runs/{runId}/insights":
     "requestEvalRunInsights",
+  "post /projects/{projectId}/eval-runs/{runId}/backtest": "backtestEvalRun",
+  "post /projects/{projectId}/eval-runs/{runId}/judge/backtest":
+    "backtestEvalRunJudge",
   "post /projects/{projectId}/eval-runs/{runId}/judge": "requestEvalRunJudge",
   "get /organizations/{organizationId}/eval-check-repos": "listEvalCheckRepos",
   "post /organizations/{organizationId}/eval-check-repos":
@@ -414,6 +422,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
  * and it belongs in the map above with a method written for it.
  */
 const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
+  "get /projects/{projectId}/agent/jobs/{jobId}":
+    "Durable headless-agent transport used by surface-core for Slack/Discord; the SDK does not expose the service-credential-only agent entry point.",
+  "post /projects/{projectId}/agent/jobs/{jobId}/cancel":
+    "Durable headless-agent cancellation companion to the service-credential-only agent endpoint; surface clients own its job lifecycle.",
   // The DEPRECATED `/hosts` aliases. Their canonical `/clients` twins are in
   // the map above and are what the SDK's contract covers. The SDK does still
   // reach these paths — `listHosts`…`duplicateHost` remain as executable
@@ -438,6 +450,10 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "Deprecated alias of `POST /clients/{client}/duplicate`; see `GET /projects/{projectId}/hosts`.",
   "post /projects/{projectId}/agent":
     "The headless agent turn. Reachable only with a chat-surface service credential (Slack/Discord), and it spends hosted-model credits per call — an SDK method would advertise a capability an sk_ key does not have.",
+  "post /projects/{projectId}/model-leases":
+    "Transport plumbing for the SDK's `mcpjam/*` model provider, which mints, renews and revokes leases inside its own `fetch`. The SDK DOES call this route — but a lease is only usable by something that then speaks the vendor wire protocol to `proxyBaseUrl`, tracks `expiresAt`, and re-mints on a budget denial, which is exactly what the provider exists to do. A client method would hand a caller a raw credential and no way to spend it.",
+  "post /projects/{projectId}/model-leases/revoke":
+    "The teardown half of the above; `releaseMcpjamModelLeases()` calls it. See `POST /projects/{projectId}/model-leases`.",
   "get /agent-ops":
     "The agent's own operation registry, serialized for the org-settings Capabilities page. It describes the tools THIS build offers its agent — an implementation detail whose shape changes with every tool added, not a contract to program against.",
   "get /harness/{harnessId}/builtin-tools":
@@ -456,6 +472,10 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "An interactive OAuth probe for the Inspector UI's connect flow, whose result only makes sense to something that can then open a browser.",
   "post /projects/{projectId}/servers/{serverId}/oauth/import-tokens":
     "Imports an OAuth grant obtained out of band. Deliberately hard to reach: an SDK method would make bulk credential injection the easy path.",
+  "post /projects/{projectId}/eval-ingest/capabilities":
+    "Authenticated SDK reporting capability negotiation is owned by the reporter.",
+  "post /projects/{projectId}/eval-ingest/runs/evaluations":
+    "Advisory case-run persistence is owned by the SDK reporter, alongside report terminalization.",
   "post /projects/{projectId}/eval-ingest/report":
     "SDK eval-result INGESTION. Already covered by the SDK's reporter, which owns the payload shape end to end; a second, lower-level way to post the same body would let the two drift.",
   "post /projects/{projectId}/eval-ingest/runs/start":
@@ -554,4 +574,45 @@ describe("/api/v1 -> SDK coverage", () => {
     const reasons = Object.values(EXCLUDED_FROM_SDK);
     expect(new Set(reasons).size).toBeGreaterThan(reasons.length / 2);
   });
+});
+
+describe("authoring SDK requests", () => {
+  it.each(["completed", "failed", "cancelled"])(
+    "handles %s without committing unsuccessful jobs",
+    async (status) => {
+      const requests: Array<{ url: string; method: string }> = [];
+      const client = new PlatformApiClient({
+        baseUrl: "https://example.test/api/v1",
+        getAuth: async () => "test-token",
+        fetch: async (url, init) => {
+          requests.push({ url: String(url), method: init?.method ?? "GET" });
+          const data =
+            requests.length === 1
+              ? { jobId: "job" }
+              : requests.length === 2
+              ? { status, error: "Declared job error" }
+              : { created: [] };
+          return Response.json(data);
+        },
+      });
+      const result = client.generateEvalCases({
+        projectId: "p",
+        suiteId: "s",
+        body: {},
+      });
+      if (status === "completed")
+        await expect(result).resolves.toEqual({ created: [] });
+      else await expect(result).rejects.toThrow("Declared job error");
+      expect(requests[1]).toEqual({
+        method: "GET",
+        url: "https://example.test/api/v1/projects/p/eval-suites/s/authoring/job",
+      });
+      if (status === "completed")
+        expect(requests[2]).toEqual({
+          method: "POST",
+          url: "https://example.test/api/v1/projects/p/eval-suites/s/authoring/job/commit",
+        });
+      else expect(requests).toHaveLength(2);
+    },
+  );
 });

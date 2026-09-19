@@ -27,6 +27,8 @@ export function JourneyRubricEditor({
   onChange,
   allowedKinds,
   maxCriteria = MAX_RUBRIC_CRITERIA,
+  onDraftValidityChange,
+  showAllErrors,
 }: {
   value: JourneyCriterion[];
   onChange: (next: JourneyCriterion[]) => void;
@@ -43,6 +45,10 @@ export function JourneyRubricEditor({
    * backend enforces regardless.
    */
   maxCriteria?: number;
+  /** Passed through to `ChecksSection` — see its prop of the same name. */
+  onDraftValidityChange?: (hasInvalidDraft: boolean) => void;
+  /** Passed through to `ChecksSection` — see its prop of the same name. */
+  showAllErrors?: boolean;
 }) {
   // Stable across renders as long as the entries are: `ChecksSection` compares
   // by identity when the user edits a row, and a fresh array every render
@@ -62,13 +68,15 @@ export function JourneyRubricEditor({
         onChange={(next: Predicate[]) =>
           onChange(reconcileRubricEntries(value, next))
         }
-        title="Checks"
-        // "Measure", never "gate": a failing check is a finding in Insights,
-        // and nothing downstream blocks or fails because of it.
-        // One line on purpose — this doubles as card-header copy on the
-        // swarm confirm step.
-        description="Each check is reported in the run scorecard and can surface as a finding in Insights."
-        emptyStateText="No checks yet — add one to start measuring."
+        title="Evaluators"
+        noun="evaluator"
+        onDraftValidityChange={onDraftValidityChange}
+        showAllErrors={showAllErrors}
+        // Swarms have one grading tier: every evaluator decides the session.
+        // One line on purpose, because this doubles as card-header copy on
+        // the swarm confirm step.
+        description="Every evaluator must pass for a session to pass."
+        emptyStateText="No evaluators yet. Add one to measure a specific behavior."
         allowedKinds={allowedKinds}
         // `hideAddButton`, NOT `readOnly`: `readOnly` disables per-row edit AND
         // remove, which would make the "Remove one to add another" message
@@ -83,8 +91,8 @@ export function JourneyRubricEditor({
               so the actionable sentence would be advice the author cannot
               take. */}
           {cap === 0
-            ? "No room for more checks in this launch."
-            : `At most ${cap} checks — remove one to add another.`}
+            ? "No room for more evaluators in this launch."
+            : `At most ${cap} evaluators. Remove one to add another.`}
         </p>
       ) : null}
       {value.length > 0 ? (
@@ -107,7 +115,7 @@ export function JourneyRubricEditor({
                   onChange(next);
                 }}
                 className="h-8 text-xs"
-                aria-label={`Name for check ${index + 1}`}
+                aria-label={`Name for evaluator ${index + 1}`}
               />
             </div>
           ))}
