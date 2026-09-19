@@ -12,74 +12,41 @@
  * The read is the same read: `useEvalRunDecisionDetail` shares its LRU store
  * with the existing decision card, so mounting both surfaces costs one request,
  * not two, and they cannot disagree about a run.
- *
- * `fallbackBody` is the migration seam. Until the case rows land, the old
- * run-detail pane still renders beneath the verdict, so no information is
- * removed from the page in the commit that adds the headline. That pane is
- * also where the rewrite-arm description disclosure lives (via
- * `RunPluginSnapshot`); this component does not render a second one.
  */
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 import { Copy } from "lucide-react";
+import { runClientIdentity } from "../evals/helpers";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 
 import { compactModelIdTail } from "@/lib/environment-label";
-import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
-import { useEvalRunRouteFacts } from "@/hooks/use-eval-run-route-facts";
-import { useEvalRunServerFacts } from "@/hooks/use-eval-run-server-facts";
-import { ServerFactsCard } from "./server-facts-card";
-import { SERVER_FACTS_FAILURE_COPY } from "./server-facts-model";
-import { useEvalRunStageAnalytics } from "@/hooks/use-eval-run-stage-analytics";
 import { useDescriptionExperimentEnabled } from "@/hooks/useDescriptionExperimentEnabled";
-import { useFailureGroupsEnabled } from "@/hooks/useFailureGroupsEnabled";
 import {
   evalRunDecisionRevision,
   isTerminalEvalRunStatus,
 } from "@/lib/evals/eval-decision-summary-store";
 
 import { unifyTriageRows } from "../evals/ai-triage-helpers";
-import { groupRunIterationsByTestCase } from "../evals/run-case-groups";
 import { useServerQuality } from "../evals/use-server-quality";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
 import {
-  buildEvaluateCaseRows,
-  defaultOpenCaseRow,
-} from "./evaluate-case-row-model";
-import {
   describeRunChanges,
-  pillsByRowKey,
   summarizeRunChanges,
 } from "./evaluate-run-diff-model";
 import { useEvalRunCompare } from "./use-eval-run-compare";
-import {
-  catalogToolNamesFromRun,
-  isEmulatedDescriptionExperimentEngine,
-  readRunExecutionEngine,
-} from "./description-experiment-model";
-import { FailureGroupsCard } from "./failure-groups-card";
-import { RunAdvisorySection } from "./run-advisory-section";
-import { RunCaseRowBody } from "./run-case-row-body";
+import { UnifiedFindingsSection } from "./unified-findings-section";
 import { RunResultsMatrix } from "./run-results-matrix";
-import { RunCaseRows } from "./run-case-rows";
 import { RunDescriptionExperimentCard } from "./run-description-experiment-card";
 import { useEvalDescriptionExperiment } from "./use-eval-description-experiment";
-import {
-  buildRunRouteFacts,
-  routeFactsForRow,
-  routeLinesByRowKey,
-} from "./route-facts-model";
-import { RunStageStrip } from "./run-stage-strip";
-import { buildStageStrip } from "./run-stage-strip-model";
 import {
   buildEvaluateImprovePrompt,
   buildStageFixPrompt,
 } from "./stage-fix-prompt";
 import { remedyForDiagnostic } from "./stage-remedy";
-import { RunVerdictHero } from "./run-verdict-hero";
+import { HeroExplanation, RunVerdictHero } from "./run-verdict-hero";
 import { buildRunVerdictHero } from "./run-verdict-hero-model";
 import {
   buildHeroPairings,
@@ -104,6 +71,7 @@ import { useEvaluateRunPageHeaderActions } from "./evaluate-run-page";
 export function SingleRunContent({
   projectId,
   run,
+  suiteName,
   iterations,
   allIterations,
   siblingRuns = [],
@@ -112,10 +80,11 @@ export function SingleRunContent({
   decisionSummaryEnabled,
   onOpenIteration,
   onEditCase,
-  fallbackBody,
+  onEditEvaluator,
 }: {
   projectId: string | null | undefined;
   run: EvalSuiteRun;
+  suiteName?: string;
   iterations: readonly EvalIteration[];
   /** Every iteration in the suite, so the previous run's fractions are known. */
   allIterations?: readonly EvalIteration[];
@@ -129,6 +98,7 @@ export function SingleRunContent({
     iterationId: string;
   }) => void;
   onEditCase?: (testCaseId: string) => void;
+  onEditEvaluator?: (testCaseId: string) => void;
   fallbackBody?: ReactNode;
 }) {
   // Terminal only, matching `RunDecisionSummarySection`: a running row has no
@@ -170,10 +140,7 @@ export function SingleRunContent({
         {
           key: run._id,
           run,
-          client: run.namedHostId
-            ? (names.get(run.namedHostId) ??
-              `Client …${run.namedHostId.slice(-6)}`)
-            : "Suite client",
+          client: runClientIdentity(run, names).name,
           modelId,
           model: compactModelIdTail(modelLabel),
           iterations,
@@ -221,27 +188,6 @@ export function SingleRunContent({
     enabled: active,
   });
 
-  const caseRows = useMemo(() => {
-    const groups = groupRunIterationsByTestCase([...iterations], "test");
-    return buildEvaluateCaseRows({
-      groups,
-      summary: detail.summary,
-      diagnostics: detail.diagnostics,
-      chains: chains.chains,
-      chainsLoaded: chains.status === "ready",
-      decisionStatus: detail.status,
-    });
-  }, [
-    iterations,
-    detail.summary,
-    detail.diagnostics,
-    detail.status,
-    chains.chains,
-    chains.status,
-  ]);
-
-  const openRowKey = useMemo(() => defaultOpenCaseRow(caseRows), [caseRows]);
-
   const descriptionExperimentEnabled = useDescriptionExperimentEnabled();
   const descriptionExperiment = useEvalDescriptionExperiment({
     projectId,
@@ -249,119 +195,6 @@ export function SingleRunContent({
     revision: evalRunDecisionRevision(run),
     enabled: descriptionExperimentEnabled && active,
   });
-  const catalogToolNames = useMemo(
-    () =>
-      descriptionExperimentEnabled
-        ? catalogToolNamesFromRun(run)
-        : new Set<string>(),
-    [descriptionExperimentEnabled, run],
-  );
-  // Absent engine = unknown = refused, with the same note as a harness run.
-  const engineSupported = isEmulatedDescriptionExperimentEngine(
-    readRunExecutionEngine(run),
-  );
-  // The propose CTA exists only where the hook does: a non-terminal run has
-  // no failed trials to draft from, and the hook is `enabled: false` for it.
-  // While the hook has a request out, every button is held, so a second
-  // click cannot draft a second proposal before the first has an id.
-  const proposeProps =
-    descriptionExperimentEnabled && active
-      ? {
-          catalogToolNames,
-          engineSupported,
-          onPropose: (toolName: string) =>
-            descriptionExperiment.propose({ toolName }),
-          ...(descriptionExperiment.status === "loading"
-            ? {
-                requestPending: true,
-                busyToolName:
-                  descriptionExperiment.experiment?.toolName ?? null,
-              }
-            : {}),
-        }
-      : null;
-  const failureGroupsEnabled = useFailureGroupsEnabled();
-  // No flag of its own: route facts read data the page already loaded, spend
-  // nothing, and have no backend gate. `evaluate-enabled` — which gates this
-  // whole page — is the audience gate, and a second one would only be a
-  // second thing to remember to turn on.
-  const persistedRouteFacts = useEvalRunRouteFacts({
-    projectId,
-    runId: run._id,
-    runStatus: run.status,
-    enabled: active,
-  });
-  // The page-local producer stands in for a document that is NOT THERE —
-  // `absent`, or a deployment that does not serve the route yet. It must not
-  // stand in for one that is still loading, and it must not paper over a
-  // document the contract rejected: that is a bug report, and local numbers
-  // in its place would hide it.
-  const routeFactsFallback =
-    persistedRouteFacts.status === "absent" ||
-    (persistedRouteFacts.status === "error" &&
-      persistedRouteFacts.error?.kind === "routeUnavailable");
-  const routeFactsDoc = useMemo(() => {
-    if (persistedRouteFacts.status === "ready") {
-      return persistedRouteFacts.document;
-    }
-    if (!routeFactsFallback) return null;
-    return buildRunRouteFacts(run, iterations);
-  }, [
-    persistedRouteFacts.status,
-    persistedRouteFacts.document,
-    routeFactsFallback,
-    run,
-    iterations,
-  ]);
-  const routeFactsComputedHere = routeFactsFallback && routeFactsDoc !== null;
-  const routeFactsContractError =
-    persistedRouteFacts.status === "error" &&
-    persistedRouteFacts.error?.kind === "invalidContract";
-  // Server facts are COMPUTED ON READ, so there is no materializer to wait for
-  // and no page-local fallback: nothing in the browser can reconstruct the
-  // snapshot the run was taken against, and a fabricated stand-in would be a
-  // description of a server nobody observed.
-  //
-  // NOT gated on a terminal run status, unlike every sibling above. Those read
-  // materialized rollups that only exist once a run has finished; this one
-  // describes the SNAPSHOT the run was taken against and what setup observed,
-  // both of which are true from the run's first trial. Waiting for terminal
-  // would hide the server's own facts for exactly as long as somebody is
-  // watching the run that needs them.
-  const serverFacts = useEvalRunServerFacts({
-    projectId,
-    runId: run._id,
-    enabled: decisionSummaryEnabled,
-  });
-  const routeLines = useMemo(
-    () =>
-      routeFactsDoc
-        ? routeLinesByRowKey(routeFactsDoc, caseRows, iterations)
-        : undefined,
-    [routeFactsDoc, caseRows, iterations],
-  );
-
-  // No second flag. This whole surface is already behind `evaluate-enabled`,
-  // and gating the strip again meant it vanished with no way for a reader to
-  // tell an ungated section from a broken one — which is exactly what happened.
-  // The strip is part of the page; whether it has numbers is the document's
-  // business, and it says which.
-  const stageAnalytics = useEvalRunStageAnalytics({
-    projectId,
-    runId: run._id,
-    runStatus: run.status,
-    enabled: active,
-  });
-  const stripView = useMemo(
-    () =>
-      buildStageStrip({
-        status: stageAnalytics.status,
-        document: stageAnalytics.document,
-        error: stageAnalytics.error,
-      }),
-    [stageAnalytics.status, stageAnalytics.document, stageAnalytics.error],
-  );
-
   // What changed since the previous run. One read, no store: the answer is not
   // shared with another surface and a cache would be more machinery than it is
   // worth.
@@ -377,56 +210,13 @@ export function SingleRunContent({
     [compare.dto],
   );
 
-  /**
-   * The previous run's own pass fractions, keyed by case.
-   *
-   * Read from the iteration rows this page already holds rather than from the
-   * comparison: the public compare DTO carries each side's OUTCOME but no
-   * per-side counts, so "was 7/10" has to come from somewhere else or not be
-   * shown at all.
-   */
-  const previousFractions = useMemo(() => {
-    const byCaseKey = new Map<string, { passed: number; total: number }>();
-    if (!previousRunId || !allIterations) return byCaseKey;
-    for (const iteration of allIterations) {
-      if (iteration.suiteRunId !== previousRunId) continue;
-      const caseKey = iteration.testCaseSnapshot?.caseKey;
-      if (!caseKey) continue;
-      const entry = byCaseKey.get(caseKey) ?? { passed: 0, total: 0 };
-      entry.total += 1;
-      if (iteration.result === "passed") entry.passed += 1;
-      byCaseKey.set(caseKey, entry);
-    }
-    return byCaseKey;
-  }, [allIterations, previousRunId]);
-
-  const rowPills = useMemo(
-    () =>
-      pillsByRowKey({
-        rows: caseRows,
-        dto: compare.dto,
-        caseKeyOf: (row) => row.caseKey,
-        previousIterationsOf: (caseKey) =>
-          previousFractions.get(caseKey) ?? null,
-      }),
-    [caseRows, compare.dto, previousFractions],
-  );
-
-  const [stageFilter, setStageFilter] = useState<string | null>(null);
-  const visibleRows = useMemo(
-    () =>
-      stageFilter === null
-        ? caseRows
-        : caseRows.filter(
-            (row) =>
-              row.break.kind === "brokeAt" && row.break.stage === stageFilter,
-          ),
-    [caseRows, stageFilter],
-  );
-
   // Advisory only, and read from the same place the existing triage card reads
   // it. `autoRequest` is deliberately off: a server-quality generation costs
   // money, and this page's primary action does not depend on it.
+  //
+  // ALSO the controller the unified-findings experiment borrows. One per run,
+  // deliberately: mounting a second would give the page two lifecycles for the
+  // same lease and let one click become two billable requests.
   const serverQuality = useServerQuality(run, { autoRequest: false });
 
   /**
@@ -511,6 +301,28 @@ export function SingleRunContent({
     onOpenIteration && focusTarget?.testCaseId,
   );
 
+  /**
+   * Open the iteration a finding's evidence names.
+   *
+   * The page's router wants `{ testCaseId, iterationId }`, so the case is
+   * looked up FROM THE ITERATION rather than borrowed from whatever the
+   * verdict hero happens to be focused on — those are different cases most of
+   * the time, and reusing the focus target would open the wrong one while
+   * looking like it worked. An iteration this page does not hold (a finding
+   * built from a run whose rows are paged out) opens nothing rather than
+   * opening something adjacent.
+   */
+  const openEvidenceIteration = useCallback(
+    (iterationId: string) => {
+      if (!onOpenIteration) return;
+      const iteration = iterations.find((row) => row._id === iterationId);
+      const testCaseId = iteration?.testCaseId;
+      if (!testCaseId) return;
+      onOpenIteration({ testCaseId: String(testCaseId), iterationId });
+    },
+    [onOpenIteration, iterations],
+  );
+
   const inRunPageHeader = useEvaluateRunPageHeaderActions(
     canOpenFailingTrace || improvePrompt
       ? {
@@ -529,6 +341,25 @@ export function SingleRunContent({
     >
       <RunVerdictHero
         view={view}
+        explanation={
+          <UnifiedFindingsSection
+            suiteRunId={String(run._id)}
+            iterations={iterations}
+            clientLabel={view.pairings?.[0]?.client ?? null}
+            fallback={<HeroExplanation view={view} />}
+            generation={{
+              pending: serverQuality.pending,
+              failedGeneration: serverQuality.failedGeneration,
+              error: serverQuality.error,
+              unavailable: serverQuality.unavailable,
+              canRequest: serverQuality.canRequest,
+              requestInsight: serverQuality.requestServerQuality,
+            }}
+            {...(onOpenIteration
+              ? { onOpenIteration: openEvidenceIteration }
+              : {})}
+          />
+        }
         {...(!inRunPageHeader && canOpenFailingTrace
           ? { onOpenFailingTrace: openFailingTrace }
           : {})}
@@ -561,8 +392,11 @@ export function SingleRunContent({
 
       <div className="border-t border-border/40">
         <RunResultsMatrix
+          onEditCase={onEditCase}
+          onEditEvaluator={onEditEvaluator}
           key={run._id}
           run={run}
+          suiteName={suiteName}
           runs={siblingRuns}
           diagnostics={detail.diagnostics}
           chains={chains.chains}
@@ -577,112 +411,8 @@ export function SingleRunContent({
               : iterations
           }
           hostNamesById={hostNamesById}
-          onOpenIteration={onOpenIteration}
         />
       </div>
-
-      <details
-        className="border-t border-border/40"
-        open={stageFilter !== null || undefined}
-      >
-        <summary className="cursor-pointer px-5 py-4 text-sm font-semibold">
-          Case diagnostics{" "}
-          <span className="ml-2 text-xs font-normal text-muted-foreground">
-            Selected run · stages, grading, and remedies
-          </span>
-        </summary>
-        <div className="border-t border-border/40">
-          <RunStageStrip
-            view={stripView}
-            activeStage={stageFilter}
-            onSelectStage={setStageFilter}
-          />
-        </div>
-
-        {/*
-          Directly under the strip, because it answers the two cells the strip
-          could only say "observed by the runner" about. The card renders on a
-          real document; every OTHER outcome says which one it is, because the
-          alternative — the card's own first version — was a blank space under
-          the strip that read identically for "this deployment does not serve
-          the route yet", "the read failed" and "there is no such run".
-        */}
-        {serverFacts.status === "ready" && serverFacts.document ? (
-          <ServerFactsCard
-            document={serverFacts.document}
-            stageFilter={stageFilter}
-          />
-        ) : null}
-        {serverFacts.status === "error" && serverFacts.error ? (
-          <div
-            className={cn(
-              "border-t border-border/40 px-5 py-2 text-[12px]",
-              // A contract mismatch is a BUG REPORT — our builder and our
-              // published contract have drifted. The other three are service
-              // states, and painting them red would report a defect nobody
-              // observed.
-              serverFacts.error.kind === "invalidContract"
-                ? "text-destructive"
-                : "text-muted-foreground",
-            )}
-            data-testid="server-facts-error"
-          >
-            <p className="font-medium">
-              {SERVER_FACTS_FAILURE_COPY[serverFacts.error.kind].title}
-            </p>
-            <p>{SERVER_FACTS_FAILURE_COPY[serverFacts.error.kind].detail}</p>
-          </div>
-        ) : null}
-        {serverFacts.status === "absent" ? (
-          <p
-            className="border-t border-border/40 px-5 py-2 text-[12px] text-muted-foreground"
-            data-testid="server-facts-absent"
-          >
-            No server facts for this run — it is not visible here.
-          </p>
-        ) : null}
-
-        {routeFactsContractError ? (
-          <p
-            className="border-t border-border/40 px-5 py-2 text-[12px] text-destructive"
-            data-testid="route-facts-error"
-          >
-            routes not shown. The run&apos;s route facts did not match the
-            contract
-          </p>
-        ) : null}
-
-        <div className="border-t border-border/40">
-          <RunCaseRows
-            rows={visibleRows}
-            defaultOpenKey={openRowKey}
-            pills={rowPills}
-            {...(routeLines ? { routeLines } : {})}
-            renderBody={(row) => (
-              <RunCaseRowBody
-                row={row}
-                iterations={iterations}
-                {...(routeFactsDoc
-                  ? {
-                      routeFacts: routeFactsForRow(
-                        routeFactsDoc,
-                        row,
-                        iterations,
-                      ),
-                      catalogState: routeFactsDoc.catalogState,
-                      ...(routeFactsComputedHere ? { computedHere: true } : {}),
-                    }
-                  : {})}
-                {...(onOpenIteration ? { onOpenIteration } : {})}
-                {...(onEditCase ? { onEditCase } : {})}
-                {...(proposeProps
-                  ? { descriptionExperiment: proposeProps }
-                  : {})}
-              />
-            )}
-          />
-        </div>
-      </details>
 
       {descriptionExperimentEnabled && descriptionExperiment.experiment ? (
         <RunDescriptionExperimentCard
@@ -695,28 +425,6 @@ export function SingleRunContent({
             descriptionExperiment.experiment.status === "proposed"
           }
         />
-      ) : null}
-
-      <RunAdvisorySection
-        suiteRunId={String(run._id)}
-        triageRows={triageRows}
-        showActionableFindings={Boolean(serverQuality.result)}
-      />
-
-      {failureGroupsEnabled && run.suiteId ? (
-        <FailureGroupsCard suiteId={String(run.suiteId)} />
-      ) : null}
-
-      {fallbackBody ? (
-        <details className="border-t border-border/40">
-          <summary className="cursor-pointer px-5 py-4 text-sm font-medium">
-            Full run report{" "}
-            <span className="ml-2 text-xs font-normal text-muted-foreground">
-              Traces, configuration, and advanced metrics
-            </span>
-          </summary>
-          <div className="flex min-h-[480px] flex-col">{fallbackBody}</div>
-        </details>
       ) : null}
     </div>
   );

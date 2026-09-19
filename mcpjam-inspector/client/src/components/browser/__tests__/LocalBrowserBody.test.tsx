@@ -32,6 +32,8 @@ const api = vi.hoisted(() => ({
   },
   lease: { state: "free" as string, holder: undefined as string | undefined },
   installs: 0,
+  /** Every status probe the pane made, so a test can see it keep asking. */
+  statusFetches: 0,
   inputs: [] as unknown[],
   ensures: [] as string[],
   ensureError: null as Error | null,
@@ -78,13 +80,20 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
   useBrowserWorkspaceEnabled: () => api.workspaceEnabled,
 }));
 
+vi.mock("@/components/browser/BrowserSettingsButton", () => ({
+  BrowserSettingsButton: () => null,
+}));
+
 vi.mock("@/lib/local-browser/client", async () => {
   const actual = await vi.importActual<
     typeof import("@/lib/local-browser/client")
   >("@/lib/local-browser/client");
   return {
     ...actual,
-    fetchLocalBrowserStatus: async () => api.status,
+    fetchLocalBrowserStatus: async () => {
+      api.statusFetches += 1;
+      return api.status;
+    },
     fetchLocalBrowserSession: api.lookup,
     startLocalBrowserInstall: async () => {
       api.installs += 1;
@@ -190,6 +199,7 @@ beforeEach(() => {
   };
   api.lease = { state: "free", holder: undefined };
   api.installs = 0;
+  api.statusFetches = 0;
   api.inputs = [];
   api.ensures = [];
   api.ensureError = null;
@@ -402,6 +412,91 @@ describe("the agent browser pane", () => {
     ).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: /install/i }));
     await waitFor(() => expect(api.installs).toBe(1));
+  });
+
+  it("says why the download failed, when it will try again, and offers Retry now", async () => {
+    // "exited with code 1" sent nobody anywhere. The server now keeps
+    // Playwright's own reason and books its own retry; the pane shows both,
+    // with the installer's output behind a disclosure rather than in the face.
+    api.status = {
+      installed: false,
+      install: {
+        status: "failed",
+        error: "Download failed: server returned code 403",
+        details:
+          "Downloading Chromium 1234\nFailed to install browsers\nDownload failed: server returned code 403",
+        retryAt: Date.now() + 30_000,
+        attempts: 1,
+      },
+      running: false,
+      leaseHeld: false,
+    };
+    renderBody();
+    expect(
+      await screen.findByTestId("rail-browser-install-error"),
+    ).toHaveTextContent("Download failed: server returned code 403");
+    expect(screen.getByTestId("rail-browser-install-retry")).toHaveTextContent(
+      /Retrying automatically in ~(29|30)s/,
+    );
+    expect(
+      screen.getByTestId("rail-browser-install-details"),
+    ).toHaveTextContent("Failed to install browsers");
+    await userEvent.click(screen.getByRole("button", { name: "Retry now" }));
+    await waitFor(() => expect(api.installs).toBe(1));
+  });
+
+  it("shows no countdown once the automatic retries are spent", async () => {
+    api.status = {
+      installed: false,
+      install: { status: "failed", error: "network down", attempts: 4 },
+      running: false,
+      leaseHeld: false,
+    };
+    renderBody();
+    await screen.findByTestId("rail-browser-install-error");
+    expect(screen.queryByTestId("rail-browser-install-retry")).toBeNull();
+    expect(screen.queryByTestId("rail-browser-install-details")).toBeNull();
+  });
+
+  it("keeps asking until this machine has a browser, then stops", async () => {
+    // A startup install the pane never saw begin, and a retry the server
+    // booked on its own, both finish without anyone clicking. A pane that
+    // only polled while it happened to observe `installing` never noticed.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      api.status = {
+        installed: false,
+        install: { status: "failed", error: "network down", attempts: 1 },
+        running: false,
+        leaseHeld: false,
+      };
+      renderBody();
+      await screen.findByTestId("rail-browser-install-error");
+      const before = api.statusFetches;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_100);
+      });
+      expect(api.statusFetches).toBeGreaterThan(before);
+
+      api.status = {
+        ...api.status,
+        installed: true,
+        install: { status: "ready" },
+      };
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_100);
+      });
+      await waitFor(() =>
+        expect(screen.queryByTestId("rail-browser-needs-chromium")).toBeNull(),
+      );
+      const settled = api.statusFetches;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(11_000);
+      });
+      expect(api.statusFetches).toBe(settled);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows the download's progress rather than looking frozen", async () => {

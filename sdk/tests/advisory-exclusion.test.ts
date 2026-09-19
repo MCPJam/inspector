@@ -29,6 +29,7 @@ import {
 import type { HostRunner } from "../src/HostRunner.js";
 import type { Predicate } from "../src/predicates/types.js";
 import type { PlatformEvalCase } from "../src/platform/types.js";
+import { authoredRequiredRole } from "../src/contract/policy-spelling.js";
 
 const FAILING_ADVISORY: Predicate = {
   type: "responseContains",
@@ -132,8 +133,8 @@ describe("STAGE_ANALYZER_VERSION", () => {
   // 10 was advisory exclusion (the behaviour this file pins); 11 added
   // response/call routing on top of it. The exclusion tests above are the
   // real assertion — this one only keeps the constant from drifting silently.
-  it("is analyzer version 11", () => {
-    expect(STAGE_ANALYZER_VERSION).toBe(11);
+  it("is analyzer version 12", () => {
+    expect(STAGE_ANALYZER_VERSION).toBe(12);
   });
 });
 
@@ -369,7 +370,10 @@ describe("predicateScoreDefinition strips policy from the hash", () => {
     const b = predicateScoreDefinition(advised, { ordinal: 0 });
     expect(a.scorerId).toBe(b.scorerId);
     expect(a.implementationHash).toBe(b.implementationHash);
-    expect(a.role).toBe("gating");
+    // The spelling this build emits. The two definitions differ in role and
+    // in NOTHING else — same id, same implementation hash — which is the
+    // property this test is really about.
+    expect(a.role).toBe(authoredRequiredRole());
     expect(b.role).toBe("advisory");
     expect(JSON.stringify(b)).not.toContain("severity");
   });

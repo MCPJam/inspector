@@ -12,7 +12,7 @@ let balanceState:
       freeDailyCreditsRemaining: number;
       freeDailyCreditsTotal: number;
       walletLocked: boolean;
-      billingModel?: "daily" | "monthly_per_seat";
+      billingModel?: "daily" | "monthly_per_seat" | "monthly_flat";
       monthlyAllowanceTotal?: number;
       monthlyAllowanceRemaining?: number;
       monthlyResetAt?: number | null;
@@ -21,6 +21,7 @@ let balanceState:
 let isLoadingState = false;
 let evalQuotaState:
   | {
+      starterRemaining?: number;
       used: number;
       allowed: number | null;
       resetsAt: number;
@@ -28,7 +29,11 @@ let evalQuotaState:
     }
   | undefined;
 let billingStatusState:
-  { effectivePlan: "free" | "team" | "enterprise" } | undefined;
+  | {
+      effectivePlan: "free" | "team" | "enterprise";
+      pricingVersion?: "v1" | "v2";
+    }
+  | undefined;
 
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
@@ -39,8 +44,8 @@ vi.mock("@/hooks/useCreditBalance", () => ({
 }));
 
 vi.mock("@/hooks/use-eval-iteration-quota", () => ({
-  useEvalIterationQuota: () => ({
-    quota: evalQuotaState,
+  useEvalIterationQuota: ({ enabled = true }: { enabled?: boolean }) => ({
+    quota: enabled ? evalQuotaState : undefined,
     isLoading: false,
     isAtLimit: false,
   }),
@@ -118,6 +123,11 @@ describe("SidebarCredits", () => {
     vi.useRealTimers();
   });
 
+  it("keeps the current plan visible in the collapsed hover trigger", () => {
+    renderCredits();
+    expect(screen.getByTestId("sidebar-see-credits")).toHaveTextContent("Free");
+  });
+
   it("renders the footer row and the daily credit bar with reset timing", () => {
     renderCredits();
 
@@ -126,7 +136,7 @@ describe("SidebarCredits", () => {
     );
     const dailyRow = screen.getByTestId("sidebar-usage-daily");
     expect(dailyRow).toHaveTextContent("Free daily credits");
-    expect(dailyRow).toHaveTextContent("36 / 300");
+    expect(dailyRow).toHaveTextContent("264 / 300");
     expect(dailyRow).toHaveTextContent("resets in 3h");
   });
 
@@ -170,10 +180,10 @@ describe("SidebarCredits", () => {
     const daily = screen.getByRole("progressbar", {
       name: "Free daily credits",
     });
-    expect(daily).toHaveAttribute("aria-valuetext", "36 / 300");
+    expect(daily).toHaveAttribute("aria-valuetext", "264 / 300");
     expect(
       screen.getByRole("progressbar", { name: "Daily eval iterations" }),
-    ).toHaveAttribute("aria-valuetext", "12 / 50 used");
+    ).toHaveAttribute("aria-valuetext", "38 / 50 remaining");
   });
 
   it("shows the monthly team allowance without the absolute reset date", () => {
@@ -194,7 +204,7 @@ describe("SidebarCredits", () => {
     renderCredits();
 
     const monthlyRow = screen.getByTestId("sidebar-usage-monthly");
-    expect(monthlyRow).toHaveTextContent("Monthly team credits");
+    expect(monthlyRow).toHaveTextContent("Monthly credits");
     expect(monthlyRow).toHaveTextContent("18,000 / 24,000");
     expect(monthlyRow).toHaveTextContent("resets in 16 days");
     expect(monthlyRow.textContent ?? "").not.toMatch(/resets in 16 days \(/);
@@ -228,7 +238,35 @@ describe("SidebarCredits", () => {
 
     const evalRow = screen.getByTestId("sidebar-usage-eval-iterations");
     expect(evalRow).toHaveTextContent("Daily eval iterations");
-    expect(evalRow).toHaveTextContent("12 / 50 used");
+    expect(evalRow).toHaveTextContent("38 / 50 remaining");
+  });
+
+  it("keeps the V2 starter allowance while hiding recurring eval allowances", () => {
+    billingStatusState = { effectivePlan: "team", pricingVersion: "v2" };
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: 50000,
+      monthlyAllowanceRemaining: 30000,
+    };
+    evalQuotaState = {
+      starterRemaining: 420,
+      used: 12,
+      allowed: 500,
+      resetsAt: 0,
+      windowKind: "month",
+    };
+    renderCredits();
+    expect(
+      screen.queryByTestId("sidebar-usage-eval-iterations"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Free daily credits")).not.toBeInTheDocument();
+    expect(screen.getByTestId("sidebar-usage-monthly")).toHaveTextContent(
+      "30,000 / 50,000",
+    );
+    expect(screen.getByText(/Free starter eval iterations:/)).toHaveTextContent(
+      "420 remaining · one-time allowance of 500",
+    );
   });
 
   it("offers Explore plans on the free plan", () => {
@@ -276,4 +314,24 @@ describe("SidebarCredits", () => {
       "Free daily credits",
     );
   });
+});
+
+it("shows daily credits for a v2 free org", () => {
+  billingStatusState = { effectivePlan: "free", pricingVersion: "v2" };
+  isLoadingState = false;
+  balanceState = {
+    paidCreditsRemaining: 330,
+    hasPurchaseHistory: false,
+    freeDailyPercentUsed: 25,
+    freeDailyResetAt: Date.now() + 86400000,
+    freeDailyCreditsRemaining: 150,
+    freeDailyCreditsTotal: 200,
+    walletLocked: false,
+    billingModel: "daily",
+  };
+  renderCredits();
+  expect(screen.getByTestId("sidebar-usage-daily")).toHaveTextContent(
+    "150 / 200",
+  );
+  expect(screen.queryByTestId("sidebar-usage-monthly")).not.toBeInTheDocument();
 });

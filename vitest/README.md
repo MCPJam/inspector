@@ -25,7 +25,7 @@ const corpus = loadCorpusFromLock(lock);
 
 describeEvalSuite("refund flows", corpus.toEvalSuite(), {
   factory: () => buildExecutor(),
-  run: { iterations: 25 },
+  run: { iterations: 25, runTimeoutMs: 240_000, mcpjam: { strict: true } },
   gate: {
     minimumPassRate: 0.9,
     maximumP95LatencyMs: 30_000,
@@ -33,6 +33,8 @@ describeEvalSuite("refund flows", corpus.toEvalSuite(), {
   },
 });
 ```
+
+Set `MCPJAM_API_KEY` in CI. Strict reporting fails the test when evidence cannot be persisted, while keeping the completed local measurements available through `getResults()` and `getReportingReceipt()`. For an intentional local-only run, set `mcpjam: { enabled: false }`.
 
 `vitest run` then reports one test per hosted case, titled with its dashboard
 id:
@@ -57,16 +59,19 @@ given — a final `it` for the policy.
 | --- | --- |
 | `executor` | A ready `HostExecutor`. |
 | `factory` | Builds one inside `beforeAll`, for an executor that must connect first. Mutually exclusive with `executor`. |
-| `run` | `EvalTestRunOptions`: `iterations`, `concurrency`, `timeoutMs`, `mcpjam`, … |
+| `run` | SDK execution controls: `iterations` (or suite `defaults.iterations`), `concurrency`, `timeoutMs`, `runTimeoutMs`, `evaluatorTimeoutMs`, `maxCapturedBytes`, `signal`, `mcpjam`, … |
 | `gate` | A `GatePolicy`. Omit to register no gate test. |
-| `hookTimeoutMs` | Timeout for the whole suite run. Default 300000. |
+| `hookTimeoutMs` | Vitest hook timeout. Default 300000. Configure SDK execution bounds separately. |
+| `dispose` | Optional async cleanup for the executor, invoked in `afterAll` even after failure. |
+| `summary` | `table` by default, or `none`. Reports measurements and persistence separately. |
+| `only` / `skip` | Suite case IDs to focus/skip. Skip wins; unknown IDs are rejected. |
 
 ### `testEval(test, options)`
 
 The single-test seat, for a file that owns one eval and wants no suite.
 
 ```ts
-import { EvalTest } from "@mcpjam/sdk";
+import { EvalTest, assertion } from "@mcpjam/sdk";
 import { mintCaseId } from "@mcpjam/sdk/contract";
 import { testEval } from "@mcpjam/vitest";
 
@@ -79,14 +84,26 @@ testEval(
   new EvalTest({
     id: "c_V1StGXR8Z5jdHi6Bmy",
     name: "refunds a duplicate charge",
-    test: async (executor) => {
-      const result = await executor.run("refund the duplicate charge");
-      return result.hasToolCall("create_refund");
+    execute: async (executor) => {
+      await executor.run("refund the duplicate charge");
+    },
+    evaluators: {
+      mode: "extend",
+      list: [assertion({ type: "toolCalledAtLeastOnce", toolName: "create_refund" })],
     },
   }),
-  { factory: () => buildExecutor(), run: { iterations: 25 } }
+  { factory: () => buildExecutor(), run: { iterations: 25, mcpjam: { strict: true } } }
 );
 ```
+
+The nested case test is named `passes`; its outer title retains the case's name and hosted ID.
+Both facades expose `.skip(...)` and `.only(...)`. Skipped registrations never construct an executor.
+Focused registrations use Vitest's native focus behavior and are rejected when CI disables `allowOnly`.
+
+Suite filtering preserves the original case inventory. A gate over a subset is incomplete by default;
+use `gate.selectionScope: "selected"` only when intentionally certifying that selection. Hosted subset
+reporting is currently refused until persisted selection support is available; use `mcpjam.enabled: false`
+for local filtered runs. Skipping everything produces no execution and no passing acceptance claim.
 
 ### `planEvalSuite(suite, options)`
 
@@ -107,7 +124,7 @@ not an optimization: the suite uploads a single hosted run, computes one
 aggregate evaluation-config hash, and executes cases sequentially. Calling it
 per test would produce N hosted runs and N aggregate hashes. Each `it` is an
 assertion over that one already-computed result, so per-test timeouts are
-irrelevant — the timeout that matters is `hookTimeoutMs`.
+irrelevant to execution. Set `hookTimeoutMs` above the SDK run deadline. The SDK uses separate iteration, evaluator, and run bounds; its abort signal is cooperative for custom external side effects. `maxCapturedBytes` defaults to 16 MiB per iteration and bounds retained SDK evidence. Exceeding it returns unavailable capture with evaluator error rows and drops the oversized transcript from the result. It does not cap allocations inside your executor or custom code.
 
 **A wrapper, not a reporter.** A vitest Reporter observes tests; it cannot
 decide what a test *is*. Evals need the opposite, so failures land on named

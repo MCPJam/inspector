@@ -291,6 +291,7 @@ export async function generateSwarmJourneys(
   bearer: string,
   args: {
     projectId: string;
+    swarmRefId?: string;
     /** Exactly one grounding source — the route's zod refine enforces it. */
     serverAttachmentId?: string;
     environmentId?: string;
@@ -307,6 +308,7 @@ export async function generateSwarmJourneys(
     bearer,
     {
       projectId: args.projectId,
+      ...(args.swarmRefId ? { swarmRefId: args.swarmRefId } : {}),
       ...(args.serverAttachmentId
         ? { serverAttachmentId: args.serverAttachmentId }
         : {}),
