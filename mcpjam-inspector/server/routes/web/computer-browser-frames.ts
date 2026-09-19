@@ -89,6 +89,18 @@ const CLOSE_NOT_FOUND = 4404; // no browser there
  * a pane should hold its place and reconnect, not surface an error.
  */
 const CLOSE_LEASE_HELD = 4409;
+/**
+ * The box is asleep. TEMPORARY, and its own code because the pane's answer is
+ * neither "retry this socket" nor "give up".
+ *
+ * A hosted browser is now reclaimed within a couple of minutes of nobody
+ * watching, so finding one paused is ORDINARY rather than exceptional. The
+ * socket cannot fix it — waking is `ensure=1` on the panel route — and a plain
+ * 4503 would put a hidden pane into a 3-second reconnect loop against a box
+ * that will stay paused until somebody looks at it again, which is both
+ * pointless traffic and a probe against a machine we deliberately parked.
+ */
+const CLOSE_ASLEEP = 4410;
 const CLOSE_UNAVAILABLE = 4503; // shutting down, or an unexplained drop
 /**
  * This box cannot encode video; ask again without it.
@@ -341,6 +353,12 @@ export function createComputerBrowserFramesWsHandler(
           info.value.projectId !== claims.projectId
         ) {
           refusal = { code: CLOSE_UNAUTHORIZED, reason: "invalid token" };
+        } else if (info.value.status !== "ready") {
+          // Free: the status came back in the read we already made for the
+          // ownership check. A paused box has no daemon answering, so opening
+          // the upstream would fail anyway — this just says WHY, so the pane
+          // can re-ensure instead of reconnecting into nothing.
+          refusal = { code: CLOSE_ASLEEP, reason: "computer asleep" };
         } else {
           viewerId = claims.userId;
           const lookup = await lookupSession({

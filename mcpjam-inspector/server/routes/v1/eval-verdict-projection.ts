@@ -15,11 +15,11 @@
  *     not validate is ABSENT, never partially trusted.
  *  2. `verdictPolicyVersion` and `verdictPolicyIntegrityError` survive
  *     independently of the summary: an operator must be able to tell "this run
- *     was decided under v2 and produced no readable summary" from "this run is
- *     a legacy percent-threshold run".
+ *     was decided by per-case grading and produced no readable summary" from
+ *     "this run was decided by the suite-wide accuracy threshold".
  *
- * Fields are OMITTED rather than nulled, so a legacy run's DTO is
- * byte-identical to what it was before v2 existed.
+ * Fields are OMITTED rather than nulled, so a suite-wide run's DTO is
+ * byte-identical to what it was before the per-case policy existed.
  */
 
 import { z } from "zod";

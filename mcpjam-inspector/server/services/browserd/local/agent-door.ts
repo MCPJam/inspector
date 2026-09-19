@@ -36,7 +36,11 @@ import {
   unknownResult,
   type ContractRefusal,
 } from "../agent-contract-mapper.js";
-import type { BrowserCommand, BrowserCommandSource } from "../protocol.js";
+import type {
+  BrowserCommand,
+  BrowserCommandCorrelation,
+  BrowserCommandSource,
+} from "../protocol.js";
 import type { InProcessBrowserdClient } from "../in-process-client.js";
 import type { BrowserdCommandResponse } from "../browserd-codec.js";
 import type { BrowserLedgerActor } from "../daemon/command-ledger.js";
@@ -209,7 +213,8 @@ export interface RunAgentCommandArgs {
   command: BrowserAgentCommand;
   commandId?: string;
   tabId?: string;
-  correlation?: Record<string, string>;
+  /** @see isBrowserCommandCorrelation */
+  correlation?: BrowserCommandCorrelation;
 }
 
 export interface RunAgentCommandOutput {
@@ -435,6 +440,21 @@ export function toContractResult(args: {
       return {
         status: 409,
         result: unknownResult({ ...common, reason: "unknown_boot" }),
+      };
+    case "protocol_mismatch":
+      // Refused, not unknown: the daemon checks before the queue, so nothing ran.
+      return {
+        status: 409,
+        result: refusedResult({
+          ...common,
+          code: "protocol_mismatch",
+          message:
+            "this browser daemon speaks a different protocol version than " +
+            (response.running === undefined
+              ? "this server"
+              : `this server (it speaks ${response.running})`) +
+            "; nothing ran. It needs to be restarted onto the current build.",
+        }),
       };
     default: {
       // Exhaustive: a new daemon outcome must be given one of the three
