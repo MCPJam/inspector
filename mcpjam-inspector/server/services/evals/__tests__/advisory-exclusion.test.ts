@@ -46,6 +46,8 @@ const FAILING_ADVISORY: Predicate = {
  * added when the fixture set grows; a changed row is a bug.
  */
 const PINNED_HOSTED_CRITERION_IDS: Record<string, string> = {
+  "responseCloseTo — exact normalized distance": "responseCloseTo-40b8362cbab4",
+  "responseCloseTo — Unicode and normalization": "responseCloseTo-45df32e6c10f",
   "toolCalledWith — minimal (only required fields)":
     "toolCalledWith-bb535809fe86",
   "toolCalledWith — all optional fields populated":

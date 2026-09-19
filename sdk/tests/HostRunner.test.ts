@@ -1,3 +1,4 @@
+import { McpjamModelLeaseScope } from "../src/mcpjam-model-lease.js";
 import { HostRunner } from "../src/HostRunner";
 import { PromptResult } from "../src/PromptResult";
 import { Host } from "../src/host-config/host";
@@ -17,6 +18,7 @@ vi.mock("ai", () => ({
     type: "dynamic",
   })),
   jsonSchema: vi.fn((schema: any) => schema),
+  asSchema: vi.fn((schema: any) => ({ jsonSchema: schema })),
 }));
 
 // Mock the model factory
@@ -39,8 +41,7 @@ const telemetryEventBase = {
 
 /** Replays `experimental_telemetry.integrations` like real `generateText` (Jest mocks `ai` only). */
 async function replayEvalSpanStepFinish(params: any, stepResult: any) {
-  for (const integration of params.experimental_telemetry?.integrations ??
-    []) {
+  for (const integration of params.experimental_telemetry?.integrations ?? []) {
     await integration.onStepFinish?.(stepResult);
   }
 }
@@ -283,6 +284,17 @@ describe("HostRunner", () => {
 
       expect(result).toBeInstanceOf(PromptResult);
       expect(result.text).toBe("The result is 5");
+      expect(result.recordedContext?.toolDefinitions).toEqual(
+        Object.entries(mockToolSet).map(([name, tool]) => ({
+          name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+        }))
+      );
+      expect(result.recordedContext?.systemPrompt).toBe(
+        "You are a helpful assistant."
+      );
+      expect(result.recordedContext?.unavailable).toBeUndefined();
       expect(result.toolsCalled()).toEqual(["add"]);
       expect(result.hasError()).toBe(false);
       expect(result.inputTokens()).toBe(10);
@@ -682,7 +694,7 @@ describe("HostRunner", () => {
           {
             toolCallId: "call-default",
             abortSignal: { throwIfAborted: vi.fn() },
-          },
+          }
         );
         params.onStepFinish?.();
         return {
@@ -1877,9 +1889,7 @@ describe("HostRunner", () => {
         })
       ).toEqual({
         type: "content",
-        value: [
-          { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
-        ],
+        value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
       });
     });
   });
@@ -1971,4 +1981,27 @@ describe("HostRunner", () => {
       expect(callArgs.tools.subtract.description).toBe("Subtract two numbers");
     });
   });
+});
+
+it("carries suite lease ownership through iteration clones into the model", async () => {
+  const scope = new McpjamModelLeaseScope();
+  const runner = new HostRunner({
+    tools: {},
+    apiKey: "sk_test",
+    mcpjamProject: "selected-project",
+    baseUrls: { mcpjam: "https://custom.test" },
+    model: "mcpjam/anthropic/claude-haiku-4.5",
+  });
+  const iteration = runner
+    .withOptions({ mcpjamLeaseScope: scope })
+    .withOptions({});
+  await iteration.run("hello");
+  expect(createModelFromString).toHaveBeenLastCalledWith(
+    "mcpjam/anthropic/claude-haiku-4.5",
+    expect.objectContaining({
+      mcpjamLeaseScope: scope,
+      mcpjamProject: "selected-project",
+      baseUrls: { mcpjam: "https://custom.test" },
+    })
+  );
 });

@@ -1,3 +1,4 @@
+import { filterSuppressedSuiteAssertions } from "@mcpjam/sdk/contract";
 /**
  * Project a HOSTED eval suite onto a suite file — or refuse.
  *
@@ -28,10 +29,12 @@
 
 import { isDeepStrictEqual } from "node:util";
 import {
+  EVAL_SUITE_SCHEMA_VERSION,
   evalSuiteFileSchema,
   isOpaqueId,
   type EvalSuiteFile,
   type EvalSuiteFileCase,
+  type EvalSuiteSchemaVersion,
 } from "@mcpjam/sdk/contract";
 import { suiteFilePointer } from "@mcpjam/sdk";
 import type {
@@ -67,6 +70,15 @@ export type BuildSuiteFileInput = {
   cases: PlatformEvalCase[];
   /** Resolved only when the suite has exactly one attached environment. */
   environment?: PlatformEnvironmentResolved;
+};
+
+export type BuildSuiteFileOptions = {
+  /**
+   * The dialect to write. Defaults to schemaVersion 1 — an offline file has no
+   * capability handshake with its reader, so a newer dialect is written only
+   * when the author asks for it.
+   */
+  schemaVersion?: EvalSuiteSchemaVersion;
 };
 
 function unsupported(
@@ -487,17 +499,6 @@ function suiteLevelFindings(
     );
   }
 
-  if (settings.judge?.autoRun === true) {
-    findings.push(
-      unsupported(
-        ["settings", "judge"],
-        "suite automatically runs LLM-as-judge grading, and a suite file has " +
-          "no judge vocabulary. Exporting it would produce a file that " +
-          "grades with deterministic assertions alone."
-      )
-    );
-  }
-
   return findings;
 }
 
@@ -605,17 +606,18 @@ function caseLevelFindings(
   return findings;
 }
 
-// ── repetitions ──────────────────────────────────────────────────────────────
+// ── iterations ───────────────────────────────────────────────────────────────
 
 /**
- * Pick `defaults.repetitions`: the count the most cases use, smallest on a tie.
+ * Pick the suite-default count (`defaults.iterations`, or `defaults.repetitions`
+ * in a schemaVersion 1 file): the count the most cases use, smallest on a tie.
  *
  * The choice is cosmetic — every case whose count differs carries an explicit
- * `repetitions`, so the resolved value is `case.iterations` either way — but it
+ * override, so the resolved value is `case.iterations` either way — but it
  * must be DETERMINISTIC, because the alternative is an export whose diff moves
  * every time the case order changes.
  */
-export function modalRepetitions(counts: readonly number[]): number {
+export function modalIterations(counts: readonly number[]): number {
   if (counts.length === 0) return 1;
   const tally = new Map<number, number>();
   for (const count of counts) {
@@ -759,9 +761,15 @@ function differences(
  * produce validator noise about fields the caller did not get wrong.
  */
 export function buildSuiteFileFromPlatform(
-  input: BuildSuiteFileInput
+  input: BuildSuiteFileInput,
+  options: BuildSuiteFileOptions = {}
 ): SuiteExportResult {
   const { detail, cases } = input;
+  const schemaVersion = options.schemaVersion ?? EVAL_SUITE_SCHEMA_VERSION;
+  // The one field whose NAME differs by dialect. Everything else the two
+  // dialects share is spelled once below.
+  const countKey =
+    schemaVersion === EVAL_SUITE_SCHEMA_VERSION ? "repetitions" : "iterations";
   const suiteChecks = detail.settings.checks ?? [];
 
   const findings = suiteLevelFindings(detail, cases, input.environment);
@@ -794,7 +802,7 @@ export function buildSuiteFileFromPlatform(
 
   if (findings.length > 0) return { ok: false, findings };
 
-  const repetitions = modalRepetitions(cases.map((entry) => entry.iterations));
+  const iterations = modalIterations(cases.map((entry) => entry.iterations));
   const executionConfig = detail.executionConfig as NonNullable<
     PlatformEvalSuiteDetail["executionConfig"]
   >;
@@ -802,7 +810,7 @@ export function buildSuiteFileFromPlatform(
   const assertions = suiteChecks as EvalSuiteFileCase["assertions"];
 
   const candidate = {
-    schemaVersion: "1",
+    schemaVersion,
     mode: "agentWorkflow",
     reportingMode: "standard",
     suite: {
@@ -837,6 +845,31 @@ export function buildSuiteFileFromPlatform(
         : {}),
     },
     defaults: {
+      ...(detail.settings.judge
+        ? {
+            judge: {
+              enabled: detail.settings.judge.enabled,
+              ...(detail.settings.judge.model != null
+                ? { model: detail.settings.judge.model }
+                : {}),
+              ...(detail.settings.judge.autoRun !== undefined
+                ? { autoRun: detail.settings.judge.autoRun }
+                : {}),
+              ...(detail.settings.judge.threshold !== undefined
+                ? { threshold: detail.settings.judge.threshold }
+                : {}),
+              ...(detail.settings.judge.role !== undefined
+                ? { role: detail.settings.judge.role }
+                : {}),
+              ...(detail.settings.judge.severity !== undefined
+                ? { severity: detail.settings.judge.severity }
+                : {}),
+              ...(detail.settings.judge.rubric !== undefined
+                ? { rubric: detail.settings.judge.rubric }
+                : {}),
+            },
+          }
+        : {}),
       model: suiteModel,
       ...(hoistedProvider === undefined ? {} : { provider: hoistedProvider }),
       ...(executionConfig.systemPrompt === undefined
@@ -845,7 +878,7 @@ export function buildSuiteFileFromPlatform(
       ...(executionConfig.temperature === undefined
         ? {}
         : { temperature: executionConfig.temperature }),
-      repetitions,
+      [countKey]: iterations,
       // A v2 suite uses its own fraction; a legacy one converts its percent.
       // Never the other way round for a v2 suite: `suiteLevelFindings` has
       // already refused the export when a v2 threshold is unreadable, so this
@@ -865,12 +898,13 @@ export function buildSuiteFileFromPlatform(
     // import status for it would assert a faithfulness claim about a mapping
     // that never happened.
     cases: cases.map((evalCase, index) => ({
+      ...(evalCase.judge !== undefined ? { judge: evalCase.judge } : {}),
       id: caseIds[index],
       title: evalCase.title,
       ...(evalCase.intent === undefined ? {} : { intent: evalCase.intent }),
-      ...(evalCase.iterations === repetitions
+      ...(evalCase.iterations === iterations
         ? {}
-        : { repetitions: evalCase.iterations }),
+        : { [countKey]: evalCase.iterations }),
       ...(evalCase.isNegative ? { isNegativeTest: true } : {}),
       ...(evalCase.expectedOutput === undefined ||
       evalCase.expectedOutput === null
@@ -881,7 +915,20 @@ export function buildSuiteFileFromPlatform(
         ? {}
         : { model: evalCase.models[0].model }),
       steps: evalCase.steps,
-      ...(assertions && assertions.length > 0 ? { assertions } : {}),
+      ...(assertions && assertions.length > 0
+        ? {
+            assertions: filterSuppressedSuiteAssertions(
+              assertions,
+              evalCase.suppressedSuiteStandardCheckIds
+            ),
+          }
+        : {}),
+      ...(evalCase.suppressedSuiteStandardCheckIds?.length
+        ? {
+            suppressedSuiteStandardCheckIds:
+              evalCase.suppressedSuiteStandardCheckIds,
+          }
+        : {}),
     })),
   };
 
