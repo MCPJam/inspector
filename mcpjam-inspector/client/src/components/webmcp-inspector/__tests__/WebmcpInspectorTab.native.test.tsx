@@ -61,7 +61,6 @@ beforeEach(() => {
     pending: [],
     starting: false,
     error: undefined,
-    liveFrame: undefined,
     lastScreenshot: undefined,
     chatEnabled: false,
     sendCommand: vi.fn(async () => ({ state: null })),

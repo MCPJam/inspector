@@ -27,6 +27,7 @@ const {
   environmentsState,
   flagState,
   hostListState,
+  projectRoleState,
   saveSeedMock,
   toastSuccess,
   toastError,
@@ -36,6 +37,10 @@ const {
     value: undefined as ProjectEnvironmentView[] | undefined,
   },
   flagState: { environments: true },
+  // The backend's `canManageProjectMembers`, which is what publishing a study
+  // takes. Admin by default: every pre-existing case here is about the form,
+  // not about the role.
+  projectRoleState: { canManageMembers: true, isLoading: false },
   hostListState: {
     hosts: [] as Array<Partial<HostListItem>>,
     isLoading: false,
@@ -67,12 +72,23 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => hostListState,
 }));
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => <div data-testid="server-group-picker" />,
+// Partial: the composer's model-matrix hook imports `shouldQueryProjectId`
+// from this same module, so a full replacement takes out the strip.
+vi.mock("@/hooks/useProjects", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useProjects")>()),
+  useProjectMembers: () => projectRoleState,
+}));
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
 }));
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ signUp: vi.fn(), signIn: vi.fn() }),
+}));
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 const sharePolicyState = vi.hoisted(() => ({
   policy: undefined as
@@ -128,6 +144,7 @@ vi.mock("@/components/project-environments/environment-picker", () => ({
 import {
   UserTestingScenarioCreateFlow,
   composedSetupHasServers,
+  isStudyNameTakenError,
   pickDefaultCreateClient,
 } from "@/components/scenarios/UserTestingScenarioCreateFlow";
 
@@ -168,6 +185,11 @@ function goToTasks() {
   fireEvent.click(screen.getByTestId("user-testing-create-continue"));
 }
 
+/** Step 2 is on screen — the only proof that a Continue press actually carried. */
+function onTasksStep() {
+  return screen.queryByTestId("user-testing-create-save") !== null;
+}
+
 /** Step 1 → step 2 → publish, for the tests that are not about the stepper. */
 function createStudy() {
   goToTasks();
@@ -185,6 +207,8 @@ beforeEach(() => {
     { hostId: "host-2", name: "Cursor", serverCount: 1 },
   ];
   hostListState.isLoading = false;
+  projectRoleState.canManageMembers = true;
+  projectRoleState.isLoading = false;
   ensureAdhocMock.mockImplementation(
     async (args: { stacks: Array<{ hostId: string }> }) =>
       args.stacks.map((stack) => ({
@@ -263,49 +287,69 @@ describe("UserTestingScenarioCreateFlow", () => {
     });
   });
 
-  it("cannot continue without an environment", () => {
-    // No clients to default to, so nothing answers the required field.
+  it("presses through to nothing without an environment, and says why", () => {
+    // No clients to default to, so nothing answers the required field. The
+    // button is live — it has to be pressed to find that out.
     hostListState.hosts = [];
     renderFlow();
-    expect(screen.getByTestId("user-testing-create-continue")).toBeDisabled();
+
+    goToTasks();
+
+    expect(onTasksStep()).toBe(false);
+    expect(
+      screen.getByTestId("user-testing-create-environment-required"),
+    ).toBeInTheDocument();
   });
 
   /**
-   * The gate above is old; SAYING so is the fix. It was reported as "I can
-   * create a scenario without an environment" precisely because the only sign
-   * was an inert button — so the requirement is stated on the field, and drops
-   * away once the field is satisfied rather than nagging under a valid form.
+   * The gate is old; SAYING so is the fix. It was reported as "I can create a
+   * scenario without an environment" precisely because the only sign was an
+   * inert button — so the press names what is missing, and the message drops
+   * away the moment the field is satisfied rather than standing over a form
+   * that no longer has a problem.
    */
-  it("says the environment is required, and stops saying it once one is picked", () => {
+  it("says the environment is required only once asked, and stops saying it once one is picked", () => {
     hostListState.hosts = [];
     renderFlow();
+
+    // Nothing is nagged before the ask. The marked label is what carries the
+    // requirement until then — an asterisk is what a scanning user reads as
+    // "required" before they try Continue.
+    expect(
+      screen.queryByTestId("user-testing-create-environment-required"),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText("(required)").length).toBeGreaterThan(0);
+
+    goToTasks();
 
     expect(
       screen.getByTestId("user-testing-create-environment-required"),
     ).toBeInTheDocument();
-    // Marked on the label too — an asterisk is what a scanning user reads as
-    // "required" before they try Continue.
-    expect(screen.getAllByText("(required)").length).toBeGreaterThan(0);
 
     fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
       target: { value: "env-1" },
     });
 
+    // Cleared by the fix itself, with no second press needed.
     expect(
       screen.queryByTestId("user-testing-create-environment-required"),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByTestId("user-testing-create-continue"),
-    ).not.toBeDisabled();
+
+    goToTasks();
+    expect(onTasksStep()).toBe(true);
   });
 
-  it("waits for the environment list before claiming anything is missing", () => {
+  it("waits for the environment list before claiming anything is missing, even on a press", () => {
     // `undefined` is "we haven't looked yet" — the loading line is the honest
-    // answer there, and asserting a missing field would contradict it.
+    // answer there, and telling the creator they forgot something would be a
+    // claim about them rather than about the query.
     environmentsState.value = undefined;
     hostListState.hosts = [];
     renderFlow();
 
+    goToTasks();
+
+    expect(onTasksStep()).toBe(false);
     expect(
       screen.queryByTestId("user-testing-create-environment-required"),
     ).not.toBeInTheDocument();
@@ -339,7 +383,7 @@ describe("UserTestingScenarioCreateFlow", () => {
     );
   });
 
-  it("reports an already-published environment as such, not as a failure", async () => {
+  it("refuses a setup that already has a study, rather than calling it created", async () => {
     const onCreateScenario = vi
       .fn()
       .mockResolvedValue({ scenarioId: "cb-9", created: false });
@@ -351,11 +395,11 @@ describe("UserTestingScenarioCreateFlow", () => {
     createStudy();
 
     await waitFor(() => {
-      expect(toastSuccess).toHaveBeenCalledWith(
-        expect.stringMatching(/already published/i),
+      expect(toastError).toHaveBeenCalledWith(
+        expect.stringMatching(/already have a study/i),
       );
     });
-    expect(toastError).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 
   it("surfaces the backend's message verbatim when publishing is refused", async () => {
@@ -380,6 +424,78 @@ describe("UserTestingScenarioCreateFlow", () => {
     });
     // Recoverable — the form is usable again rather than stuck mid-save.
     expect(screen.getByTestId("user-testing-create-save")).not.toBeDisabled();
+  });
+
+  it("reads the refusal off `data`, the only field a production deployment keeps", async () => {
+    // THE PRODUCTION SHAPE, and the reason the case above passed while the
+    // screen shipped broken. Convex redacts the `message` of every throw on a
+    // production deployment — `ConvexError` included — to the request-id
+    // banner, and forwards the payload on `data`. A test that rejects with a
+    // readable `message` is therefore vacuous for this bug: it asserts copy
+    // that only a dev deployment produces.
+    const refusal = Object.assign(
+      new Error(
+        "[CONVEX M(scenarios:publishEnvironmentScenario)] " +
+          "[Request ID: 837e8ce9409d0385] Server Error",
+      ),
+      {
+        data: {
+          code: "FORBIDDEN",
+          message:
+            "Publishing an environment scenario requires project admin (shared execution config).",
+        },
+      },
+    );
+    renderFlow(vi.fn().mockRejectedValue(refusal));
+
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    createStudy();
+
+    await waitFor(() => {
+      expect(toastError).toHaveBeenCalledWith(
+        "Publishing an environment scenario requires project admin (shared execution config).",
+      );
+    });
+    expect(toastError).not.toHaveBeenCalledWith(
+      expect.stringContaining("Server Error"),
+    );
+  });
+
+  it("says up front that publishing needs admin, instead of after the task list", () => {
+    // The refusal is knowable on arrival and no control here can change it, so
+    // it is not held back for a press the way "no client picked" is.
+    projectRoleState.canManageMembers = false;
+    renderFlow();
+
+    expect(
+      screen.getByTestId("user-testing-create-admin-required"),
+    ).toBeInTheDocument();
+
+    // And step 1 does not carry: the whole point is not to collect a study
+    // nobody is allowed to create.
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    goToTasks();
+    expect(onTasksStep()).toBe(false);
+  });
+
+  it("does not call an admin a non-admin while the role is in flight", () => {
+    projectRoleState.canManageMembers = false;
+    projectRoleState.isLoading = true;
+    renderFlow();
+
+    expect(
+      screen.queryByTestId("user-testing-create-admin-required"),
+    ).toBeNull();
+    // Still fails closed: nothing advances until the answer lands.
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    goToTasks();
+    expect(onTasksStep()).toBe(false);
   });
 
   it("hands off to the Environments editor instead of creating one here", () => {
@@ -514,30 +630,40 @@ describe("UserTestingScenarioCreateFlow — a setup with no servers", () => {
     expect(ask({ hostId: "host-unknown" })).toBeNull();
   });
 
-  it("refuses to publish, and says what is missing", () => {
+  it("refuses to carry a client with no servers, and says what is missing", () => {
     hostListState.hosts = [
       { hostId: "host-1", name: "Claude", serverCount: 0 },
     ];
     renderFlow();
 
+    // Silent until asked: a client picked FOR them is not something the
+    // creator did wrong until they try to move on with it.
+    expect(
+      screen.queryByTestId("user-testing-create-servers-required"),
+    ).not.toBeInTheDocument();
+
+    goToTasks();
+
+    expect(onTasksStep()).toBe(false);
     expect(
       screen.getByTestId("user-testing-create-servers-required"),
-    ).toHaveTextContent(/no servers of its own/i);
-    expect(screen.getByTestId("user-testing-create-continue")).toBeDisabled();
+    ).toHaveTextContent(/no server picked/i);
   });
 
   it("says nothing while the host list has not settled, and lets nothing through", () => {
     // An unknown answer must not render as a problem — but it must not open
     // the gate either. The server question answers `null` during the load
-    // window, and a fast creator could otherwise publish straight through it.
+    // window, and a fast creator could otherwise walk straight through it.
     hostListState.hosts = [];
     hostListState.isLoading = true;
     renderFlow();
 
+    goToTasks();
+
+    expect(onTasksStep()).toBe(false);
     expect(
       screen.queryByTestId("user-testing-create-servers-required"),
     ).not.toBeInTheDocument();
-    expect(screen.getByTestId("user-testing-create-continue")).toBeDisabled();
   });
 
   it("never lands the default on the broken client when a runnable one exists", () => {
@@ -552,12 +678,12 @@ describe("UserTestingScenarioCreateFlow — a setup with no servers", () => {
     expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
       "Loaded",
     );
+    goToTasks();
+
+    expect(onTasksStep()).toBe(true);
     expect(
       screen.queryByTestId("user-testing-create-servers-required"),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByTestId("user-testing-create-continue"),
-    ).not.toBeDisabled();
   });
 
   it("blocks a picked client that cannot run, even in a mixed project", () => {
@@ -572,26 +698,28 @@ describe("UserTestingScenarioCreateFlow — a setup with no servers", () => {
     fireEvent.click(screen.getByTestId("user-testing-create-clients-picker"));
     fireEvent.click(screen.getByRole("checkbox", { name: /^empty$/i }));
 
+    goToTasks();
+
+    expect(onTasksStep()).toBe(false);
     expect(
       screen.getByTestId("user-testing-create-servers-required"),
     ).toBeInTheDocument();
-    expect(screen.getByTestId("user-testing-create-continue")).toBeDisabled();
   });
 });
 
 describe("UserTestingScenarioCreateFlow — defaults", () => {
-  it("preselects a client and suggests a name, so Continue is pressable on arrival", () => {
+  it("preselects a client and suggests a name, so Continue carries on arrival", () => {
     renderFlow();
 
     expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
       "Claude",
     );
     expect(
-      screen.getByTestId("user-testing-create-continue"),
-    ).not.toBeDisabled();
-    expect(
       screen.queryByTestId("user-testing-create-environment-required"),
     ).not.toBeInTheDocument();
+
+    goToTasks();
+    expect(onTasksStep()).toBe(true);
   });
 
   it("waits for the host list to settle before deciding there is nothing to default to", () => {
@@ -601,7 +729,9 @@ describe("UserTestingScenarioCreateFlow — defaults", () => {
     hostListState.isLoading = true;
     const { onCreateScenario } = renderFlow();
 
-    expect(screen.getByTestId("user-testing-create-continue")).toBeDisabled();
+    goToTasks();
+
+    expect(onTasksStep()).toBe(false);
     expect(onCreateScenario).not.toHaveBeenCalled();
   });
 
@@ -643,9 +773,6 @@ describe("UserTestingScenarioCreateFlow — defaults", () => {
     fireEvent.change(screen.getByTestId("user-testing-create-name"), {
       target: { value: "" },
     });
-    expect(
-      screen.getByTestId("user-testing-create-continue"),
-    ).not.toBeDisabled();
 
     createStudy();
 
@@ -844,9 +971,6 @@ describe("UserTestingScenarioCreateFlow — composing a setup", () => {
     expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
       "Cursor",
     );
-    expect(
-      screen.getByTestId("user-testing-create-continue"),
-    ).not.toBeDisabled();
 
     fireEvent.change(screen.getByTestId("user-testing-create-name"), {
       target: { value: "Round 2 with real users" },
@@ -886,7 +1010,7 @@ describe("UserTestingScenarioCreateFlow — composing a setup", () => {
     expect(onCreateScenario.mock.calls[0][0].environmentId).toBe("env-1");
   });
 
-  it("says an identical setup reopens the scenario it already has", async () => {
+  it("refuses an identical composed setup instead of opening the study it has", async () => {
     const alreadyPublished = vi
       .fn()
       .mockResolvedValue({ scenarioId: "cb-9", created: false });
@@ -899,11 +1023,12 @@ describe("UserTestingScenarioCreateFlow — composing a setup", () => {
     });
     createStudy();
 
-    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
-    // The typed name is dropped by the idempotent publish — say so rather than
-    // claiming a scenario was created with it.
-    expect(toastSuccess.mock.calls[0][0]).toMatch(/already published/i);
-    expect(toastSuccess.mock.calls[0][0]).toMatch(/name and access/i);
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    // The typed name never reached a study, so the screen must not suggest one
+    // was made with it — and "Another go" stays in the field to be retried on a
+    // different setup.
+    expect(toastError.mock.calls[0][0]).toMatch(/already have a study/i);
+    expect(screen.getByTestId("user-testing-create-save")).toBeInTheDocument();
   });
 
   it("degrades to the saved-environment path on a backend without ad-hoc rows", async () => {
@@ -993,9 +1118,11 @@ describe("UserTestingScenarioCreateFlow — without Project Environments", () =>
     hostListState.hosts = [];
     renderFlow();
 
+    goToTasks();
+
     expect(
       screen.getByTestId("user-testing-create-environment-required"),
-    ).toHaveTextContent(/pick the client a tester will see/i);
+    ).toHaveTextContent(/no client picked/i);
   });
 });
 
@@ -1122,8 +1249,8 @@ describe("UserTestingScenarioCreateFlow — create study (Production Redesign)",
   });
 
   it("leaves an already-published study's ratings and tasks alone", async () => {
-    // Publishing is idempotent per environment, so a collision opens someone
-    // else's study — rewriting its rating widget or replacing its task list
+    // Publishing is idempotent per environment, so the id that comes back is
+    // another study's — rewriting its rating widget or replacing its task list
     // from here would reconfigure it.
     const { onApplyStudySurfaces } = renderFlow(
       vi.fn().mockResolvedValue({ scenarioId: "cb-existing", created: false }),
@@ -1135,7 +1262,7 @@ describe("UserTestingScenarioCreateFlow — create study (Production Redesign)",
     createStudy();
 
     await waitFor(() => {
-      expect(toastSuccess).toHaveBeenCalled();
+      expect(toastError).toHaveBeenCalled();
     });
     expect(onApplyStudySurfaces).not.toHaveBeenCalled();
   });
@@ -1198,16 +1325,16 @@ describe("UserTestingScenarioCreateFlow — org share ceiling", () => {
     const { onCreateScenario } = renderFlow();
 
     expect(
-      screen.getByText("Your organization limits sharing to project members."),
+      screen.getByText("Your organization limits sharing to team members."),
     ).toBeInTheDocument();
     expect(screen.getByTestId("user-testing-create-access")).toHaveTextContent(
-      "Project members",
+      "Team members",
     );
 
     await user.click(screen.getByTestId("user-testing-create-access"));
     expect(
       await screen.findByRole("menuitemradio", {
-        name: "Anyone with the link",
+        name: "Anyone with the link who is signed in",
       }),
     ).toHaveAttribute("data-disabled");
     expect(
@@ -1227,5 +1354,227 @@ describe("UserTestingScenarioCreateFlow — org share ceiling", () => {
         mode: "project_members",
       });
     });
+  });
+});
+
+/**
+ * Reported: "I create a second study with the same client and server and it
+ * replaces the first — I get 'already published' and it redirects me to the
+ * original." Publishing is idempotent per environment, so nothing was created;
+ * the screen used to call that a success and walk the creator into the other
+ * study. Until the backend can carry two studies on one setup, the honest
+ * answer is to refuse and stay put.
+ */
+describe("UserTestingScenarioCreateFlow — a setup that already has a study", () => {
+  const publishedAlready = () =>
+    vi.fn().mockResolvedValue({ scenarioId: "existing-1", created: false });
+
+  it("reports the refusal as an error, not as a created study", async () => {
+    const { onCreateScenario } = renderFlow(publishedAlready());
+
+    createStudy();
+
+    await waitFor(() => expect(onCreateScenario).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        expect.stringMatching(/already have a study/i),
+      ),
+    );
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("keeps the creator on their draft", async () => {
+    // Navigation is the caller's job and it is told `created: false`; what this
+    // screen owes is not disappearing out from under the draft.
+    const onCreateScenario = publishedAlready();
+    renderFlow(onCreateScenario);
+
+    createStudy();
+
+    await waitFor(() => expect(onCreateScenario).toHaveBeenCalled());
+    expect(screen.getByTestId("user-testing-create-save")).toBeInTheDocument();
+  });
+
+  it("does not write ratings or tasks onto the study that already exists", async () => {
+    // The draft on screen belongs to a study that was never created. Applying
+    // it would reconfigure someone else's live study.
+    const onApplyStudySurfaces = vi.fn().mockResolvedValue(undefined);
+    const onCreateScenario = publishedAlready();
+    renderFlow(onCreateScenario, vi.fn(), onApplyStudySurfaces);
+
+    createStudy();
+
+    await waitFor(() => expect(onCreateScenario).toHaveBeenCalled());
+    expect(onApplyStudySurfaces).not.toHaveBeenCalled();
+  });
+
+  it("lets them try again once the setup changes", async () => {
+    // The refusal releases the button; a stuck "Creating…" would make the
+    // screen a dead end.
+    const onCreateScenario = publishedAlready();
+    renderFlow(onCreateScenario);
+
+    createStudy();
+    await waitFor(() => expect(onCreateScenario).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+    await waitFor(() => expect(onCreateScenario).toHaveBeenCalledTimes(2));
+  });
+});
+
+/**
+ * A setup may back as many studies as you like; what a project cannot hold
+ * twice is a study NAME. The backend refuses a taken one with
+ * `{code: 'CONFLICT', field: 'name'}` — named field and all — so this screen
+ * can put the correction on the input rather than in a toast the reader then
+ * has to act on from memory.
+ */
+describe("UserTestingScenarioCreateFlow — a name the project already uses", () => {
+  const nameTaken = () =>
+    vi.fn().mockRejectedValue(
+      Object.assign(new Error("A study named \"Checkout flow\" already exists."), {
+        data: { code: "CONFLICT", field: "name" },
+      }),
+    );
+
+  it("puts the refusal on the name field and keeps the draft", async () => {
+    const onCreateScenario = nameTaken();
+    renderFlow(onCreateScenario);
+
+    createStudy();
+
+    await waitFor(() => expect(onCreateScenario).toHaveBeenCalled());
+    const message = await screen.findByTestId("user-testing-create-name-taken");
+    expect(message).toHaveTextContent(/already exists in this project/i);
+    // Back on the step that holds the field — a correction on a screen you
+    // cannot reach is not a correction.
+    expect(screen.getByTestId("user-testing-create-name")).toBeInTheDocument();
+  });
+
+  it("clears the refusal as soon as the name changes", async () => {
+    renderFlow(nameTaken());
+
+    createStudy();
+    await screen.findByTestId("user-testing-create-name-taken");
+
+    fireEvent.change(screen.getByTestId("user-testing-create-name"), {
+      target: { value: "Checkout flow, round 2" },
+    });
+
+    expect(
+      screen.queryByTestId("user-testing-create-name-taken"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("lets the creator submit again once the name changes", async () => {
+    const onCreateScenario = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("taken"), {
+          data: { code: "CONFLICT", field: "name" },
+        }),
+      )
+      .mockResolvedValueOnce({ scenarioId: "cb-2", created: true });
+    renderFlow(onCreateScenario);
+
+    createStudy();
+    await screen.findByTestId("user-testing-create-name-taken");
+
+    fireEvent.change(screen.getByTestId("user-testing-create-name"), {
+      target: { value: "Checkout flow, round 2" },
+    });
+    createStudy();
+
+    await waitFor(() => expect(onCreateScenario).toHaveBeenCalledTimes(2));
+    expect(onCreateScenario.mock.calls[1][0].name).toBe(
+      "Checkout flow, round 2",
+    );
+  });
+
+  it("puts the refused fallback name into the field so it can be edited", async () => {
+    // The field may be empty: the study is then published under the
+    // placeholder, and a refusal that quotes a name the field does not hold
+    // leaves nothing to correct. Pressing Create again would resubmit the same
+    // name and fail the same way, which is a dead end, not a correction.
+    const onCreateScenario = nameTaken();
+    renderFlow(onCreateScenario);
+
+    fireEvent.change(screen.getByTestId("user-testing-create-name"), {
+      target: { value: "" },
+    });
+    createStudy();
+
+    await screen.findByTestId("user-testing-create-name-taken");
+    const refused = onCreateScenario.mock.calls[0][0].name as string;
+    expect(refused).toBeTruthy();
+    expect(screen.getByTestId("user-testing-create-name")).toHaveValue(refused);
+  });
+
+  it("leaves any other failure in the toast, verbatim", async () => {
+    // "You need admin" is a different problem than "that name is taken", and
+    // it is not the name field's to explain.
+    const onCreateScenario = vi
+      .fn()
+      .mockRejectedValue(new Error("Publishing requires project admin."));
+    renderFlow(onCreateScenario);
+
+    createStudy();
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "Publishing requires project admin.",
+      ),
+    );
+    expect(
+      screen.queryByTestId("user-testing-create-name-taken"),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("isStudyNameTakenError", () => {
+  it("matches the backend's shape, not its wording", () => {
+    // The sentence is the backend's to improve; a client that greps it breaks
+    // the next time someone does.
+    expect(
+      isStudyNameTakenError({ data: { code: "CONFLICT", field: "name" } }),
+    ).toBe(true);
+  });
+
+  it("is not fooled by another conflict", () => {
+    expect(
+      isStudyNameTakenError({ data: { code: "CONFLICT", field: "scenarioId" } }),
+    ).toBe(false);
+    expect(isStudyNameTakenError(new Error("A study named X already exists"))).toBe(
+      false,
+    );
+    expect(isStudyNameTakenError(null)).toBe(false);
+  });
+});
+
+describe("guest publishing", () => {
+  it("prompts for signup and leaves the creation draft available to retry", async () => {
+    const onCreateScenario = vi
+      .fn()
+      .mockRejectedValue({
+        data: {
+          code: "guest_sharing_requires_sign_in",
+          message: "Sign up to share",
+        },
+      });
+    const onApplyStudySurfaces = vi.fn();
+    renderFlow(onCreateScenario, vi.fn(), onApplyStudySurfaces);
+    createStudy();
+    expect(
+      await screen.findByRole("dialog", { name: "Sign up to share" }),
+    ).toBeInTheDocument();
+    expect(toastError).not.toHaveBeenCalled();
+    expect(onApplyStudySurfaces).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+    expect(screen.getByTestId("user-testing-create-save")).toBeEnabled();
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+    await waitFor(() => expect(onCreateScenario).toHaveBeenCalledTimes(2));
+    expect(onCreateScenario.mock.calls[1]).toEqual(
+      onCreateScenario.mock.calls[0],
+    );
   });
 });

@@ -18,6 +18,14 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOllama } from "ollama-ai-provider-v2";
 import type { LanguageModel } from "ai";
 import type { LLMProvider, CustomProvider } from "./types.js";
+import {
+  getMcpjamLeaseClient,
+  type McpjamModelLeaseScope,
+  resolveMcpjamBaseUrl,
+  resolveMcpjamProject,
+  MCPJAM_PLACEHOLDER_API_KEY,
+  MCPJAM_PROXY_PLACEHOLDER_ORIGIN,
+} from "./mcpjam-model-lease.js";
 
 /**
  * Custom base URLs for built-in providers that support them.
@@ -33,18 +41,33 @@ export interface BaseUrls {
    * When omitted, the provider derives it from the AWS_REGION env var.
    */
   bedrock?: string;
+  /**
+   * MCPJam APP origin for `mcpjam/…` models, e.g. https://app.mcpjam.com — the
+   * host a lease is minted from, NOT a model endpoint. Falls back to
+   * `MCPJAM_BASE_URL` and then the public app.
+   */
+  mcpjam?: string;
 }
 
 /**
  * Options for creating a model.
  */
 export interface CreateModelOptions {
+  /** @internal Lease ownership for a suite run. */
+  mcpjamLeaseScope?: McpjamModelLeaseScope;
   apiKey: string;
   baseUrls?: BaseUrls;
   /** Custom providers registry (name -> config) */
   customProviders?:
     | Map<string, CustomProvider>
     | Record<string, CustomProvider>;
+  /**
+   * Which project pays for `mcpjam/…` models. Falls back to
+   * `MCPJAM_PROJECT_ID` and then the `default` sentinel, which resolves
+   * server-side to the API key organization's Default project — the same
+   * resolution eval reporting uses, so inference and results land together.
+   */
+  mcpjamProject?: string;
 }
 
 /** Built-in providers list */
@@ -59,6 +82,7 @@ const BUILT_IN_PROVIDERS: LLMProvider[] = [
   "mistral",
   "openrouter",
   "xai",
+  "mcpjam",
 ];
 
 /**
@@ -276,7 +300,7 @@ export function createModelFromString(
   llmString: string,
   options: CreateModelOptions
 ): ProviderLanguageModel {
-  const { apiKey, baseUrls, customProviders } = options;
+  const { apiKey, baseUrls, customProviders, mcpjamProject } = options;
 
   // Convert custom providers to Map if provided as object
   const customProvidersMap =
@@ -371,6 +395,66 @@ export function createModelFromString(
         ...(baseUrls?.bedrock && { baseURL: baseUrls.bedrock }),
       });
       return bedrock(model) as unknown as ProviderLanguageModel;
+    }
+
+    // MCPJam-hosted inference. Not a vendor: `model` here is still a full
+    // vendor id (`anthropic/claude-sonnet-4.5`), and `apiKey` is an `sk_`
+    // MCPJam key rather than a provider key.
+    //
+    // Built on the VENDOR providers on purpose. MCPJam's proxy speaks
+    // Anthropic's and OpenAI's own wire formats, so the existing providers work
+    // against it unchanged — no custom LanguageModel to write, and none to keep
+    // in step with the AI SDK. What they cannot express is the lease: a
+    // deployment-specific URL and a header they know nothing about, neither
+    // knowable until an authenticated call mints one. So the provider is
+    // pointed at a placeholder and the lease client's `fetch` rewrites the URL,
+    // strips the placeholder credential and attaches the lease. See
+    // `mcpjam-model-lease.ts`.
+    case "mcpjam": {
+      const slash = model.indexOf("/");
+      const vendor = slash === -1 ? model : model.slice(0, slash);
+      // `apiKey` first so an explicit key always wins; the env fallback is what
+      // makes `MCPJAM_API_KEY` alone enough in CI.
+      const mcpjamApiKey = apiKey || readEnvVar("MCPJAM_API_KEY") || "";
+      if (!mcpjamApiKey) {
+        throw new Error(
+          `An MCPJam API key is required for "mcpjam/${model}". ` +
+            "Set MCPJAM_API_KEY, or pass it as the runner's apiKey."
+        );
+      }
+      const client = getMcpjamLeaseClient(
+        {
+          baseUrl: resolveMcpjamBaseUrl(baseUrls?.mcpjam),
+          apiKey: mcpjamApiKey,
+          project: resolveMcpjamProject(mcpjamProject),
+          model,
+        },
+        options.mcpjamLeaseScope
+      );
+
+      // The FULL vendor id is what reaches the wire, so the proxy's model
+      // allowlist matches the lease exactly rather than through its
+      // alias-tolerance rule.
+      if (vendor === "anthropic") {
+        const anthropic = createAnthropic({
+          apiKey: MCPJAM_PLACEHOLDER_API_KEY,
+          baseURL: `${MCPJAM_PROXY_PLACEHOLDER_ORIGIN}/v1`,
+          fetch: client.proxyFetch,
+        });
+        return anthropic(model) as ProviderLanguageModel;
+      }
+      if (vendor === "openai") {
+        const openai = createOpenAI({
+          apiKey: MCPJAM_PLACEHOLDER_API_KEY,
+          baseURL: `${MCPJAM_PROXY_PLACEHOLDER_ORIGIN}/v1`,
+          fetch: client.proxyFetch,
+        });
+        return openai(model);
+      }
+      throw new Error(
+        `MCPJam-hosted inference serves anthropic/* and openai/* models; ` +
+          `"mcpjam/${model}" names "${vendor}".`
+      );
     }
 
     default: {
