@@ -1,3 +1,14 @@
+import type {
+  EvalExpectedToolCall,
+  EvalTraceInput,
+} from "@mcpjam/evaluators/internal/eval-reporting-types";
+export type {
+  EvalExpectedToolCall,
+  EvalTraceSpanCategory,
+  EvalTraceSpanStatus,
+  EvalTraceSpanInput,
+  EvalTraceInput,
+} from "@mcpjam/evaluators/internal/eval-reporting-types";
 import type { MCPClientManager } from "./mcp-client-manager/MCPClientManager.js";
 import type { EvalMatchOptions } from "./matchers.js";
 import type { IterationStatus } from "./contract/chain.js";
@@ -8,78 +19,19 @@ import type {
   EvalVerdictPolicyVersion,
 } from "./contract/verdict-policy.js";
 
-export type EvalExpectedToolCall = {
-  toolName: string;
-  arguments?: Record<string, unknown>;
-};
-
 export type EvalCiMetadata = {
   provider?: string;
   pipelineId?: string;
   jobId?: string;
   runUrl?: string;
+  repositoryUrl?: string;
+  prUrl?: string;
+  branchUrl?: string;
   branch?: string;
   commitSha?: string;
+  dirty?: boolean;
+  pullRequestNumber?: number;
 };
-
-export type EvalTraceSpanCategory =
-  | "step"
-  | "llm"
-  | "tool"
-  | "error"
-  | "connection"
-  | "discovery";
-export type EvalTraceSpanStatus = "ok" | "error";
-
-export type EvalTraceSpanInput = {
-  id: string;
-  parentId?: string;
-  name: string;
-  category: EvalTraceSpanCategory;
-  startMs: number;
-  endMs: number;
-  promptIndex?: number;
-  stepIndex?: number;
-  status?: EvalTraceSpanStatus;
-  toolCallId?: string;
-  toolName?: string;
-  serverId?: string;
-  modelId?: string;
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  messageStartIndex?: number;
-  messageEndIndex?: number;
-  // GenAI harness metadata (step/llm spans). Mirror of inspector
-  // shared/eval-trace.ts EvalTraceSpan; kept in parity via the shared fixture.
-  finishReason?: string;
-  provider?: string;
-  responseId?: string;
-  responseTimestamp?: string;
-  ttfcMs?: number;
-  // MCP server-contract metadata (tool spans). JSON-RPC error code from a
-  // failed tools/call (OTel rpc.response.status_code).
-  mcpErrorCode?: number;
-  // Harness evidence provenance (tool spans on harness runs): where the
-  // recorded output came from, and whether the wire corroborates it. Mirror of
-  // the inspector's `EvalTraceSpan`; see it for what each field claims. An SDK
-  // producer normally leaves these absent — they describe MCPJam's own proxy
-  // seam, which an externally-executed run does not have.
-  outputSource?: "narration" | "evidence" | "reconstructed";
-  wireCorroborated?: boolean;
-  evidenceRequestId?: string;
-  evidenceStatus?: "complete" | "incomplete";
-};
-
-export type EvalTraceInput =
-  | string
-  | Array<{ role: string; content: unknown }>
-  | {
-      messages?: Array<{ role: string; content: unknown }>;
-      spans?: EvalTraceSpanInput[];
-      prompts?: unknown[];
-      raw?: unknown;
-    };
 
 export type EvalWidgetCsp = {
   connectDomains?: string[];
@@ -187,8 +139,30 @@ export type MCPServerReplayConfig = {
   clientSecret?: string;
 };
 
+export interface SelectedEvalClient {
+  id: string;
+  name: string;
+  configId: string;
+  versionId: string;
+  versionNumber: number;
+}
+
 export type MCPJamReportingConfig = {
+  /** Saved client selected at the beginning of this run. */
+  selectedClient?: SelectedEvalClient;
+  /** Explicitly end a partial run without certifying its incomplete population. Requires target termination support. */
+  terminalStatus?: "cancelled" | "timed_out";
   enabled?: boolean;
+  /** Local transport controls; never included in the reporting payload. */
+  transport?: {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    /** Budget for one HTTP request including retries/body; each chunk has its own budget. */
+    operationTimeoutMs?: number;
+    maxResponseBytes?: number;
+    maxRequestBytes?: number;
+    maxArtifactBytes?: number;
+  };
   apiKey?: string;
   baseUrl?: string;
   /**
@@ -196,6 +170,7 @@ export type MCPJamReportingConfig = {
    * works too). Defaults to the API key org's Default project.
    */
   project?: string;
+  /** Defaults to server IDs from resolved replay configs; pass [] to opt out. */
   serverNames?: string[];
   serverReplayConfigs?: MCPServerReplayConfig[];
   suiteName?: string;
@@ -211,10 +186,22 @@ export type MCPJamReportingConfig = {
    */
   failOnToolError?: boolean;
   externalRunId?: string;
+  /**
+   * Links sibling runs launched together so they share a run number and group
+   * in MCPJam. Set by `runWithClient` when given several clients; a
+   * caller-supplied value is used as-is. 1-128 characters.
+   */
+  runGroupId?: string;
   framework?: string;
+  /** Auto-detected when omitted. An explicit object is preserved; `{}` opts out. */
   ci?: EvalCiMetadata;
   expectedIterations?: number;
   tags?: string[];
+  /** Optional advisory case-run envelopes, persisted after terminalization. */
+  runEvaluations?: import("./run-evaluators.js").CaseRunEvaluation[];
+  runName?: string;
+  runTags?: string[];
+  runMetadata?: Record<string, string | number | boolean>;
   /**
    * Host configuration that drove this eval run. Sent unconditionally: the
    * `GET /sdk/v1/info` capability probe this once negotiated through was
@@ -301,13 +288,25 @@ export type ReportEvalResultsInput = MCPJamReportingConfig & {
    */
   executor?: {
     getHostSnapshot?: () =>
-      | import("./host-config/public-types.js").HostJson
-      | undefined;
+      import("./host-config/public-types.js").HostJson | undefined;
   };
   mcpClientManager?: MCPClientManager;
 };
 
+/** Optional evidence omitted without changing core iteration persistence. */
+export type EvalReportingWarning = {
+  code:
+    | "RUN_METADATA_OMITTED"
+    | "RUN_EVALUATIONS_OMITTED"
+    | "RUN_EVALUATIONS_NOT_CONFIRMED";
+  message: string;
+};
+
 export type ReportEvalResultsOutput = {
+  /** Core run persisted; these optional additions were not stored or confirmed. */
+  warnings?: EvalReportingWarning[];
+  /** Link derived only from validated hosted identity. */
+  url?: string;
   suiteId: string;
   runId: string;
   /**
@@ -320,7 +319,14 @@ export type ReportEvalResultsOutput = {
    * `?project=`, and the app has to guess which project to open.
    */
   projectId?: string;
-  status: "completed" | "failed";
+  status:
+    | "pending"
+    | "running"
+    | "grading"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "timed_out";
   /**
    * The run's verdict.
    *
@@ -330,7 +336,7 @@ export type ReportEvalResultsOutput = {
    * that collapses it into `failed` reports the server under test as broken
    * when the harness was.
    */
-  result: "passed" | "failed" | "inconclusive";
+  result: "passed" | "failed" | "inconclusive" | "pending";
   summary: {
     total: number;
     passed: number;
@@ -356,4 +362,17 @@ export type ReportEvalResultsOutput = {
    * Why a v2 run could not be decided, set alongside `result: "inconclusive"`.
    */
   verdictPolicyIntegrityError?: string;
+};
+
+/** Persistence is independent of the eval verdict. Unknown acknowledgement is null. */
+export type EvalReportingReceipt = {
+  schemaVersion: 1;
+  state: "not_requested" | "pending" | "persisted" | "failed";
+  acceptedIterations: number;
+  acknowledgedIterations: number | null;
+  pendingIterations: number | null;
+  report?: ReportEvalResultsOutput;
+  warnings?: EvalReportingWarning[];
+  error?: { code: string; message: string };
+  reason?: "disabled" | "missing_api_key";
 };

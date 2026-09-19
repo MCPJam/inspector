@@ -11,6 +11,7 @@ import {
   initGuestTokenSecret,
   issueGuestToken,
 } from "../../../services/guest-token.js";
+import { upstreamRefusalFromResponse } from "../../../services/upstream-refusal.js";
 
 const {
   runEvalsWithManagerMock,
@@ -148,6 +149,15 @@ const endpointCases: EndpointCase[] = [
     successMock: generateNegativeEvalTestsWithManagerMock,
   },
 ];
+
+/**
+ * The two endpoints whose failures come from MCPJam's own generation backend.
+ * `run-test-case` shares the route helper but not the upstream hop, so the
+ * refusal-passthrough assertions below would prove nothing about it.
+ */
+const generationEndpointCases = endpointCases.filter(({ path }) =>
+  path.includes("generate"),
+);
 
 const runSuiteBody = {
   projectId: "project-1",
@@ -400,6 +410,75 @@ describe("web routes — evals", () => {
         }),
       );
       expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(generationEndpointCases)(
+    "forwards a backend platform_capacity 429 with its code and Retry-After for $path",
+    async ({ path, body, successMock }) => {
+      // The refusal is built from a real upstream `Response` so the adapter's
+      // reader is exercised here too, not just the route's forwarding.
+      successMock.mockRejectedValueOnce(
+        await upstreamRefusalFromResponse(
+          new Response(
+            JSON.stringify({
+              ok: false,
+              code: "platform_capacity",
+              error: "MCPJam's daily generation budget is used up.",
+              isRetryable: true,
+              retryAfterMs: 3_600_000,
+              canTopUp: false,
+            }),
+            {
+              status: 429,
+              headers: {
+                "Content-Type": "application/json",
+                "Retry-After": "1800",
+              },
+            },
+          ),
+          "Failed to generate test cases",
+        ),
+      );
+      const { app, token } = createEvalsTestApp();
+      const response = await postJson(app, path, body, token);
+      const { status, data } = await expectJson<{
+        code?: string;
+        message?: string;
+        details?: { code?: string; canTopUp?: boolean };
+      }>(response);
+
+      // The regression: this whole class arrived as 500 INTERNAL_ERROR, which
+      // the 5xx monitors count as an MCPJam fault and page on.
+      expect(status).toBe(429);
+      expect(data.code).toBe("RATE_LIMITED");
+      // A generic HTTP client retries on the header or not at all.
+      expect(response.headers.get("Retry-After")).toBe("1800");
+      // Which budget ran out. `platform_capacity` is MCPJam's own, so the
+      // client must be able to tell it from the caller's allowance and NOT
+      // offer a top-up.
+      expect(data.details?.code).toBe("platform_capacity");
+      expect(data.details?.canTopUp).toBe(false);
+      expect(data.message).toContain("daily generation budget");
+    },
+  );
+
+  it.each(generationEndpointCases)(
+    "still answers 5xx when the backend itself failed for $path",
+    async ({ path, body, successMock }) => {
+      successMock.mockRejectedValueOnce(
+        await upstreamRefusalFromResponse(
+          new Response(JSON.stringify({ ok: false, code: "provider_error" }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          }),
+          "Failed to generate test cases",
+        ),
+      );
+      const { app, token } = createEvalsTestApp();
+      const response = await postJson(app, path, body, token);
+      expect(response.status).toBeGreaterThanOrEqual(500);
+      expect(response.headers.get("Retry-After")).toBeNull();
     },
   );
 
