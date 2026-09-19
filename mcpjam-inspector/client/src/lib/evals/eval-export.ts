@@ -5,6 +5,7 @@ import type {
   EvalSuiteRun,
 } from "@/components/evals/types";
 import type { ServerWithName } from "@/state/app-types";
+import { snapshotTestModels } from "@/components/evals/helpers";
 import { isOpaqueId, mintCaseId } from "@mcpjam/sdk/contract";
 import {
   resolvePromptTurns,
@@ -103,7 +104,7 @@ export type SdkTestFileInput = {
 };
 
 export function normalizeEvalCaseForExport(
-  testCase: EvalCase
+  testCase: EvalCase,
 ): EvalExportCaseInput {
   return {
     id: testCase._id,
@@ -119,14 +120,14 @@ export function normalizeEvalCaseForExport(
       stripPromptTurnsFromAdvancedConfig(testCase.advancedConfig) ?? undefined,
     modelHints:
       testCase.models?.map(
-        (modelConfig) => `${modelConfig.provider}/${modelConfig.model}`
+        (modelConfig) => `${modelConfig.provider}/${modelConfig.model}`,
       ) ?? [],
   };
 }
 
 export function normalizeSuiteConfigTestForExport(
   test: EvalSuiteConfigTest,
-  index: number
+  index: number,
 ): EvalExportCaseInput {
   return {
     id: test.testCaseId ?? `config-test-${index + 1}`,
@@ -140,15 +141,18 @@ export function normalizeSuiteConfigTestForExport(
     promptTurns: resolveExportPromptTurns(test),
     advancedConfig:
       stripPromptTurnsFromAdvancedConfig(test.advancedConfig) ?? undefined,
-    modelHints:
-      test.provider && test.model
-        ? [`${test.provider}/${test.model}`]
-        : undefined,
+    modelHints: snapshotTestModels(test).length
+      ? snapshotTestModels(test).map(({ provider, model }) =>
+          provider && !model.startsWith(`${provider}/`)
+            ? `${provider}/${model}`
+            : model,
+        )
+      : undefined,
   };
 }
 
 export function normalizeDraftEvalCaseForExport(
-  draft: EvalExportDraftInput
+  draft: EvalExportDraftInput,
 ): EvalExportCaseInput {
   return {
     id: draft.testCaseId ?? undefined,
@@ -167,11 +171,11 @@ export function normalizeDraftEvalCaseForExport(
 
 export function pickSuiteExportCases(
   persistedCases: EvalCase[],
-  suiteRuns: EvalSuiteRun[]
+  suiteRuns: EvalSuiteRun[],
 ): EvalExportCaseInput[] {
   if (persistedCases.length > 0) {
     return persistedCases.map((testCase) =>
-      normalizeEvalCaseForExport(testCase)
+      normalizeEvalCaseForExport(testCase),
     );
   }
 
@@ -188,7 +192,7 @@ export function pickSuiteExportCases(
   }
 
   return latestRunWithTests.configSnapshot.tests.map((test, index) =>
-    normalizeSuiteConfigTestForExport(test, index)
+    normalizeSuiteConfigTestForExport(test, index),
   );
 }
 
@@ -199,20 +203,20 @@ export function buildSdkInstallSnippet(): string {
 export function buildSdkEnvSnippet(
   serverIds: string[],
   serverEntries: Record<string, ServerWithName | undefined>,
-  projectId?: string | null
+  projectId?: string | null,
 ): SdkEnvSnippetResult {
   const serverConnections = buildServerConnections(serverIds, serverEntries);
   const httpConnections = serverConnections.filter(
     (
-      connection
+      connection,
     ): connection is Extract<ExportServerConnection, { kind: "http" }> =>
-      connection.kind === "http"
+      connection.kind === "http",
   );
   const stdioConnections = serverConnections.filter(
     (
-      connection
+      connection,
     ): connection is Extract<ExportServerConnection, { kind: "stdio" }> =>
-      connection.kind === "stdio"
+      connection.kind === "stdio",
   );
 
   const lines = [
@@ -221,6 +225,9 @@ export function buildSdkEnvSnippet(
     "export LLM_API_KEY=<your-llm-api-key>",
     "# Optional: an MCPJam API key (sk_…, Settings → API keys) auto-saves results to your Evals dashboard.",
     "export MCPJAM_API_KEY=<your sk_… key>",
+    "# No provider key? Prefix the model with mcpjam/ to run it on your MCPJam",
+    "# credits instead, with MCPJAM_API_KEY as the only secret:",
+    "#   export EVAL_MODEL=mcpjam/anthropic/claude-sonnet-4.5",
     // Pin uploads to the project this export came from; without it they
     // land in the org's Default project.
     ...(projectId
@@ -235,8 +242,8 @@ export function buildSdkEnvSnippet(
         connection.placeholder
           ? `export ${connection.envVarName}=<replace-with-server-url>`
           : `export ${connection.envVarName}=${shellSingleQuote(
-              connection.url
-            )}`
+              connection.url,
+            )}`,
       );
     }
   }
@@ -244,23 +251,21 @@ export function buildSdkEnvSnippet(
   if (stdioConnections.length > 0) {
     lines.push(
       "",
-      "# STDIO MCP servers are configured inline in the generated test file"
+      "# STDIO MCP servers are configured inline in the generated test file",
     );
     for (const connection of stdioConnections) {
       lines.push(
-        `# ${collapseToSingleLine(
-          connection.serverId
-        )}: ${collapseToSingleLine(
-          formatCommandDisplay(connection.command, connection.args)
-        )}`
+        `# ${collapseToSingleLine(connection.serverId)}: ${collapseToSingleLine(
+          formatCommandDisplay(connection.command, connection.args),
+        )}`,
       );
       if (connection.envKeys.length > 0) {
         lines.push(
           `# ${collapseToSingleLine(
-            connection.serverId
+            connection.serverId,
           )} also expects local env vars: ${collapseToSingleLine(
-            connection.envKeys.join(", ")
-          )}`
+            connection.envKeys.join(", "),
+          )}`,
         );
       }
     }
@@ -269,7 +274,7 @@ export function buildSdkEnvSnippet(
   return {
     snippet: lines.join("\n"),
     usedPlaceholderFallback: serverConnections.some(
-      (connection) => connection.placeholder
+      (connection) => connection.placeholder,
     ),
     missingServerIds: serverConnections
       .filter((connection) => connection.placeholder)
@@ -324,20 +329,25 @@ export function buildSdkTestFile({
     "const SERVER_IDS = SERVER_CONFIGS.map((server) => server.id);",
     "const LLM_API_KEY = process.env.LLM_API_KEY!;",
     "const MODEL = process.env.EVAL_MODEL!;",
+    "// An mcpjam/… model runs on your MCPJam credits, so it takes the MCPJam",
+    "// key instead of a provider key.",
+    'const API_KEY = MODEL.startsWith("mcpjam/")',
+    "  ? process.env.MCPJAM_API_KEY!",
+    "  : LLM_API_KEY;",
     `const SUITE_NAME = ${jsonLiteral(suite.name || "MCPJam export")};`,
   ];
 
   if (suite.description?.trim()) {
     lines.push(
       "",
-      ...toCommentLines(suite.description.trim()).map((line) => `// ${line}`)
+      ...toCommentLines(suite.description.trim()).map((line) => `// ${line}`),
     );
   }
 
   if (usedPlaceholderFallback) {
     lines.push(
       "// Some server connection details were unavailable locally.",
-      "// Replace any placeholder values before running this file."
+      "// Replace any placeholder values before running this file.",
     );
   }
 
@@ -364,7 +374,7 @@ export function buildSdkTestFile({
     "    agent = new HostRunner({",
     "      tools,",
     "      model: MODEL,",
-    "      apiKey: LLM_API_KEY,",
+    "      apiKey: API_KEY,",
     "      maxSteps: 8,",
     "      mcpClientManager: manager,",
     "    });",
@@ -372,14 +382,14 @@ export function buildSdkTestFile({
     "",
     "  afterAll(async () => {",
     "    await manager.disconnectAllServers();",
-    "  }, 120_000);"
+    "  }, 120_000);",
   );
 
   if (cases.length === 0) {
     lines.push(
       "",
       "  // No saved cases were available for this suite yet.",
-      "  // Add or run cases in MCPJam, then export again."
+      "  // Add or run cases in MCPJam, then export again.",
     );
   } else {
     for (const [index, testCase] of cases.entries()) {
@@ -393,7 +403,7 @@ export function buildSdkTestFile({
 
 export function buildSuiteExportFileName(
   suiteName: string,
-  scope: "suite" | "test-case"
+  scope: "suite" | "test-case",
 ): string {
   const safeName = sanitizeFilename(suiteName || "mcpjam-export");
   return scope === "suite" ? `${safeName}.eval.test.ts` : `${safeName}.test.ts`;
@@ -406,7 +416,7 @@ export function buildAgentPromptExportFileName(suiteName: string): string {
 
 export function buildServerConnections(
   serverIds: string[],
-  serverEntries: Record<string, ServerWithName | undefined>
+  serverEntries: Record<string, ServerWithName | undefined>,
 ): ExportServerConnection[] {
   return serverIds.map((serverId) => {
     const serverEntry = serverEntries[serverId];
@@ -485,14 +495,14 @@ function exportedCaseId(testCase: EvalExportCaseInput): string {
 
 function buildCaseTestBlock(
   testCase: EvalExportCaseInput,
-  index: number
+  index: number,
 ): string {
   const caseTitle = testCase.title || `Exported case ${index + 1}`;
   const promptTurns = testCase.promptTurns;
   const firstTurn = promptTurns[0];
 
   const allExpectedToolCalls = promptTurns.flatMap(
-    (turn) => turn.expectedToolCalls ?? []
+    (turn) => turn.expectedToolCalls ?? [],
   );
 
   const lines: string[] = [
@@ -513,15 +523,15 @@ function buildCaseTestBlock(
   lines.push(
     "      const evalTest = new EvalTest({",
     `        id: ${jsonLiteral(exportedCaseId(testCase))},`,
-    `        name: ${jsonLiteral(caseTitle)},`
+    `        name: ${jsonLiteral(caseTitle)},`,
   );
 
   if (allExpectedToolCalls.length > 0) {
     lines.push(
       `        expectedToolCalls: ${indentBlock(
         jsonLiteral(allExpectedToolCalls, 2),
-        8
-      ).trimStart()},`
+        8,
+      ).trimStart()},`,
     );
   }
 
@@ -530,14 +540,14 @@ function buildCaseTestBlock(
     lines.push(
       "        test: async (agent) => {",
       `          const result = await agent.run(${jsonLiteral(
-        firstTurn.prompt
-      )});`
+        firstTurn.prompt,
+      )});`,
     );
     lines.push(
       `          return ${buildSingleTurnReturnExpression(
         firstTurn,
-        testCase.isNegativeTest
-      )};`
+        testCase.isNegativeTest,
+      )};`,
     );
     lines.push("        },");
   } else {
@@ -550,9 +560,9 @@ function buildCaseTestBlock(
             prompt: turn.prompt,
             expectedToolCalls: turn.expectedToolCalls ?? [],
           })),
-          2
+          2,
         ),
-        12
+        12,
       )};`,
       "          const results: Awaited<ReturnType<typeof agent.run>>[] = [];",
       "",
@@ -562,12 +572,12 @@ function buildCaseTestBlock(
       "            });",
       "            results.push(result);",
       "          }",
-      ""
+      "",
     );
 
     if (testCase.isNegativeTest) {
       lines.push(
-        "          return results.every((result) => result.toolsCalled().length === 0);"
+        "          return results.every((result) => result.toolsCalled().length === 0);",
       );
     } else {
       lines.push(
@@ -579,7 +589,7 @@ function buildCaseTestBlock(
         "                ? matchToolCallWithPartialArgs(tc.toolName, tc.arguments, result.getToolCalls())",
         "                : result.hasToolCall(tc.toolName),",
         "            );",
-        "          });"
+        "          });",
       );
     }
 
@@ -594,7 +604,7 @@ function buildCaseTestBlock(
     `        // Auto-saves to MCPJam when MCPJAM_API_KEY (sk_…) is set; local-only otherwise.`,
     `        mcpjam: { suiteName: SUITE_NAME },`,
     `      });`,
-    "      expect(evalTest.accuracy()).toBe(1);"
+    "      expect(evalTest.accuracy()).toBe(1);",
   );
 
   lines.push("    },", "    90_000,", "  );");
@@ -608,7 +618,7 @@ function buildSingleTurnReturnExpression(
       arguments: Record<string, any>;
     }>;
   },
-  isNegativeTest: boolean
+  isNegativeTest: boolean,
 ): string {
   if (isNegativeTest) {
     return "result.toolsCalled().length === 0";
@@ -625,8 +635,8 @@ function buildSingleTurnReturnExpression(
     if (hasArgs) {
       checks.push(
         `matchToolCallWithPartialArgs(${jsonLiteral(
-          tc.toolName
-        )}, ${jsonLiteral(tc.arguments)}, result.getToolCalls())`
+          tc.toolName,
+        )}, ${jsonLiteral(tc.arguments)}, result.getToolCalls())`,
       );
     } else {
       checks.push(`result.hasToolCall(${jsonLiteral(tc.toolName)})`);
@@ -654,7 +664,7 @@ function buildSingleTurnReturnExpression(
  * branch actually varies with the arguments present.
  */
 function anyTestCaseUsesPartialArgMatching(
-  cases: EvalExportCaseInput[]
+  cases: EvalExportCaseInput[],
 ): boolean {
   return cases.some((testCase) => {
     if (testCase.isNegativeTest) {
@@ -665,8 +675,8 @@ function anyTestCaseUsesPartialArgMatching(
     }
     return testCase.promptTurns.some((turn) =>
       (turn.expectedToolCalls ?? []).some(
-        (tc) => Object.keys(tc.arguments ?? {}).length > 0
-      )
+        (tc) => Object.keys(tc.arguments ?? {}).length > 0,
+      ),
     );
   });
 }
@@ -682,24 +692,27 @@ function anyTestCaseUsesPartialArgMatching(
  * silently — an author who sees the case pass locally needs to know what that
  * pass did and did not cover.
  */
-function describeUntranslatedTurnState(testCase: EvalExportCaseInput): string[] {
+function describeUntranslatedTurnState(
+  testCase: EvalExportCaseInput,
+): string[] {
   const notes: string[] = [];
 
   testCase.promptTurns.forEach((turn, index) => {
     const label = `turn ${index + 1}`;
     for (const check of turn.checks ?? []) {
-      const role = (check as { role?: string }).role === "advisory"
-        ? "advisory"
-        : "gating";
+      const role =
+        (check as { role?: string }).role === "advisory"
+          ? "advisory"
+          : "gating";
       notes.push(
         `  ${label}: ${role} check "${String(
-          (check as { type?: string }).type ?? "unknown"
-        )}" is NOT evaluated by this file.`
+          (check as { type?: string }).type ?? "unknown",
+        )}" is NOT evaluated by this file.`,
       );
     }
     for (const widgetCheck of turn.widgetChecks ?? []) {
       notes.push(
-        `  ${label}: widget checks on "${widgetCheck.toolName}" need a hosted run; NOT evaluated here.`
+        `  ${label}: widget checks on "${widgetCheck.toolName}" need a hosted run; NOT evaluated here.`,
       );
     }
     if (turn.pinnedToolCall) {
@@ -708,7 +721,7 @@ function describeUntranslatedTurnState(testCase: EvalExportCaseInput): string[] 
       // this turn like any other. What is true in both branches is that the
       // pinned call never runs and the turn prompts with an empty string.
       notes.push(
-        `  ${label}: pinned (model-free) call "${turn.pinnedToolCall.toolName}" is NOT replayed; the turn sends an empty prompt and only the case's own assertions apply.`
+        `  ${label}: pinned (model-free) call "${turn.pinnedToolCall.toolName}" is NOT replayed; the turn sends an empty prompt and only the case's own assertions apply.`,
       );
     }
   });
@@ -732,7 +745,7 @@ function pushCaseComments(lines: string[], testCase: EvalExportCaseInput) {
   }
   if (testCase.modelHints && testCase.modelHints.length > 0) {
     commentLines.push(
-      `Model hints from MCPJam: ${testCase.modelHints.join(", ")}`
+      `Model hints from MCPJam: ${testCase.modelHints.join(", ")}`,
     );
   }
 
@@ -741,7 +754,7 @@ function pushCaseComments(lines: string[], testCase: EvalExportCaseInput) {
   const advancedConfig = testCase.advancedConfig ?? undefined;
   if (advancedConfig && Object.keys(advancedConfig).length > 0) {
     commentLines.push(
-      "Advanced config captured in MCPJam (apply manually if you need stricter runtime parity):"
+      "Advanced config captured in MCPJam (apply manually if you need stricter runtime parity):",
     );
     commentLines.push(...jsonLiteral(advancedConfig, 2).split("\n"));
   }
@@ -762,7 +775,7 @@ function pushCaseComments(lines: string[], testCase: EvalExportCaseInput) {
 }
 
 function renderServerConnectionEntries(
-  connections: ExportServerConnection[]
+  connections: ExportServerConnection[],
 ): string {
   const lines: string[] = [];
 
@@ -771,8 +784,8 @@ function renderServerConnectionEntries(
       if (connection.placeholder) {
         lines.push(
           `// Replace the placeholder URL for ${collapseToSingleLine(
-            connection.serverId
-          )} with the real server URL if needed.`
+            connection.serverId,
+          )} with the real server URL if needed.`,
         );
       }
       lines.push(
@@ -780,25 +793,25 @@ function renderServerConnectionEntries(
         `  id: ${jsonLiteral(connection.serverId)},`,
         '  kind: "http",',
         `  url: process.env.${connection.envVarName} ?? ${jsonLiteral(
-          connection.url
+          connection.url,
         )},`,
-        "},"
+        "},",
       );
       continue;
     }
 
     lines.push(
       `// ${collapseToSingleLine(
-        connection.serverId
+        connection.serverId,
       )} runs over stdio: ${collapseToSingleLine(
-        formatCommandDisplay(connection.command, connection.args)
-      )}`
+        formatCommandDisplay(connection.command, connection.args),
+      )}`,
     );
     if (connection.envKeys.length > 0) {
       lines.push(
         `// Add any required local env vars before running: ${collapseToSingleLine(
-          connection.envKeys.join(", ")
-        )}`
+          connection.envKeys.join(", "),
+        )}`,
       );
     }
     lines.push(
@@ -807,7 +820,7 @@ function renderServerConnectionEntries(
       '  kind: "stdio",',
       `  command: ${jsonLiteral(connection.command)},`,
       `  args: ${jsonLiteral(connection.args)},`,
-      "},"
+      "},",
     );
   }
 
@@ -878,7 +891,7 @@ function collapseToSingleLine(value: string): string {
 }
 
 function normalizeOptionalString(
-  value: string | undefined
+  value: string | undefined,
 ): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;

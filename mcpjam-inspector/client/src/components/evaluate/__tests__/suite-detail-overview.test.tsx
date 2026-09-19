@@ -12,7 +12,6 @@ import { openEvalChat } from "@/lib/mcpjam-agent/eval-scope";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDetailOverview } from "../suite-detail-overview";
-import { formatRunHistoryDate } from "../suite-detail-model";
 import type {
   EvalCase,
   EvalIteration,
@@ -181,19 +180,33 @@ describe("SuiteDetailOverview", () => {
     const headers = table
       .getAllByRole("columnheader")
       .map((header) => header.textContent);
-    expect(headers.slice(0, 2)).toEqual(["Date", "Run"]);
-    expect(table.getAllByRole("button", { name: /^#/ })).toHaveLength(2);
+    expect(headers).toEqual([
+      "Run",
+      "Client",
+      "Model",
+      "Result",
+      "Rate",
+      "Platform",
+      "Commit",
+      "Date",
+      "Latency",
+      "Tokens",
+      "Calls",
+    ]);
+    expect(table.getAllByRole("button", { name: /^Open run #/ })).toHaveLength(
+      2,
+    );
     expect(screen.queryByTestId("suite-run-row-two")).toBeNull();
     const row = within(screen.getByTestId("suite-run-row-one"));
     const cells = screen
       .getByTestId("suite-run-row-one")
       .querySelectorAll("td");
-    expect(cells[0]).toHaveTextContent(formatRunHistoryDate(1000));
-    expect(cells[0]).not.toHaveTextContent("#");
-    expect(cells[1]).toHaveTextContent("#1");
-    expect(cells[1]).not.toHaveTextContent(formatRunHistoryDate(1000));
+    expect(cells[0]).toHaveTextContent("#1");
+    expect(cells[7].querySelector("time")).toHaveAttribute(
+      "dateTime",
+      new Date(1000).toISOString(),
+    );
     expect(row.getByText("25%")).toBeVisible();
-    expect(row.getByText("1/4 passed")).toBeVisible();
     expect(row.getByText(/Claude/)).toBeVisible();
     expect(
       row.queryByRole("button", { name: /Client model mapping/ }),
@@ -208,11 +221,13 @@ describe("SuiteDetailOverview", () => {
       screen.getByRole("option", { name: "Cursor", exact: true }),
     );
     expect(screen.queryByTestId("suite-run-row-solo")).toBeNull();
-    expect(row.getByText("1/4 passed")).toBeVisible();
+    expect(row.getByTitle("1/4 passed")).toHaveTextContent("25%");
     expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
       "1/4 passed",
     );
-    await user.click(table.getByRole("button", { name: "#1", exact: true }));
+    await user.click(
+      table.getByRole("button", { name: "Open run #1", exact: true }),
+    );
     expect(onRunClick).toHaveBeenCalledWith("one");
   });
 
@@ -293,7 +308,7 @@ describe("SuiteDetailOverview", () => {
     expect(screen.queryByText("card declined")).toBeNull();
     expect(screen.queryByText("Top failure signature")).toBeNull();
     expect(screen.getByText("GitHub")).toBeTruthy();
-    expect(screen.getAllByText("Finished").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Passed").length).toBeGreaterThan(0);
 
     await user.click(screen.getByTestId("suite-run-row-run-1"));
     expect(onRunClick).toHaveBeenCalledWith("run-1");
@@ -309,9 +324,12 @@ describe("SuiteDetailOverview", () => {
     expect(onTestCaseClick).toHaveBeenCalledWith("case-2");
 
     // "Edit" is the SUITE's (→ settings); the cases card says what it does.
-    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(
+      screen.getByRole("button", { name: "Configure suite evaluators" }),
+    );
     expect(onEditSuite).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("button", { name: "Add case" }));
+    await user.click(screen.getByRole("menuitem", { name: "Add manually" }));
     expect(onEditCases).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("button", { name: "Setup Run" }));
@@ -572,7 +590,8 @@ describe("SuiteDetailOverview", () => {
     // The empty hero is gone at this point — Generate has to live on the card.
     expect(screen.queryByTestId("suite-empty-action-generate")).toBeNull();
 
-    await user.click(screen.getByTestId("suite-detail-generate-cases"));
+    await user.click(screen.getByRole("button", { name: "Add case" }));
+    await user.click(screen.getByRole("menuitem", { name: "Generate" }));
     expect(openEvalChat).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toBeVisible();
     expect(screen.queryByTestId("suite-case-generation-workspace")).toBeNull();
@@ -583,7 +602,7 @@ describe("SuiteDetailOverview", () => {
     expect(screen.queryByRole("button", { name: "Back to suite" })).toBeNull();
   });
 
-  it("disables the card's Generate while a generation is already running", () => {
+  it("disables the card's Generate while a generation is already running", async () => {
     renderWithProviders(
       <SuiteDetailOverview
         projectId="project-1"
@@ -598,6 +617,7 @@ describe("SuiteDetailOverview", () => {
         onEditCases={vi.fn()}
         onGenerateTestCases={vi.fn()}
         canGenerateTestCases
+        generateTestCasesDisabledReason="Generation is in progress"
         isGeneratingTestCases
         onRunClick={vi.fn()}
         onTestCaseClick={vi.fn()}
@@ -605,7 +625,13 @@ describe("SuiteDetailOverview", () => {
       />,
     );
 
-    expect(screen.getByTestId("suite-detail-generate-cases")).toBeDisabled();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Add case" }));
+    expect(
+      screen.getByRole("menuitem", { name: "Generating…" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("Generation is in progress")).toBeVisible();
   });
 
   it("hides both case-authoring controls on a read-only suite", () => {
@@ -694,7 +720,7 @@ describe("SuiteDetailOverview", () => {
     expect(screen.queryByText("No runs match these filters.")).toBeNull();
   });
 
-  it("names the active filter and releases a value that leaves the option set", async () => {
+  it("keeps a selected client clearable when its last run disappears", async () => {
     const user = userEvent.setup();
     const twoClientHosts = new Map<string, string | null>([
       ["host-1", "Claude"],
@@ -746,14 +772,18 @@ describe("SuiteDetailOverview", () => {
 
     expect(
       screen.getByRole("combobox", { name: "Filter by client" }),
-    ).toHaveTextContent("Client");
-    expect(screen.queryByText("No runs match these filters.")).toBeNull();
+    ).toHaveTextContent("Cursor");
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by client" }),
+    );
+    expect(screen.getByRole("option", { name: "Cursor" })).toBeVisible();
+    await user.click(screen.getByRole("option", { name: "All clients" }));
     expect(screen.getByTestId("suite-run-row-run-1")).toBeTruthy();
   });
 });
 
 beforeEach(() => useEvalGeneration.setState({ suites: {} }));
-it("shows generated drafts and explains why they cannot run yet", async () => {
+it("keeps draft review out of the suite, but still warns drafts are waiting", async () => {
   useEvalGeneration.setState({
     suites: {
       [evalSuiteKey({ projectId: "project-1", suiteId: "suite-1" })]: {
@@ -792,23 +822,19 @@ it("shows generated drafts and explains why they cannot run yet", async () => {
       rerunningSuiteId={null}
     />,
   );
+  // Draft review belongs to the tab that produced the drafts. The suite page
+  // shows only cases that are actually in the suite, so neither the panel nor
+  // any draft body may appear here.
   expect(screen.queryByText("Generated flowchart case")).toBeNull();
   expect(
-    screen.getByRole("button", { name: "Review Draft Cases" }),
-  ).toHaveAttribute("aria-expanded", "false");
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Review Draft Cases" }));
-  expect(screen.getByText("Generated flowchart case")).toBeVisible();
-  expect(screen.queryByText("No cases yet")).toBeNull();
-  expect(screen.queryByTestId("suite-detail-test-cases")).toBeNull();
-  expect(
-    screen.getByRole("button", { name: "Describe another case" }),
-  ).toBeVisible();
+    screen.queryByRole("button", { name: "Review Draft Cases" }),
+  ).toBeNull();
   expect(
     screen.getByRole("button", { name: "Generate", exact: true }),
   ).toBeVisible();
   expect(screen.getByRole("button", { name: "Import cases" })).toBeVisible();
+  // The run button still says drafts are waiting — that is the pointer back to
+  // the generate tab, and the only place the suite page mentions them.
   await userEvent
     .setup()
     .hover(
@@ -817,6 +843,56 @@ it("shows generated drafts and explains why they cannot run yet", async () => {
     );
   expect(await screen.findByRole("tooltip")).toHaveTextContent(
     "1 generated draft is waiting to be added",
+  );
+});
+
+it("gives imported drafts their own surface with a way back to the suite", async () => {
+  const onGeneratingChange = vi.fn();
+  useEvalGeneration.setState({
+    suites: {
+      [evalSuiteKey({ projectId: "project-1", suiteId: "suite-1" })]: {
+        status: "ready",
+        drafts: [
+          {
+            id: "draft-1",
+            revision: "r1",
+            markdownImport: { source: { fileName: "cases.md" } },
+            input: {
+              suiteId: "suite-1",
+              title: "Imported grocery case",
+              query: "Browse the Grocery category.",
+              expectedOutput: "The grocery list renders.",
+              steps: [],
+            },
+          },
+        ],
+      } as never,
+    },
+  });
+  renderWithProviders(
+    <SuiteDetailOverview
+      projectId="project-1"
+      suite={makeSuite()}
+      cases={[makeCase({ _id: "case-1" })]}
+      runs={[]}
+      runsLoading={false}
+      allIterations={[]}
+      hostNamesById={hostNamesById}
+      onRerun={vi.fn()}
+      onEditSuite={vi.fn()}
+      onRunClick={vi.fn()}
+      onTestCaseClick={vi.fn()}
+      onGeneratingChange={onGeneratingChange}
+      rerunningSuiteId={null}
+    />,
+  );
+  // The import surface replaces the suite page, so real cases are not beside
+  // drafts that are not in the suite yet.
+  expect(screen.getByTestId("suite-import-review")).toBeVisible();
+  expect(screen.queryByTestId("suite-detail-test-cases")).toBeNull();
+  // The breadcrumb is the way back, and it must not say "Generate".
+  expect(onGeneratingChange).toHaveBeenCalledWith(
+    expect.objectContaining({ label: "Import test cases" }),
   );
 });
 
@@ -856,7 +932,9 @@ describe("SuiteDetailOverview — a CI-managed suite", () => {
   it("replaces Edit with the reason and a way forward", () => {
     renderLocked({ declaredSuiteId: "s_from_file" });
 
-    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Configure suite evaluators" }),
+    ).toBeNull();
     // The reason and the remedy TOGETHER. A disabled Edit with a tooltip would
     // make the way out discoverable only by hovering the thing that does not
     // work.
@@ -909,7 +987,9 @@ describe("SuiteDetailOverview — a CI-managed suite", () => {
         rerunningSuiteId={null}
       />,
     );
-    expect(screen.getByRole("button", { name: "Edit" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Configure suite evaluators" }),
+    ).toBeTruthy();
     expect(screen.queryByTestId("suite-detail-ci-owned")).toBeNull();
     // …and the escape hatch is not offered where there is nothing to escape.
     expect(screen.queryByTestId("suite-detail-duplicate-to-edit")).toBeNull();
@@ -934,9 +1014,11 @@ it("offers Markdown import in populated editable suites", async () => {
       rerunningSuiteId={null}
     />,
   );
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Import cases" }));
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Add case" }));
+  await user.click(
+    screen.getByRole("menuitem", { name: "Import", exact: true }),
+  );
   expect(onImportCases).toHaveBeenCalledOnce();
 });
 
@@ -963,4 +1045,143 @@ it("opens SDK setup from the suite header", async () => {
     .setup()
     .click(screen.getByRole("button", { name: "Setup SDK" }));
   expect(onSetupSdk).toHaveBeenCalledTimes(1);
+});
+
+it("deletes a test case from its row after confirming", async () => {
+  const onDeleteTestCasesBatch = vi.fn().mockResolvedValue(undefined);
+  const onTestCaseClick = vi.fn();
+  const user = userEvent.setup();
+
+  renderWithProviders(
+    <SuiteDetailOverview
+      suite={makeSuite()}
+      cases={[
+        makeCase({ _id: "case-1" }),
+        makeCase({ _id: "case-2", title: "Refund order" }),
+      ]}
+      runs={[]}
+      runsLoading={false}
+      allIterations={[]}
+      hostNamesById={new Map()}
+      onRerun={vi.fn()}
+      onEditSuite={vi.fn()}
+      onEditCases={vi.fn()}
+      onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+      onRunClick={vi.fn()}
+      onTestCaseClick={onTestCaseClick}
+      rerunningSuiteId={null}
+    />,
+  );
+
+  await user.click(screen.getByTestId("suite-test-case-delete-case-2"));
+  // Opening the confirm is not opening the case.
+  expect(onTestCaseClick).not.toHaveBeenCalled();
+  expect(
+    within(screen.getByRole("dialog")).getByText(/Refund order/),
+  ).toBeTruthy();
+
+  await user.click(screen.getByTestId("suite-test-case-delete-confirm"));
+  expect(onDeleteTestCasesBatch).toHaveBeenCalledWith(["case-2"]);
+});
+
+it("hides the row delete button when the suite config is locked", () => {
+  renderWithProviders(
+    <SuiteDetailOverview
+      suite={makeSuite()}
+      cases={[makeCase({ _id: "case-1" })]}
+      runs={[]}
+      runsLoading={false}
+      allIterations={[]}
+      hostNamesById={new Map()}
+      onRerun={vi.fn()}
+      onEditSuite={vi.fn()}
+      onEditCases={vi.fn()}
+      onDeleteTestCasesBatch={vi.fn()}
+      onRunClick={vi.fn()}
+      onTestCaseClick={vi.fn()}
+      rerunningSuiteId={null}
+      configLocked
+    />,
+  );
+
+  expect(screen.getByTestId("suite-test-case-row-case-1")).toBeTruthy();
+  expect(screen.queryByTestId("suite-test-case-delete-case-1")).toBeNull();
+});
+
+describe("SuiteDetailOverview cancel", () => {
+  const runningRun = (
+    overrides: Partial<EvalSuiteRun> & { _id: string },
+  ): EvalSuiteRun =>
+    makeRun({
+      status: "running",
+      result: "pending",
+      completedAt: undefined,
+      ...overrides,
+    });
+
+  function renderSuite(props: Record<string, unknown> = {}) {
+    return renderWithProviders(
+      <SuiteDetailOverview
+        suite={makeSuite()}
+        cases={[]}
+        runs={[]}
+        runsLoading={false}
+        allIterations={[]}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+        {...props}
+      />,
+    );
+  }
+
+  it("cancels every in-flight run of the suite from the header", async () => {
+    const user = userEvent.setup();
+    const onCancelRun = vi.fn();
+    renderSuite({
+      runs: [
+        runningRun({ _id: "run-1", runNumber: 1 }),
+        runningRun({ _id: "run-2", runNumber: 2, status: "grading" }),
+        makeRun({ _id: "run-3", runNumber: 3 }),
+      ],
+      onCancelRun,
+    });
+
+    await user.click(screen.getByTestId("suite-detail-cancel"));
+    expect(onCancelRun).toHaveBeenCalledWith(["run-1", "run-2"]);
+  });
+
+  it("hides the header cancel when nothing is running", () => {
+    renderSuite({
+      runs: [makeRun({ _id: "run-1", runNumber: 1 })],
+      onCancelRun: vi.fn(),
+    });
+
+    expect(screen.queryByTestId("suite-detail-cancel")).toBeNull();
+  });
+
+  it("offers no cancel on a running history row", () => {
+    renderSuite({
+      runs: [runningRun({ _id: "run-1", runNumber: 1 })],
+      onCancelRun: vi.fn(),
+    });
+
+    expect(
+      screen.getByRole("button", { name: "Open run #1" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel run #1" })).toBeNull();
+  });
+
+  it("disables the header cancel while one is in flight", () => {
+    renderSuite({
+      runs: [runningRun({ _id: "run-1", runNumber: 1 })],
+      onCancelRun: vi.fn(),
+      cancellingRunId: "run-1",
+    });
+
+    expect(screen.getByTestId("suite-detail-cancel")).toBeDisabled();
+  });
 });

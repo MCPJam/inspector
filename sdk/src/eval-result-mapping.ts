@@ -377,7 +377,8 @@ export function promptsToEvalResult(
     // A caller-declared status wins; otherwise the same named legacy rule, on
     // the error this mapper already derived from the prompts.
     status:
-      overrides.status ?? legacyIterationStatusFromExecutionError(iterationError),
+      overrides.status ??
+      legacyIterationStatusFromExecutionError(iterationError),
     durationMs: durationSum > 0 ? durationSum : undefined,
     provider: overrides.provider ?? first.getProvider(),
     model: overrides.model ?? first.getModel(),
@@ -477,11 +478,52 @@ export function actualToolCallsFromPrompts(
   );
 }
 
+/**
+ * The provider and model an iteration ran on, from the same source
+ * `promptsToEvalResult` reads. `fallback` covers an iteration that never
+ * reached the model (setup failed before the first turn), so a run still names
+ * what it was configured to run — a saved client's model, for instance.
+ */
+export function variantFromPrompts(
+  prompts: PromptResult[],
+  fallback?: { provider?: string; model?: string }
+): { provider?: string; model?: string } {
+  const first = prompts[0];
+  return {
+    provider: first?.getProvider() ?? fallback?.provider,
+    model: first?.getModel() ?? fallback?.model,
+  };
+}
+
+/**
+ * The provider and model an executor is configured to run, for iterations that
+ * produced no prompt of their own. Duck-typed: only `HostRunner` parses a model
+ * string, and the `HostExecutor` interface does not promise these.
+ */
+export function variantFromExecutor(executor: unknown): {
+  provider?: string;
+  model?: string;
+} {
+  const candidate = executor as {
+    getParsedProvider?: () => string;
+    getParsedModel?: () => string;
+  } | null;
+  const provider = candidate?.getParsedProvider?.();
+  const model = candidate?.getParsedModel?.();
+  return {
+    ...(provider ? { provider } : {}),
+    ...(model ? { model } : {}),
+  };
+}
+
 export function iterationTraceFromPrompts(
   prompts: PromptResult[],
   traceMessages: Array<{ role: string; content: unknown }>,
   promptSummaries?: PromptTraceSummaryLike[]
 ): EvalResultInput["trace"] | undefined {
+  const recordedContext = prompts.flatMap((prompt) =>
+    prompt.recordedContext ? [prompt.recordedContext] : []
+  );
   const mergedSpans = mergePromptSpansForIteration(prompts);
   if (
     traceMessages.length === 0 &&
@@ -491,6 +533,7 @@ export function iterationTraceFromPrompts(
     return undefined;
   }
   return {
+    ...(recordedContext.length ? { recordedContext } : {}),
     messages: traceMessages,
     ...(mergedSpans.length > 0 ? { spans: mergedSpans } : {}),
     ...(promptSummaries && promptSummaries.length > 0
@@ -592,18 +635,26 @@ export function iterationToEvalResult(
     provider,
     model,
     expectedToolCalls: options.expectedToolCalls,
-    actualToolCalls,
-    tokens: {
-      input: iteration.tokens.input,
-      output: iteration.tokens.output,
-      total: iteration.tokens.total,
-    },
+    actualToolCalls: iteration.captureError ? undefined : actualToolCalls,
+    tokens: iteration.captureError
+      ? undefined
+      : {
+          input: iteration.tokens.input,
+          output: iteration.tokens.output,
+          total: iteration.tokens.total,
+        },
     error: iteration.error,
-    trace,
+    trace: iteration.captureError ? undefined : trace,
     widgetSnapshots: widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
     metadata: {
       iterationNumber: index + 1,
       retryCount: iteration.retryCount ?? 0,
+      ...(iteration.captureError
+        ? {
+            captureError: iteration.captureError,
+            captureCompleteness: "unavailable",
+          }
+        : {}),
     },
   };
 }
@@ -796,6 +847,185 @@ function syntheticStepsForCase(
 }
 
 /**
+ * One uploaded per-step verdict. Mirrors the hosted runner's row
+ * (`buildStepResultRecords` in the inspector server) so the Evaluate UI's
+ * Steps tab reads SDK runs the same way it reads hosted ones. Only `stepId`
+ * and `status` are load-bearing — the client overwrites `kind`/`stepIndex`
+ * from the authored step — but we send the full row for parity.
+ */
+type SdkStepResult = {
+  stepId: string;
+  stepIndex: number;
+  kind: "prompt" | "assert";
+  status: "ok" | "fail" | "pending";
+  reason?: string;
+};
+
+/** Deep-equal on the small `{toolName, arguments}` shape, key order aside. */
+function sameToolCall(
+  a: EvalExpectedToolCall,
+  b: EvalExpectedToolCall
+): boolean {
+  return (
+    a.toolName === b.toolName &&
+    stableStringify(a.arguments) === stableStringify(b.arguments)
+  );
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, inner) => {
+    if (inner === null || typeof inner !== "object" || Array.isArray(inner)) {
+      return inner;
+    }
+    return Object.fromEntries(
+      Object.entries(inner as Record<string, unknown>).sort(([a], [b]) =>
+        a < b ? -1 : a > b ? 1 : 0
+      )
+    );
+  });
+}
+
+/** Trim a reason so one mismatched argument blob cannot dominate the row. */
+function briefly(value: unknown): string {
+  const text = stableStringify(value) ?? "";
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+}
+
+const toolNames = (calls: readonly EvalExpectedToolCall[]): string =>
+  [...new Set(calls.map((call) => call.toolName))].join(", ");
+
+/**
+ * Per-step verdicts for one iteration, keyed by the SAME step ids the case's
+ * steps were authored with — which is why this branches on `predicates` the
+ * way {@link syntheticStepsForCase} does:
+ *
+ * - predicates present: this SDK uploads the steps itself, as
+ *   `advancedConfig.steps` with `sdk-prompt-N` / `sdk-assert-N` ids.
+ * - otherwise: no steps are uploaded and the backend synthesizes them at
+ *   ingest (`sdkSinglePromptSteps`) as `step-1` / `step-expect-N`. Those ids
+ *   are mirrored here rather than uploading our own steps, because
+ *   `advancedConfig` is hashed into the case key — emitting steps for a case
+ *   that never had them would fork its hosted history.
+ *
+ * A row whose id matches no authored step is dropped by the client, so being
+ * wrong here costs a blank row, never a wrong verdict.
+ */
+function stepResultsForIteration(args: {
+  iteration: IterationResult;
+  prompts: PromptResult[];
+  expectedToolCalls: EvalExpectedToolCall[] | undefined;
+  predicates: Predicate[] | undefined;
+  isNegativeTest: boolean | undefined;
+}): SdkStepResult[] {
+  const { iteration, prompts, expectedToolCalls, predicates } = args;
+  const rows: SdkStepResult[] = [];
+  const push = (row: Omit<SdkStepResult, "stepIndex">) =>
+    rows.push({ ...row, stepIndex: rows.length });
+
+  if (predicates && predicates.length > 0) {
+    prompts.forEach((_prompt, promptIndex) => {
+      // The hosted adapter marks a prompt step ok once it ran at all; the
+      // assertions below are what carry the verdict.
+      push({
+        stepId: `sdk-prompt-${promptIndex}`,
+        kind: "prompt",
+        status: "ok",
+      });
+    });
+    predicates.forEach((_predicate, predicateIndex) => {
+      const result = iteration.predicateResults?.[predicateIndex];
+      if (!result) {
+        // Never evaluated (an earlier failure halted the iteration). Pending,
+        // not a false pass — same call the hosted adapter makes.
+        push({
+          stepId: `sdk-assert-${predicateIndex}`,
+          kind: "assert",
+          status: "pending",
+        });
+        return;
+      }
+      push({
+        stepId: `sdk-assert-${predicateIndex}`,
+        kind: "assert",
+        status: result.passed ? "ok" : "fail",
+        ...(result.reason ? { reason: result.reason } : {}),
+      });
+    });
+    return rows;
+  }
+
+  if (prompts.length > 0) {
+    push({ stepId: "step-1", kind: "prompt", status: "ok" });
+  }
+  if (!expectedToolCalls || expectedToolCalls.length === 0) return rows;
+
+  const match = iteration.toolMatch;
+  // The matcher returns one aggregate verdict with diff buckets, not a row per
+  // expectation, so each expectation is re-attributed from those buckets. Each
+  // bucket entry answers for one expectation only: two expectations of the
+  // same tool must not both be blamed by a single missing or mismatched call.
+  const remainingMissing = [...(match?.missing ?? [])];
+  const remainingMismatches = [...(match?.argumentMismatches ?? [])];
+  const blame = expectedToolCalls.map((expected): string | undefined => {
+    if (!match || match.passed) return undefined;
+    if (args.isNegativeTest) {
+      const called = toolNames(match.extra);
+      return called ? `tool was called: ${called}` : "tool was called";
+    }
+    const missingAt = remainingMissing.findIndex((call) =>
+      sameToolCall(call, expected)
+    );
+    if (missingAt !== -1) {
+      remainingMissing.splice(missingAt, 1);
+      return "not called";
+    }
+    const mismatchAt = remainingMismatches.findIndex(
+      (entry) =>
+        entry.toolName === expected.toolName &&
+        stableStringify(entry.expectedArgs) ===
+          stableStringify(expected.arguments)
+    );
+    if (mismatchAt !== -1) {
+      const [mismatch] = remainingMismatches.splice(mismatchAt, 1);
+      return `arguments differed: expected ${briefly(
+        mismatch.expectedArgs
+      )}, got ${briefly(mismatch.actualArgs)}`;
+    }
+    return undefined;
+  });
+  // A match can fail on extras or ordering alone, implicating no single
+  // expectation. Failing every row is the honest read — the header must never
+  // say "1 of 1 passed" for an iteration whose tool calls did not match.
+  const unattributed =
+    match !== undefined && !match.passed && blame.every((r) => r === undefined);
+  const shared = match?.outOfOrder.length
+    ? "called out of order"
+    : match?.extra.length
+    ? `unexpected tool call: ${toolNames(match.extra)}`
+    : "tool calls did not match";
+
+  expectedToolCalls.forEach((_expected, expectedIndex) => {
+    const stepId = `step-expect-${expectedIndex}`;
+    if (!match) {
+      push({ stepId, kind: "assert", status: "pending" });
+      return;
+    }
+    if (match.passed) {
+      push({ stepId, kind: "assert", status: "ok" });
+      return;
+    }
+    const reason = blame[expectedIndex] ?? (unattributed ? shared : undefined);
+    push({
+      stepId,
+      kind: "assert",
+      status: reason ? "fail" : "ok",
+      ...(reason ? { reason } : {}),
+    });
+  });
+  return rows;
+}
+
+/**
  * Hosted-case identity and semantics carried onto every result row.
  *
  * Separate from `expectedToolCalls` and friends because these three describe
@@ -968,7 +1198,8 @@ export function iterationsToEvalResultInputs(
   predicates?: Predicate[],
   matchOptions?: import("./matchers.js").EvalMatchOptions,
   evaluationConfig?: EvaluationConfigSnapshot,
-  caseIdentity?: EvalCaseIdentity
+  caseIdentity?: EvalCaseIdentity,
+  variant?: { provider?: string; model?: string }
 ): EvalResultInput[] {
   const advancedConfig = syntheticStepsForCase(iterations, predicates);
   return iterations.map((iteration, index) => {
@@ -1000,14 +1231,23 @@ export function iterationsToEvalResultInputs(
       caseIdentity,
     });
 
+    const stepResults = stepResultsForIteration({
+      iteration,
+      prompts,
+      expectedToolCalls,
+      predicates,
+      isNegativeTest: caseIdentity?.isNegativeTest,
+    });
+
     return {
       caseTitle: testName,
       query: prompts[0]?.getPrompt() ?? testName,
       passed,
       status: resolveIterationLifecycleStatus(iteration),
       durationMs: durationMs > 0 ? durationMs : undefined,
+      ...variantFromPrompts(prompts, variant),
       expectedToolCalls,
-      actualToolCalls,
+      actualToolCalls: iteration.captureError ? undefined : actualToolCalls,
       // Hosted↔local identity and semantics, on the wire. `caseId` is the
       // DECLARED identity the backend resolves by first (and adopts onto a
       // case that resolved by content hash); `externalCaseId` is the older
@@ -1028,23 +1268,34 @@ export function iterationsToEvalResultInputs(
       ...(caseIdentity?.expectedOutput !== undefined
         ? { expectedOutput: caseIdentity.expectedOutput }
         : {}),
-      tokens: {
-        input: iteration.tokens.input,
-        output: iteration.tokens.output,
-        total: iteration.tokens.total,
-      },
+      tokens: iteration.captureError
+        ? undefined
+        : {
+            input: iteration.tokens.input,
+            output: iteration.tokens.output,
+            total: iteration.tokens.total,
+          },
       error: iteration.error,
-      trace,
+      trace: iteration.captureError ? undefined : trace,
       widgetSnapshots: widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
       advancedConfig,
       matchOptions,
       metadata: mergeHostExtrasIntoMetadata(
         {
           retryCount: iteration.retryCount ?? 0,
+          ...(iteration.captureError
+            ? {
+                captureError: iteration.captureError,
+                captureCompleteness: "unavailable",
+              }
+            : {}),
           iterationNumber: index + 1,
           ...(iteration.predicateResults
             ? { predicates: iteration.predicateResults }
             : {}),
+          // Per-step verdicts for the Steps tab. Omitted when empty, the same
+          // rule the hosted runner applies.
+          ...(stepResults.length > 0 ? { stepResults } : {}),
           ...scoreMetadata(iteration, evaluationConfig),
           ...attachStageMeasurements(
             stageDerivationToMetadata(stageDerivation),
@@ -1072,7 +1323,8 @@ export function suiteTestResultsToEvalResultInputs(
     string,
     import("./matchers.js").EvalMatchOptions | undefined
   >,
-  caseIdentityByTest?: Record<string, EvalCaseIdentity | undefined>
+  caseIdentityByTest?: Record<string, EvalCaseIdentity | undefined>,
+  variant?: { provider?: string; model?: string }
 ): EvalResultInput[] {
   const inputs: EvalResultInput[] = [];
   for (const [testName, testResult] of testResults) {
@@ -1107,15 +1359,30 @@ export function suiteTestResultsToEvalResultInputs(
       });
 
       const identity = caseIdentityByTest?.[testName];
+      const stepResults = stepResultsForIteration({
+        iteration,
+        prompts,
+        expectedToolCalls,
+        predicates,
+        isNegativeTest: identity?.isNegativeTest,
+      });
       inputs.push({
         caseTitle: testName,
         query: prompts[0]?.getPrompt() ?? testName,
         passed,
         status: resolveIterationLifecycleStatus(iteration),
         durationMs: durationMs > 0 ? durationMs : undefined,
+        ...variantFromPrompts(prompts, variant),
         expectedToolCalls,
-        actualToolCalls,
-        ...(identity?.caseId !== undefined ? { caseId: identity.caseId } : {}),
+        actualToolCalls: iteration.captureError ? undefined : actualToolCalls,
+        ...(identity?.caseId !== undefined
+          ? {
+              caseId: identity.caseId,
+              ...(testResult.runEvaluation
+                ? { externalIterationId: `${identity.caseId}:${index}` }
+                : {}),
+            }
+          : {}),
         ...(identity?.externalCaseId !== undefined
           ? { externalCaseId: identity.externalCaseId }
           : {}),
@@ -1126,13 +1393,15 @@ export function suiteTestResultsToEvalResultInputs(
         ...(identity?.expectedOutput !== undefined
           ? { expectedOutput: identity.expectedOutput }
           : {}),
-        tokens: {
-          input: iteration.tokens.input,
-          output: iteration.tokens.output,
-          total: iteration.tokens.total,
-        },
+        tokens: iteration.captureError
+          ? undefined
+          : {
+              input: iteration.tokens.input,
+              output: iteration.tokens.output,
+              total: iteration.tokens.total,
+            },
         error: iteration.error,
-        trace,
+        trace: iteration.captureError ? undefined : trace,
         widgetSnapshots:
           widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
         advancedConfig,
@@ -1142,9 +1411,16 @@ export function suiteTestResultsToEvalResultInputs(
             testName,
             iterationNumber: index + 1,
             retryCount: iteration.retryCount ?? 0,
+            ...(iteration.captureError
+              ? {
+                  captureError: iteration.captureError,
+                  captureCompleteness: "unavailable",
+                }
+              : {}),
             ...(iteration.predicateResults
               ? { predicates: iteration.predicateResults }
               : {}),
+            ...(stepResults.length > 0 ? { stepResults } : {}),
             ...scoreMetadata(iteration, testResult.evaluationConfig),
             ...attachStageMeasurements(
               stageDerivationToMetadata(

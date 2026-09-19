@@ -26,7 +26,7 @@
  */
 import { execFile } from "node:child_process";
 import { readdir, readFile, readlink } from "node:fs/promises";
-import { createConnection } from "node:net";
+import { createConnection, createServer } from "node:net";
 import { networkInterfaces } from "node:os";
 
 /** Loopback host used for every URL handed to an adapter. */
@@ -168,6 +168,30 @@ export async function assertBridgePortUnclaimed(args: {
       );
     }
   }
+}
+
+/**
+ * A free loopback port for a session's bridge.
+ *
+ * The OS picks it (bind `:0`), so it is never a port something else already
+ * holds — a hardcoded number in the ephemeral range regularly is. The probe
+ * closes before the bridge binds; `assertBridgePortUnclaimed` runs immediately
+ * before the spawn and refuses the port if something took it in between.
+ */
+export async function reserveLoopbackPort(): Promise<number> {
+  return new Promise((resolvePromise, reject) => {
+    const probe = createServer();
+    probe.once("error", reject);
+    probe.listen(0, LOOPBACK_HOST_V4, () => {
+      const address = probe.address();
+      if (address === null || typeof address === "string") {
+        probe.close(() => reject(new Error("could not reserve a bridge port")));
+        return;
+      }
+      const { port } = address;
+      probe.close(() => resolvePromise(port));
+    });
+  });
 }
 
 /**
@@ -384,7 +408,9 @@ async function readLinuxListenAddresses(pid: number): Promise<string[] | null> {
         }
       }),
     );
-    sockets = new Set(inodes.filter((inode): inode is string => inode !== null));
+    sockets = new Set(
+      inodes.filter((inode): inode is string => inode !== null),
+    );
   } catch {
     return null;
   }
@@ -422,7 +448,10 @@ function decodeProcNetAddress(hex: string): string | null {
     for (let word = 0; word < 4; word += 1) {
       const chunk = hex.slice(word * 8, word * 8 + 8);
       const beChunk =
-        chunk.slice(6, 8) + chunk.slice(4, 6) + chunk.slice(2, 4) + chunk.slice(0, 2);
+        chunk.slice(6, 8) +
+        chunk.slice(4, 6) +
+        chunk.slice(2, 4) +
+        chunk.slice(0, 2);
       words.push(beChunk.slice(0, 4), beChunk.slice(4, 8));
     }
     return words.join(":");
@@ -447,14 +476,20 @@ function normalizeHexGroups(address: string): string {
   if (!address.includes(":")) return address;
   return address
     .split(":")
-    .map((group) => (/^[0-9a-f]+$/.test(group) ? group.replace(/^0+(?=.)/, "") : group))
+    .map((group) =>
+      /^[0-9a-f]+$/.test(group) ? group.replace(/^0+(?=.)/, "") : group,
+    )
     .join(":");
 }
 
 /** Is a bound address one that only this machine can reach? */
 export function isLoopbackBoundAddress(address: string): boolean {
   const bare = normalizeHexGroups(
-    address.split("%")[0]!.trim().toLowerCase().replace(/^\[|\]$/g, ""),
+    address
+      .split("%")[0]!
+      .trim()
+      .toLowerCase()
+      .replace(/^\[|\]$/g, ""),
   );
   if (bare === "") return false;
   if (/^127\./.test(bare)) return true;
@@ -466,7 +501,8 @@ export function isLoopbackBoundAddress(address: string): boolean {
     if (/^127\./.test(inner)) return true;
     // /proc renders the mapped v4 half as two hex words, e.g. `::ffff:7f00:1`.
     const hexWords = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(inner);
-    if (hexWords !== null && parseInt(hexWords[1]!, 16) >> 8 === 0x7f) return true;
+    if (hexWords !== null && parseInt(hexWords[1]!, 16) >> 8 === 0x7f)
+      return true;
   }
   // `*`, `0.0.0.0` and `::` are wildcards: bound to everything, including the
   // LAN. Explicitly NOT loopback.
@@ -483,10 +519,7 @@ export function isLoopbackBoundAddress(address: string): boolean {
 export async function assertBridgeBindingIsLoopback(args: {
   pid: number;
   platform?: NodeJS.Platform;
-  read?: (
-    pid: number,
-    platform: NodeJS.Platform,
-  ) => Promise<string[] | null>;
+  read?: (pid: number, platform: NodeJS.Platform) => Promise<string[] | null>;
 }): Promise<void> {
   const platform = args.platform ?? process.platform;
   const read = args.read ?? readProcessListenAddresses;
