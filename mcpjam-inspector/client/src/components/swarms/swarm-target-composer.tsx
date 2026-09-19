@@ -12,12 +12,16 @@ import { RequiredMark } from "@/components/shared/required-mark";
 import { CloudRunBadge } from "@/components/computer/CloudRunBadge";
 import type { CloudServerBlockCopy } from "@/lib/cloud-server-readiness";
 import { CloudUnreachableNotice } from "@/components/computer/CloudUnreachableNotice";
-import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
+import {
+  EnvironmentComposer,
+  SWARM_COMPOSER_SLOTS,
+} from "@/components/environment-composer/environment-composer";
 import {
   isComposeMode,
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
 import { MAX_ENVIRONMENTS_PER_JOURNEY } from "@/components/swarms/journey-environments";
+import { SwarmProductionNotice } from "@/components/swarms/swarm-production-notice";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -146,7 +150,10 @@ export function SwarmTargetComposer({
         />
       ) : null}
 
+      <SwarmProductionNotice data-testid="new-swarm-production-notice" />
+
       <EnvironmentComposer
+        slots={SWARM_COMPOSER_SLOTS}
         projectId={projectId}
         environments={environments}
         value={value}

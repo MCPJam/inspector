@@ -1,0 +1,74 @@
+name: Evals action live smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: Existing MCPJam project name or ID
+        required: true
+        type: string
+      suite:
+        description: Existing hosted suite to run (uses eval credits)
+        required: true
+        type: string
+      gate:
+        description: Also evaluate gates
+        type: boolean
+        default: false
+  # Called by `release.yml` to gate publishing `evals-v1`. Same inputs, so the
+  # release and a manual dispatch exercise one path.
+  workflow_call:
+    inputs:
+      project:
+        description: Existing MCPJam project name or ID
+        required: true
+        type: string
+      suite:
+        description: Existing hosted suite to run (uses eval credits)
+        required: true
+        type: string
+      gate:
+        description: Also evaluate gates
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - name: Verify pinned CLI is published
+        run: npm view @mcpjam/cli@5.7.1 version
+      - name: Test the action helpers
+        run: node --test actions/evals/*.test.mjs
+      # Before the credits, not after: a release that forgot the repo variables
+      # would otherwise start a real eval run against an empty project name.
+      - name: Require the smoke inputs and the API key
+        env:
+          PROJECT: ${{ inputs.project }}
+          SUITE: ${{ inputs.suite }}
+          API_KEY: ${{ secrets.MCPJAM_API_KEY }}
+        run: |
+          if [ -z "$PROJECT" ] || [ -z "$SUITE" ]; then
+            echo "::error::project and suite are required. A release passes vars.EVALS_SMOKE_PROJECT and vars.EVALS_SMOKE_SUITE."
+            exit 1
+          fi
+          if [ -z "$API_KEY" ]; then
+            echo "::error::Set the MCPJAM_API_KEY secret before running the live smoke."
+            exit 1
+          fi
+      - name: Run hosted suite with the local action
+        uses: ./actions/evals
+        with:
+          # Set this secret before manually starting the live smoke test.
+          api-key: ${{ secrets.MCPJAM_API_KEY }}
+          project: ${{ inputs.project }}
+          suite: ${{ inputs.suite }}
+          gate: ${{ inputs.gate }}

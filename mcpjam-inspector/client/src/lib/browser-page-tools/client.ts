@@ -30,9 +30,8 @@ import {
 /**
  * The `browser_*` definitions, as the model is shown them.
  *
- * Soft-fails to an empty list, like the harness catalog: a pane that cannot
- * reach the catalog should show no browser section, not an error over a
- * browser that is working.
+ * Failed reads are surfaced by useBrowserTools with a retry action. Catalog
+ * availability is separate from whether chat can drive the browser.
  */
 export async function fetchBrowserToolDefinitions(
   engine: "hosted" | "local",

@@ -14,6 +14,10 @@ const sdkPredicatesEntry = path.resolve(
   rootDir,
   "../sdk/src/predicates/index.ts",
 );
+const sdkAssertionsEntry = path.resolve(
+  rootDir,
+  "../sdk/src/assertions/index.ts",
+);
 // The versioned contract — now the canonical home of the step union that
 // `shared/steps.ts` re-exports. Needs its own alias BEFORE the bare
 // `@mcpjam/sdk` entry below: a string `find` matches by prefix, so without it
@@ -63,6 +67,7 @@ export default defineConfig({
       { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },
       { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
       { find: "@mcpjam/sdk/predicates", replacement: sdkPredicatesEntry },
+      { find: "@mcpjam/sdk/assertions", replacement: sdkAssertionsEntry },
       { find: "@mcpjam/sdk/contract", replacement: sdkContractEntry },
       { find: "@mcpjam/sdk", replacement: sdkIndexEntry },
       { find: "@/shared", replacement: path.resolve(__dirname, "./") },

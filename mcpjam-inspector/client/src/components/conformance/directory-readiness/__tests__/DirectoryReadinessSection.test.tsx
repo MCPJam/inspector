@@ -370,6 +370,59 @@ describe("hosted mode", () => {
     expect(screen.getByText(/^Ready$/i)).toBeInTheDocument();
   });
 
+  it("does not blame the organization when MCPJam's own budget ran out", async () => {
+    // Observations are MCPJam-paid. When the PLATFORM budget is spent, the
+    // copy must not say the org hit its limit, because nothing the customer
+    // buys would clear it.
+    mockStartHosted.mockResolvedValue({
+      runId: "run_2",
+      status: "pending",
+      deduped: false,
+      includeLlmObservations: true,
+      readinessKind: "claude",
+      projectId: "p",
+      serverId: "s",
+    });
+    mockGetRun.mockResolvedValue({
+      id: "run_platform_cap",
+      status: "completed",
+      overallStatus: "ready",
+      lanes: [],
+      stages: [],
+      terminalReason: null,
+      errorMessage: null,
+      hasReport: true,
+      llmObservations: {
+        status: "billing-blocked",
+        reason: "platform_cap_reached",
+      },
+      includeLlmObservations: true,
+    });
+    mockGetReport.mockResolvedValue(claudeResult({ status: "ready" }));
+
+    render(
+      <DirectoryReadinessSection publisher="claude" server={HTTP_SERVER} />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /run readiness/i }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/MCPJam's daily budget for them is used up/i),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Nothing was charged/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/reached its MCPJam model limit/i),
+    ).not.toBeInTheDocument();
+    // The grade stands on its own; the missing paid pass does not demote it.
+    expect(
+      screen.getByText(/The grade below is complete without them/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/^Ready$/i)).toBeInTheDocument();
+  });
+
   it("offers the package modes disabled, with the surface that can run them", () => {
     render(
       <DirectoryReadinessSection publisher="openai" server={HTTP_SERVER} />,

@@ -67,7 +67,28 @@ import {
   FakeProvider,
   fakeTool,
 } from "../../../services/webmcp-inspector/__tests__/fake-provider.js";
-import { decodeWebMcpBinaryFrame } from "@/shared/webmcp-inspector-protocol";
+import {
+  createFrameStreamDecoder,
+  FRAME_STREAM_KIND,
+  type FrameStreamFrame,
+} from "@/shared/browserd-frame-stream";
+
+/**
+ * Read one frame off the wire, with the reader the browser uses.
+ *
+ * The socket speaks the daemon's own record format — the same bytes it always
+ * did, now without a message adapter in between — so this decodes exactly as
+ * `createFrameWireReader` does on the client.
+ */
+function readFrame(bytes: Uint8Array): FrameStreamFrame {
+  const result = createFrameStreamDecoder().push(bytes);
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error(result.error);
+  expect(result.records).toHaveLength(1);
+  const record = result.records[0]!;
+  expect(record.kind).toBe(FRAME_STREAM_KIND.frame);
+  return record as FrameStreamFrame;
+}
 
 const ALLOWED_ORIGIN = "http://localhost:5173";
 
@@ -307,7 +328,7 @@ describe("webmcp frames WS — the stream", () => {
       ts: 1_700_000_000_500,
     });
 
-    const decoded = decodeWebMcpBinaryFrame(await ws.waitForBinary());
+    const decoded = readFrame(await ws.waitForBinary());
     expect(decoded).toBeDefined();
     expect(decoded!.deviceWidth).toBe(1024);
     expect(decoded!.deviceHeight).toBe(640);
@@ -315,7 +336,7 @@ describe("webmcp frames WS — the stream", () => {
     // The session's own counter, shared with the SSE stream — which is what
     // lets the client drop a straggling SSE frame that predates this one.
     expect(decoded!.seq).toBeGreaterThan(0);
-    expect([...decoded!.jpeg]).toEqual([0xff, 0xd8, 0x41, 0x41, 0x41]);
+    expect([...decoded.jpeg]).toEqual([0xff, 0xd8, 0x41, 0x41, 0x41]);
     // ONE message per frame, not a meta/payload pair: a receiver that lost
     // track of which half it held would paint one frame's pixels with
     // another's dimensions.
@@ -334,17 +355,17 @@ describe("webmcp frames WS — the stream", () => {
       deviceHeight: 1600,
       scale: 2,
     });
-    const scaled = decodeWebMcpBinaryFrame(await ws.waitForBinary());
+    const scaled = readFrame(await ws.waitForBinary());
     // Dropped here, a 2560-wide frame would arrive claiming to be its own CSS
     // size and the client would send back every click at double coordinates.
-    expect(scaled!.scale).toBe(2);
+    expect(scaled.scale).toBe(2);
     expect(scaled!.deviceWidth).toBe(2560);
 
     provider.sessions[0].emitFrame({ data: jpegBase64(0x44) });
-    const plain = decodeWebMcpBinaryFrame(await ws.waitForBinary(2));
+    const plain = readFrame(await ws.waitForBinary(2));
     // A provider that has no notion of scale — the electron surface, an older
     // one — publishes frames without it, and 1 is what those have always meant.
-    expect(plain!.scale).toBe(1);
+    expect(plain.scale).toBe(1);
   });
 
   it("tells the session when this socket cannot keep up", async () => {
@@ -371,14 +392,36 @@ describe("webmcp frames WS — the stream", () => {
 
   it("replays the current paint to a socket that connects after it", async () => {
     const session = await openSession();
-    // Published BEFORE anyone is listening: the hub holds exactly one frame,
-    // and a connecting pane must paint from it rather than sit blank until the
-    // page happens to repaint — which for a settled page is never.
+    // Published BEFORE anyone is listening: the frame channel holds exactly
+    // one paint, and a connecting pane must draw from it rather than sit blank
+    // until the page happens to repaint — which for a settled page is never.
     provider.sessions[0].emitFrame({ data: jpegBase64(0x42) });
 
     const ws = connect(server.port, session.sessionId, token);
-    const decoded = decodeWebMcpBinaryFrame(await ws.waitForBinary());
-    expect([...decoded!.jpeg]).toEqual([0xff, 0xd8, 0x42, 0x42, 0x42]);
+    const decoded = readFrame(await ws.waitForBinary());
+    expect([...decoded.jpeg]).toEqual([0xff, 0xd8, 0x42, 0x42, 0x42]);
+  });
+
+  it("keeps streaming after a navigation clears the retained paint", async () => {
+    const session = await openSession();
+    const ws = connect(server.port, session.sessionId, token);
+    await ws.opened;
+    provider.sessions[0].emitFrame({ data: jpegBase64(0x41) });
+    expect([...readFrame(await ws.waitForBinary()).jpeg]).toEqual([
+      0xff, 0xd8, 0x41, 0x41, 0x41,
+    ]);
+
+    // The clear replaces this socket's pacer, to drop any frame it accepted
+    // for the OLD page and had not yet put on the wire. The replacement has to
+    // carry the new page's paint, or a navigation would end the stream.
+    provider.sessions[0].callbacks.onNavigated(
+      "https://example.test/two",
+      "https://example.test",
+    );
+    provider.sessions[0].emitFrame({ data: jpegBase64(0x42) });
+    expect([...readFrame(await ws.waitForBinary(2)).jpeg]).toEqual([
+      0xff, 0xd8, 0x42, 0x42, 0x42,
+    ]);
   });
 
   it("carries frames only — no activity, tools or session chatter", async () => {
@@ -449,6 +492,36 @@ describe("webmcp frames WS — the stream", () => {
     expect(runtime.expiresAt).toBeGreaterThan(before);
   });
 
+  it("counts a binary-wire viewer as a subscriber", async () => {
+    // This socket used to subscribe to `runtime.hub` directly, which delivers
+    // frames but is invisible to `hasSubscribers` — so a viewer on this wire
+    // counted as nobody: the idle sweep could reap a session being watched,
+    // and the hosted tool poll stayed silent for a pane someone had open.
+    const session = await openSession();
+    expect(webMcpSessions.hasSubscribers(session.sessionId)).toBe(false);
+
+    const ws = connect(server.port, session.sessionId, token);
+    await ws.opened;
+    await ws.settle();
+
+    expect(webMcpSessions.hasSubscribers(session.sessionId)).toBe(true);
+  });
+
+  it("marks the session WATCHED on a ping, not merely attached", async () => {
+    // Attachment survives a background tab; the ping does not. For a hosted
+    // session that difference is what holds a metered desktop box awake.
+    const session = await openSession();
+    const ws = connect(server.port, session.sessionId, token);
+    await ws.opened;
+    await ws.settle();
+    expect(webMcpSessions.isWatched(session.sessionId)).toBe(false);
+
+    ws.ws.send(JSON.stringify({ type: "ping" }));
+    await ws.settle();
+
+    expect(webMcpSessions.isWatched(session.sessionId)).toBe(true);
+  });
+
   it("closes 4404 when the session it is watching goes away", async () => {
     const session = await openSession();
     const ws = connect(server.port, session.sessionId, token);
@@ -458,6 +531,25 @@ describe("webmcp frames WS — the stream", () => {
     // No further paint is ever coming from a closed browser; a socket left
     // open would look live while feeding a pane that never updates again.
     expect((await ws.closed).code).toBe(4404);
+  });
+
+  it("closes a socket that connects AFTER the browser has already crashed", async () => {
+    const session = await openSession();
+    // A paint from before the crash, which the channel would otherwise retain
+    // and hand to the next subscriber as though the page were still there.
+    provider.sessions[0].emitFrame({ data: jpegBase64(0x42) });
+    // A crash publishes the terminal session event and THEN a timeline entry,
+    // and replay is one event deep — so a socket arriving now replays the
+    // entry and would never hear that the browser is gone.
+    provider.sessions[0].callbacks.onCrashed("The browser crashed.");
+
+    const ws = connect(server.port, session.sessionId, token);
+    expect((await ws.closed).code).toBe(4404);
+    // And NOT one dead frame on the way out. The channel delivers a retained
+    // paint synchronously on subscribe, so a socket that subscribed first and
+    // checked the status afterwards would send it before closing.
+    await ws.settle();
+    expect(ws.binary).toHaveLength(0);
   });
 });
 
@@ -488,8 +580,8 @@ describe("webmcp frames WS — lifecycle", () => {
     const after = connect(server.port, session.sessionId, token);
     await after.opened;
     provider.sessions[0].emitFrame({ data: jpegBase64(0x43) });
-    const decoded = decodeWebMcpBinaryFrame(await after.waitForBinary());
-    expect([...decoded!.jpeg]).toEqual([0xff, 0xd8, 0x43, 0x43, 0x43]);
+    const decoded = readFrame(await after.waitForBinary());
+    expect([...decoded.jpeg]).toEqual([0xff, 0xd8, 0x43, 0x43, 0x43]);
   });
 
   it("unsubscribes from the hub when the socket closes", async () => {

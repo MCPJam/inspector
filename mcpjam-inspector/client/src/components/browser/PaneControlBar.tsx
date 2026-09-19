@@ -114,7 +114,7 @@ export function PaneSettingsMenu({
           onCheckedChange={(next) => onToggleStats(Boolean(next))}
           data-testid="pane-stats-toggle"
         >
-          Stats for nerds
+          Stats
         </DropdownMenuCheckboxItem>
       </DropdownMenuContent>
     </DropdownMenu>
