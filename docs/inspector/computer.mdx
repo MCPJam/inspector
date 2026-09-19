@@ -17,6 +17,32 @@ you close the terminal, and wakes on next use.
 Open it from the **Computer** tab. The first time you open the terminal, MCPJam
 provisions the machine; after that it resumes in about a second.
 
+## "This machine" engine
+
+In addition to the cloud computer, the Playground supports running the `bash` tool directly on the machine that runs this inspector — the **"This machine"** engine. When it is active, agent commands execute as your OS user account in a per-project workspace under `~/.mcpjam/computer/<project>/`, with no cloud sandbox involved.
+
+### Consent
+
+Before the local engine can be used, you must explicitly grant consent from the inspector. Consent is a device-scoped capability: it records that you — the person running this inspector — have allowed agents to execute commands on this machine. Granting consent from a second browser profile rotates the capability, and the previous profile is asked to re-consent.
+
+Consent can be revoked at any time. After revocation, any turn that requests the local engine resolves as unavailable rather than silently falling back to the cloud.
+
+### Approval
+
+Every command that runs on the local engine requires your explicit approval before it executes, regardless of the host's tool-approval setting. There is no auto-approve for model-driven shell commands on your own machine.
+
+### Engine label
+
+Tool results from non-hosted turns include an `engine` field — `"local"` or `"cloud"` — so you can see at a glance where a command ran. Hosted inspector deployments omit this field to keep transcripts byte-identical to their existing format.
+
+### What the local engine is not
+
+The local workspace directory is a convenient default working directory, not a sandbox. Commands run with your full OS user permissions. The boundaries are consent, per-command approval, and the actor restrictions below — not filesystem paths.
+
+### Who can use it
+
+The local engine is available only to signed-in members running the inspector directly (not via a shared chatbox link, a guest session, a journey, or a swarm scope). Requests from those contexts always resolve to the cloud family.
+
 ## Chat attachments
 
 When the previewed host has a computer attached and you are signed in, files you
