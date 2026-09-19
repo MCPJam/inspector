@@ -29,6 +29,11 @@ on:
     paths:
       - "mcpjam-inspector/server/utils/harness/local/**"
       - "mcpjam-inspector/scripts/build-local-harness-pack.mjs"
+      # The launcher is part of the foundation Windows conformance rests on,
+      # and this is the only workflow that compiles it. Left out of the filter,
+      # a PR that changed nothing but the launcher was never built or tested
+      # anywhere before it merged.
+      - "mcpjam-inspector/tools/mcpjam-job-launcher/**"
       - ".github/workflows/local-harness-conformance.yml"
 
 permissions:
@@ -256,6 +261,18 @@ jobs:
       - name: Build the Job Object launcher
         working-directory: mcpjam-inspector/tools/mcpjam-job-launcher
         run: go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
+
+      # The launcher's unit tests, on the only runner that can run them: the
+      # code is `syscall.SysProcAttr` and `golang.org/x/sys/windows`, so it
+      # does not compile anywhere else. They cover which child the launcher
+      # will agree to start — a containment check that ran nowhere in CI until
+      # this step existed, and one whose failure mode is silent acceptance of
+      # a program outside the verified pack.
+      - name: Test the Job Object launcher
+        working-directory: mcpjam-inspector/tools/mcpjam-job-launcher
+        run: |
+          go vet ./...
+          go test ./...
 
       - name: Download the bundled Node runtime
         run: |

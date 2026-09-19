@@ -42,6 +42,18 @@ export { SourceUrlPart } from "./parts/source-url-part";
 export { SourceDocumentPart } from "./parts/source-document-part";
 export { JsonPart } from "./parts/json-part";
 export { JsonView } from "./parts/json-view";
+// The one JSON tokenizer, also on the `@mcpjam/chat-ui/json-tokens` subpath
+// for consumers that want it without the renderer graph (BB-239).
+//
+// `highlightJson` is deliberately NOT re-exported here: it returns a raw HTML
+// string for `dangerouslySetInnerHTML`, and its escaping is element-content
+// only. It stays on the subpath, next to the editor that already feeds it.
+export {
+  formatPath,
+  tokenizeJson,
+  type Token,
+  type TokenType,
+} from "./internal/json-tokens";
 export { Markdown } from "./internal/markdown";
 
 // --- Public types ---
@@ -58,6 +70,7 @@ export {
   type ReasoningDisplayMode,
   type ToolRenderContext,
   type WidgetRenderInput,
+  type JsonRenderer,
 } from "./types";
 
 // --- Pure helpers (single-sourced for hosts that build messages/overrides) ---

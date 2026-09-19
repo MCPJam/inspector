@@ -184,6 +184,25 @@ const config: ForgeConfig = {
 
   hooks: {
     /**
+     * Tell the hot-restart scheduler that a spawn completed.
+     *
+     * Forge runs `postStart` after the initial spawn AND after every respawn it
+     * does in response to `rs`, which makes it the only real
+     * restart-has-finished signal: emitting `rs` returns long before the child
+     * has exited and come back. `vite.dev-plugins.ts` uses it to release its
+     * in-flight lock, cancel the watchdog, and run any restart that was
+     * requested while this one was still going.
+     *
+     * Imported dynamically so nothing is loaded on the packaging path. The
+     * scheduler's state lives on `globalThis`, which is what lets this module
+     * instance reach the one the Vite config files created -- see that file.
+     */
+    postStart: async () => {
+      const { notifyRestartComplete } = await import("./vite.dev-plugins");
+      notifyRestartComplete();
+    },
+
+    /**
      * Inject Sentry debug ids into the Electron bundles and upload their maps.
      *
      * This has to live here, not in the release workflows. `.vite/build` and

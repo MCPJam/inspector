@@ -49,6 +49,16 @@ describe("TrialStageDetailCard", () => {
     );
   });
 
+  it("omits the reason line for `observed`, which every passing stage carries", () => {
+    render(
+      <TrialStageDetailCard row={row({ state: "passed", reason: "observed" })} />,
+    );
+    expect(screen.queryByTestId("trial-stage-reason")).toBeNull();
+    expect(
+      screen.getByTestId("trial-stage-detail-card").textContent,
+    ).not.toContain(STAGE_REASON_LABELS.observed);
+  });
+
   it("NEVER manufactures a rate from one observation", () => {
     const card = render(
       <TrialStageDetailCard row={row({ state: "passed" })} />,
@@ -102,6 +112,45 @@ describe("TrialStageDetailCard", () => {
     );
     expect(screen.getByTestId("trial-stage-state")).toHaveTextContent(
       "state not recognized",
+    );
+  });
+});
+
+describe("TrialStageDetailCard — the runner's own reason", () => {
+  it("lists a setup-aborted connection row's reason in place of the generic sentence", () => {
+    const line =
+      'The stored authorization for "Linear" has expired or been revoked. Reconnect it in the server settings.';
+    render(
+      <TrialStageDetailCard
+        row={row({
+          stage: "connection",
+          state: "notMeasured",
+          reason: "setupAborted",
+          evidence: { spanIds: ["run-connect-s1"], predicateReasons: [line] },
+        })}
+      />,
+    );
+    expect(
+      screen.getByTestId("trial-stage-predicate-reasons"),
+    ).toHaveTextContent(line);
+    expect(
+      screen.getByTestId("trial-stage-detail-card").textContent,
+    ).not.toContain("runner’s setup observations");
+  });
+
+  it("keeps the generic sentence when the runner recorded no reason", () => {
+    render(
+      <TrialStageDetailCard
+        row={row({
+          stage: "connection",
+          state: "notMeasured",
+          reason: "setupAborted",
+        })}
+      />,
+    );
+    expect(screen.queryByTestId("trial-stage-predicate-reasons")).toBeNull();
+    expect(screen.getByTestId("trial-stage-detail-card").textContent).toContain(
+      "runner’s setup observations",
     );
   });
 });

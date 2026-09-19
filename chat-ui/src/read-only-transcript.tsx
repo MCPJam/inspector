@@ -7,6 +7,7 @@ import { getRenderableConversationMessages } from "./internal/thread-helpers";
 import {
   DEFAULT_CHAT_UI_MODEL,
   type ChatUiModel,
+  type JsonRenderer,
   type ReasoningDisplayMode,
   type ThemeMode,
   type ToolRenderContext,
@@ -42,12 +43,27 @@ export interface TranscriptProps {
   reasoningDisplayMode?: ReasoningDisplayMode;
   widgetPolicy?: WidgetPolicy;
   className?: string;
+  /**
+   * See `MessageViewProps.showAssistantAvatar`. Defaults to whether
+   * `renderAvatar` was supplied; deliberately NOT defaulted here, so the
+   * resolution lives in one place.
+   */
   showAssistantAvatar?: boolean;
   renderAvatar?: (model: ChatUiModel | undefined) => ReactNode;
   /** Host override for the tool block (inspector interactive `ToolPart`). */
   renderTool?: (ctx: ToolRenderContext) => ReactNode;
   /** Host override for widget rendering (inspector `WidgetReplay`). */
   renderWidget?: (input: WidgetRenderInput) => ReactNode;
+  /**
+   * Host override for how a tool's JSON payloads are DISPLAYED — the
+   * inspector passes the collapsible tree its Playground uses.
+   *
+   * Unlike `renderTool` and `renderWidget` this survives into
+   * `ReadOnlyTranscriptProps`, because it is a different kind of seam: it
+   * swaps one presentation of a value for another and can do nothing else.
+   * See {@link JsonRenderer}, and the read-only contract below.
+   */
+  renderJson?: JsonRenderer;
   /**
    * Host slot under each assistant message (per-turn ratings).
    *
@@ -75,10 +91,11 @@ export function Transcript({
   reasoningDisplayMode = "inline",
   widgetPolicy = "placeholder",
   className,
-  showAssistantAvatar = true,
+  showAssistantAvatar,
   renderAvatar,
   renderTool,
   renderWidget,
+  renderJson,
   renderTurnFooter,
 }: TranscriptProps) {
   const visible = getRenderableConversationMessages(messages);
@@ -99,6 +116,7 @@ export function Transcript({
             renderAvatar={renderAvatar}
             renderTool={renderTool}
             renderWidget={renderWidget}
+            renderJson={renderJson}
             renderTurnFooter={renderTurnFooter}
             turnIndex={index}
           />
@@ -118,12 +136,21 @@ export type ReadOnlyTranscriptProps = Omit<
  * JSON/data parts, approvals-as-state, and tool call/result blocks.
  * Widget-bearing tools render a placeholder (see `widgetPolicy`).
  *
- * READ-ONLY means no host seams and no side effects: this never touches
- * Convex, analytics, stores, contexts, or any widget runtime, and nothing it
- * renders can edit the thread or call a tool.
+ * READ-ONLY means no side effects: this never touches Convex, analytics,
+ * stores, contexts, or any widget runtime, and nothing it renders can edit the
+ * thread or call a tool. The two seams that could break that — `renderTool`
+ * and `renderWidget`, which hand a host the whole tool block or mount a real
+ * widget — are omitted from its props.
+ *
+ * `renderJson` is not omitted, and the difference is what it is able to do: it
+ * is handed a value and the text the default renderer would have shown, and
+ * returns a node. It cannot reach the part, the message, or anything that
+ * calls a tool. It is the seam the inspector uses to display payloads in the
+ * same collapsible tree its Playground uses, rather than this package growing
+ * a second copy of a component that already exists one layer up.
  *
  * It is NOT inert. Parts own local disclosure state — reasoning collapses
- * (`ReasoningPart`) and a large tool payload folds (`FoldedBlock`) — so the
+ * (`ReasoningPart`) and the tool card collapses (`ToolCallPart`) — so the
  * subtree contains focusable controls whose only effect is on what this
  * component shows. A transcript that inlined every hundred-line payload was
  * the "bunch of JSON" BB-198 was filed about.

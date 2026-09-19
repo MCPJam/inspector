@@ -116,6 +116,16 @@ vi.mock("../logger", () => ({
     event: vi.fn(),
     systemEvent: vi.fn(),
   },
+  // Same trap `engine-error-phase.test.ts` documents, reached from a different
+  // direction. Every stub stream in this suite is a lone `finish` chunk — the
+  // empty-response shape — so each turn now runs the engine's empty-step
+  // failure branch, which reports through `stream-failure-reporter` →
+  // `error-origin-capture` → this export. A mock missing it throws a vitest
+  // module error INSIDE the branch; the throw escapes to the agentic loop's
+  // catch, `runSucceeded` never flips, and persistence silently never runs —
+  // which is what these persist-plumbing assertions would have blamed on the
+  // product.
+  captureOriginErrorToSentry: vi.fn(),
 }));
 
 const baseModelDefinition: ModelDefinition = {

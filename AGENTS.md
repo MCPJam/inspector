@@ -23,3 +23,22 @@ agents working outside this repository.
   role system (chat-ui's `--trace-waterfall-*`). Adding another is a real
   decision, not a shortcut around the rule: it will not track the theme, and
   nothing will check it.
+
+## The browserd daemon bundle
+
+`mcpjam-inspector/server/services/browserd/dist/` is CHECKED IN: the daemon runs
+on a sandbox that has only those bytes and no build step, so a daemon edit that
+is not re-bundled ships the previous daemon.
+
+After touching anything under `server/services/browserd/daemon/` — or anything
+it imports, which now includes `protocol.ts` and the WebMCP launch flags — run:
+
+```
+npm run bundle:browserd -w @mcpjam/inspector
+```
+
+and commit both files in `dist/`. `pretest` runs
+`node scripts/bundle-browserd.mjs --check`, which rebuilds in memory, writes
+nothing, and fails with the remediation if the checked-in bundle is stale;
+`server/services/browserd/__tests__/bundle-freshness.test.ts` asserts the same
+property from inside the suite.
