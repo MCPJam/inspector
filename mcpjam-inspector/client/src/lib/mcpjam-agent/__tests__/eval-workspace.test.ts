@@ -9,6 +9,7 @@ import {
   evalSuiteKey,
   editGeneratedDraft,
   saveGeneratedDraft,
+  stageMarkdownDrafts,
 } from "../eval-workspace";
 import type { EvalAgentScope } from "@/shared/eval-agent-scope";
 const scope: EvalAgentScope = {
@@ -31,6 +32,39 @@ const input = {
   steps: [{ id: "p1", kind: "prompt" as const, prompt: "Find a ticket" }],
 };
 beforeEach(() => useEvalGeneration.setState({ suites: {} }));
+
+it("clears a failed generation's error when an import stages its drafts", () => {
+  const key = evalSuiteKey(scope);
+  // Generation and import share this store. A generation failure used to keep
+  // its message on screen above drafts that had just imported fine — and it
+  // named a tool-coverage setting the import surface does not offer.
+  useEvalGeneration.setState({
+    suites: {
+      [key]: {
+        status: "ready",
+        drafts: [],
+        error:
+          "No tools are marked read-only on these servers. Choose Read and write or add read-only tool annotations, then try again.",
+      } as never,
+    },
+  });
+  stageMarkdownDrafts(
+    { projectId: scope.projectId, suiteId: scope.suiteId },
+    [
+      {
+        title: "Imported case",
+        prompt: "Browse the Grocery category.",
+        expectedOutput: "The list renders.",
+        issues: [],
+        source: { fileName: "cases.md" },
+      } as never,
+    ],
+    [],
+  );
+  const state = useEvalGeneration.getState().suites[key];
+  expect(state.error).toBeUndefined();
+  expect(state.drafts).toHaveLength(1);
+});
 describe("reviewable eval generation", () => {
   it("stages without saving, rejects duplicate jobs and out-of-suite edits, then commits once", async () => {
     let finish!: () => void;
@@ -136,4 +170,66 @@ it("waits for the exact case context and recovers when its bridges register", ()
   removeSuite();
   expect(changed).toHaveBeenCalledTimes(4);
   unsubscribe();
+});
+
+vi.mock("@/lib/apis/eval-authoring-api", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  readAuthoringJob: vi.fn(),
+  authoringRequest: vi.fn(),
+}));
+import { readAuthoringJob } from "@/lib/apis/eval-authoring-api";
+import { followAuthoringJob } from "../eval-workspace";
+describe("authoring polling recovery", () => {
+  it("retries reads with the same job ID and resets the budget after success", async () => {
+    vi.useFakeTimers();
+    const read = vi.mocked(readAuthoringJob);
+    read.mockReset();
+    const status = {
+      jobId: "job",
+      phase: "draft",
+      drafts: [],
+      warnings: [],
+      error: null,
+    };
+    read
+      .mockRejectedValueOnce(new Error("Network"))
+      .mockRejectedValueOnce(new Error("Network"))
+      .mockRejectedValueOnce(new Error("Network"))
+      .mockResolvedValueOnce({ ...status, status: "pending" })
+      .mockRejectedValueOnce(new Error("Network"))
+      .mockResolvedValueOnce({ ...status, status: "completed" });
+    try {
+      const polling = followAuthoringJob(scope, "job");
+      await vi.runAllTimersAsync();
+      await polling;
+      expect(read).toHaveBeenCalledTimes(6);
+      expect(read.mock.calls.every(([id]) => id === "job")).toBe(true);
+      expect(
+        useEvalGeneration.getState().suites[evalSuiteKey(scope)],
+      ).toMatchObject({ status: "ready", error: undefined });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("stops after three retries and retains the resumable job ID", async () => {
+    vi.useFakeTimers();
+    vi.mocked(readAuthoringJob)
+      .mockReset()
+      .mockRejectedValue(new Error("Offline"));
+    try {
+      const polling = followAuthoringJob(scope, "failed-read");
+      await vi.runAllTimersAsync();
+      await polling;
+      expect(readAuthoringJob).toHaveBeenCalledTimes(4);
+      expect(
+        useEvalGeneration.getState().suites[evalSuiteKey(scope)],
+      ).toMatchObject({
+        status: "error",
+        error: "Offline",
+        authoringJobId: "failed-read",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

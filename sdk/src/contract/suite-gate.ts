@@ -66,6 +66,7 @@ import type {
   ScorerRole,
 } from "./types.js";
 import { evalExecutionVariantSchema } from "./verdict-policy.js";
+import { isRequiredRole } from "../predicates/policy.js";
 
 /** Report / evaluator version, as a literal. Absence is not v1. */
 export const SUITE_GATE_SCHEMA_VERSION = 1;
@@ -806,7 +807,7 @@ function evaluateNoGatingScoreErrors(
   const errored = subject.scores.filter(
     (score) =>
       score.status === "error" &&
-      byHash.get(score.definitionHash)?.role === "gating"
+      isRequiredRole(byHash.get(score.definitionHash)?.role)
   );
   return {
     condition,
@@ -829,7 +830,7 @@ type GatingIdentity = {
 
 function gatingIdentities(run: SuiteGateRunEvidenceV1): GatingIdentity[] {
   const fromDefinitions = definitionsOf(run)
-    .filter((definition) => definition.role === "gating")
+    .filter((definition) => isRequiredRole(definition.role))
     .map((definition) => ({
       scorerId: definition.scorerId,
       definitionHash: definitionHash(definition),
@@ -838,7 +839,7 @@ function gatingIdentities(run: SuiteGateRunEvidenceV1): GatingIdentity[] {
     }));
   if (fromDefinitions.length > 0) return fromDefinitions;
   return summariesFor(run)
-    .filter((summary) => summary.role === "gating")
+    .filter((summary) => isRequiredRole(summary.role))
     .map((summary) => ({
       scorerId: summary.scorerId,
       definitionHash: summary.definitionHash,

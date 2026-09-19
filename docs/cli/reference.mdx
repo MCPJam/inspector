@@ -1060,7 +1060,7 @@ With `--format json`, a single machine-readable startup object (public URL, serv
 
 ## `readiness` hosted commands
 
-Grade a saved server against a publisher's directory as the platform reaches it — through the saved server row and the authorize exchange. This is the hosted half of `readiness check`: it answers a different question (what the platform sees, not what your machine sees), can optionally spend credits for model observations, and leaves a persistent record.
+Grade a saved server against a publisher's directory as the platform reaches it — through the saved server row and the authorize exchange. This is the hosted half of `readiness check`: it answers a different question (what the platform sees, not what your machine sees), can optionally run a model for experience observations (included with MCPJam — no credits are consumed), and leaves a persistent record.
 
 All `readiness` hosted commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
 
@@ -1202,8 +1202,8 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--client <id-or-name...>` | No | Attached client(s) to run, so the run is stamped with that client's config. Several values start one **paid run each**. |
 | `--host <id-or-name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. Not the host-compat catalog id `mcpjam compat --host` / `mcpjam tools --host` take — see [Two different `--host` flags](#two-different---host-flags). |
 | `--all-targets` | No | Run **every** attached environment (or, if none, every attached host) — one **paid run per target** |
-| `--repetitions <n>` | No | Run each case this many times (1-10), for this run only |
-| `--iterations <n>` | No | **Deprecated** alias for `--repetitions`. Passing both is an error. |
+| `--iterations <n>` | No | Run each case this many times (1-10), for this run only |
+| `--repetitions <n>` | No | **Legacy** spelling of `--iterations`. Passing both is an error. |
 | `--case <id-or-title...>` | No | Run only these cases instead of the whole suite |
 | `--exclude-skills` | No | Run the "without skills" A/B arm: nothing is pinned, and the run is labelled as excluded |
 | `--refresh-snapshot` | No | **Persists a new host-config snapshot on the suite** (see below). Single-target runs only. |
@@ -1212,7 +1212,7 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
 | `--wait` | No | Wait for every launched run to reach a terminal status |
-| `--wait-timeout <ms>` | No | Maximum wait time (default 600000); requires `--wait` |
+| `--wait-timeout <ms>` | No | Maximum wait time (default 2100000); requires `--wait` |
 | `--reporter <json-summary\|junit-xml\|html>` | No | Write the completed structured report to stdout; requires `--wait`. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
 | `--out <path>` | No | Atomically write the completed report to a file; defaults to `json-summary`, or uses `--reporter` when present; requires `--wait` |
 | `--compose-client <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Ephemeral by default** — pass `--save-targets` to attach it to the suite. |
@@ -1332,8 +1332,19 @@ project update that suite rather than creating a second one. A UI-authored
 suite has no declared id, so no file can claim it. Resolve is never by name.
 
 File `passThreshold` is a fraction; the hosted suite grades on a percent. The
-conversion refuses rather than approximates. File `repetitions` above **10**
-are refused by name (`REPETITIONS_CAP`) and are not clamped.
+conversion refuses rather than approximates. A file count above **10**
+(`repetitions` in a `schemaVersion: "1"` file, `iterations` in `"2"`) is
+refused by name (`REPETITIONS_CAP`) and is not clamped.
+
+**Which vocabulary the sync speaks is the deployment's call.** Before writing
+anything, the CLI reads `GET /capabilities` once. A deployment that advertises
+`vocabulary.version: 2` gets every request with `x-mcpjam-eval-vocabulary: 2`
+and case bodies spelled canonically — `iterations` (the exact count),
+`legacyIterations` (the legacy floor, the same number) and `assertions` —
+instead of `repetitions` / `iterations` / `checks`. A deployment without the
+capability block, or without the capabilities route at all, is spoken to in
+vocabulary 1, byte-for-byte as before. Nothing in the file changes either way:
+the dialect of the file and the vocabulary of the wire are independent.
 
 Cases are synced in batches of at most 100 (`create_eval_cases`). Every
 declared case is created or updated, including `disabled: true` rows. A case
@@ -1355,7 +1366,8 @@ refusal). Hosted platform-authored suites do not currently have a backend
 tool-policy field or enforcement path, so the CLI does not upload a suite that
 would claim those guarantees. When supported by an eval runner, `toolPolicy`
 is enforced at execution time with denied tools kept visible but blocked;
-server annotations are advisory and **UNTRUSTED**. File `defaults.repetitions` is
+server annotations are advisory and **UNTRUSTED**. The file's default count
+(`defaults.repetitions`, or `defaults.iterations` in `schemaVersion: "2"`) is
 inherited per case and is not uploaded as a suite `minIterations` floor.
 Authored `defaults.systemPrompt` and `defaults.temperature` are uploaded as
 execution defaults; omitted fields stay omitted so the platform applies its
@@ -1370,7 +1382,7 @@ synchronization is unaffected and always runs.
 
 Without `--idempotency-key`, the CLI derives one from the file's SHA-256,
 declared suite id, project, target, and every run-affecting knob
-(`--repetitions`, `--case`, `--min-pass-rate`, `--exclude-skills`,
+(`--iterations`, `--case`, `--min-pass-rate`, `--exclude-skills`,
 `--match-options`, `--environment` / `--host` / `--server` / `--all-targets`,
 `--refresh-snapshot`, compose flags, and the normalized
 `--allow-approximated` set with its `--approval-reason`). Repeating the same
@@ -1519,6 +1531,17 @@ per-case grades. `status: null` means that judge was never requested for the
 run — different from a judge that ran and graded nothing. In `--format human`,
 each judge that actually graded gets a one-line summary.
 
+Goal completion reports per-iteration `status`: `scored`, `error`, or `skipped`.
+Legacy scored rows are returned as `scored`. A failed job retains completed
+measurements alongside any unscored error or skipped rows; job failure does not
+mean every trial failed its goal. Use each row's `status` before interpreting
+`score` and `passed`, and join rows to trials using `iterationId`.
+Pending jobs return an empty `cases` array and may expose `progress`
+(`total`, `completed`, `errors`, `skipped`). Terminal jobs may include template
+version/hash; case rows may also include `gradingKey`, `errorCode`,
+`evidenceHash`, and `evidenceManifest` for provenance. Older results can omit
+these fields. Groundedness retains its existing per-case grade shape.
+
 The failure diagnostics inside `decisionSummary` are **paginated**, and a page
 that is not the whole set says so: `diagnostics.complete` is `false` and
 `diagnostics.nextCursor` carries the next page. Without `--diagnostics-cursor`
@@ -1558,6 +1581,28 @@ for the suite does not reach a run that was already recorded — `--enable` is
 what grades it, and it changes nothing beyond that run. Passing neither
 `--judge-model` nor `--judge-threshold` grades with the suite's own config,
 clearing any override a previous request left on the run.
+
+### `cloud eval judge-backtest`
+
+Preview a draft judge rubric against recorded evidence. **Spends your organization's model budget.** Leaves the run verdict unchanged. Supports paginated continuation for large runs.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Terminal eval run ID (from `eval run`) |
+| `--json <request>` | Yes | JSON or `@file` with `rubric` and optional `continuation`. Set `rubric` to an object with `instructions` and/or `criteria`, or `null` for objective-only grading |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+The response includes a `cases` array with per-case draft scores, a `summary` with `graded`, `flips`, and `storedMissing` counts, and pagination fields (`cursor`, `sourceHash`, `reservationId`, `isDone`). When `isDone` is `false`, pass the returned `cursor`, `sourceHash`, and `reservationId` back in `continuation` with the unchanged rubric to grade the next page. Completed page retries return cached results.
+
+```bash
+# First page
+mcpjam cloud eval judge-backtest --run run_123 \
+  --json '{"rubric":{"instructions":"Check every tool result"}}'
+
+# Continue with the next page
+mcpjam cloud eval judge-backtest --run run_123 \
+  --json '{"rubric":{"instructions":"Check every tool result"},"continuation":{"cursor":1,"sourceHash":"<hash>","reservationId":"<id>"}}'
+```
 
 ### `cloud eval stage-analytics`
 
@@ -1630,19 +1675,19 @@ run before evaluating it.
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 | `--min-pass-rate-percent <0-100>` | No | Minimum share of iterations that must pass |
-| `--no-gating-score-errors` | No | Fail if any gating scorer errored |
+| `--no-gating-score-errors` | No | Fail if any required scorer errored |
 | `--min-scorer-pass-rate <scorerId=percent>` | No | Minimum pass rate for one scorer; repeatable |
 | `--min-mean-score <scorerId=0..1>` | No | Minimum mean score for one scorer; repeatable |
 | `--baseline <runId>` | No | Baseline run ID to gate a regression delta against, in addition to any threshold flags above. Mutually exclusive with `--baseline-sha` |
 | `--baseline-sha <sha>` | No | Baseline **source commit SHA**, resolved server-side to the completed run in this suite recorded against it. Mutually exclusive with `--baseline` |
 | `--min-sample-size <n>` | No | Iterations required on **each** side before a pass-rate regression is decidable (default 5); requires `--baseline` or `--baseline-sha` |
 | `--min-effect-size-percent <0-100>` | No | Smallest pass-rate drop worth failing on, as a percentage (default 1); requires `--baseline` or `--baseline-sha` |
-| `--gate-deterministic-regressions` | No | Fail if a deterministic gating scorer flipped from passed to failed; requires `--baseline` or `--baseline-sha` |
+| `--gate-deterministic-regressions` | No | Fail if a deterministic required scorer flipped from passed to failed; requires `--baseline` or `--baseline-sha` |
 | `--max-p95-latency-increase-ms <ms>` | No | Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires `--baseline` or `--baseline-sha` |
 | `--max-cost-usd <usd>` | No | Fail if the run's MCPJam-billed cost exceeded this many dollars. Accepts decimals (`0.05`) |
 | `--max-cost-increase-percent <percent>` | No | Fail if cost rose by more than this percentage of the baseline's; requires `--baseline` or `--baseline-sha`. Values above 100 are allowed — a run costing three times its baseline is a 200% increase |
 | `--wait` | No | Poll until the run reaches a terminal status |
-| `--wait-timeout <ms>` | No | Maximum wait time (default 600000) |
+| `--wait-timeout <ms>` | No | Maximum wait time (default 2100000) |
 | `--reporter <json-summary\|junit-xml\|html>` | No | Write the structured eval and gate report to stdout. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
 | `--out <path>` | No | Atomically write the report to a file; defaults to `json-summary`, or uses `--reporter` when present |
 
@@ -2020,9 +2065,19 @@ Write a hosted eval suite to a local suite file.
 | `--project <id-or-name>` | No | Project the suite belongs to (defaults to the most recently updated project) |
 | `--out <path>` | No | Where to write (default `.mcpjam/evals/<suite-id>.yaml`) |
 | `--force` | No | Replace an existing file at the output path |
+| `--schema-version <1\|2>` | No | Suite-file dialect to write. `1` (the default) spells the count `repetitions` and the rules `checks`; `2` spells them `iterations` and `assertions`. Both dialects load. |
 
 The default path uses the suite's **id**, not its display name: an id is stable
 and path-safe, so a rename does not leave a second file behind.
+
+Like `eval run --file`, export reads `GET /capabilities` first and fetches the
+cases in the vocabulary the deployment advertises; the file it writes is the
+same either way. `--schema-version` chooses the file's dialect, the deployment
+chooses the wire's vocabulary, and neither decides the other.
+
+The dialect is the author's choice and is never inferred: a file has no
+handshake with whatever will read it later, so `eval export` keeps writing
+`schemaVersion: "1"` until you ask for `2`.
 
 **Fail-closed.** A suite file cannot express everything a hosted suite can, and
 this command refuses rather than writing a file that describes a different test
@@ -2080,14 +2135,48 @@ Edit an eval suite's settings (only the flags you pass change).
 | `--model <id>` | No | Execution model ID |
 | `--system-prompt <text>` | No | Execution system prompt |
 | `--temperature <n>` | No | Execution temperature |
-| `--min-accuracy <pct>` | No | Minimum accuracy, 0–100 |
-| `--min-iterations <1-10\|off>` | No | Floor on per-case iterations — every case runs at least this many times. `off` removes the floor |
+| `--min-accuracy <pct>` | No | Suite accuracy threshold: one percentage, 0–100, over the whole run. Mutually exclusive with `--pass-threshold` |
+| `--pass-threshold <0-1>` | No | Pass threshold as a fraction, 0–1 (`0.9`, not `90`), preserving the suite’s criterion; suite-wide suites write a percentage. Mutually exclusive with `--min-accuracy` |
+| `--min-iterations <1-10\|off>` | No | Minimum iterations per case: a floor that RAISES a case's own count — every case runs at least this many times, and a case configured for more keeps its count. `off` removes the floor. Mutually exclusive with `--iterations` |
+| `--iterations <n>` | No | Iterations per case: the suite DEFAULT, 1–100, which a case can override. Mutually exclusive with `--min-iterations` |
 | `--tool-call-order <any\|in-order\|exact>` | No | Tool call order |
 | `--arguments <ignore\|partial\|exact>` | No | Argument matching |
 | `--extra-tool-calls <unlimited\|N>` | No | Allowed extra tool calls |
 | `--judge <on\|off>` | No | Turn LLM-as-judge grading on/off. `on` both enables the judge and sets it to grade every run as it completes; `off` stops both |
 | `--judge-model <id>` | No | Judge model ID |
 | `--judge-threshold <0-1>` | No | Judge pass threshold, 0–1 (a case passes when its score is at or above it) |
+
+#### Which grading flags a suite takes
+
+A suite has ONE pass criterion and ONE iteration rule, and
+`mcpjam cloud eval get` reports which under `settings.policy`:
+
+| `settings.policy` | Criterion flag | Iteration flag |
+| --- | --- | --- |
+| `legacy` | `--min-accuracy <pct>` or `--pass-threshold <0-1>` | `--min-iterations <1-10\|off>` |
+| `v2` | `--pass-threshold <0-1>` | `--iterations <n>` |
+
+The two criteria are **not two units of one number.** A suite-wide accuracy
+threshold asks whether one rate across the whole run reaches a percentage; a
+per-case pass rate asks whether each case passes a fraction of its own
+iterations. Ten cases, nine always passing and one always failing, passes a 90%
+suite-wide bar and fails a 0.9 per-case one — so dividing a percentage by 100
+moves the bar for every suite with more than one case.
+
+The iteration flags differ the same way: `--min-iterations` RAISES a case's own
+count and `--iterations` REPLACES it, so a case configured for 7 runs 7 times
+under a floor of 3 and 3 times under a default of 3.
+
+Passing both flags of a pair is a usage error. The CLI and MCP read the suite's
+criterion first and refuse iteration fields that the suite does not use.
+The CLI's `--pass-threshold 0.9` preserves the criterion: on a suite-wide suite
+it writes `settings.minimumAccuracy: 90`; on a per-case suite it writes
+`settings.passThreshold: 0.9`. Grading flag edits carry the revision read from
+the suite, and unchanged edits skip the write.
+
+Changing the criterion is not offered by the app, CLI or MCP today. It requires
+a direct API `PATCH` with both `settings.repetitions` and `settings.passThreshold`.
+An explicit scope-change operation is a follow-up.
 
 ### `cloud eval revisions`
 
@@ -2258,8 +2347,8 @@ Run a single case as a persisted, fully-queryable run — inspect it with `eval 
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
 | `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
 | `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
-| `--repetitions <n>` | No | Run the case this many times (1-10) |
-| `--iterations <n>` | No | **Deprecated** alias for `--repetitions`. Passing both is an error. |
+| `--iterations <n>` | No | Run the case this many times (1-10) |
+| `--repetitions <n>` | No | **Legacy** spelling of `--iterations`. Passing both is an error. |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
 
 Every `--compose-*` flag behaves exactly as it does for `eval run` — see
@@ -2304,7 +2393,7 @@ Permanently delete a test case.
 
 #### `cloud eval cases generate`
 
-AI-generate test cases from the suite's tools (spends credits).
+AI-generate test cases from the suite's tools. Included with MCPJam; no customer credits consumed; it counts against the organization's daily generation quota.
 
 | Flag | Required | Description |
 |------|----------|-------------|
