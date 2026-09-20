@@ -468,7 +468,10 @@ export function scorerRowLabel(
   const standardName =
     STANDARD_CHECK_NAME_BY_KIND[kind as StandardCheckPredicateKind];
   if (standardName) return standardName;
-  return formatCriterion({ predicate });
+  // An authored check outside the catalog is titled by its purpose ("Check
+  // what the answer says"); the configured rule stays its expectation, so the
+  // title and the EXPECTED line on the run page never read the same.
+  return purposeOf(predicate);
 }
 
 /**
@@ -985,10 +988,10 @@ export function removeCaseScorer(
  * The configured expectation, without running the evaluator again.
  *
  * The judge's expectation is the case's own Expected Outcome, because that
- * string IS what the judge was asked to decide. The generic sentence is the
- * fallback for a case that configured no outcome and is graded by suite
- * criteria alone — there, naming the rubric is the most a reader can be told
- * without the suite in hand.
+ * string IS what the judge was asked to decide. A case that configured no
+ * outcome is graded against something else (its route, the suite's criteria,
+ * or the request itself), and the fallback names which, in the same words
+ * the authoring pane uses for the same fact.
  */
 export function expectationOf(row: ScorecardRow): string {
   if (row.predicate) return formatCriterion({ predicate: row.predicate });
@@ -996,7 +999,10 @@ export function expectationOf(row: ScorecardRow): string {
   if (row.widgetAssertion) return purposeOf(row.widgetAssertion);
   if (row.provenance === "judge") {
     const goal = row.judge?.goal.trim();
-    return goal || "Satisfy the task according to the configured judge rubric.";
+    if (goal) return goal;
+    return row.judge
+      ? RUBRIC_SOURCE_HINT[row.judge.rubricSource]
+      : "Satisfy the task according to the configured judge rubric.";
   }
   return row.kindLabel;
 }
