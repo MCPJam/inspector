@@ -439,6 +439,15 @@ describe("describeError — invalid response format copy", () => {
     expect(out.nextSteps.join(" ")).toMatch(/Traffic Log/);
     expect(out.nextSteps.join(" ").toLowerCase()).not.toMatch(/retry/);
   });
+
+  it("does not treat a buried phrase as invalid response format", () => {
+    const out = describeError(
+      makeError("Internal error: logs mention invalid response format", {
+        code: -32603,
+      }),
+    );
+    expect(out.slug).toBe("jsonrpc/internal_error");
+  });
 });
 
 describe("describeError — fallback shapes (>= 8)", () => {

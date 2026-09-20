@@ -237,8 +237,15 @@ function resolveDashThirtyTwoThousandOne(message: string): string {
  * "Invalid response format" when a handler return value fails the result
  * schema. Disambiguate by message, same as the `-32001` overload above.
  */
+const INVALID_RESPONSE_FORMAT =
+  /^(?:MCP error -32603:\s*)?invalid response format$/i;
+
+function isInvalidResponseFormat(message: string): boolean {
+  return INVALID_RESPONSE_FORMAT.test(message.trim());
+}
+
 function resolveInternalError(message: string): string {
-  if (/invalid\s+response\s+format/i.test(message)) {
+  if (isInvalidResponseFormat(message)) {
     return "jsonrpc/invalid_response_format";
   }
   return "jsonrpc/internal_error";
@@ -309,7 +316,7 @@ function messageSlug(message: string): string | undefined {
   if (/Invalid tool name/i.test(message)) {
     return "provider/invalid_tool_name";
   }
-  if (/invalid\s+response\s+format/i.test(message)) {
+  if (isInvalidResponseFormat(message)) {
     return "jsonrpc/invalid_response_format";
   }
   return undefined;

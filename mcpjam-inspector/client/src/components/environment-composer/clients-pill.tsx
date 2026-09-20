@@ -63,6 +63,11 @@ export function ClientsPill({
 
   const single = max === 1;
   const selected = value;
+  const canSelectAnother =
+    single ||
+    (selected.length < max &&
+      (budget == null ||
+        (selected.length + 1) * budget.choiceCount <= budget.maxTargets));
   const selectedHosts = selected.map((hostId) => ({
     hostId,
     host: hosts.find((item) => item.hostId === hostId),
@@ -87,7 +92,7 @@ export function ClientsPill({
       return;
     }
     if (checked) {
-      if (selected.includes(hostId) || selected.length >= max) return;
+      if (selected.includes(hostId) || !canSelectAnother) return;
       onChange([...selected, hostId]);
     } else {
       onChange(selected.filter((id) => id !== hostId));
@@ -171,10 +176,7 @@ export function ClientsPill({
                 !checked &&
                 budget != null &&
                 (selected.length + 1) * budget.choiceCount > budget.maxTargets;
-              const capBlocked =
-                !single &&
-                !checked &&
-                (productBlocked || (budget == null && selected.length >= max));
+              const capBlocked = !checked && !canSelectAnother;
               return (
                 <Label
                   key={host.hostId}
@@ -231,7 +233,12 @@ export function ClientsPill({
         onClose={() => setShowCreate(false)}
         projectId={projectId}
         onCreated={(hostId) => {
-          onChange(single ? [hostId] : [...selected, hostId].slice(0, max));
+          if (single) {
+            onChange([hostId]);
+            return;
+          }
+          if (!canSelectAnother || selected.includes(hostId)) return;
+          onChange([...selected, hostId]);
         }}
       />
     </>
