@@ -489,6 +489,9 @@ export function useConformanceRun({
       };
 
       const handleMessage = (event: MessageEvent) => {
+        // The callback page posts to window.location.origin, so anything from
+        // elsewhere is a foreign window injecting an authorization code.
+        if (event.origin !== window.location.origin) return;
         if (event.data?.type !== "OAUTH_CALLBACK" || !event.data?.code) return;
         onCode(event.data);
       };
