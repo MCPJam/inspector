@@ -19,6 +19,7 @@ export type MCPJamLimitIntent = "guest" | "topup";
 export type MCPJamLimitSurface = "chat" | "swarm" | "scenario";
 
 export interface MCPJamLimitNotifyInput {
+  runId?: string;
   limitKind?: MCPJamLimitKind;
   organizationId?: string;
   surface?: MCPJamLimitSurface;
@@ -26,6 +27,7 @@ export interface MCPJamLimitNotifyInput {
 }
 
 interface MCPJamLimitDialogState {
+  notifiedRunIds: ReadonlySet<string>;
   isOpen: boolean;
   hasPendingLimit: boolean;
   outOfCreditsHit: boolean;
@@ -56,6 +58,7 @@ const intentForAuth = (
 
 export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
   (set) => ({
+    notifiedRunIds: new Set<string>(),
     isOpen: false,
     hasPendingLimit: false,
     outOfCreditsHit: false,
@@ -68,8 +71,13 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
     pendingInput: null,
     notifyLimitHit: (input = {}) =>
       set((state) => {
+        if (input.runId && state.notifiedRunIds.has(input.runId)) return state;
+        const notifiedRunIds = input.runId
+          ? new Set([...state.notifiedRunIds, input.runId])
+          : state.notifiedRunIds;
         if (state.authStatus === "loading") {
           return {
+            notifiedRunIds,
             hasPendingLimit: true,
             outOfCreditsHit: true,
             outOfCreditsOrganizationId: input.organizationId ?? null,
@@ -79,12 +87,14 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
         const intent = intentForAuth(state.authStatus, input);
         if (!intent) {
           return {
+            notifiedRunIds,
             hasPendingLimit: false,
             outOfCreditsHit: true,
             outOfCreditsOrganizationId: input.organizationId ?? null,
           };
         }
         return {
+          notifiedRunIds,
           hasPendingLimit: false,
           outOfCreditsHit: true,
           outOfCreditsOrganizationId: input.organizationId ?? null,

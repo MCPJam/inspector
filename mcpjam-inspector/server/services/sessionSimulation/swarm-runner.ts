@@ -5,6 +5,7 @@ import {
 import type { SpendRefusal } from "./admission-retry.js";
 import { prepareTargetGrounding } from "./target-grounding";
 import { SwarmSetupError } from "./swarm-setup-turn";
+import { isCreditExhaustion } from "../../../shared/credit-exhaustion.js";
 import { composeAbortSignals } from "@mcpjam/sdk";
 import { logger } from "../../utils/logger.js";
 import { withDeadline } from "../../utils/run-supervisor/deadline.js";
@@ -405,6 +406,7 @@ export function classifyRateLimit(
   if (isTransientSpendRefusal(refusal.code, refusal.refusalReason))
     return "transient_capacity";
   if (!message) return "provider_rate_limit";
+  if (isCreditExhaustion(message)) return "org_spend_cap";
   if (isAccountLimit(message)) return "org_spend_cap";
   if (/\bspend\b|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
     return "org_spend_cap";
@@ -1478,7 +1480,8 @@ async function runJourneyFanOut(
           const accountLimitFailure =
             outcome === "failed" &&
             !abortedBySpendCap &&
-            isAccountLimit(errorMessage, errorReason);
+            (isAccountLimit(errorMessage, errorReason) ||
+              isCreditExhaustion({ message: errorMessage, code: errorReason }));
           if (outcome === "rate_limited" || accountLimitFailure) {
             const cause = classifyRateLimit(errorMessage, errorRefusal);
             if (cause === "org_spend_cap") {

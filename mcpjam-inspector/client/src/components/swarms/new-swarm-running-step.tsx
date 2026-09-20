@@ -1,3 +1,4 @@
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 /**
  * Running step of the New swarm create flow.
  *
@@ -346,6 +347,16 @@ function RunLiveBridge({
     { journeyRunId: runId } as any,
     { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, 32) },
   );
+  useEffect(() => {
+    for (const attempt of run?.attempts ?? []) {
+      notifyMCPJamLimitError({
+        runId,
+        code: attempt.errorCode ?? undefined,
+        message: attempt.errorMessage,
+        surface: "swarm",
+      });
+    }
+  }, [runId, run?.attempts]);
   const runStatus = run?.status ?? "running";
   // Convex supplies the whole matrix's progress over its shared connection.
   // Only the selected trace needs SSE: one stream per row exhausts the

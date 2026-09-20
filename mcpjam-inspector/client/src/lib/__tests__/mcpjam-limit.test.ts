@@ -13,6 +13,7 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 beforeEach(() => {
   useFrontierSignInDialogStore.getState().close();
   useMCPJamLimitDialogStore.setState({
+    notifiedRunIds: new Set<string>(),
     authStatus: "loading",
     hasPendingLimit: false,
     outOfCreditsHit: false,
@@ -519,3 +520,53 @@ it.each(["platform_free_budget_exhausted", "account_suspended"])(
     ).toBe(false);
   },
 );
+
+describe("credit exhaustion during a run", () => {
+  it.each([
+    { code: "org_rate_limit" },
+    { code: "billing_limit_reached" },
+    { message: "Daily credit limit reached." },
+    { message: "Monthly MCPJam credit limit reached." },
+    { message: "Credits exhausted" },
+    { message: "Your organization's credit limit was reached." },
+    { details: { failure: JSON.stringify({ code: "billing_limit_reached" }) } },
+  ])("recognizes credit exhaustion: %j", (input) => {
+    expect(notifyMCPJamLimitError(input)).toBe(true);
+  });
+
+  it.each([
+    { message: "Provider rate limit exceeded (429)" },
+    { code: "user_rate_limit", details: { limitKind: "concurrency" } },
+    {
+      code: "billing_limit_reached",
+      details: { code: "spend_budget_reached" },
+    },
+    {
+      message:
+        'Credits exhausted: {"code":"ORGANIZATION_SPEND_BUDGET_REACHED"}',
+    },
+    { code: "wallet_locked", message: "Credits exhausted" },
+    {
+      code: "billing_limit_reached",
+      details: { gateKey: "maxEvalIterationsPerMonth" },
+    },
+  ])(
+    "does not turn a throttle or spend cap into a credit wall: %j",
+    (input) => {
+      expect(notifyMCPJamLimitError(input)).toBe(false);
+      expect(useMCPJamLimitDialogStore.getState().hasPendingLimit).toBe(false);
+    },
+  );
+
+  it("opens once per run even after dismissal, and opens for a new run", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const input = { runId: "credit-run-1", code: "billing_limit_reached" };
+    expect(notifyMCPJamLimitError(input)).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+    useMCPJamLimitDialogStore.getState().close();
+    expect(notifyMCPJamLimitError(input)).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+    notifyMCPJamLimitError({ ...input, runId: "credit-run-2" });
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+});

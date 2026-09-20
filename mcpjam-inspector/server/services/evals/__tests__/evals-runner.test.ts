@@ -195,10 +195,75 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     delete process.env.CONVEX_HTTP_URL;
   });
 
-  async function runQuickTestCase(
-    compareRunId?: string,
-    intent?: string,
-  ) {
+  it.each(["Credits exhausted", "Daily credit limit reached."])(
+    "stops remaining iterations after %s and preserves completed results",
+    async (message) => {
+      const success = streamTextMock.getMockImplementation()!;
+      streamTextMock
+        .mockImplementationOnce(success)
+        .mockImplementationOnce(() => {
+          throw new Error(message);
+        });
+      const config = buildQuickRunConfig();
+      config.config.tests[0].runs = 4;
+      let nextId = 0;
+      convexClient.mutation.mockImplementation(async (name) =>
+        name === "testSuites:recordIterationStartWithoutRun"
+          ? { iterationId: `iteration-${++nextId}` }
+          : { iterationId: "iteration" },
+      );
+      const result = await runEvalSuiteWithAiSdk(config as any);
+      expect(streamTextMock).toHaveBeenCalledTimes(2);
+      expect(result?.quickRunIterationOutcomes).toHaveLength(2);
+      expect(result?.quickRunIterationOutcomes?.[0].evaluation.passed).toBe(
+        true,
+      );
+      expect(result?.quickRunIterationOutcomes?.[1].creditsExhausted).toBe(
+        true,
+      );
+      const skipped = convexClient.action.mock.calls.filter(
+        ([name, args]) =>
+          name === "testSuites:updateTestIteration" &&
+          args.status === "skipped",
+      );
+      expect(skipped).toHaveLength(2);
+      expect(skipped.map(([, args]) => args.iterationId)).toEqual([
+        "iteration-3",
+        "iteration-4",
+      ]);
+    },
+  );
+
+  it("finishes a credit-blocked suite as failed while retaining its completed summary", async () => {
+    const success = streamTextMock.getMockImplementation()!;
+    streamTextMock
+      .mockImplementationOnce(success)
+      .mockImplementationOnce(() => {
+        throw new Error("Credits exhausted");
+      });
+    const config = buildQuickRunConfig();
+    config.config.tests[0].runs = 3;
+    const recorder = {
+      startIteration: vi.fn().mockResolvedValue("iteration"),
+      finishIteration: vi.fn().mockResolvedValue(undefined),
+      finalize: vi.fn().mockResolvedValue(undefined),
+    };
+    await runEvalSuiteWithAiSdk({
+      ...config,
+      runId: "suite-run",
+      recorder,
+    } as any);
+    expect(streamTextMock).toHaveBeenCalledTimes(2);
+    expect(recorder.finishIteration).toHaveBeenCalledTimes(2);
+    expect(recorder.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
+      }),
+    );
+  });
+
+  async function runQuickTestCase(compareRunId?: string, intent?: string) {
     // Use a BYOK-only model id so the runner takes the local generateText
     // path (which the test mocks). gpt-5-mini has a hosted "openai/gpt-5-mini"
     // counterpart and would otherwise route through the backend.

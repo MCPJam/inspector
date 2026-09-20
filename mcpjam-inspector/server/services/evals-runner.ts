@@ -1,4 +1,5 @@
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import { isCreditExhaustion } from "../../shared/credit-exhaustion.js";
 import { EVAL_SANDBOX_CAPACITY_POLICY } from "../utils/run-supervisor/capacity-retry.js";
 import type { TimeoutMetadata } from "../utils/run-supervisor/deadline.js";
 import { isCredentialFreeGithubExecution } from "./github-checks/credential-policy.js";
@@ -717,6 +718,7 @@ export type EvalIterationOutcome = {
   evaluation: EvaluationResult;
   iterationId?: string;
   policyBlockCount?: number;
+  creditsExhausted?: boolean;
 };
 
 /**
@@ -2641,6 +2643,7 @@ const executeTestCase = async (params: {
   abortSignal?: AbortSignal;
   /** Lifecycle abort hook: an iteration timeout aborts the whole run through it. */
   abortRun?: (error: EvalRunStoppedError) => void;
+  creditStop?: { exhausted: boolean };
   compareRunId?: string;
   /** Rewrite-arm marker — see {@link RunEvalSuiteOptions.toolDescriptionOverride}. */
   toolDescriptionOverride?: ToolDescriptionOverrideMarker;
@@ -2741,6 +2744,7 @@ const executeTestCase = async (params: {
   // Run a single iteration under the per-iteration timeout + run-abort guards.
   // Bails immediately if the run was already stopped; on timeout it aborts the
   // whole run (via `abortRun`) and marks the row `timed_out`.
+  const creditStop = params.creditStop ?? { exhausted: false };
   const runSingleIteration = async <T extends EvalIterationOutcome>(
     runner: (
       iterationSignal: AbortSignal,
@@ -2775,14 +2779,21 @@ const executeTestCase = async (params: {
         abortSignal,
       });
 
+    const runAndCheckCredits = async (
+      signal: AbortSignal,
+      deadline: number,
+    ) => {
+      const outcome = await runner(signal, deadline, noteIterationStarted);
+      if (outcome.creditsExhausted) creditStop.exhausted = true;
+      return outcome;
+    };
     if (!isolatedIterationTimeoutEnabled()) {
       // Kill-switch path: the pre-isolation behaviour, kept verbatim for one
       // release. An iteration timeout aborts the WHOLE run and rejects, which
       // is the contract `evals-runner.test.ts` pinned before this change.
       try {
         return await runIterationUnderBudget({
-          run: (signal, deadlineAt) =>
-            runner(signal, deadlineAt, noteIterationStarted),
+          run: runAndCheckCredits,
           runSignal: abortSignal,
           unitTimeoutMs: budgets.unitTimeoutMs,
           graceMs: EVAL_ABORT_GRACE_MS,
@@ -2811,8 +2822,7 @@ const executeTestCase = async (params: {
 
     try {
       return await runIterationUnderBudget({
-        run: (signal, deadlineAt) =>
-          runner(signal, deadlineAt, noteIterationStarted),
+        run: runAndCheckCredits,
         runSignal: abortSignal,
         unitTimeoutMs: budgets.unitTimeoutMs,
         graceMs: EVAL_ABORT_GRACE_MS,
@@ -3019,6 +3029,27 @@ const executeTestCase = async (params: {
   }
 
   for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+    if (creditStop.exhausted) {
+      // Only untouched rows are skipped. Completed evidence remains intact.
+      const iterationId = await findIterationIdForTimeout({
+        convexClient,
+        runId,
+        test,
+        runIndex,
+        precreatedIterationId: precreatedIterationIds[runIndex],
+      });
+      if (iterationId) {
+        await convexClient.action("testSuites:updateTestIteration" as any, {
+          iterationId,
+          status: "skipped",
+          result: "failed",
+          actualToolCalls: [],
+          tokensUsed: 0,
+          error: "Credits exhausted. Remaining work was stopped.",
+        });
+      }
+      continue;
+    }
     const precreatedIterationId = shouldPrecreateIterations
       ? precreatedIterationIds[runIndex]
       : undefined;
@@ -3535,6 +3566,7 @@ export const runEvalSuiteWithAiSdk = async ({
         modelIdentifiers,
       });
     }
+    const creditStop = { exhausted: false };
     const runOne = (test: (typeof tests)[number]) =>
       runTestCase({
         test,
@@ -3556,6 +3588,7 @@ export const runEvalSuiteWithAiSdk = async ({
         runId,
         abortSignal: abortController.signal,
         abortRun,
+        creditStop,
         injectOpenAiCompat,
         hostPolicy: hostExecutionPolicy,
         ...(gradingMode ? { gradingMode } : {}),
@@ -3784,7 +3817,10 @@ export const runEvalSuiteWithAiSdk = async ({
     // Only finalize if we have a recorder (suite runs, not quick runs)
     if (recorder) {
       await recorder.finalize({
-        status: "completed",
+        status: creditStop.exhausted ? "failed" : "completed",
+        ...(creditStop.exhausted
+          ? { notes: "Credits exhausted. Remaining work was stopped." }
+          : {}),
         summary: {
           total: summary.total,
           passed: summary.passed,
@@ -4928,6 +4964,10 @@ const runLocalIteration = async ({
     });
 
     return {
+      creditsExhausted: isCreditExhaustion({
+        message: acc.iterationError,
+        details: acc.iterationErrorDetails,
+      }),
       evaluation,
       iterationId: iterationId ?? undefined,
       ...(toolPolicyGate?.blocks.length
@@ -5175,6 +5215,10 @@ const runLocalIteration = async ({
       finishParams: failParams,
     });
     return {
+      creditsExhausted: isCreditExhaustion({
+        message: errorMessage,
+        details: errorDetails,
+      }),
       evaluation,
       iterationId: iterationId ?? undefined,
       ...(toolPolicyGate?.blocks.length
@@ -5908,6 +5952,7 @@ const runHostedIterationWithBrowser = async (
     );
     failedEvaluation.passed = false;
     return {
+      creditsExhausted: isCreditExhaustion(error),
       evaluation: failedEvaluation,
       iterationId,
       ...(toolPolicyGate?.blocks.length
@@ -6523,6 +6568,10 @@ const runHostedIterationWithBrowser = async (
   });
 
   return {
+    creditsExhausted: isCreditExhaustion({
+      message: iterationError,
+      details: iterationErrorDetails,
+    }),
     evaluation,
     iterationId: iterationId ?? undefined,
     ...(toolPolicyGate?.blocks.length
