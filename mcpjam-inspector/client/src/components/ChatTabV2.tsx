@@ -2441,6 +2441,7 @@ export function ChatTabV2({
                             }
                             canTopUp={canShowTopupCta}
                             canManageCredits={canManageOrgCreditsForActiveOrg}
+                            organizationId={organizationId}
                             onTopUp={handleOpenTopupDialog}
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
@@ -2710,6 +2711,7 @@ export function ChatTabV2({
                               }
                               canTopUp={canShowTopupCta}
                               canManageCredits={canManageOrgCreditsForActiveOrg}
+                            organizationId={organizationId}
                               onTopUp={handleOpenTopupDialog}
                               walletLocked={errorMessage.walletLocked}
                               limitKind={errorMessage.limitKind}
@@ -2857,6 +2859,7 @@ export function ChatTabV2({
                             }
                             canTopUp={canShowTopupCta}
                             canManageCredits={canManageOrgCreditsForActiveOrg}
+                            organizationId={organizationId}
                             onTopUp={handleOpenTopupDialog}
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
@@ -3118,6 +3121,7 @@ export function ChatTabV2({
           chatSessionId={chatSessionId}
           lastUserMessage={pendingResendMessage}
           organizationId={organizationId}
+          organizationName={sortedOrganizations.find((org) => org._id === organizationId)?.name}
           source="chat_banner"
         />
       )}
