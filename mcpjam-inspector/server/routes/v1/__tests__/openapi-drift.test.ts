@@ -240,6 +240,11 @@ const KNOWN_UNDOCUMENTED = new Set([
   // document the pair when the flag comes off.
   "get /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}",
   "post /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}/commit",
+  // Document import rides the same gate: the route answers
+  // FEATURE_NOT_SUPPORTED unless EVAL_AUTHORING_GENERATION_V1_ENABLED is set,
+  // and `docs/README.md` keeps a per-deployment feature out of openapi.json
+  // until the flag comes off. Document it beside `cases/generate` then.
+  "post /projects/{projectId}/eval-suites/{suiteId}/cases/import",
 ]);
 
 /**
@@ -458,7 +463,7 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     // asks the caller for an id the route will never read.
     const shared = spec.components?.parameters ?? {};
     const resolve = (p: { $ref?: string; name?: string; in?: string }) =>
-      p.$ref ? (shared[p.$ref.split("/").pop() ?? ""] ?? {}) : p;
+      p.$ref ? shared[p.$ref.split("/").pop() ?? ""] ?? {} : p;
 
     const problems: string[] = [];
     for (const [path, item] of Object.entries(spec.paths)) {

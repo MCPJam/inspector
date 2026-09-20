@@ -21,6 +21,7 @@ import {
 import {
   useEvalGeneration,
   evalSuiteKey,
+  followAuthoringJob,
 } from "@/lib/mcpjam-agent/eval-workspace";
 import { SuiteRunReview, type SuiteRunReviewProps } from "./suite-run-review";
 import { GenerateCasesDialog } from "./generate-cases-dialog";
@@ -143,6 +144,7 @@ export function SuiteDetailOverview({
   readOnlyConfig = false,
   configLocked = false,
   projectId = null,
+  importJobId = null,
   onGeneratingChange,
 }: {
   suite: EvalSuite;
@@ -197,6 +199,14 @@ export function SuiteDetailOverview({
   configLocked?: boolean;
   /** Threaded from `EvaluateTab`; never resolved in the browser. */
   projectId?: string | null;
+  /**
+   * An authoring job whose drafts this page should open on (`?importJob=`).
+   *
+   * An API import hands its unfinished cases back as a link, which a person
+   * may open in a browser that never ran the import — so the drafts are read
+   * from the job itself rather than from this tab's memory.
+   */
+  importJobId?: string | null;
   /** Retained for callers; verdicts are read in the report, not history rows. */
   decisionSummaryEnabled?: boolean;
   /**
@@ -402,6 +412,13 @@ export function SuiteDetailOverview({
   const importedDrafts =
     generation?.drafts.filter((draft) => draft.markdownImport) ?? [];
   const [importReviewClosed, setImportReviewClosed] = useState(false);
+  useEffect(() => {
+    // Linked-to jobs are followed, not assumed: the poll stages whatever the
+    // job still holds, and committed drafts are already excluded from it, so
+    // the surface opens on exactly the cases that still need a person.
+    if (!projectId || !importJobId) return;
+    void followAuthoringJob({ projectId, suiteId: suite._id }, importJobId);
+  }, [projectId, importJobId, suite._id]);
   const hadImportedDrafts = useRef(importedDrafts.length > 0);
   useEffect(() => {
     // A fresh import reopens the review; leaving it closed would strand the
@@ -676,8 +693,8 @@ export function SuiteDetailOverview({
               {runsLoading
                 ? "Loading runs…"
                 : hasRuns
-                  ? "No runs match these filters."
-                  : "No runs yet."}
+                ? "No runs match these filters."
+                : "No runs yet."}
             </div>
           ) : (
             <div className="@container/run-history overflow-x-auto bg-card">
@@ -911,8 +928,8 @@ function GenerateCasesButton({
   const blocked = isGenerating
     ? "Generating test cases…"
     : !canGenerate
-      ? (disabledReason ?? "Configure suite servers before generating cases.")
-      : null;
+    ? disabledReason ?? "Configure suite servers before generating cases."
+    : null;
 
   const button = (
     <Button
@@ -1007,16 +1024,16 @@ export function SuiteEmptyCasesHero({
               action.id === "describe"
                 ? !onDescribe
                 : action.id === "generate"
-                  ? !onGenerate || !canGenerate || isGenerating
-                  : !onImport;
+                ? !onGenerate || !canGenerate || isGenerating
+                : !onImport;
             const generateTooltip =
               action.id === "generate"
                 ? isGenerating
                   ? "Generating test cases…"
                   : !canGenerate
-                    ? (generateDisabledReason ??
-                      "Configure suite servers before generating cases.")
-                    : null
+                  ? generateDisabledReason ??
+                    "Configure suite servers before generating cases."
+                  : null
                 : null;
             const button = (
               <button

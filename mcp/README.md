@@ -79,6 +79,7 @@ so results respect the caller's project access.
 | `update_eval_case` | Edit an eval test case. | — |
 | `delete_eval_case` | Permanently delete one test case from an eval suite. | — |
 | `generate_eval_cases` | AI-generate test cases from the suite's server tools and persist them into the suite. | — |
+| `import_eval_cases` | Turn a markdown, JSON or CSV document into runnable test cases with MCPJam's AI and persist them into the suite. Costs customer credits. | — |
 | `get_eval_run` | Get the status, pass/fail result, and summary counts of an eval run. | ✅ |
 | `get_eval_run_stage_analytics` | Get one run's user-value chain funnel: per stage, how many trials it applied to, reached it, were measured there, passed, failed, and were excluded and why — overall and by intent, model and host. Counts only; a zero denominator means not measured, never 0. | — |
 | `get_eval_run_gate` | Get one run's stored suite quality-gate report: passed, failed, non_gateable, or not_configured. `not_configured` is a real report, never an absent route. A deployment that does not serve the route is a different fact — do not report it as no policy. A run waiver never covers this report. | — |
@@ -227,10 +228,12 @@ require the project the run belongs to — `run_eval_suite` and
 `list_eval_suite_runs` return it, so the loop is self-contained.
 The eval authoring/editing tools are writes, annotated `readOnlyHint: false`
 (the deletes and `cancel_eval_run` additionally announce `destructiveHint`) so
-hosts can gate them. Two of them SPEND: `run_eval_suite` and `run_eval_case`
-start LLM iterations against the organization's credits. `generate_eval_cases`
-also calls a model, but that one is on MCPJam — no credits are consumed; it
-counts against the organization's daily generation quota. By default the
+hosts can gate them. Three of them SPEND: `run_eval_suite` and `run_eval_case`
+start LLM iterations against the organization's credits, and
+`import_eval_cases` runs MCPJam's authoring model over the caller's document.
+`generate_eval_cases` also calls a model, but that one is on MCPJam — no
+credits are consumed; it counts against the organization's daily generation
+quota. By default the
 platform connects the suite's saved server selection — the exact set the run
 snapshot references; `servers` is an explicit override. Naming a disabled
 server runs it (the platform authorizes eval runs by project membership; the
@@ -266,7 +269,7 @@ picks. Promote such a row to a named environment in place with
 
 An environment-backed run records the environment and the exact revision it
 executed against, and `get_eval_run` reports that triple — so an agent can
-confirm *which* configuration produced a result long after the environment has
+confirm _which_ configuration produced a result long after the environment has
 been edited. A run that used a saved server selection has no environment to
 record, and reports `environment: null`.
 
@@ -287,7 +290,7 @@ This worker serves MCPJam's own Agent Skills alongside its tools, so an agent th
 
 and implements `skills/list`, `skills/get`, and `resources/read` for every URI in a skill's manifest. `resources/directory/read` is **not** implemented, so `directoryRead` is not declared — the manifest already enumerates every file.
 
-The catalog includes `drive-mcpjam-playground`, which teaches agent-driven session turns, browser commands, handoff, and screenshot evidence. The eval skills are `run-mcpjam-evals`, `mcpjam-eval-import`, `create-mcp-eval`, and `explore-to-sdk-evals`. Among the eval skills, only the first teaches this server's *tools* — the eval-run loop, what bills, and how to triage a failure. The other three teach authoring the eval files and suites those tools then operate on, which is the adjacency that matters for a caller working on evals. `mcp-inspector` is excluded because its subject is interpreting probe / doctor / OAuth / conformance output, and this server exposes none of those tools. `mcpjam-eval-import` is served by both venues deliberately: it spans them, producing a suite the platform tools run.
+The catalog includes `drive-mcpjam-playground`, which teaches agent-driven session turns, browser commands, handoff, and screenshot evidence. The eval skills are `run-mcpjam-evals`, `mcpjam-eval-import`, `create-mcp-eval`, and `explore-to-sdk-evals`. Among the eval skills, only the first teaches this server's _tools_ — the eval-run loop, what bills, and how to triage a failure. The other three teach authoring the eval files and suites those tools then operate on, which is the adjacency that matters for a caller working on evals. `mcp-inspector` is excluded because its subject is interpreting probe / doctor / OAuth / conformance output, and this server exposes none of those tools. `mcpjam-eval-import` is served by both venues deliberately: it spans them, producing a suite the platform tools run.
 
 **The bundle is generated and committed.** `scripts/generate-skills-bundle.mjs` reads the SKILL.md sources, computes SHA-256 digests and byte sizes, and writes `src/generated/SkillsBundle.generated.ts`. After editing a skill, run `npm run bundle:skills -w @mcpjam/mcp` and commit the result; `tests/skillsBundleDrift.test.ts` fails if you forget. The generator is not a build hook because `build:ui` and `deploy` do not build `@mcpjam/sdk`, which it imports on purpose — it must parse frontmatter with the same function a host re-parses with, or we manufacture our own `frontmatter_drift`.
 
@@ -348,11 +351,11 @@ Three things about that are deliberate:
 
 ### AuthKit domains
 
-| Target | `AUTHKIT_DOMAIN` |
-| --- | --- |
-| Production (`wrangler deploy --env production`, hostname `mcp.mcpjam.com`) | `login.mcpjam.com` |
+| Target                                                                       | `AUTHKIT_DOMAIN`                      |
+| ---------------------------------------------------------------------------- | ------------------------------------- |
+| Production (`wrangler deploy --env production`, hostname `mcp.mcpjam.com`)   | `login.mcpjam.com`                    |
 | Staging (`wrangler deploy --env staging`, hostname `mcp-staging.mcpjam.com`) | `dynamic-echo-14-staging.authkit.app` |
-| PR previews (`wrangler deploy --env preview`) and `npm run dev` | `dynamic-echo-14-staging.authkit.app` |
+| PR previews (`wrangler deploy --env preview`) and `npm run dev`              | `dynamic-echo-14-staging.authkit.app` |
 
 Both domains are the MCPJam tenant — the same one the inspector app authenticates against, so a user signed into the inspector can reach this worker.
 
@@ -363,7 +366,7 @@ For developing against the **Home/MCPJam agent** locally, use `npm run dev:local
 `dev:local` worker automatically (see `CONTRIBUTING.md`), so you normally don't
 run it by hand.
 Both tenants must have **Client ID Metadata Document** enabled under
-*Connect → Configuration* in the WorkOS dashboard — it's off by default, and
+_Connect → Configuration_ in the WorkOS dashboard — it's off by default, and
 without it dynamic-client-registration MCP clients will fail to connect.
 
 No secrets are required: JWKS is public, and the Platform API is called with

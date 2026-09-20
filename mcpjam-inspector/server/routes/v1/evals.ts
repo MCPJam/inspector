@@ -88,7 +88,11 @@ import {
   type LaunchContext,
 } from "../../utils/launch-context.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
-import { HOSTED_MODE } from "../../config.js";
+import {
+  HOSTED_MODE,
+  LOCAL_SERVER_ADDR,
+  MCPJAM_HOSTED_ORIGIN,
+} from "../../config.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { SCHEDULED_EVALS_WRITE_ENABLED } from "../../config.js";
 import {
@@ -3529,6 +3533,61 @@ const scheduleSchema = z.strictObject({
   // 400. Only meaningful when enabling — see the handler.
   environmentId: z.string().min(1).optional(),
 });
+
+/**
+ * Duplicate handling for a commit. Empty is the whole body for generation,
+ * which has no policy to express, so every field is optional.
+ */
+const commitAuthoringJobSchema = z
+  .object({
+    duplicatePolicy: z.enum(["block", "warn", "create_anyway"]).optional(),
+    overrideReason: z.string().min(1).optional(),
+  })
+  .strict();
+
+/** File suffix for a document the caller did not name. */
+function extensionForFormat(format: "markdown" | "json" | "csv"): string {
+  return format === "markdown" ? "md" : format;
+}
+
+/** The API's document ceiling. Matches the app's Markdown upload and the backend. */
+const MAX_IMPORT_DOCUMENT_BYTES = 100 * 1024;
+
+const importCasesSchema = z
+  .object({
+    format: z.enum(["markdown", "json", "csv"]),
+    content: z
+      .string()
+      .min(1)
+      .refine(
+        (value) =>
+          new TextEncoder().encode(value).length <= MAX_IMPORT_DOCUMENT_BYTES,
+        "Split the document into files of at most 100 KiB.",
+      ),
+    // Recorded on each case's provenance. Optional because a caller that
+    // pasted a document has no file to name; the route names it by format.
+    fileName: z.string().min(1).max(255).optional(),
+    servers: z.array(z.string().min(1)).optional(),
+    environmentId: z.string().min(1).optional(),
+    caseModels: z
+      .array(
+        z.object({
+          model: z.string().min(1),
+          provider: z.string().min(1).optional(),
+        }),
+      )
+      .optional(),
+    // Applied when the cases are written, not when the job starts — the
+    // authoring step does not know yet which drafts will survive review.
+    duplicatePolicy: z.enum(["block", "warn", "create_anyway"]).optional(),
+    overrideReason: z.string().min(1).optional(),
+    idempotencyKey: z.string().min(1).max(256).optional(),
+  })
+  .strict()
+  .refine((body) => !body.environmentId || (body.servers?.length ?? 0) === 0, {
+    message:
+      "environmentId and servers are mutually exclusive — an environment supplies its own closed server set.",
+  });
 
 const generateCasesSchema = z
   .object({
@@ -9174,106 +9233,26 @@ evals.post(
       (await defaultCaseModels(readClient, suiteId));
 
     if (process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED === "true") {
-      const { manager } = await createAuthorizedManager(
-        callerContextFromHono(c),
+      return startAuthoringJobAndAwait(c, {
         token,
+        readClient,
         projectId,
-        serverIds,
-        WEB_CALL_TIMEOUT_MS,
-        undefined,
-        undefined,
-        { serverNames, xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE) },
-      );
-      let toolSnapshot;
-      try {
-        ({ toolSnapshot } = await captureToolSnapshotForEvalAuthoring(
-          manager,
-          serverIds ?? [],
-        ));
-      } finally {
-        await manager.disconnectAllServers();
-      }
-      const response = await fetch(
-        `${requireConvexHttpUrl()}/eval-authoring/v1/jobs`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-            "x-inspector-service-token":
-              process.env.INSPECTOR_SERVICE_TOKEN ?? "",
+        suiteId,
+        serverIds: serverIds ?? [],
+        serverNames,
+        startFailureMessage: "Could not start generation.",
+        job: {
+          source: "generation",
+          instructions: "Generate cases for the suite's authorized tools.",
+          options: {
+            mode,
+            caseModels,
+            caseMix: body.caseMix,
+            varyUserStyles: body.varyUserStyles,
           },
-          body: JSON.stringify({
-            version: 1,
-            ...(c.get("workosApiKeyId")
-              ? { apiKeyId: c.get("workosApiKeyId") }
-              : {}),
-            source: "generation",
-            projectId,
-            suiteId,
-            requestKey: idempotencyKey ?? randomUUID(),
-            instructions: "Generate cases for the suite's authorized tools.",
-            toolSnapshot,
-            options: {
-              mode,
-              caseModels,
-              caseMix: body.caseMix,
-              varyUserStyles: body.varyUserStyles,
-            },
-          }),
-          signal: AbortSignal.timeout(30_000),
         },
-      );
-      let job;
-      try {
-        job = JSON.parse(await response.text());
-      } catch {
-        throw new WebRouteError(
-          502,
-          ErrorCode.SERVER_UNREACHABLE,
-          "The case authoring service returned an invalid response.",
-        );
-      }
-      if (!response.ok)
-        throw new WebRouteError(
-          response.status as any,
-          ErrorCode.SERVER_UNREACHABLE,
-          job.error ?? "Could not start generation.",
-        );
-      // Compatibility callers may wait briefly; their disconnect never cancels the job.
-      const waitUntil = Date.now() + 15_000;
-      while (!c.req.raw.signal.aborted && Date.now() < waitUntil) {
-        const status = await readClient.query(
-          "evalAuthoringState:status" as any,
-          { jobId: job.jobId },
-        );
-        if (!status)
-          throw new WebRouteError(
-            404,
-            ErrorCode.NOT_FOUND,
-            "Authoring job not found.",
-          );
-        if (status.status !== "pending") {
-          const { convexClient } = createConvexClients(token);
-          return completeGeneratedAuthoringJob(
-            c,
-            convexClient,
-            status,
-            suiteId,
-          );
-        }
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-      return v1Resource(
-        c,
-        {
-          ...job,
-          generationModel: "anthropic/claude-haiku-4.5",
-          created: [],
-          counts: { normal: 0, negative: 0 },
-        },
-        202,
-      );
+        requestKey: idempotencyKey ?? randomUUID(),
+      });
     }
 
     // A caseMix only counts when it requests at least one case (a bucket > 0).
@@ -9632,6 +9611,120 @@ evals.post(
   },
 );
 
+/**
+ * Author eval cases from a document the caller supplies.
+ *
+ * The sibling of `cases/generate`: generation invents cases from the suite's
+ * tools, import reads them out of something a person already wrote. Both run
+ * the same backend authoring job, so both answer the same shape — and both
+ * discover tools first, so the authored cases are grounded in tools the suite
+ * can actually call rather than names the model liked.
+ */
+evals.post(
+  "/projects/:projectId/eval-suites/:suiteId/cases/import",
+  async (c) => {
+    if (process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED !== "true")
+      throw convexFunctionUnavailableError(
+        "Document import is not enabled on this deployment.",
+      );
+    const projectId = c.req.param("projectId");
+    const suiteId = evalIdParam(c, "suiteId", "Eval suite");
+    const body = parseWithSchema(
+      importCasesSchema,
+      await readJsonObjectBody(c),
+    );
+    const token = await getConvexBearerForRequest(c);
+    // Header over body, for the reason `cases/generate` spells out: the header
+    // is the channel unattended clients and the agent adapter control, and a
+    // body key could be shaped by model output. Import spends per call, so a
+    // dropped key means paying to author the same document twice.
+    const idempotencyKey = readAnyIdempotencyKey(c) ?? body.idempotencyKey;
+
+    const readClient = createConvexReadClient(token);
+    let suite: SuiteDoc | null;
+    try {
+      suite = await readClient.query("testSuites:getTestSuite" as any, {
+        suiteId,
+      });
+    } catch (error) {
+      throw translateConvexReadError(error, {
+        scope: "v1.evals",
+        notFoundMessage: "Eval suite not found",
+      });
+    }
+    requireProjectMatch(suite, projectId, "Eval suite");
+
+    const environmentId = await selectSuiteEnvironmentId({
+      convexAuthToken: token,
+      projectId,
+      suite: suite!,
+      requestedEnvironmentId: body.environmentId,
+      hasServerOverride: (body.servers?.length ?? 0) > 0,
+      serverField: "servers",
+    });
+
+    let serverIds = body.servers;
+    let serverNames: string[] | undefined;
+    if (environmentId) {
+      let launch: ResolvedEnvironmentForLaunch;
+      try {
+        launch = await resolveEnvironmentForLaunch(readClient, {
+          projectId,
+          environmentId,
+        });
+      } catch (error) {
+        throw translateEnvironmentResolveError(error);
+      }
+      serverIds = environmentServerIds(launch);
+      serverNames = environmentServerNames(launch);
+    } else if (!serverIds || serverIds.length === 0) {
+      const selection = await fetchSuiteRunServerSelection(
+        token,
+        suiteId,
+        undefined,
+      );
+      serverIds = selection.serverIds;
+      serverNames = selection.serverNames;
+    } else {
+      const resolved = await resolveProjectServerSelectors(
+        readClient,
+        projectId,
+        serverIds,
+      );
+      serverIds = resolved.serverIds;
+      serverNames = resolved.serverNames;
+    }
+
+    const caseModels =
+      body.caseModels?.map(toPersistedModelEntry) ??
+      (await defaultCaseModels(readClient, suiteId));
+
+    return startAuthoringJobAndAwait(c, {
+      token,
+      readClient,
+      projectId,
+      suiteId,
+      serverIds: serverIds ?? [],
+      serverNames,
+      startFailureMessage: "Could not start the import.",
+      job: {
+        source: "import",
+        format: body.format,
+        content: body.content,
+        fileName: body.fileName ?? `import.${extensionForFormat(body.format)}`,
+        options: { caseModels },
+      },
+      requestKey: idempotencyKey ?? randomUUID(),
+      commit: {
+        ...(body.duplicatePolicy
+          ? { duplicatePolicy: body.duplicatePolicy }
+          : {}),
+        ...(body.overrideReason ? { overrideReason: body.overrideReason } : {}),
+      },
+    });
+  },
+);
+
 // Versioned authoring jobs retain full steps. A read never commits drafts.
 evals.get(
   "/projects/:projectId/eval-suites/:suiteId/authoring/:jobId",
@@ -9663,6 +9756,9 @@ evals.post(
       jobId: evalIdParam(c, "jobId", "Authoring job"),
     });
     const suiteId = c.req.param("suiteId");
+    // The app's Markdown flow is deliberately not committable from here: its
+    // drafts exist so a person reviews them, and an API commit would decide on
+    // their behalf. API import uses `source: "import"` and passes.
     if (
       !job ||
       job.projectId !== c.req.param("projectId") ||
@@ -9674,15 +9770,162 @@ evals.post(
         ErrorCode.NOT_FOUND,
         "Generated authoring job not found.",
       );
-    return completeGeneratedAuthoringJob(c, convex, job, suiteId);
+    const commit = parseWithSchema(
+      commitAuthoringJobSchema,
+      await readJsonObjectBody(c),
+    );
+    return completeGeneratedAuthoringJob(c, convex, job, suiteId, commit);
   },
 );
+
+/**
+ * Start a backend authoring job for this suite and answer the caller.
+ *
+ * Both authoring entry points — generation from the suite's tools, import from
+ * a supplied document — do the identical dance: connect the authorized
+ * servers, freeze a tool snapshot, hand the job to the backend, then wait a
+ * short while so a caller that can block gets its cases in the same response.
+ * Only the job payload differs. Keeping the dance in one place is what stops
+ * the two from drifting on the parts that matter: the snapshot is captured
+ * before any spend, the manager is always disconnected, and a caller's
+ * disconnect never cancels a job the backend has already accepted.
+ */
+async function startAuthoringJobAndAwait(
+  c: Context,
+  args: {
+    token: string;
+    readClient: ReturnType<typeof createConvexReadClient>;
+    projectId: string;
+    serverIds: string[];
+    suiteId: string;
+    serverNames: string[] | undefined;
+    requestKey: string;
+    /** Source-specific fields: `source`, the document or instructions, options. */
+    job: Record<string, unknown>;
+    startFailureMessage: string;
+    /** Commit-time duplicate handling, forwarded when the job finishes here. */
+    commit?: { duplicatePolicy?: string; overrideReason?: string };
+  },
+) {
+  const { manager } = await createAuthorizedManager(
+    callerContextFromHono(c),
+    args.token,
+    args.projectId,
+    args.serverIds,
+    WEB_CALL_TIMEOUT_MS,
+    undefined,
+    undefined,
+    {
+      serverNames: args.serverNames,
+      xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+    },
+  );
+  let toolSnapshot;
+  try {
+    ({ toolSnapshot } = await captureToolSnapshotForEvalAuthoring(
+      manager,
+      args.serverIds,
+    ));
+  } finally {
+    await manager.disconnectAllServers();
+  }
+  const response = await fetch(
+    `${requireConvexHttpUrl()}/eval-authoring/v1/jobs`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${args.token}`,
+        "x-inspector-service-token": process.env.INSPECTOR_SERVICE_TOKEN ?? "",
+      },
+      body: JSON.stringify({
+        version: 1,
+        ...(c.get("workosApiKeyId")
+          ? { apiKeyId: c.get("workosApiKeyId") }
+          : {}),
+        projectId: args.projectId,
+        suiteId: args.suiteId,
+        requestKey: args.requestKey,
+        toolSnapshot,
+        ...args.job,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+  let job;
+  try {
+    job = JSON.parse(await response.text());
+  } catch {
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "The case authoring service returned an invalid response.",
+    );
+  }
+  if (!response.ok)
+    throw new WebRouteError(
+      response.status as any,
+      ErrorCode.SERVER_UNREACHABLE,
+      job.error ?? args.startFailureMessage,
+    );
+  // Compatibility callers may wait briefly; their disconnect never cancels the job.
+  const waitUntil = Date.now() + 15_000;
+  while (!c.req.raw.signal.aborted && Date.now() < waitUntil) {
+    const status = await args.readClient.query(
+      "evalAuthoringState:status" as any,
+      { jobId: job.jobId },
+    );
+    if (!status)
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        "Authoring job not found.",
+      );
+    if (status.status !== "pending") {
+      const { convexClient } = createConvexClients(args.token);
+      return completeGeneratedAuthoringJob(
+        c,
+        convexClient,
+        status,
+        args.suiteId,
+        args.commit,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return v1Resource(
+    c,
+    {
+      ...job,
+      generationModel: "anthropic/claude-haiku-4.5",
+      created: [],
+      counts: { normal: 0, negative: 0 },
+    },
+    202,
+  );
+}
+
+/**
+ * Where a person finishes the drafts this commit could not.
+ *
+ * A skipped draft is not lost — it stays on the job, uncommitted. Handing back
+ * a link to it is what lets an agent stop: the alternative is re-sending the
+ * whole document, which re-authors and re-bills every case in it, and a
+ * reworded case is not caught as a duplicate.
+ */
+function authoringReviewUrl(suiteId: string, jobId: string): string {
+  const origin = HOSTED_MODE ? MCPJAM_HOSTED_ORIGIN : LOCAL_SERVER_ADDR;
+  return `${origin}/evaluate/suite/${encodeURIComponent(
+    suiteId,
+  )}?importJob=${encodeURIComponent(jobId)}`;
+}
 
 async function completeGeneratedAuthoringJob(
   c: Context,
   convex: ReturnType<typeof createConvexClients>["convexClient"],
   job: any,
   suiteId: string,
+  commit?: { duplicatePolicy?: string; overrideReason?: string },
 ) {
   if (job.status !== "completed")
     return v1Resource(c, {
@@ -9697,7 +9940,8 @@ async function completeGeneratedAuthoringJob(
     if (!parsed.success) {
       // One unreadable draft is a skip, not a reason to drop the whole commit.
       skipped.push({
-        title: (value as { case?: { title?: string } })?.case?.title ??
+        title:
+          (value as { case?: { title?: string } })?.case?.title ??
           "Untitled case",
         error: "This draft could not be read. Retry the failed cases.",
       });
@@ -9729,7 +9973,16 @@ async function completeGeneratedAuthoringJob(
     );
   }
   const saved = cases.length
-    ? await createEvalCasesInBatches(convex, { suiteId, cases })
+    ? await createEvalCasesInBatches(convex, {
+        suiteId,
+        cases,
+        ...(commit?.duplicatePolicy
+          ? { duplicatePolicy: commit.duplicatePolicy as never }
+          : {}),
+        ...(commit?.overrideReason
+          ? { overrideReason: commit.overrideReason }
+          : {}),
+      })
     : { committed: [], failed: [] };
   const ids = [
     ...new Set<string>([
@@ -9746,6 +9999,13 @@ async function completeGeneratedAuthoringJob(
     read.status === "fulfilled" && read.value ? [read.value] : [],
   );
   const vocabulary = vocabularyOf(c);
+  const unfinished = [
+    ...skipped,
+    ...saved.failed.map((failure) => ({
+      title: failure.title ?? cases[failure.index]?.title ?? "Untitled case",
+      error: failure.message,
+    })),
+  ];
   return v1Resource(c, {
     jobId: job.jobId,
     status: job.status,
@@ -9757,13 +10017,10 @@ async function completeGeneratedAuthoringJob(
       normal: docs.filter((doc) => !doc.isNegativeTest).length,
       negative: docs.filter((doc) => doc.isNegativeTest).length,
     },
-    skipped: [
-      ...skipped,
-      ...saved.failed.map((failure) => ({
-        title: failure.title ?? cases[failure.index]?.title ?? "Untitled case",
-        error: failure.message,
-      })),
-    ],
+    skipped: unfinished,
+    ...(unfinished.length
+      ? { reviewUrl: authoringReviewUrl(suiteId, job.jobId) }
+      : {}),
     ...(job.error ? { error: job.error } : {}),
   });
 }

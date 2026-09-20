@@ -589,9 +589,9 @@ function makeClient(overrides: FixtureOverrides = {}): {
         {
           id: "scenario-1",
           environmentId,
-          name: created ? ((requestBody.name as string) ?? "Checkout") : "Kept",
+          name: created ? (requestBody.name as string) ?? "Checkout" : "Kept",
           mode: created
-            ? ((requestBody.mode as string) ?? "project_members")
+            ? (requestBody.mode as string) ?? "project_members"
             : "anyone_with_link",
           accessVersion: 1,
           link: "https://app.mcpjam.com/s/checkout?t=abc",
@@ -2412,6 +2412,7 @@ describe("operation catalog consistency", () => {
     update_eval_case: { suite: "s", case: "c", title: "renamed" },
     delete_eval_case: { suite: "s", case: "c" },
     generate_eval_cases: { suite: "s", prompt: "q" },
+    import_eval_cases: { suite: "s", format: "markdown", content: "# Case" },
     get_eval_run: { project: "p", runId: "r" },
     get_eval_run_stage_analytics: { project: "p", runId: "r" },
     get_eval_run_gate: { project: "p", runId: "r" },
@@ -2756,6 +2757,7 @@ describe("operation catalog consistency", () => {
       "update_eval_case",
       "delete_eval_case",
       "generate_eval_cases",
+      "import_eval_cases",
       "create_client",
       "update_client",
       "delete_client",

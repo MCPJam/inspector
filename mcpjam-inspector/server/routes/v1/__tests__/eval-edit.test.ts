@@ -674,13 +674,36 @@ describe("v1 eval-edit routes", () => {
   });
 
   it("GET reports the backend automatic policy for an untouched suite", async () => {
-    convexQueryMock.mockImplementation((name: string) => name === "testSuites:getTestSuite"
-      ? Promise.resolve({ ...SUITE_DOC, judgeConfig: undefined, judgePolicy: { contractVersion: 4, automatic: true, effective: { enabled: true, autoRun: true, judgeModel: "openai/gpt-5.4-mini", threshold: 0.7, role: "advisory" } } })
-      : defaultQueryImpl(name));
-    const res = await request("GET", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            judgeConfig: undefined,
+            judgePolicy: {
+              contractVersion: 4,
+              automatic: true,
+              effective: {
+                enabled: true,
+                autoRun: true,
+                judgeModel: "openai/gpt-5.4-mini",
+                threshold: 0.7,
+                role: "advisory",
+              },
+            },
+          })
+        : defaultQueryImpl(name),
+    );
+    const res = await request(
+      "GET",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+    );
     expect(res.status).toBe(200);
-    const body = await res.json() as any;
-    expect(body.settings.judge).toMatchObject({ autoRun: true, automatic: true, contractVersion: 4 });
+    const body = (await res.json()) as any;
+    expect(body.settings.judge).toMatchObject({
+      autoRun: true,
+      automatic: true,
+      contractVersion: 4,
+    });
   });
 
   it("PATCH partial settings merge onto current values (no field reset)", async () => {
@@ -2386,51 +2409,100 @@ describe("v1 eval-edit routes", () => {
     });
   }
 
-  it.each(["", "<html>upstream error</html>"])("maps non-JSON generation replies to 502: %j", async (body) => {
-    const oldFlag = process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
-    const oldUrl = process.env.CONVEX_HTTP_URL;
-    process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = "true";
-    process.env.CONVEX_HTTP_URL = "https://backend.test";
-    const capture = vi.spyOn(authoringHelpers, "captureToolSnapshotForEvalAuthoring").mockResolvedValue({ toolSnapshot: [] } as any);
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(body, { status: 503 }));
-    try {
-      const response = await generateWith({});
-      expect(response.status).toBe(502);
-      expect(await response.json()).toMatchObject({ code: "SERVER_UNREACHABLE" });
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    } finally {
-      capture.mockRestore();
-      fetchMock.mockRestore();
-      if (oldFlag === undefined) delete process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
-      else process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = oldFlag;
-      if (oldUrl === undefined) delete process.env.CONVEX_HTTP_URL;
-      else process.env.CONVEX_HTTP_URL = oldUrl;
-    }
-  });
+  it.each(["", "<html>upstream error</html>"])(
+    "maps non-JSON generation replies to 502: %j",
+    async (body) => {
+      const oldFlag = process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+      const oldUrl = process.env.CONVEX_HTTP_URL;
+      process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = "true";
+      process.env.CONVEX_HTTP_URL = "https://backend.test";
+      const capture = vi
+        .spyOn(authoringHelpers, "captureToolSnapshotForEvalAuthoring")
+        .mockResolvedValue({ toolSnapshot: [] } as any);
+      const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(new Response(body, { status: 503 }));
+      try {
+        const response = await generateWith({});
+        expect(response.status).toBe(502);
+        expect(await response.json()).toMatchObject({
+          code: "SERVER_UNREACHABLE",
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      } finally {
+        capture.mockRestore();
+        fetchMock.mockRestore();
+        if (oldFlag === undefined)
+          delete process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+        else process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = oldFlag;
+        if (oldUrl === undefined) delete process.env.CONVEX_HTTP_URL;
+        else process.env.CONVEX_HTTP_URL = oldUrl;
+      }
+    },
+  );
 
-  it.each(["failed", "cancelled", "pending", "completed"])("returns %s authoring jobs without missing-collection crashes", async (status) => {
-    convexQueryMock.mockImplementation((name: string) => name === "evalAuthoringState:status"
-      ? Promise.resolve({ jobId: "job", projectId: "p1", suiteId: "s1", source: "generation", status, error: "Stopped" }) : defaultQueryImpl(name));
-    const response = await request("POST", "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit", {});
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ status, error: "Stopped" });
-    expect(convexMutationMock).not.toHaveBeenCalled();
-  });
-  it.each(["GET", "POST"])("returns 404 for absent authoring jobs on %s", async (method) => {
-    convexQueryMock.mockResolvedValue(null);
-    const response = await request(method, `/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa${method === "POST" ? "/commit" : ""}`, method === "POST" ? {} : undefined);
-    expect(response.status).toBe(404);
-  });
+  it.each(["failed", "cancelled", "pending", "completed"])(
+    "returns %s authoring jobs without missing-collection crashes",
+    async (status) => {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "evalAuthoringState:status"
+          ? Promise.resolve({
+              jobId: "job",
+              projectId: "p1",
+              suiteId: "s1",
+              source: "generation",
+              status,
+              error: "Stopped",
+            })
+          : defaultQueryImpl(name),
+      );
+      const response = await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+        {},
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ status, error: "Stopped" });
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["GET", "POST"])(
+    "returns 404 for absent authoring jobs on %s",
+    async (method) => {
+      convexQueryMock.mockResolvedValue(null);
+      const response = await request(
+        method,
+        `/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa${
+          method === "POST" ? "/commit" : ""
+        }`,
+        method === "POST" ? {} : undefined,
+      );
+      expect(response.status).toBe(404);
+    },
+  );
   it("omits unavailable case reads from receipts and counts", async () => {
     convexQueryMock.mockImplementation((name: string, args: any) => {
-      if (name === "evalAuthoringState:status") return Promise.resolve({ jobId: "job", projectId: "p1", suiteId: "s1", source: "generation", status: "completed", committedCaseIds: ["valid", "missing", "unreadable"] });
+      if (name === "evalAuthoringState:status")
+        return Promise.resolve({
+          jobId: "job",
+          projectId: "p1",
+          suiteId: "s1",
+          source: "generation",
+          status: "completed",
+          committedCaseIds: ["valid", "missing", "unreadable"],
+        });
       if (name === "testSuites:getTestCase") {
-        if (args.testCaseId === "unreadable") return Promise.reject(new Error("Not accessible"));
+        if (args.testCaseId === "unreadable")
+          return Promise.reject(new Error("Not accessible"));
         return Promise.resolve(args.testCaseId === "valid" ? CASE_DOC : null);
       }
       return defaultQueryImpl(name);
     });
-    const response = await request("POST", "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit", {});
+    const response = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+      {},
+    );
     expect(response.status).toBe(200);
     const result = await response.json();
     expect(result.created).toHaveLength(1);
@@ -2438,19 +2510,63 @@ describe("v1 eval-edit routes", () => {
   });
 
   it("keeps review skips and normalizes batch failure messages", async () => {
-    const draft = { version: 1, draftId: "draft", revision: 0, case: { title: "Save failed", steps: [{ id: "p", kind: "prompt", prompt: "Find a document" }], expectedOutput: "Document found" }, issues: [], additions: [], review: "required" };
-    convexQueryMock.mockResolvedValue({ jobId: "job", projectId: "p1", suiteId: "s1", source: "generation", status: "completed", drafts: [
-      { ...draft, draftId: "review", case: { ...draft.case, title: "Needs review" }, additions: [{ id: "a", path: "steps.0", explanation: "Added details" }] }, draft,
-    ] });
+    const draft = {
+      version: 1,
+      draftId: "draft",
+      revision: 0,
+      case: {
+        title: "Save failed",
+        steps: [{ id: "p", kind: "prompt", prompt: "Find a document" }],
+        expectedOutput: "Document found",
+      },
+      issues: [],
+      additions: [],
+      review: "required",
+    };
+    convexQueryMock.mockResolvedValue({
+      jobId: "job",
+      projectId: "p1",
+      suiteId: "s1",
+      source: "generation",
+      status: "completed",
+      drafts: [
+        {
+          ...draft,
+          draftId: "review",
+          case: { ...draft.case, title: "Needs review" },
+          additions: [
+            { id: "a", path: "steps.0", explanation: "Added details" },
+          ],
+        },
+        draft,
+      ],
+    });
     convexMutationMock.mockImplementation((name: string) => {
-      if (name === "evalAuthoringState:prepareCommit") return Promise.resolve({ title: "Save failed" });
-      if (name === "testSuites:createTestCases") return Promise.resolve({ caseUpsert: { committed: [], failed: [{ index: 0, code: "DUPLICATE", message: "Already exists" }] } });
+      if (name === "evalAuthoringState:prepareCommit")
+        return Promise.resolve({ title: "Save failed" });
+      if (name === "testSuites:createTestCases")
+        return Promise.resolve({
+          caseUpsert: {
+            committed: [],
+            failed: [
+              { index: 0, code: "DUPLICATE", message: "Already exists" },
+            ],
+          },
+        });
       return Promise.resolve(null);
     });
-    const response = await request("POST", "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit", {});
+    const response = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+      {},
+    );
     expect(response.status).toBe(200);
     expect((await response.json()).skipped).toEqual([
-      { title: "Needs review", error: "Review this draft's issues and proposed additions in the suite." },
+      {
+        title: "Needs review",
+        error:
+          "Review this draft's issues and proposed additions in the suite.",
+      },
       { title: "Save failed", error: "Already exists" },
     ]);
   });
@@ -2477,6 +2593,254 @@ describe("v1 eval-edit routes", () => {
       },
     );
   }
+
+  /**
+   * Document import: the same authoring job as generation, reached with a
+   * document instead of a brief. What is worth pinning is the part that is
+   * NOT shared — the gate, the forwarded payload, and the fact that a partial
+   * result hands back a way to finish it that is not "send it all again".
+   */
+  async function importWith(init: {
+    headers?: Record<string, string>;
+    body?: Record<string, unknown>;
+    /** Applied AFTER `withNoPriorLedger`, which otherwise clobbers it. */
+    query?: (name: string) => Promise<unknown> | undefined;
+  }) {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    withNoPriorLedger();
+    if (init.query) {
+      const base = convexQueryMock.getMockImplementation()!;
+      convexQueryMock.mockImplementation((name: string, ...rest: unknown[]) => {
+        const override = init.query!(name);
+        return override ?? (base as any)(name, ...rest);
+      });
+    }
+    return makeApp().request(
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/import",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          ...(init.headers ?? {}),
+        },
+        body: JSON.stringify({
+          format: "markdown",
+          content: "# Case 1\nSearch for coffee.",
+          ...(init.body ?? {}),
+        }),
+      },
+    );
+  }
+
+  it("refuses import when the authoring flag is off", async () => {
+    const oldFlag = process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+    delete process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+    try {
+      const response = await importWith({});
+      expect(response.status).toBe(422);
+      expect(await response.json()).toMatchObject({
+        code: "FEATURE_NOT_SUPPORTED",
+      });
+    } finally {
+      if (oldFlag !== undefined)
+        process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = oldFlag;
+    }
+  });
+
+  it("forwards the document, its format and a defaulted file name", async () => {
+    const oldFlag = process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+    const oldUrl = process.env.CONVEX_HTTP_URL;
+    process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = "true";
+    process.env.CONVEX_HTTP_URL = "https://backend.test";
+    const capture = vi
+      .spyOn(authoringHelpers, "captureToolSnapshotForEvalAuthoring")
+      .mockResolvedValue({ toolSnapshot: [] } as any);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        Response.json(
+          { version: 1, jobId: "job", status: "pending" },
+          { status: 202 },
+        ),
+      );
+    try {
+      const response = await importWith({
+        body: { format: "csv", content: "title,prompt\nA,B" },
+        query: (name) =>
+          name === "evalAuthoringState:status"
+            ? Promise.resolve({ jobId: "job", status: "pending" })
+            : undefined,
+      });
+      expect(response.status).toBe(202);
+      const sent = JSON.parse(
+        (fetchMock.mock.calls[0]?.[1] as RequestInit).body as string,
+      );
+      expect(sent).toMatchObject({
+        source: "import",
+        format: "csv",
+        content: "title,prompt\nA,B",
+        // Named by format, because a pasted document has no file behind it.
+        fileName: "import.csv",
+      });
+    } finally {
+      capture.mockRestore();
+      fetchMock.mockRestore();
+      if (oldFlag === undefined)
+        delete process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+      else process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = oldFlag;
+      if (oldUrl === undefined) delete process.env.CONVEX_HTTP_URL;
+      else process.env.CONVEX_HTTP_URL = oldUrl;
+    }
+  });
+
+  it("refuses a document over the 100 KiB ceiling", async () => {
+    const oldFlag = process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+    process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = "true";
+    try {
+      const response = await importWith({
+        body: { content: "x".repeat(100 * 1024 + 1) },
+      });
+      expect(response.status).toBe(400);
+    } finally {
+      if (oldFlag === undefined)
+        delete process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+      else process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = oldFlag;
+    }
+  });
+
+  it("commits an import job, and still refuses the app's Markdown job", async () => {
+    // The app's Markdown drafts exist so a PERSON decides on them; an API
+    // commit would decide on their behalf. Import carries its own source and
+    // is committable, which is the whole reason the two are not one value.
+    for (const [source, expected] of [
+      ["import", 200],
+      ["markdown", 404],
+    ] as const) {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "evalAuthoringState:status"
+          ? Promise.resolve({
+              jobId: "job",
+              projectId: "p1",
+              suiteId: "s1",
+              source,
+              status: "completed",
+              drafts: [],
+            })
+          : defaultQueryImpl(name),
+      );
+      const response = await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+        {},
+      );
+      expect(response.status).toBe(expected);
+    }
+  });
+
+  it("hands back a review link for the cases it could not finish", async () => {
+    // A skipped draft is not lost — it stays on the job. The link is what
+    // lets a caller stop: without it the only move is re-sending the whole
+    // document, which re-authors and re-bills every case in it.
+    const draft = {
+      version: 1,
+      draftId: "review",
+      revision: 0,
+      case: {
+        title: "Needs review",
+        steps: [{ id: "p", kind: "prompt", prompt: "Browse groceries" }],
+        expectedOutput: "The list renders",
+      },
+      issues: [],
+      additions: [{ id: "a", path: "steps.0", explanation: "Added details" }],
+      review: "required",
+    };
+    convexQueryMock.mockResolvedValue({
+      jobId: "job77",
+      projectId: "p1",
+      suiteId: "s1",
+      source: "import",
+      status: "completed",
+      drafts: [draft],
+    });
+    const response = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+      {},
+    );
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.skipped).toHaveLength(1);
+    expect(result.reviewUrl).toContain("/evaluate/suite/s1");
+    expect(result.reviewUrl).toContain("importJob=job77");
+  });
+
+  it("omits the review link when every case landed", async () => {
+    convexQueryMock.mockResolvedValue({
+      jobId: "job77",
+      projectId: "p1",
+      suiteId: "s1",
+      source: "import",
+      status: "completed",
+      drafts: [],
+    });
+    const response = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+      {},
+    );
+    expect(await response.json()).not.toHaveProperty("reviewUrl");
+  });
+
+  it("carries a commit-time duplicate policy into the case writer", async () => {
+    convexQueryMock.mockResolvedValue({
+      jobId: "job",
+      projectId: "p1",
+      suiteId: "s1",
+      source: "import",
+      status: "completed",
+      drafts: [
+        {
+          version: 1,
+          draftId: "d",
+          revision: 0,
+          case: {
+            title: "Search",
+            steps: [{ id: "p", kind: "prompt", prompt: "Find my projects" }],
+            expectedOutput: "Projects listed",
+          },
+          issues: [],
+          additions: [],
+          review: "required",
+        },
+      ],
+    });
+    convexMutationMock.mockImplementation((name: string) => {
+      if (name === "evalAuthoringState:prepareCommit")
+        return Promise.resolve({ title: "Search" });
+      if (name === "testSuites:createTestCases")
+        return Promise.resolve({
+          caseUpsert: { committed: [], failed: [] },
+        });
+      return Promise.resolve(null);
+    });
+    const response = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+      { duplicatePolicy: "warn", overrideReason: "Re-importing a fixed case" },
+    );
+    expect(response.status).toBe(200);
+    expect(
+      convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:createTestCases",
+      )?.[1],
+    ).toMatchObject({
+      duplicatePolicy: "warn",
+      overrideReason: "Re-importing a fixed case",
+    });
+  });
 
   it("generate reaches the ledger with a BODY idempotency key", async () => {
     const res = await generateWith({ body: { idempotencyKey: "cli-run-7" } });
@@ -4789,13 +5153,20 @@ describe("eval vocabulary negotiation", () => {
   });
 });
 
-
 describe("authoring job ID validation", () => {
-  it.each(["GET", "POST"])("rejects malformed IDs on %s before querying Convex", async (method) => {
-    validateGuestTokenMock.mockResolvedValue({ valid: false });
-    convexQueryMock.mockClear();
-    const response = await request(method, `/api/v1/projects/p1/eval-suites/s1/authoring/not-an-id${method === "POST" ? "/commit" : ""}`);
-    expect(response.status).toBe(404);
-    expect(convexQueryMock).not.toHaveBeenCalled();
-  });
+  it.each(["GET", "POST"])(
+    "rejects malformed IDs on %s before querying Convex",
+    async (method) => {
+      validateGuestTokenMock.mockResolvedValue({ valid: false });
+      convexQueryMock.mockClear();
+      const response = await request(
+        method,
+        `/api/v1/projects/p1/eval-suites/s1/authoring/not-an-id${
+          method === "POST" ? "/commit" : ""
+        }`,
+      );
+      expect(response.status).toBe(404);
+      expect(convexQueryMock).not.toHaveBeenCalled();
+    },
+  );
 });

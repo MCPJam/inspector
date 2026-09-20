@@ -112,6 +112,7 @@ import type {
   PlatformEvalCaseBatchResult,
   PlatformEvalCaseDeleted,
   PlatformEvalCasesGenerated,
+  PlatformEvalCasesImported,
   PlatformEvalIteration,
   PlatformEvalStepResult,
   PlatformEvalRun,
@@ -837,6 +838,12 @@ export type CreateEvalCasesResult = Omit<
 /** `generate_eval_cases`, with each generated case's suite stamped on. */
 export type GenerateEvalCasesResult = Omit<
   PlatformEvalCasesGenerated,
+  "created"
+> & { created: PlatformEvalCaseWithSuite[] };
+
+/** `import_eval_cases`, with each imported case's suite stamped on. */
+export type ImportEvalCasesResult = Omit<
+  PlatformEvalCasesImported,
   "created"
 > & { created: PlatformEvalCaseWithSuite[] };
 
@@ -6658,6 +6665,192 @@ export const generateEvalCasesOperation: PlatformOperation<
     return {
       ...generated,
       created: generated.created.map((testCase) =>
+        stampSuiteId(testCase, suite.id)
+      ),
+    };
+  },
+};
+
+const MAX_IMPORT_DOCUMENT_BYTES = 100 * 1024;
+
+const importEvalCasesInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  format: z
+    .enum(["markdown", "json", "csv"])
+    .describe(
+      "How the document is written. All three are read by the same model; the format only says how the text is laid out."
+    ),
+  content: z
+    .string()
+    .min(1)
+    .describe(
+      "The whole document, as text. At most 100 KiB — split a larger one and import the parts separately."
+    ),
+  fileName: z
+    .string()
+    .trim()
+    .min(1)
+    .max(255)
+    .optional()
+    .describe(
+      "The document's name, recorded on each case so a reviewer can trace it back. Defaults to `import.<format>`."
+    ),
+  servers: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe(
+      "Server names/IDs to discover tools from; defaults to the suite's selection."
+    ),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
+  caseModels: z
+    .array(caseModelSchema)
+    .optional()
+    .describe("Execution models to set on the imported cases."),
+  duplicatePolicy: z
+    .enum(["block", "warn", "create_anyway"])
+    .optional()
+    .describe(
+      "What to do with a case whose definition already exists in the suite. Defaults to `block`. `warn` and `create_anyway` require `overrideReason`."
+    ),
+  overrideReason: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Why importing a duplicate is intended. Recorded on the case's revision."
+    ),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(256)
+    .optional()
+    .describe(
+      "Retry-safety key: pass one, because a retry must not author and bill the same document twice. Repeating a call with the same key replays the first attempt's drafts and returns the cases it already created."
+    ),
+});
+export type ImportEvalCasesInput = z.infer<typeof importEvalCasesInput>;
+
+export const importEvalCasesOperation: PlatformOperation<
+  ImportEvalCasesInput,
+  ImportEvalCasesResult
+> = {
+  name: "import_eval_cases",
+  // Authoring a document runs MCPJam's model on the customer's behalf, unlike
+  // `generate_eval_cases`, which is included in the plan. Every re-import of
+  // the same text spends again, which is why the description is explicit that
+  // a fix means re-sending one case rather than the document.
+  risk: "spend",
+  title: "Import MCPJam eval cases from a document",
+  description:
+    "Turn a document a person wrote — a test plan, a QA checklist, a spreadsheet of scenarios — into runnable test cases and persist them into the suite. MCPJam's model reads the document and authors complete cases (prompt, tool calls, assertions, expected outcome) grounded in the suite's server tools, so the caller does not have to structure anything itself. Markdown, JSON and CSV are accepted, up to 100 KiB. COSTS MONEY: consumes customer credits per import. Cases the model could not finish are NOT created — they come back in `skipped`, and `reviewUrl` opens the app page holding exactly those drafts for a person to complete. To fix one, re-import ONLY that case's corrected text; re-sending the whole document re-authors and re-bills every case in it. IDEMPOTENT on idempotencyKey.",
+  readOnly: false,
+  permalink: derivePermalinks((result) =>
+    result.created.flatMap((testCase) =>
+      evalCaseRef(testCase, testCase.suiteId)
+    )
+  ),
+  inputSchema: importEvalCasesInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    assertNoServerOverrideWithEnvironment(input);
+    // Both checks are HERE rather than as schema `.refine`s: an operation's
+    // `inputSchema` is handed to the agent tool surface, which needs a plain
+    // object schema — a refinement wraps it in `ZodEffects` and the toolset
+    // stops building. Same reasoning as `create_eval_cases`.
+    if (
+      input.duplicatePolicy !== undefined &&
+      input.duplicatePolicy !== "block" &&
+      !input.overrideReason
+    ) {
+      throw new PlatformApiError(
+        `duplicatePolicy \`${input.duplicatePolicy}\` imports a case that duplicates ` +
+          "an existing one, so it requires an overrideReason — the reason is what " +
+          "gets recorded on the case's revision.",
+        "VALIDATION_ERROR",
+        // Client-synthesized: no request was made, so quoting a server status
+        // would misreport what happened.
+        { status: 0 }
+      );
+    }
+    // Refused before the request: the document is the whole payload, and
+    // sending 100 KiB only to have the route reject it wastes the round trip.
+    const documentBytes = new TextEncoder().encode(input.content).length;
+    if (documentBytes > MAX_IMPORT_DOCUMENT_BYTES) {
+      throw new PlatformApiError(
+        `The document is ${documentBytes} bytes; the limit is ${MAX_IMPORT_DOCUMENT_BYTES}. ` +
+          "Split it and import the parts separately.",
+        "VALIDATION_ERROR",
+        { status: 0 }
+      );
+    }
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    // Server name/id selectors resolve to project server IDs before sending,
+    // the way generate_eval_cases does — the route hands `servers` straight to
+    // batch authorization, which expects IDs.
+    const overrideServers = input.servers
+      ? await resolveRunServers(client, project, input.servers, signal)
+      : undefined;
+    const environment = input.environment
+      ? await resolveEnvironmentSelector(
+          client,
+          project,
+          input.environment,
+          signal
+        )
+      : undefined;
+    const imported = await client.importEvalCases(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        body: {
+          format: input.format,
+          content: input.content,
+          ...(input.fileName ? { fileName: input.fileName } : {}),
+          ...(overrideServers
+            ? { servers: overrideServers.map((server) => server.id) }
+            : {}),
+          ...(environment ? { environmentId: environment.id } : {}),
+          ...(input.caseModels ? { caseModels: input.caseModels } : {}),
+          ...(input.duplicatePolicy
+            ? { duplicatePolicy: input.duplicatePolicy }
+            : {}),
+          ...(input.overrideReason
+            ? { overrideReason: input.overrideReason }
+            : {}),
+          // In the BODY as well as the header, the way generate_eval_cases
+          // sends it: one key on the wire rather than two channels that could
+          // disagree. The route merges a header key over this one.
+          ...(input.idempotencyKey
+            ? { idempotencyKey: input.idempotencyKey }
+            : {}),
+        },
+      },
+      {
+        signal,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      }
+    );
+    return {
+      ...imported,
+      created: imported.created.map((testCase) =>
         stampSuiteId(testCase, suite.id)
       ),
     };
@@ -18643,6 +18836,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   updateEvalCaseOperation,
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
   getEvalRunGateOperation,

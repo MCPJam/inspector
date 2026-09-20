@@ -66,6 +66,7 @@ import {
   listConformanceRunsOperation,
   getConformanceReportOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   ensureAdhocEnvironmentOperation,
   getEnvironmentOperation,
   nameEnvironmentOperation,
@@ -1801,6 +1802,22 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       // suite and takes a slice of a bounded daily quota — see
       // TIER_EXCEPTIONS in `__tests__/agent-op-registry.test.ts`.
       confirmSeverity: "none",
+    },
+  },
+  {
+    operation: importEvalCasesOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Import eval cases from ${
+          named(input, "fileName") ??
+          `a ${named(input, "format") ?? ""} document`
+        } into ${named(input, "suite") ?? "(unnamed)"}`,
+      buttonLabel: "Import them",
+      kind: "generate",
+      // Unlike generation, the authoring model here runs on the CUSTOMER's
+      // credits, so the approval card must say money is being spent.
+      confirmSeverity: "spend",
     },
   },
   {

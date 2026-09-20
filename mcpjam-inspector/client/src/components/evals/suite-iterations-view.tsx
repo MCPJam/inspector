@@ -713,20 +713,20 @@ export function SuiteIterationsView({
     route.type === "run-detail"
       ? "run-detail"
       : route.type === "test-detail"
-        ? evaluateCaseEditor
-          ? "test-edit"
-          : "test-detail"
-        : route.type === "test-edit" && (!editingDisabled || evaluateCaseEditor)
-          ? "test-edit"
-          : route.type === "test-edit"
-            ? "test-detail"
-            : "overview";
+      ? evaluateCaseEditor
+        ? "test-edit"
+        : "test-detail"
+      : route.type === "test-edit" && (!editingDisabled || evaluateCaseEditor)
+      ? "test-edit"
+      : route.type === "test-edit"
+      ? "test-detail"
+      : "overview";
   const runsViewMode: SuiteOverviewView =
     route.type === "suite-overview" && route.view === "test-cases"
       ? "test-cases"
       : route.type === "suite-overview" && route.view === "cross-host"
-        ? "cross-host"
-        : "runs";
+      ? "cross-host"
+      : "runs";
 
   // Local state that's not in the URL
   const [runDetailSortBy, setRunDetailSortBy] = useState<
@@ -1176,7 +1176,7 @@ export function SuiteIterationsView({
   });
 
   const selectedCompareBaseRunId =
-    route.type === "run-detail" ? (route.compareToRunId ?? null) : null;
+    route.type === "run-detail" ? route.compareToRunId ?? null : null;
 
   // Resolve namedHostId → display name for any run-detail / list views
   // that want to surface which host a run was triggered against. The project
@@ -1322,10 +1322,10 @@ export function SuiteIterationsView({
 
   // Derive selectedIterationId from route
   const selectedIterationId =
-    route.type === "run-detail" ? (route.iteration ?? null) : null;
+    route.type === "run-detail" ? route.iteration ?? null : null;
 
   const selectedRunTestCaseId =
-    route.type === "run-detail" ? (route.testCaseId ?? null) : null;
+    route.type === "run-detail" ? route.testCaseId ?? null : null;
 
   const handleSelectTestCase = (group: RunCaseGroup) => {
     if (route.type !== "run-detail" || !group.testCaseId) {
@@ -1463,18 +1463,18 @@ export function SuiteIterationsView({
   const ciOwnedReason = configLocked
     ? CI_OWNED_REASON_COPY
     : capabilitiesReady && capabilities.ownership?.ciOwned
-      ? CI_OWNED_REASON_COPY
-      : undefined;
+    ? CI_OWNED_REASON_COPY
+    : undefined;
   // `computerEnvironmentRowVisible` is declared beside the images it gates —
   // see the comment there for why the two share one condition.
   const computerEnvironmentDisabledReason =
     ciOwnedReason ??
     (!capabilitiesReady
       ? undefined
-      : (featureDisabledReason(capabilities.features?.computers) ??
+      : featureDisabledReason(capabilities.features?.computers) ??
         (capabilities.permissions?.["suite.configure"] === false
           ? PERMISSION_REASON_COPY
-          : undefined)));
+          : undefined));
   const subsectionOptions = useMemo(
     () => ({
       isVerdictPolicyV2,
@@ -2007,7 +2007,7 @@ export function SuiteIterationsView({
                   }
                   openCompareIterationId={
                     route.type === "test-edit" || route.type === "test-detail"
-                      ? (route.iteration ?? null)
+                      ? route.iteration ?? null
                       : null
                   }
                   onContinueInChat={onContinueInChat}
@@ -2236,6 +2236,11 @@ export function SuiteIterationsView({
                   metricsByRun={metricsByRun ?? NO_METRICS}
                   hostNamesById={hostNamesById}
                   onRerun={onRerunWithOverride}
+                  importJobId={
+                    route.type === "suite-overview"
+                      ? route.importJob ?? null
+                      : null
+                  }
                   onEditSuite={() => navigation.toSuiteEdit(suite._id)}
                   onEditCases={onCreateTestCase}
                   onDescribeCases={onDescribeTestCase}
@@ -2433,8 +2438,8 @@ export function SuiteIterationsView({
                       runningTestCaseId={runningTestCaseId}
                       blockTestCaseRuns={Boolean(
                         rerunningSuiteId ||
-                        replayingRunId ||
-                        evalRunsDisabledReason,
+                          replayingRunId ||
+                          evalRunsDisabledReason,
                       )}
                       runTestCaseDisabledReason={evalRunsDisabledReason}
                       connectedServerNames={connectedServerNames}

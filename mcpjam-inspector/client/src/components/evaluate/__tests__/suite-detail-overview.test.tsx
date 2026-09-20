@@ -7,6 +7,7 @@ import {
   useEvalGeneration,
   evalSuiteKey,
   registerEvalSuite,
+  followAuthoringJob,
 } from "@/lib/mcpjam-agent/eval-workspace";
 import { openEvalChat } from "@/lib/mcpjam-agent/eval-scope";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -33,6 +34,12 @@ vi.mock("@/lib/mcpjam-agent/eval-scope", async (original) => ({
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
+}));
+
+// Only the network poll is doubled; the store it writes into is real.
+vi.mock("@/lib/mcpjam-agent/eval-workspace", async (original) => ({
+  ...(await original<object>()),
+  followAuthoringJob: vi.fn(async () => undefined),
 }));
 
 function makeSuite(overrides: Partial<EvalSuite> = {}): EvalSuite {
@@ -848,6 +855,34 @@ it("keeps draft review out of the suite, but still warns drafts are waiting", as
     );
   expect(await screen.findByRole("tooltip")).toHaveTextContent(
     "1 generated draft is waiting to be added",
+  );
+});
+
+it("follows a linked authoring job instead of trusting this browser's memory", async () => {
+  // An API import hands its unfinished cases back as a link. Whoever opens it
+  // usually did not run the import, so their store holds nothing — the drafts
+  // have to be read from the job named in the URL.
+  useEvalGeneration.setState({ suites: {} });
+  renderWithProviders(
+    <SuiteDetailOverview
+      projectId="project-1"
+      importJobId="job_77"
+      suite={makeSuite()}
+      cases={[makeCase({ _id: "case-1" })]}
+      runs={[]}
+      runsLoading={false}
+      allIterations={[]}
+      hostNamesById={hostNamesById}
+      onRerun={vi.fn()}
+      onEditSuite={vi.fn()}
+      onRunClick={vi.fn()}
+      onTestCaseClick={vi.fn()}
+      rerunningSuiteId={null}
+    />,
+  );
+  expect(followAuthoringJob).toHaveBeenCalledWith(
+    { projectId: "project-1", suiteId: "suite-1" },
+    "job_77",
   );
 });
 
