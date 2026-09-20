@@ -10,6 +10,7 @@ import {
 import {
   SWARM_FINDING_DISPOSITION_LABELS,
   SWARM_FINDING_COVERAGE_NOTE_LABELS,
+  SWARM_FINDING_SIGNAL_LABELS,
   DECISION_LABEL_VOCABULARIES,
 } from "../src/contract/decision-labels.js";
 const finding = {
@@ -135,5 +136,107 @@ describe("tone follows disposition", () => {
         ]
       );
     }
+  });
+});
+
+describe("recorded signals and verification counts", () => {
+  it("accepts a population-fact row that reports what was recorded", () => {
+    const row = {
+      ...finding,
+      id: "signal:outputTruncated:p:run:host",
+      basis: "populationFact" as const,
+      scopeLevel: "goal" as const,
+      signal: "outputTruncated" as const,
+      outcomePhrase: "Reply cut off before finishing",
+      // A table lookup is not the chain worker's verdict, so a signal row
+      // never colours a stage it did not measure.
+      chainStageState: null,
+      chainStageBasis: "reported" as const,
+      reportExcerpt: null,
+    };
+    expect(swarmJourneyFindingSchema.parse(row)).toEqual(row);
+  });
+
+  it("rejects a signal outside the vocabulary", () => {
+    expect(
+      swarmJourneyFindingSchema.safeParse({ ...finding, signal: "ranOutOfWork" })
+        .success
+    ).toBe(false);
+  });
+
+  it("parses an old payload that predates the signal and account fields", () => {
+    expect(swarmJourneyFindingSchema.safeParse(finding).success).toBe(true);
+    expect(swarmJourneyFindingSchema.parse(finding).signal).toBeUndefined();
+  });
+
+  it("carries a plain-language account beside the cited engineering one", () => {
+    const row = {
+      ...finding,
+      reportExcerpt: {
+        actual: "The change was rejected.",
+        account: "She tried to save her changes and the app would not take them.",
+        citations: ["s/m:0"],
+      },
+    };
+    expect(swarmJourneyFindingSchema.parse(row)).toEqual(row);
+    // The account is bounded; `actual` keeps its own, larger bound.
+    expect(
+      swarmJourneyFindingSchema.safeParse({
+        ...finding,
+        reportExcerpt: {
+          actual: "ok",
+          account: "x".repeat(601),
+          citations: ["s/m:0"],
+        },
+      }).success
+    ).toBe(false);
+  });
+
+  it("conserves verification counts: proposed is the three states summed", () => {
+    const envelope = swarmJourneyFindingsSchema.parse(wire);
+    const verification = {
+      proposed: 4,
+      confirmed: 2,
+      rejected: 1,
+      unverified: 1,
+      // Overlapping, never a fourth state.
+      omitted: 1,
+    };
+    const parsed = swarmJourneyFindingsSchema.parse({
+      ...envelope,
+      verification,
+    });
+    expect(parsed.verification).toEqual(verification);
+    expect(verification.proposed).toBe(
+      verification.confirmed + verification.rejected + verification.unverified
+    );
+  });
+
+  it("refuses a negative or fractional count", () => {
+    const envelope = swarmJourneyFindingsSchema.parse(wire);
+    for (const bad of [-1, 1.5])
+      expect(
+        swarmJourneyFindingsSchema.safeParse({
+          ...envelope,
+          verification: {
+            proposed: bad,
+            confirmed: 0,
+            rejected: 0,
+            unverified: 0,
+            omitted: 0,
+          },
+        }).success,
+        String(bad)
+      ).toBe(false);
+  });
+
+  it("labels every signal and the new coverage note", () => {
+    for (const signal of DECISION_LABEL_VOCABULARIES.swarmFindingSignals)
+      expect(SWARM_FINDING_SIGNAL_LABELS[signal]).toBeTruthy();
+    // "rejected", not "checked and rejected": validation can refuse a proposal
+    // before any model verifies it.
+    expect(SWARM_FINDING_COVERAGE_NOTE_LABELS.mechanismsRejected).toBe(
+      "A possible cause was rejected"
+    );
   });
 });
