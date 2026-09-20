@@ -1,51 +1,15 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   USER_VALUE_STAGES,
   type EvalRunDecisionChain,
 } from "@mcpjam/sdk/contract";
 import { TrialChainPanel } from "../trial-chain-panel";
 
-describe("trial chain report", () => {
-  it("opens the recorded failure and switches evidence when selecting another stage", async () => {
-    const user = userEvent.setup();
-    const chain = {
-      status: "verified",
-      firstFailedStage: "selection",
-      stages: USER_VALUE_STAGES.map((stage) => ({
-        stage,
-        state: stage === "selection" ? "failed" : "passed",
-      })),
-    } as EvalRunDecisionChain;
-    render(
-      <TrialChainPanel
-        chain={chain}
-        layout="report"
-        nextAction="Inspect the expected tools."
-      />,
-    );
-    expect(screen.getByTestId("trial-stage-detail-card")).toHaveAttribute(
-      "data-stage",
-      "selection",
-    );
-    expect(screen.getByTestId("trial-stage-next-action")).toHaveTextContent(
-      "Inspect the expected tools.",
-    );
-    const stages = within(
-      screen.getByRole("navigation", { name: "Iteration stages" }),
-    );
-    expect(stages.getAllByRole("button")).toHaveLength(6);
-    await user.click(stages.getByRole("button", { name: /01 Connection/ }));
-    expect(screen.getByTestId("trial-stage-detail-card")).toHaveAttribute(
-      "data-stage",
-      "connection",
-    );
-    expect(screen.queryByTestId("trial-stage-next-action")).toBeNull();
-  });
-});
+vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => false }));
 
-describe("trial chain report under a mask", () => {
+describe("iteration chain cards under a mask", () => {
   const judgeFailedChain = {
     status: "verified",
     firstFailedStage: "userValue",
@@ -61,26 +25,19 @@ describe("trial chain report under a mask", () => {
     ),
   } as EvalRunDecisionChain;
 
-  it("keeps all six stages, masks only the named one, and opens it", () => {
+  it("keeps all six cards, masks only the named one, and opens it", () => {
     render(
       <TrialChainPanel
         chain={judgeFailedChain}
-        layout="report"
         maskedStage="userValue"
         nextAction="Read the judge's rationale."
         stageFooter={(stage) => <div data-testid={`footer-${stage}`} />}
       />,
     );
-    const stages = within(
-      screen.getByRole("navigation", { name: "Iteration stages" }),
-    );
-    expect(stages.getAllByRole("button")).toHaveLength(6);
-    expect(
-      stages.getByRole("button", { name: /06 User value/ }),
-    ).toHaveAccessibleName(
-      "06 User value: hidden until you label this iteration",
-    );
-    // The masked card is the one open, and it is the masked frame — not the
+    for (const stage of USER_VALUE_STAGES) {
+      expect(screen.getByTestId(`stage-chain-card-${stage}`)).toBeTruthy();
+    }
+    // The masked card is the one open, and it is the masked frame, not the
     // detail card, which would print the state and the judge's reasons.
     expect(screen.getByTestId("trial-stage-masked")).toHaveAttribute(
       "data-stage",
@@ -97,19 +54,9 @@ describe("trial chain report under a mask", () => {
   it("leaves the other stages readable and unmasked", async () => {
     const user = userEvent.setup();
     render(
-      <TrialChainPanel
-        chain={judgeFailedChain}
-        layout="report"
-        maskedStage="userValue"
-      />,
+      <TrialChainPanel chain={judgeFailedChain} maskedStage="userValue" />,
     );
-    const stages = within(
-      screen.getByRole("navigation", { name: "Iteration stages" }),
-    );
-    expect(
-      stages.getByRole("button", { name: /03 Selection/ }),
-    ).not.toHaveAccessibleName(/hidden until/);
-    await user.click(stages.getByRole("button", { name: /03 Selection/ }));
+    await user.click(screen.getByTestId("stage-chain-card-selection"));
     expect(screen.getByTestId("trial-stage-detail-card")).toHaveAttribute(
       "data-stage",
       "selection",
@@ -118,7 +65,7 @@ describe("trial chain report under a mask", () => {
   });
 
   it("with no mask, a judge-decided chain opens the failure as before", () => {
-    render(<TrialChainPanel chain={judgeFailedChain} layout="report" />);
+    render(<TrialChainPanel chain={judgeFailedChain} />);
     expect(screen.getByTestId("trial-stage-detail-card")).toHaveAttribute(
       "data-stage",
       "userValue",

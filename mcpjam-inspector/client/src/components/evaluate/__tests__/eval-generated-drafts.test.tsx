@@ -243,7 +243,7 @@ it("explains a model-limit refusal instead of echoing its raw body", () => {
   }));
   renderWithProviders(<EvalGeneratedDrafts {...scope} />);
   const alert = screen.getByRole("alert");
-  expect(alert).toHaveTextContent(/MCPJam (model )?limit reached\./);
+  expect(alert).toHaveTextContent(/Out of MCPJam credits\./);
   expect(alert).not.toHaveTextContent("user_rate_limit");
 });
 
