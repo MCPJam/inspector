@@ -47,6 +47,7 @@ import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
+import { PlatformLaunchAnnouncement } from "@/components/sidebar/platform-launch-announcement";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { InviteTeamSignUpDialog } from "@/components/auth/InviteTeamSignUpDialog";
 import { consumePendingInviteDialog } from "@/lib/pending-invite-dialog";
@@ -853,6 +854,13 @@ export function MCPSidebar({
           )}
         </SidebarContent>
         <SidebarFooter>
+          {isAuthenticated && user ? (
+            <PlatformLaunchAnnouncement
+              key={user.id}
+              userId={user.id}
+              collapsed={state === "collapsed" && !isMobile}
+            />
+          ) : null}
           {utilityItems.length > 0 ? (
             <div className="flex items-center gap-1 px-1 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-0">
               {utilityItems.map((item) => (

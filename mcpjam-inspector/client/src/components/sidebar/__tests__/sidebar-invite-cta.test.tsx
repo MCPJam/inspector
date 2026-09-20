@@ -213,6 +213,7 @@ describe("sidebar invite CTA", () => {
     });
     mockUseAuth.mockReturnValue({
       user: {
+        id: "owner",
         email: "owner@example.com",
         firstName: "Owner",
         lastName: "Example",
@@ -232,6 +233,17 @@ describe("sidebar invite CTA", () => {
     // The pending-invite marker is module state in sessionStorage — a leftover
     // would auto-open the share dialog in an unrelated test.
     sessionStorage.clear();
+    localStorage.clear();
+  });
+
+  it("shows the launch announcement only after sign-in resolves", () => {
+    const { unmount } = renderSidebar();
+    expect(screen.getByRole("region", { name: "Platform launch" })).toBeInTheDocument();
+    unmount();
+    mockUseConvexAuth.mockReturnValue({ isAuthenticated: false, isLoading: false });
+    mockUseAuth.mockReturnValue({ user: null });
+    renderSidebar();
+    expect(screen.queryByRole("region", { name: "Platform launch" })).not.toBeInTheDocument();
   });
 
   it("shows the CTA for hosted guests, opening the sign-up nudge instead of the share dialog", () => {
