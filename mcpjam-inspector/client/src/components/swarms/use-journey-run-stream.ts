@@ -1,3 +1,4 @@
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   initialEvalStreamState,
@@ -216,6 +217,23 @@ export function useJourneyRunStream(
       runId,
       (event) => {
         if (genRef.current !== gen) return;
+        if (
+          event.type === "attempt_status" ||
+          event.type === "session_complete"
+        ) {
+          notifyMCPJamLimitError({
+            runId,
+            message: event.errorMessage,
+            surface: "swarm",
+          });
+        } else if (event.type === "error") {
+          notifyMCPJamLimitError({
+            runId,
+            message: event.message,
+            details: event.details,
+            surface: "swarm",
+          });
+        }
         setState((prev) => reduceSwarmStreamEvent(prev, event));
       },
       controller.signal,
