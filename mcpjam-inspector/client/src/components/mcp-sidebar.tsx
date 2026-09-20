@@ -855,6 +855,7 @@ export function MCPSidebar({
         </SidebarContent>
         <SidebarFooter>
           <PlatformLaunchAnnouncement
+            onNavigate={appNavigate}
             collapsed={state === "collapsed" && !isMobile}
           />
           {utilityItems.length > 0 ? (

@@ -1,5 +1,14 @@
 import { useRef, useState } from "react";
-import { ArrowUpRight, Play, Sparkles, X } from "lucide-react";
+import {
+  ArrowRight,
+  Play,
+  Sparkles,
+  X,
+  Network,
+  Users,
+  FlaskConical,
+  GitBranch,
+} from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -16,6 +25,11 @@ import {
   TabsTrigger,
 } from "@mcpjam/design-system/tabs";
 import { ProductUpdateVideoPlayer } from "../home/ProductUpdateVideoPlayer";
+import { SwarmHeroCharacters } from "../swarms/swarm-hero-characters";
+import {
+  LaunchFeatureVisual,
+  type LaunchFeatureId,
+} from "./launch-feature-visual";
 import type { ProductUpdateEntry } from "../home/productUpdateEntry";
 
 const LAUNCH: ProductUpdateEntry = {
@@ -24,7 +38,6 @@ const LAUNCH: ProductUpdateEntry = {
   publishAt: Date.UTC(2026, 8, 18),
   title: "Meet the new MCPJam",
   body: "From your first test to every release. Build confidence in your MCP server with one connected testing platform.",
-  href: "https://www.mcpjam.com/blog/our-new-platform",
   videoUrl: "https://www.youtube.com/watch?v=vD06SWzNx0Y",
   dismissed: false,
   isNew: true,
@@ -32,21 +45,33 @@ const LAUNCH: ProductUpdateEntry = {
 
 const FEATURES = [
   {
-    name: "Swarms",
+    id: "swarms" as const,
+    path: "/swarms",
+    icon: Network,
+    name: "Swarm",
     title: "Find the edge cases before your users do.",
     body: "Simulate user scenarios in parallel across ChatGPT, Claude, and more. See where your server holds up and where it breaks.",
   },
   {
+    id: "user-testing" as const,
+    path: "/user-testing",
+    icon: Users,
     name: "User Testing",
     title: "See your product through your users’ eyes.",
     body: "Invite real people to try your server. Bring their feedback and session insights together to uncover usability gaps.",
   },
   {
+    id: "evals" as const,
+    path: "/evaluate",
+    icon: FlaskConical,
     name: "Evals",
     title: "Turn a good result into a repeatable test.",
     body: "Build durable test suites from user workflows, then run them across clients to measure quality as your server evolves.",
   },
   {
+    id: "ci-cd" as const,
+    path: "/evaluate",
+    icon: GitBranch,
     name: "CI/CD",
     title: "Make confidence part of every release.",
     body: "Run cross-client evaluations in your release pipeline and catch regressions before they reach your users.",
@@ -59,8 +84,10 @@ type LaunchStatus = "unseen" | "seen" | "dismissed";
 /** Browser-scoped so guests keep their launch history when they sign in. */
 export function PlatformLaunchAnnouncement({
   collapsed = false,
+  onNavigate,
 }: {
   collapsed?: boolean;
+  onNavigate: (path: string) => void;
 }) {
   const [status, setStatus] = useState<LaunchStatus>(() => {
     try {
@@ -73,6 +100,8 @@ export function PlatformLaunchAnnouncement({
   // Keep the trigger stable for focus restoration; quiet the card on the next visit.
   const showCard = useRef(status === "unseen").current;
   const [open, setOpen] = useState(false);
+  const [feature, setFeature] = useState<LaunchFeatureId>("swarms");
+  const selected = FEATURES.find((item) => item.id === feature)!;
   const [playing, setPlaying] = useState(false);
   const titleRef = useRef<HTMLHeadingElement>(null);
 
@@ -123,29 +152,39 @@ export function PlatformLaunchAnnouncement({
           >
             <X className="size-3.5" aria-hidden />
           </Button>
-          <div className="px-3 pb-3 pt-3">
-            <div className="mb-2 flex items-center gap-1.5 pr-5 text-[10px] font-semibold uppercase tracking-widest">
-              <Sparkles className="size-3 text-primary" aria-hidden />A new
-              chapter
-            </div>
-            <p className="text-sm font-semibold leading-snug">{LAUNCH.title}</p>
-            <p className="mt-1 text-xs leading-relaxed">
-              More ways to test. More confidence to ship.
-            </p>
-            <DialogTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-3 w-full justify-between"
-              >
-                <span className="flex items-center gap-1.5">
-                  <Play className="size-3.5" aria-hidden />
-                  See what’s new
-                </span>
-                <ArrowUpRight className="size-3.5" aria-hidden />
-              </Button>
-            </DialogTrigger>
-          </div>
+          <DialogTrigger asChild>
+            <button
+              type="button"
+              aria-label="See what’s new"
+              className="group block w-full px-3 pb-3 pt-4 text-left transition-colors hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+            >
+              <p className="pr-6 text-[10px] font-semibold uppercase tracking-widest">
+                Meet the new MCPJam
+              </p>
+              <SwarmHeroCharacters className="my-3" />
+              <div className="grid grid-cols-2 gap-1.5">
+                {FEATURES.map(({ name, icon: Icon }) => (
+                  <span
+                    key={name}
+                    className="flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-2 text-[10px] whitespace-nowrap font-medium"
+                  >
+                    <Icon
+                      className="size-3 shrink-0 text-primary"
+                      aria-hidden
+                    />
+                    {name}
+                  </span>
+                ))}
+              </div>
+              <span className="mt-3 flex items-center justify-between text-xs font-semibold">
+                See what’s new
+                <ArrowRight
+                  className="size-3.5 transition-transform motion-safe:group-hover:translate-x-0.5"
+                  aria-hidden
+                />
+              </span>
+            </button>
+          </DialogTrigger>
         </section>
       )}
       <DialogContent
@@ -171,49 +210,41 @@ export function PlatformLaunchAnnouncement({
             {LAUNCH.body}
           </DialogDescription>
         </DialogHeader>
-        {playing ? (
-          <ProductUpdateVideoPlayer entry={LAUNCH} />
-        ) : (
-          <button
-            type="button"
-            onClick={() => setPlaying(true)}
-            aria-label="Play launch video"
-            className="group flex aspect-video w-full flex-col items-center justify-center gap-4 rounded-lg border border-border bg-muted px-6 text-center text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-          >
-            <span className="flex size-12 items-center justify-center rounded-full border border-border bg-background transition-transform motion-safe:group-hover:scale-105">
-              <Play className="size-5 text-primary" aria-hidden />
-            </span>
-            <span className="max-w-sm text-xl font-semibold leading-tight sm:text-3xl">
-              Don’t ship MCP servers
-              <br />
-              that fail.
-            </span>
-            <span className="text-xs font-medium">
-              Watch the launch film <span aria-hidden>↗</span>
-            </span>
-          </button>
-        )}
-        <Tabs defaultValue="swarms">
+
+        <Tabs
+          value={feature}
+          onValueChange={(value) => {
+            setFeature(value as LaunchFeatureId);
+            setPlaying(false);
+          }}
+        >
           <TabsList
             aria-label="Explore platform features"
             className="grid h-auto w-full grid-cols-2 sm:grid-cols-4"
           >
-            {FEATURES.map(({ name }) => (
-              <TabsTrigger
-                key={name}
-                value={name.toLowerCase().replace(/[^a-z]+/g, "-")}
-              >
+            {FEATURES.map(({ id, name }) => (
+              <TabsTrigger key={name} value={id}>
                 {name}
               </TabsTrigger>
             ))}
           </TabsList>
-          {FEATURES.map(({ name, title, body }) => (
-            <TabsContent
-              key={name}
-              value={name.toLowerCase().replace(/[^a-z]+/g, "-")}
-              className="min-h-28 px-1 pt-3"
-            >
-              <h3 className="text-base font-semibold">{title}</h3>
+          {FEATURES.map(({ id, name, title, body }) => (
+            <TabsContent key={name} value={id} className="space-y-4 pt-3">
+              {playing ? (
+                <ProductUpdateVideoPlayer entry={LAUNCH} />
+              ) : (
+                <LaunchFeatureVisual feature={id} />
+              )}
+              <div className="flex items-center justify-between gap-2 text-[10px] font-medium uppercase tracking-widest text-foreground">
+                <span>{playing ? "Launch film" : "Feature preview"}</span>
+                <span>
+                  {String(
+                    FEATURES.findIndex((item) => item.id === id) + 1,
+                  ).padStart(2, "0")}{" "}
+                  / 04
+                </span>
+              </div>
+              <h3 className="text-lg font-semibold">{title}</h3>
               <p className="mt-2 text-sm leading-relaxed text-foreground">
                 {body}
               </p>
@@ -221,11 +252,26 @@ export function PlatformLaunchAnnouncement({
           ))}
         </Tabs>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-          <Button variant="outline" asChild>
-            <a href={LAUNCH.href} target="_blank" rel="noopener noreferrer">
-              Explore the launch
-              <ArrowUpRight className="size-4" aria-hidden />
-            </a>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setOpen(false);
+              setPlaying(false);
+              onNavigate(selected.path);
+            }}
+          >
+            {feature === "ci-cd"
+              ? "Open Evaluate for CI/CD"
+              : `Explore ${selected.name}`}
+            <ArrowRight className="size-4" aria-hidden />
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => setPlaying(!playing)}
+            aria-label={playing ? "Show feature preview" : "Play launch video"}
+          >
+            <Play className="size-3.5" aria-hidden />
+            {playing ? "Show feature preview" : "Watch launch film"}
           </Button>
           <Button
             variant="ghost"

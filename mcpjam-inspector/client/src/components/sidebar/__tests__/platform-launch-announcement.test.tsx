@@ -1,9 +1,17 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PlatformLaunchAnnouncement } from "../platform-launch-announcement";
+import { PlatformLaunchAnnouncement as Announcement } from "../platform-launch-announcement";
 
-beforeEach(() => localStorage.clear());
+const onNavigate = vi.fn();
+function PlatformLaunchAnnouncement(props: { collapsed?: boolean }) {
+  return <Announcement {...props} onNavigate={onNavigate} />;
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  onNavigate.mockClear();
+});
 afterEach(() => vi.restoreAllMocks());
 
 describe("PlatformLaunchAnnouncement", () => {
@@ -26,9 +34,6 @@ describe("PlatformLaunchAnnouncement", () => {
       "src",
       expect.stringContaining("/embed/vD06SWzNx0Y"),
     );
-    expect(
-      screen.getByRole("link", { name: "Explore the launch" }),
-    ).toHaveAttribute("href", "https://www.mcpjam.com/blog/our-new-platform");
     await user.keyboard("{Escape}");
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
@@ -79,7 +84,7 @@ describe("PlatformLaunchAnnouncement", () => {
     const user = userEvent.setup();
     render(<PlatformLaunchAnnouncement />);
     await user.click(screen.getByRole("button", { name: "See what’s new" }));
-    await user.click(screen.getByRole("tab", { name: "Swarms" }));
+    await user.click(screen.getByRole("tab", { name: "Swarm" }));
     for (const name of ["User Testing", "Evals", "CI/CD"]) {
       await user.keyboard("{ArrowRight}");
       expect(screen.getByRole("tab", { name })).toHaveAttribute(
@@ -94,6 +99,54 @@ describe("PlatformLaunchAnnouncement", () => {
       screen.getByRole("button", { name: "See what’s new" }),
     ).toBeVisible();
   });
+
+  it("shows the character graphic and four feature tiles as one clear launch trigger", () => {
+    render(<PlatformLaunchAnnouncement />);
+    const trigger = screen.getByRole("button", { name: "See what’s new" });
+    for (const label of ["Swarm", "User Testing", "Evals", "CI/CD"])
+      expect(trigger).toHaveTextContent(label);
+    expect(screen.getByTestId("swarm-hero-characters")).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "Swarm",
+      "Explore Swarm",
+      "/swarms",
+      "Swarm characters explore parallel user journeys across clients",
+    ],
+    [
+      "User Testing",
+      "Explore User Testing",
+      "/user-testing",
+      "A user tests a conversation and leaves a rating and feedback",
+    ],
+    [
+      "Evals",
+      "Explore Evals",
+      "/evaluate",
+      "An evaluation suite tracks improving results across repeated runs",
+    ],
+    [
+      "CI/CD",
+      "Open Evaluate for CI/CD",
+      "/evaluate",
+      "A pull request passes automated checks before release",
+    ],
+  ])(
+    "shows a representative visual and navigates inside the app for %s",
+    async (name, action, path, visual) => {
+      const user = userEvent.setup();
+      render(<PlatformLaunchAnnouncement />);
+      await user.click(screen.getByRole("button", { name: "See what’s new" }));
+      await user.click(screen.getByRole("tab", { name, exact: true }));
+      expect(screen.getByRole("img", { name: visual })).toBeVisible();
+      expect(screen.queryByRole("link")).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: action }));
+      expect(onNavigate).toHaveBeenCalledWith(path);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    },
+  );
 
   it("opens from the collapsed sidebar", async () => {
     const user = userEvent.setup();
