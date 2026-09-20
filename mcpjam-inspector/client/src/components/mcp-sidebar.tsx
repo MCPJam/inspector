@@ -856,6 +856,7 @@ export function MCPSidebar({
         <SidebarFooter>
           <PlatformLaunchAnnouncement
             onNavigate={appNavigate}
+            audience={isAuthenticated ? "signed_in" : "guest"}
             collapsed={state === "collapsed" && !isMobile}
           />
           {utilityItems.length > 0 ? (

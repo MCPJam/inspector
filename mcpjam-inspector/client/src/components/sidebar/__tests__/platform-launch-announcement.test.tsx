@@ -1,7 +1,13 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PlatformLaunchAnnouncement as Announcement } from "../platform-launch-announcement";
+
+const { engagement } = vi.hoisted(() => ({ engagement: vi.fn() }));
+vi.mock("@/lib/launch-analytics", () => ({
+  trackLaunchEngagement: engagement,
+}));
 
 const onNavigate = vi.fn();
 function PlatformLaunchAnnouncement(props: { collapsed?: boolean }) {
@@ -11,8 +17,24 @@ function PlatformLaunchAnnouncement(props: { collapsed?: boolean }) {
 beforeEach(() => {
   localStorage.clear();
   onNavigate.mockClear();
+  engagement.mockClear();
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      constructor(
+        private callback: (entries: { isIntersecting: boolean }[]) => void,
+      ) {}
+      observe() {
+        this.callback([{ isIntersecting: true }]);
+      }
+      disconnect() {}
+    },
+  );
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe("PlatformLaunchAnnouncement", () => {
   it("stays non-blocking until opened, then restores focus on Escape", async () => {
@@ -147,6 +169,88 @@ describe("PlatformLaunchAnnouncement", () => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     },
   );
+
+  it("tracks the funnel once per action without counting rerenders as impressions", async () => {
+    const user = userEvent.setup();
+    const view = render(
+      <StrictMode>
+        <PlatformLaunchAnnouncement />
+      </StrictMode>,
+    );
+    expect(
+      engagement.mock.calls.filter(([e]) => e.action === "shown"),
+    ).toHaveLength(1);
+    view.rerender(
+      <StrictMode>
+        <PlatformLaunchAnnouncement />
+      </StrictMode>,
+    );
+    await user.click(screen.getByRole("button", { name: "See what’s new" }));
+    await user.click(screen.getByRole("tab", { name: "Evals", exact: true }));
+    await user.click(screen.getByRole("button", { name: "Play launch video" }));
+    await user.click(
+      screen.getByRole("button", { name: "Show feature preview" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Explore Evals" }));
+    expect(engagement.mock.calls.map(([e]) => e.action)).toEqual([
+      "shown",
+      "opened",
+      "feature_selected",
+      "video_requested",
+      "feature_navigated",
+      "closed",
+    ]);
+    expect(engagement).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        feature: "evals",
+        close_reason: "navigate",
+        duration_ms: expect.any(Number),
+      }),
+    );
+  });
+
+  it("waits for the launcher to become visible before counting an impression", () => {
+    let notify!: (entries: { isIntersecting: boolean }[]) => void;
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(callback: typeof notify) {
+          notify = callback;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    render(<PlatformLaunchAnnouncement />);
+    expect(engagement).not.toHaveBeenCalled();
+    act(() => notify([{ isIntersecting: false }]));
+    expect(engagement).not.toHaveBeenCalled();
+    act(() => notify([{ isIntersecting: true }]));
+    act(() => notify([{ isIntersecting: true }]));
+    expect(engagement).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report an impression for an already dismissed announcement", () => {
+    localStorage.setItem("mcpjam:platform-launch-2026-09:status", "dismissed");
+    render(<PlatformLaunchAnnouncement />);
+    expect(engagement).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes closing the modal from dismissing the announcement", async () => {
+    const user = userEvent.setup();
+    render(<PlatformLaunchAnnouncement />);
+    await user.click(screen.getByRole("button", { name: "See what’s new" }));
+    await user.keyboard("{Escape}");
+    await user.click(
+      screen.getByRole("button", { name: "Dismiss launch announcement" }),
+    );
+    expect(engagement.mock.calls.map(([e]) => e.action)).toEqual([
+      "shown",
+      "opened",
+      "closed",
+      "dismissed",
+    ]);
+  });
 
   it("opens from the collapsed sidebar", async () => {
     const user = userEvent.setup();

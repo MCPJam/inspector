@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   Play,
@@ -30,11 +30,13 @@ import {
   LaunchFeatureVisual,
   type LaunchFeatureId,
 } from "./launch-feature-visual";
+import { LAUNCH_ID, type LaunchEngagement } from "@/shared/launch-engagement";
+import { trackLaunchEngagement } from "@/lib/launch-analytics";
 import type { ProductUpdateEntry } from "../home/productUpdateEntry";
 
 const LAUNCH: ProductUpdateEntry = {
-  _id: "platform-launch-2026-09",
-  slug: "platform-launch-2026-09",
+  _id: LAUNCH_ID,
+  slug: LAUNCH_ID,
   publishAt: Date.UTC(2026, 8, 18),
   title: "Meet the new MCPJam",
   body: "From your first test to every release. Build confidence in your MCP server with one connected testing platform.",
@@ -85,8 +87,10 @@ type LaunchStatus = "unseen" | "seen" | "dismissed";
 export function PlatformLaunchAnnouncement({
   collapsed = false,
   onNavigate,
+  audience = "guest",
 }: {
   collapsed?: boolean;
+  audience?: "guest" | "signed_in";
   onNavigate: (path: string) => void;
 }) {
   const [status, setStatus] = useState<LaunchStatus>(() => {
@@ -105,6 +109,77 @@ export function PlatformLaunchAnnouncement({
   const [playing, setPlaying] = useState(false);
   const titleRef = useRef<HTMLHeadingElement>(null);
 
+  const shown = useRef(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const openedAt = useRef(0);
+  const presentation = collapsed ? "collapsed" : showCard ? "card" : "launcher";
+
+  function engagement(
+    action: LaunchEngagement["action"],
+    extra: Partial<
+      Pick<LaunchEngagement, "feature" | "duration_ms" | "close_reason">
+    > = {},
+  ) {
+    trackLaunchEngagement({
+      launch_id: LAUNCH_ID,
+      action,
+      feature,
+      presentation,
+      prior_status: status,
+      audience,
+      ...extra,
+    });
+  }
+
+  useEffect(() => {
+    if (status === "dismissed" || shown.current || !triggerRef.current) return;
+    const emit = () => {
+      if (shown.current) return;
+      shown.current = true;
+      trackLaunchEngagement({
+        launch_id: LAUNCH_ID,
+        action: "shown",
+        feature: "swarms",
+        presentation,
+        prior_status: status,
+        audience,
+      });
+    };
+    if (typeof IntersectionObserver === "undefined") {
+      emit();
+      return;
+    }
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        emit();
+        observer.disconnect();
+      }
+    });
+    observer.observe(triggerRef.current);
+    return () => observer.disconnect();
+  }, [status, presentation, audience]);
+
+  function changeOpen(
+    next: boolean,
+    reason: LaunchEngagement["close_reason"] = "dismiss",
+  ) {
+    if (next) {
+      engagement("opened");
+      openedAt.current = Date.now();
+      remember("seen");
+    } else if (open) {
+      engagement("closed", {
+        close_reason: reason,
+        duration_ms: Math.min(
+          86_400_000,
+          Math.max(0, Date.now() - openedAt.current),
+        ),
+      });
+    }
+    setOpen(next);
+    if (!next) setPlaying(false);
+  }
+
   function remember(next: LaunchStatus) {
     setStatus(next);
     try {
@@ -117,17 +192,11 @@ export function PlatformLaunchAnnouncement({
   if (status === "dismissed") return null;
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (next) remember("seen");
-        if (!next) setPlaying(false);
-      }}
-    >
+    <Dialog open={open} onOpenChange={changeOpen}>
       {collapsed || !showCard ? (
         <DialogTrigger asChild>
           <Button
+            ref={triggerRef}
             variant="ghost"
             size={collapsed ? "icon" : "sm"}
             aria-label="Discover the new MCPJam"
@@ -148,13 +217,17 @@ export function PlatformLaunchAnnouncement({
             size="icon"
             className="absolute right-1 top-1 size-7"
             aria-label="Dismiss launch announcement"
-            onClick={() => remember("dismissed")}
+            onClick={() => {
+              engagement("dismissed");
+              remember("dismissed");
+            }}
           >
             <X className="size-3.5" aria-hidden />
           </Button>
           <DialogTrigger asChild>
             <button
               type="button"
+              ref={triggerRef}
               aria-label="See what’s new"
               className="group block w-full px-3 pb-3 pt-4 text-left transition-colors hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
             >
@@ -214,6 +287,10 @@ export function PlatformLaunchAnnouncement({
         <Tabs
           value={feature}
           onValueChange={(value) => {
+            if (value !== feature)
+              engagement("feature_selected", {
+                feature: value as LaunchFeatureId,
+              });
             setFeature(value as LaunchFeatureId);
             setPlaying(false);
           }}
@@ -255,8 +332,8 @@ export function PlatformLaunchAnnouncement({
           <Button
             variant="outline"
             onClick={() => {
-              setOpen(false);
-              setPlaying(false);
+              engagement("feature_navigated");
+              changeOpen(false, "navigate");
               onNavigate(selected.path);
             }}
           >
@@ -267,7 +344,10 @@ export function PlatformLaunchAnnouncement({
           </Button>
           <Button
             variant="ghost"
-            onClick={() => setPlaying(!playing)}
+            onClick={() => {
+              if (!playing) engagement("video_requested");
+              setPlaying(!playing);
+            }}
             aria-label={playing ? "Show feature preview" : "Play launch video"}
           >
             <Play className="size-3.5" aria-hidden />
@@ -276,8 +356,7 @@ export function PlatformLaunchAnnouncement({
           <Button
             variant="ghost"
             onClick={() => {
-              setOpen(false);
-              setPlaying(false);
+              changeOpen(false, "back_to_work");
             }}
           >
             Back to work
