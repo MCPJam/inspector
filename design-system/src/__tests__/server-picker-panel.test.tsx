@@ -781,6 +781,69 @@ describe("ServerPickerPanel — an unanswered catalog", () => {
       screen.getByText("No servers in this project yet."),
     ).toBeInTheDocument();
   });
+
+  it("offers Add server only when the caller can send the user somewhere", async () => {
+    const onAddServer = vi.fn();
+    render(
+      <ServerPickerPanel
+        {...panelProps({ servers: [], catalogKnown: true, onAddServer })}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add server" }));
+    expect(onAddServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not invent an Add server control the caller never gave it", () => {
+    render(
+      <ServerPickerPanel
+        {...panelProps({ servers: [], catalogKnown: true })}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Add server" })).toBeNull();
+  });
+
+  it("does not offer Add server while the catalog is still unknown", () => {
+    render(
+      <ServerPickerPanel
+        {...panelProps({
+          servers: [],
+          catalogKnown: false,
+          onAddServer: vi.fn(),
+        })}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Add server" })).toBeNull();
+  });
+
+  it("offers Add server on the groups tab only when the project has no servers", async () => {
+    const onAddServer = vi.fn();
+    render(
+      <ServerPickerPanel
+        {...panelProps({
+          tab: "groups",
+          servers: [],
+          groups: [],
+          catalogKnown: true,
+          onAddServer,
+        })}
+      />,
+    );
+    expect(screen.queryByText(/Create new group/)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Add server" }));
+    expect(onAddServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not offer Add server on the groups tab when servers already exist", () => {
+    render(
+      <ServerPickerPanel
+        {...panelProps({ tab: "groups", groups: [], onAddServer: vi.fn() })}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Add server" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Create new group/ }),
+    ).toBeInTheDocument();
+  });
 });
 
 /**

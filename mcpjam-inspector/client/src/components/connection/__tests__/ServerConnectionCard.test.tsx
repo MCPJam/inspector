@@ -417,34 +417,6 @@ describe("ServerConnectionCard", () => {
 
       expect(screen.getByText("Failed (3)")).toBeInTheDocument();
     });
-
-    it("shows a connection settings indicator without reconnect badge copy", () => {
-      const server = createServer({ connectionStatus: "connected" });
-      render(
-        <ServerConnectionCard
-          server={server}
-          {...defaultProps}
-          needsReconnect
-        />
-      );
-
-      expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
-      expect(
-        screen.queryByLabelText("Reconnect needed")
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByLabelText("Connection settings changed")
-      ).toBeInTheDocument();
-    });
-
-    it("does not show the connection settings indicator when settings match", () => {
-      const server = createServer({ connectionStatus: "connected" });
-      render(<ServerConnectionCard server={server} {...defaultProps} />);
-
-      expect(
-        screen.queryByLabelText("Connection settings changed")
-      ).not.toBeInTheDocument();
-    });
   });
 
   describe("toggle switch", () => {

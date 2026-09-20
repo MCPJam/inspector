@@ -10,11 +10,9 @@ import {
 import { HostsConnectAddServerSlotContext } from "@/components/hosts/HostsConnectAddServerSlotContext";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { useState, type ReactElement, type ReactNode } from "react";
-import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 import type { ServerWithName, ServerUpdateResult } from "@/hooks/use-app-state";
 import type { Project } from "@/state/app-types";
 import type { ServerFormData } from "@/shared/types.js";
-import { mergeProjectClientCapabilities } from "@/lib/client-config";
 import {
   captureServerDetailModalOAuthResume,
   writeOpenServerDetailModalState,
@@ -272,7 +270,6 @@ vi.mock("@/hooks/useViews", () => ({
 vi.mock("../connection/ServerConnectionCard", () => ({
   ServerConnectionCard: ({
     server,
-    needsReconnect,
     onReconnect,
     onOpenDetailModal,
     moveTargets,
@@ -280,7 +277,6 @@ vi.mock("../connection/ServerConnectionCard", () => ({
     isMovingToProject,
   }: {
     server: ServerWithName;
-    needsReconnect?: boolean;
     onReconnect?: (
       serverName: string,
       options?: {
@@ -300,9 +296,6 @@ vi.mock("../connection/ServerConnectionCard", () => ({
       <button onClick={() => void onReconnect?.(server.name)}>
         Reconnect {server.name}
       </button>
-      {needsReconnect ? (
-        <span aria-label="Connection settings changed" />
-      ) : null}
       {moveTargets?.map((target) => (
         <button
           key={target.id}
@@ -1098,211 +1091,6 @@ describe("ServersTab shared detail modal", () => {
     fireEvent.click(screen.getByText("Close Modal"));
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  });
-
-  it("surfaces connection settings update indicators when a per-server clientCapabilities override drifts from initialize payload", () => {
-    // The indicator only fires for per-server overrides — host-driven
-    // capability changes are handled by the auto-reconciler (which
-    // disconnect/reconnects affected servers on host switch), so comparing
-    // against host-blended caps here just produced false positives.
-    const initializedCapabilities = getDefaultClientCapabilities() as Record<
-      string,
-      unknown
-    >;
-    const driftedOverride = {
-      ...initializedCapabilities,
-      experimental: { perServerOverride: true },
-    } as Record<string, unknown>;
-
-    render(
-      <ServersTab
-        {...defaultProps}
-        projectServers={{
-          "test-server": createServer({
-            config: {
-              command: "npx",
-              args: ["-y", "@modelcontextprotocol/server-test"],
-              clientCapabilities: driftedOverride,
-            },
-            initializationInfo: {
-              clientCapabilities: initializedCapabilities,
-            } as any,
-          }),
-        }}
-        projects={{
-          "project-1": createProject({
-            "test-server": createServer({
-              config: {
-                command: "npx",
-                args: ["-y", "@modelcontextprotocol/server-test"],
-                clientCapabilities: driftedOverride,
-              },
-              initializationInfo: {
-                clientCapabilities: initializedCapabilities,
-              } as any,
-            }),
-          }),
-        }}
-      />
-    );
-
-    expect(
-      screen.getByLabelText("Connection settings changed")
-    ).toBeInTheDocument();
-  });
-
-  it("does not surface the indicator when project client capabilities change but no per-server override is set", () => {
-    // Host-driven caps changes are handled by the auto-reconciler. The
-    // indicator must stay quiet for servers without their own override so
-    // host switches don't paint stale-handshake warnings across the board.
-    const initializedCapabilities = getDefaultClientCapabilities() as Record<
-      string,
-      unknown
-    >;
-
-    render(
-      <ServersTab
-        {...defaultProps}
-        projectServers={{
-          "test-server": createServer({
-            initializationInfo: {
-              clientCapabilities: initializedCapabilities,
-            } as any,
-          }),
-        }}
-        projects={{
-          "project-1": {
-            ...createProject({
-              "test-server": createServer({
-                initializationInfo: {
-                  clientCapabilities: initializedCapabilities,
-                } as any,
-              }),
-            }),
-            clientConfig: {
-              version: 1,
-              clientCapabilities: {
-                elicitation: {},
-                experimental: { inspectorProfile: true },
-              },
-              hostContext: {},
-            },
-          },
-        }}
-      />
-    );
-
-    expect(
-      screen.queryByLabelText("Connection settings changed")
-    ).not.toBeInTheDocument();
-  });
-
-  it("does not surface connection settings update indicators when server capability overrides already match initialize payload", () => {
-    const serverCapabilities = {
-      experimental: {
-        serverOverride: { enabled: true },
-      },
-    };
-    const initializedCapabilities = mergeProjectClientCapabilities(
-      getDefaultClientCapabilities() as Record<string, unknown>,
-      serverCapabilities
-    );
-
-    render(
-      <ServersTab
-        {...defaultProps}
-        projectServers={{
-          "test-server": createServer({
-            config: {
-              command: "npx",
-              args: ["-y", "@modelcontextprotocol/server-test"],
-              capabilities: serverCapabilities,
-            },
-            initializationInfo: {
-              clientCapabilities: initializedCapabilities,
-            } as any,
-          }),
-        }}
-        projects={{
-          "project-1": createProject({
-            "test-server": createServer({
-              config: {
-                command: "npx",
-                args: ["-y", "@modelcontextprotocol/server-test"],
-                capabilities: serverCapabilities,
-              },
-              initializationInfo: {
-                clientCapabilities: initializedCapabilities,
-              } as any,
-            }),
-          }),
-        }}
-      />
-    );
-
-    expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
-    expect(
-      screen.queryByLabelText("Connection settings changed")
-    ).not.toBeInTheDocument();
-  });
-
-  it("does not surface connection settings update indicators when a per-server clientCapabilities override matches initialize payload", () => {
-    // Regression: the warning previously recomputed "desired" from the
-    // project config + `server.config.capabilities` only, ignoring the
-    // per-server `clientCapabilities` override that the connect path
-    // actually ships to the SDK. Result: any server with an explicit
-    // override lit up the icon on every render, even though nothing
-    // had changed.
-    const overrideCapabilities = {
-      experimental: { perServerOverride: true },
-    } as Record<string, unknown>;
-
-    render(
-      <ServersTab
-        {...defaultProps}
-        projectServers={{
-          "test-server": createServer({
-            config: {
-              command: "npx",
-              args: ["-y", "@modelcontextprotocol/server-test"],
-              clientCapabilities: overrideCapabilities,
-            },
-            initializationInfo: {
-              clientCapabilities: overrideCapabilities,
-            } as any,
-          }),
-        }}
-        projects={{
-          "project-1": {
-            ...createProject({
-              "test-server": createServer({
-                config: {
-                  command: "npx",
-                  args: ["-y", "@modelcontextprotocol/server-test"],
-                  clientCapabilities: overrideCapabilities,
-                },
-                initializationInfo: {
-                  clientCapabilities: overrideCapabilities,
-                } as any,
-              }),
-            }),
-            clientConfig: {
-              version: 1,
-              clientCapabilities: {
-                elicitation: {},
-                experimental: { projectLevel: true },
-              },
-              hostContext: {},
-            },
-          },
-        }}
-      />
-    );
-
-    expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
-    expect(
-      screen.queryByLabelText("Connection settings changed")
-    ).not.toBeInTheDocument();
   });
 
   it("renders Quick Connect module helper copy and Browse Registry in the section header", () => {
