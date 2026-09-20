@@ -224,7 +224,7 @@ it("explains a model-limit refusal instead of echoing its raw body", () => {
     <EvalGenerationWorkspace {...target} autoStart={false} />,
   );
   const alert = screen.getByRole("alert");
-  expect(alert).toHaveTextContent(/MCPJam (model )?limit reached\./);
+  expect(alert).toHaveTextContent(/Out of MCPJam credits\./);
   expect(alert).not.toHaveTextContent("user_rate_limit");
   expect(
     screen.getByRole("button", { name: "Retry generation" }),
