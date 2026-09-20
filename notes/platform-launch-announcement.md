@@ -47,3 +47,9 @@ recording audience. Keep the full announcement regardless of sidebar collapse, a
 requested; the obsolete collapsed prop is removed. Swarm/User Testing remain
 previewable but their actions are disabled when the sandbox rollout is off.
 The telemetry endpoint requires close reason and duration only for closed events.
+
+## Copy and sidebar fit follow-up
+
+Use “Check out our new platform” for both announcement and dialog headings.
+The dialog introduction is “We've just launched a suite of new features to help you test the full lifecycle of your MCP servers!”
+Size the bottom-left announcement from the sidebar width with matching horizontal insets.
