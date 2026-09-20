@@ -854,11 +854,6 @@ export function MCPSidebar({
           )}
         </SidebarContent>
         <SidebarFooter>
-          <PlatformLaunchAnnouncement
-            onNavigate={appNavigate}
-            audience={isAuthenticated ? "signed_in" : "guest"}
-            collapsed={state === "collapsed" && !isMobile}
-          />
           {utilityItems.length > 0 ? (
             <div className="flex items-center gap-1 px-1 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-0">
               {utilityItems.map((item) => (
@@ -923,6 +918,13 @@ export function MCPSidebar({
           <SidebarUser onBeforeSignOut={onBeforeSignOut} />
         </SidebarFooter>
       </Sidebar>
+      {!authResolving && (
+        <PlatformLaunchAnnouncement
+          onNavigate={appNavigate}
+          audience={user || isAuthenticated ? "signed_in" : "guest"}
+          sandboxesEnabled={sandboxesEnabled === true}
+        />
+      )}
       {canOpenInviteDialog && showInviteDialog && activeOrganizationId ? (
         <InviteTeamMembersDialog
           key={activeOrganizationId}

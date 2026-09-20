@@ -10,8 +10,8 @@ vi.mock("@/lib/launch-analytics", () => ({
 }));
 
 const onNavigate = vi.fn();
-function PlatformLaunchAnnouncement(props: { collapsed?: boolean }) {
-  return <Announcement {...props} onNavigate={onNavigate} />;
+function PlatformLaunchAnnouncement(props: { sandboxesEnabled?: boolean }) {
+  return <Announcement sandboxesEnabled {...props} onNavigate={onNavigate} />;
 }
 
 beforeEach(() => {
@@ -275,9 +275,21 @@ describe("PlatformLaunchAnnouncement", () => {
     ]);
   });
 
-  it("opens from the collapsed sidebar", async () => {
+  it.each(["Swarm", "User Testing"])("disables navigation to unavailable %s", async (name) => {
     const user = userEvent.setup();
-    render(<PlatformLaunchAnnouncement collapsed />);
+    render(<PlatformLaunchAnnouncement sandboxesEnabled={false} />);
+    await user.click(screen.getByRole("button", { name: "Learn more about the new MCPJam" }));
+    await user.click(screen.getByRole("tab", { name, exact: true }));
+    const action = screen.getByRole("button", { name: "Not available in this workspace" });
+    expect(action).toBeDisabled();
+    await user.click(action);
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeVisible();
+  });
+
+  it("opens independently of sidebar state", async () => {
+    const user = userEvent.setup();
+    render(<PlatformLaunchAnnouncement />);
     await user.click(
       screen.getByRole("button", { name: "Learn more about the new MCPJam" }),
     );

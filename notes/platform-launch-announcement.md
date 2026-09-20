@@ -39,3 +39,11 @@ and the local-disable flag. Delivery is best-effort and never blocks UI; no
 production-delivery assertion is made by local tests. The public Axiom route
 uses the existing relay rate limit, a 2 KB body cap, and a strict field schema;
 it accepts no free-form user content or credentials.
+
+## Review fixes
+
+Mount outside the mobile sidebar sheet and wait for hosted auth resolution before
+recording audience. Keep the full announcement regardless of sidebar collapse, as
+requested; the obsolete collapsed prop is removed. Swarm/User Testing remain
+previewable but their actions are disabled when the sandbox rollout is off.
+The telemetry endpoint requires close reason and duration only for closed events.

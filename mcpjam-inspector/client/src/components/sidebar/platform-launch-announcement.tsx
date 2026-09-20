@@ -86,8 +86,9 @@ type LaunchStatus = "unseen" | "seen" | "dismissed";
 export function PlatformLaunchAnnouncement({
   onNavigate,
   audience = "guest",
+  sandboxesEnabled = false,
 }: {
-  collapsed?: boolean;
+  sandboxesEnabled?: boolean;
   audience?: "guest" | "signed_in";
   onNavigate: (path: string) => void;
 }) {
@@ -103,6 +104,8 @@ export function PlatformLaunchAnnouncement({
   const [feature, setFeature] =
     useState<LaunchEngagement["feature"]>("launch-video");
   const selected = FEATURES.find((item) => item.id === feature);
+  const canNavigate =
+    !["swarms", "user-testing"].includes(feature) || sandboxesEnabled;
   const [playing, setPlaying] = useState(false);
   const titleRef = useRef<HTMLHeadingElement>(null);
 
@@ -352,13 +355,16 @@ export function PlatformLaunchAnnouncement({
           {selected ? (
             <Button
               variant="default"
+              disabled={!canNavigate}
               onClick={() => {
                 engagement("feature_navigated");
                 changeOpen(false, "navigate");
                 onNavigate(selected.path);
               }}
             >
-              {feature === "ci-cd"
+              {!canNavigate
+                ? "Not available in this workspace"
+                : feature === "ci-cd"
                 ? "Open Evaluate for CI/CD"
                 : `Explore ${selected.name}`}
               <ArrowRight className="size-4" aria-hidden />

@@ -30,6 +30,17 @@ export const launchEngagementSchema = z
     close_reason: z.enum(["dismiss", "back_to_work", "navigate"]).optional(),
     duration_ms: z.number().int().min(0).max(86_400_000).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((event, ctx) => {
+    for (const field of ["close_reason", "duration_ms"] as const) {
+      if ((event.action === "closed") !== (event[field] !== undefined)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: "Close metadata is required only for closed events",
+        });
+      }
+    }
+  });
 
 export type LaunchEngagement = z.infer<typeof launchEngagementSchema>;

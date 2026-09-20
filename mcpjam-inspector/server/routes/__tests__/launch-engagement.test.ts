@@ -44,10 +44,17 @@ describe("launch engagement logging", () => {
     { ...event, email: "private@example.com" },
     { ...event, duration_ms: -1 },
     { ...event, launch_id: "unknown" },
+    { ...event, action: "closed" },
+    { ...event, action: "closed", duration_ms: 20 },
+    { ...event, close_reason: "dismiss" },
+    { ...event, duration_ms: 20 },
     null,
   ])("rejects invalid or unbounded fields without logging", async (payload) => {
     expect((await send(payload)).status).toBe(400);
     expect(log).not.toHaveBeenCalled();
+  });
+  it("accepts complete close metadata", async () => {
+    expect((await send({ ...event, action: "closed", duration_ms: 20, close_reason: "dismiss" })).status).toBe(204);
   });
   it("bounds body size before parsing or logging", async () => {
     expect((await send({ ...event, extra: "x".repeat(3000) })).status).toBe(

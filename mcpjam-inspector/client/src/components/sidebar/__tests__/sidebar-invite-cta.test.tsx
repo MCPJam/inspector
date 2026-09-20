@@ -8,6 +8,7 @@ const mockUseConvexAuth = vi.fn();
 const mockUseAuth = vi.fn();
 const mockShareProjectDialog = vi.fn();
 const mockInviteSignUpDialog = vi.fn();
+let sidebarHidden = false;
 const mockFeatureFlags: Record<string, boolean | undefined> = {};
 
 // The guest invite CTA only exists on hosted deployments — a local/self-hosted
@@ -105,7 +106,7 @@ vi.mock("@/components/auth/InviteTeamSignUpDialog", () => ({
 }));
 
 vi.mock("@/components/ui/sidebar", () => ({
-  Sidebar: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  Sidebar: ({ children }: { children: ReactNode }) => sidebarHidden ? null : <div>{children}</div>,
   SidebarContent: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
@@ -244,6 +245,25 @@ describe("sidebar invite CTA", () => {
     mockUseAuth.mockReturnValue({ user: null });
     renderSidebar();
     expect(screen.getByRole("region", { name: "Platform launch" })).toBeInTheDocument();
+  });
+
+  it("waits for auth resolution before showing the announcement", () => {
+    mockUseAuth.mockReturnValue({ user: null, isLoading: true });
+    const view = renderSidebar();
+    expect(screen.queryByRole("region", { name: "Platform launch" })).toBeNull();
+    view.unmount();
+    mockUseAuth.mockReturnValue({ user: { id: "owner" }, isLoading: false });
+    mockUseConvexAuth.mockReturnValue({ isAuthenticated: true, isLoading: false });
+    renderSidebar();
+    expect(screen.getByRole("region", { name: "Platform launch" })).toBeVisible();
+  });
+
+  it("shows the announcement when the mobile sidebar subtree is unmounted", () => {
+    sidebarHidden = true;
+    try {
+      renderSidebar();
+      expect(screen.getByRole("region", { name: "Platform launch" })).toBeVisible();
+    } finally { sidebarHidden = false; }
   });
 
   it("keeps guest launch history after signing in", () => {
