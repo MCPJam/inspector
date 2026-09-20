@@ -339,6 +339,7 @@ describe("evals-api hosted mode", () => {
       caught = error;
     }
 
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
     expect(caught).toBeInstanceOf(Error);
     const message = getBillingErrorMessage(caught, "Failed to start eval run");
     // Matches the canonical billing-entitlements message:
@@ -492,6 +493,48 @@ describe("evals-api hosted mode", () => {
         iteration: { _id: "iter-1" },
       }),
     ]);
+  });
+
+  it("opens once for duplicate mid-run credit errors without dropping completed events", async () => {
+    const encoder = new TextEncoder();
+    const events = [
+      { type: "complete", iteration: { _id: "completed" } },
+      { type: "error", message: "Credits exhausted" },
+      { type: "error", message: "Credits exhausted" },
+    ];
+    authFetchMock.mockResolvedValueOnce(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            for (const event of events)
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
+              );
+            controller.close();
+          },
+        }),
+      ),
+    );
+    const received: unknown[] = [];
+    let opened = 0;
+    await streamEvalTestCase(
+      {
+        projectId: "project",
+        testCaseId: "case",
+        model: "openai/gpt-5-mini",
+        provider: "openai",
+        serverIds: [],
+      },
+      (event) => {
+        received.push(event);
+        if (useMCPJamLimitDialogStore.getState().isOpen) {
+          opened++;
+          useMCPJamLimitDialogStore.getState().close();
+        }
+      },
+    );
+    expect(opened).toBe(1);
+    expect(received).toEqual(events);
   });
 
   it("posts hosted guest compare streams with the project/server payload", async () => {
