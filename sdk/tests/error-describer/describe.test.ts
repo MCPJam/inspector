@@ -858,3 +858,9 @@ it.each([
   expect(mcpjamLimitSlugForMessage(message)).toBe(slug);
   if (slug) expect(describeError(new Error(message)).slug).toBe(slug);
 });
+
+it("describes the credit exhaustion heading with plan-appropriate recovery guidance", () => {
+  const result = describeError("Out of MCPJam credits.");
+  expect(result.slug).toBe("provider/mcpjam_limit");
+  expect(result.title).toBe("Out of MCPJam credits");
+});

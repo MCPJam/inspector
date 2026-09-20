@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
+import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type {
@@ -121,6 +122,28 @@ export function useEvalQueries({
     () => suiteRunsRaw?.filter((run) => !isBenchmarkOwned(run)),
     [suiteRunsRaw]
   );
+
+  const liveRunIds = useRef(new Set<string>());
+  useEffect(() => {
+    for (const run of suiteRuns ?? []) {
+      if (run.status === "running" || run.status === "pending") {
+        liveRunIds.current.add(run._id);
+      }
+    }
+    for (const iteration of suiteDetails?.iterations ?? []) {
+      if (
+        !iteration.suiteRunId ||
+        !liveRunIds.current.has(iteration.suiteRunId)
+      )
+        continue;
+      notifyMCPJamLimitError({
+        runId: iteration.suiteRunId,
+        message: iteration.error,
+        details: iteration.errorDetails,
+        organizationId: organizationId ?? undefined,
+      });
+    }
+  }, [suiteRuns, suiteDetails, organizationId]);
 
   const isOverviewLoading =
     isActorBootstrapping || (enableOverviewQuery && suiteOverview === undefined);
