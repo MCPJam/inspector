@@ -1,146 +1,106 @@
-import { CreditLimitDialogFrame } from "./CreditLimitDialogFrame";
 import { Button } from "@mcpjam/design-system/button";
-import type { BillingInterval } from "@/hooks/useOrganizationBilling";
-import { UpgradeIntervalPicker } from "@/components/billing/UpgradeIntervalPicker";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@mcpjam/design-system/dialog";
+import { JamIllustration } from "./JamIllustration";
 import {
   RequestUpgradeButton,
-  type UpgradeRequestAction,
+  type CreditEngagementContext,
   type UpgradeRequestRecipient,
-} from "@/components/billing/RequestUpgradeButton";
+} from "./RequestUpgradeButton";
 
 export interface CreditsLimitDialogViewProps {
   description: string;
   isFreePlan?: boolean;
-  /** Can't buy credits or upgrade. Gets the owner-request path instead. */
+  isSwarm?: boolean;
   isKnownNonManager: boolean;
-  /** Free orgs whose user can manage billing. A paid org gets credits only. */
-  showUpgrade: boolean;
-  /** Free-plan admins request an owner upgrade and retain BYOK information. */
   showRequestUpgrade?: boolean;
   requestRecipients: UpgradeRequestRecipient[];
-  requestAction?: UpgradeRequestAction;
   organizationId?: string | null;
-  engagementContext?: {
-    surface: string | null;
-    current_plan?: string;
-    effective_plan?: string;
-  };
   organizationName: string;
-  interval: BillingInterval;
-  onIntervalChange: (interval: BillingInterval) => void;
-  annualPriceLabel: string | null;
-  monthlyPriceLabel: string | null;
-  annualDiscountPct: number;
-  annualSupported: boolean;
-  monthlySupported: boolean;
   teamName: string;
-  priceUnit?: string;
-  isStarting: boolean;
-  isLoadingPrices?: boolean;
-  onUpgrade: () => void;
+  engagementContext?: CreditEngagementContext;
   onBuyCredits: () => void;
-  onExplorePlans?: () => void;
+  onExplorePlans: () => void;
   onUseOwnKey: () => void;
   onDismiss: () => void;
-  /** Dev preview only; see PlanLimitDialogView. Production renders modal. */
   modal?: boolean;
 }
 
-/**
- * Presentation for the out-of-credits wall, with no data dependencies, so the
- * dev preview at `/__preview/plan-limit` can render each variant with dummy
- * props. `MCPJamLimitDialog` owns the data, the org resolution, and the copy.
- *
- */
+/** Shared Eval/Swarm presentation; billing data and navigation stay in the caller. */
 export function CreditsLimitDialogView({
   description,
   isFreePlan = false,
+  isSwarm = false,
   isKnownNonManager,
-  showUpgrade,
   showRequestUpgrade = false,
   requestRecipients,
-  requestAction = "upgrade",
   organizationId,
-  engagementContext,
   organizationName,
-  interval,
-  onIntervalChange,
-  annualPriceLabel,
-  monthlyPriceLabel,
-  annualDiscountPct,
-  annualSupported,
-  monthlySupported,
   teamName,
-  priceUnit,
-  isStarting,
-  isLoadingPrices = false,
-  onUpgrade,
+  engagementContext,
   onBuyCredits,
   onExplorePlans,
   onUseOwnKey,
   onDismiss,
   modal = true,
 }: CreditsLimitDialogViewProps) {
+  const showPlansSecondary = isSwarm && !isFreePlan;
   return (
-    <CreditLimitDialogFrame
-      title="Out of MCPJam credits"
-      description={description}
-      onDismiss={onDismiss}
+    <Dialog
+      open
       modal={modal}
+      onOpenChange={(next) => {
+        if (!next) onDismiss();
+      }}
     >
-      {isFreePlan && !isKnownNonManager && !showRequestUpgrade ? (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <Button variant="outline" onClick={onUseOwnKey}>
-            Learn more about BYOK
-          </Button>
-          <Button onClick={onExplorePlans}>Compare plans</Button>
-        </div>
-      ) : isKnownNonManager || showRequestUpgrade ? (
-        <>
-          <RequestUpgradeButton
-            recipients={requestRecipients}
-            organizationName={organizationName}
-            teamName={teamName}
-            origin="credits"
-            limitKind="credits"
-            requestAction={requestAction}
-            organizationId={organizationId}
-            engagementContext={engagementContext}
-          />
-          {showRequestUpgrade && (
-            <Button variant="link" onClick={onUseOwnKey}>
-              Learn more about BYOK
-            </Button>
-          )}
-        </>
-      ) : (
-        <>
-          {showUpgrade ? (
-            <UpgradeIntervalPicker
-              priceUnit={priceUnit}
-              interval={interval}
-              onIntervalChange={onIntervalChange}
-              annualPriceLabel={annualPriceLabel}
-              monthlyPriceLabel={monthlyPriceLabel}
-              annualDiscountPct={annualDiscountPct}
-              annualSupported={annualSupported}
-              monthlySupported={monthlySupported}
+      <DialogContent className="sm:max-w-md">
+        <JamIllustration />
+        <DialogHeader>
+          <DialogTitle>Out of MCPJam credits</DialogTitle>
+          <DialogDescription
+            className="text-pretty"
+            data-testid="limit-dialog-description"
+          >
+            {description}
+          </DialogDescription>
+        </DialogHeader>
+        {isKnownNonManager || showRequestUpgrade ? (
+          <>
+            <RequestUpgradeButton
+              recipients={requestRecipients}
+              organizationName={organizationName}
               teamName={teamName}
-              isStarting={isStarting}
-              isLoadingPrices={isLoadingPrices}
-              onUpgrade={onUpgrade}
+              origin="credits"
+              limitKind="credits"
+              requestAction={isFreePlan ? "upgrade" : "buyCredits"}
+              organizationId={organizationId}
+              engagementContext={engagementContext}
             />
-          ) : null}
+            {showRequestUpgrade && (
+              <Button variant="link" onClick={onUseOwnKey}>
+                Learn more about BYOK
+              </Button>
+            )}
+          </>
+        ) : (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <Button type="button" variant="outline" onClick={onUseOwnKey}>
-              Learn more about BYOK
+            <Button
+              variant="outline"
+              onClick={showPlansSecondary ? onExplorePlans : onUseOwnKey}
+            >
+              {showPlansSecondary ? "Compare plans" : "Learn more about BYOK"}
             </Button>
-            <Button type="button" onClick={onBuyCredits}>
-              Buy credits
+            <Button onClick={isFreePlan ? onExplorePlans : onBuyCredits}>
+              {isFreePlan ? "Compare plans" : "Buy credits"}
             </Button>
           </div>
-        </>
-      )}
-    </CreditLimitDialogFrame>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

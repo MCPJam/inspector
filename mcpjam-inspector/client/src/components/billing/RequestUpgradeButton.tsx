@@ -85,6 +85,12 @@ export function buildUpgradeRequestMail(params: {
   )}&body=${encodeURIComponent(body)}`;
 }
 
+export interface CreditEngagementContext {
+  surface: string | null;
+  current_plan?: string;
+  effective_plan?: string;
+}
+
 interface RequestUpgradeButtonProps {
   recipients: UpgradeRequestRecipient[];
   organizationName: string;
@@ -93,11 +99,7 @@ interface RequestUpgradeButtonProps {
   limitKind: string;
   requestAction?: UpgradeRequestAction;
   organizationId?: string | null;
-  engagementContext?: {
-    surface: string | null;
-    current_plan?: string;
-    effective_plan?: string;
-  };
+  engagementContext?: CreditEngagementContext;
 }
 
 /**

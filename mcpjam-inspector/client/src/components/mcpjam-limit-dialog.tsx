@@ -21,7 +21,6 @@ import { useAppNavigate } from "@/lib/app-navigation";
 import { useUpgradeCheckout } from "@/hooks/use-upgrade-checkout";
 import { useUpgradeRequestRecipients } from "@/hooks/use-upgrade-request-recipients";
 import { CreditsLimitDialogView } from "@/components/billing/CreditsLimitDialogView";
-import { AllowanceLimitDialogView } from "@/components/billing/AllowanceLimitDialogView";
 import { ScenarioOwnerLimitDialogView } from "@/components/billing/ScenarioOwnerLimitDialogView";
 import { track } from "@/lib/analytics";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
@@ -295,8 +294,6 @@ export function MCPJamLimitDialog() {
     isBillingReady && creditsUpgrade.effectivePlan === "free";
   const showCreditWall =
     showTopupDialog && isBillingReady && !frontierOpen && !isLoading;
-  const showCreditsUpgrade =
-    isFreeEffectivePlan && creditsUpgrade.canManageBilling;
   // Buying credits and upgrading the plan are two different permissions:
   // admins can do the first, only owners the second. An admin who can't
   // upgrade must not be pitched the upgrade with no way to act on it — they
@@ -324,7 +321,7 @@ export function MCPJamLimitDialog() {
       ? `Your Free credits reset daily. ${upgradeBenefit}`
       : "Add shared credits to keep your team testing.";
   const swarmDescription = `${
-    limitPeriod && limitPeriod !== "unknown"
+    limitPeriod
       ? creditDescription.replace("Your Free credits reset daily. ", "")
       : creditDescription
   } ${
@@ -405,7 +402,6 @@ export function MCPJamLimitDialog() {
     isSwarmWall,
     limitSurface,
     requestRecipients.length,
-    showCreditsUpgrade,
     showCreditsUpgradeRequest,
     showTopupDialog,
     showCreditWall,
@@ -413,122 +409,49 @@ export function MCPJamLimitDialog() {
 
   if (isLoading) return null;
 
-  const handleTopUp = () => {
+  const engagementContext = {
+    surface: limitSurface,
+    audience: creditsAudience,
+    current_plan: creditsUpgrade.currentPlan,
+    effective_plan: creditsUpgrade.effectivePlan,
+  };
+  const creditEventContext = {
+    ...engagementContext,
+    location: "plan_limit_dialog",
+    wall_kind: "organization_credits",
+    origin: "credits",
+  };
+  const navigateToBilling = (
+    action: "buy_credits" | "byok" | "explore_plans",
+  ) => {
+    const destinations = {
+      buy_credits: { path: "billing?topup=open", outcome: "billing_opened" },
+      byok: { path: "billing/byok", outcome: "byok_explainer_opened" },
+      explore_plans: { path: "plans", outcome: "billing_opened" },
+    } as const;
     const orgId = resolveBillingOrgId();
-    // Don't dismiss the modal until we know we can route the user — on a
-    // fresh sign-in the membership query may still be in flight, in which
-    // case closing now would drop them out of the upsell silently.
-    if (!orgId) {
-      track("plan_limit_buy_credits_clicked", {
-        location: "plan_limit_dialog",
-        surface: limitSurface,
-        audience: creditsAudience,
-        current_plan: creditsUpgrade.currentPlan,
-        effective_plan: creditsUpgrade.effectivePlan,
-        wall_kind: "organization_credits",
-        organization_id: null,
-        origin: "credits",
-        outcome: "blocked_missing_organization",
-      });
-      return;
+    const destination = destinations[action];
+    // Keep the wall open until there is an organization to navigate to.
+    if (orgId) {
+      close();
+      appNavigate(`/organizations/${orgId}/${destination.path}`);
     }
-    close();
-    // The router strips ?... before resolving the route, so the
-    // `topup=open` flag is invisible to navigation but visible to the
-    // billing page on mount.
-    appNavigate(`/organizations/${orgId}/billing?topup=open`);
-    track("plan_limit_buy_credits_clicked", {
-      location: "plan_limit_dialog",
-      surface: limitSurface,
-      audience: creditsAudience,
-      current_plan: creditsUpgrade.currentPlan,
-      effective_plan: creditsUpgrade.effectivePlan,
-      wall_kind: "organization_credits",
-      organization_id: orgId,
-      origin: "credits",
-      outcome: "billing_opened",
+    track(`plan_limit_${action}_clicked`, {
+      ...creditEventContext,
+      organization_id: orgId ?? null,
+      outcome: orgId ? destination.outcome : "blocked_missing_organization",
     });
   };
-
-  const handleBYOK = () => {
-    const orgId = resolveBillingOrgId();
-    if (!orgId) {
-      track("plan_limit_byok_clicked", {
-        location: "plan_limit_dialog",
-        surface: limitSurface,
-        audience: creditsAudience,
-        current_plan: creditsUpgrade.currentPlan,
-        effective_plan: creditsUpgrade.effectivePlan,
-        organization_id: null,
-        outcome: "blocked_missing_organization",
-      });
-      return;
-    }
-    close();
-    appNavigate(`/organizations/${orgId}/billing/byok`);
-    track("plan_limit_byok_clicked", {
-      location: "plan_limit_dialog",
-      surface: limitSurface,
-      audience: creditsAudience,
-      current_plan: creditsUpgrade.currentPlan,
-      effective_plan: creditsUpgrade.effectivePlan,
-      organization_id: orgId,
-      outcome: "byok_explainer_opened",
-    });
-  };
-
-  const handleExplorePlans = () => {
-    const orgId = resolveBillingOrgId();
-    // Same guard as `handleTopUp`: without an org there is no billing page to
-    // land on, so keep the dialog up rather than dropping them on nothing.
-    if (!orgId) {
-      track("plan_limit_explore_plans_clicked", {
-        location: "plan_limit_dialog",
-        surface: limitSurface,
-        audience: creditsAudience,
-        current_plan: creditsUpgrade.currentPlan,
-        effective_plan: creditsUpgrade.effectivePlan,
-        wall_kind: "organization_credits",
-        organization_id: null,
-        origin: "credits",
-        outcome: "blocked_missing_organization",
-      });
-      return;
-    }
-    close();
-    // Open the organization’s plans settings.
-    appNavigate(`/organizations/${orgId}/plans`);
-    track("plan_limit_explore_plans_clicked", {
-      location: "plan_limit_dialog",
-      surface: limitSurface,
-      audience: creditsAudience,
-      current_plan: creditsUpgrade.currentPlan,
-      effective_plan: creditsUpgrade.effectivePlan,
-      wall_kind: "organization_credits",
-      organization_id: orgId,
-      origin: "credits",
-      outcome: "billing_opened",
-    });
-  };
-
+  const handleTopUp = () => navigateToBilling("buy_credits");
+  const handleBYOK = () => navigateToBilling("byok");
+  const handleExplorePlans = () => navigateToBilling("explore_plans");
   const handleCreditsDismiss = () => {
     close();
     track("plan_limit_dialog_dismissed", {
-      location: "plan_limit_dialog",
-      surface: limitSurface,
-      audience: creditsAudience,
-      current_plan: creditsUpgrade.currentPlan,
-      effective_plan: creditsUpgrade.effectivePlan,
-      wall_kind: "organization_credits",
+      ...creditEventContext,
       organization_id: billingOrgId,
       limit_kind: "credits",
-      origin: "credits",
     });
-  };
-
-  const handleUpgrade = async () => {
-    const result = await creditsUpgrade.start();
-    if (result?.shouldDismiss) close();
   };
 
   return (
@@ -545,59 +468,21 @@ export function MCPJamLimitDialog() {
       )}
       {showScenarioWall && <ScenarioOwnerLimitDialogView onDismiss={close} />}
       {showGuestDialog && !frontierOpen && <GuestCreditWall />}
-      {showCreditWall && isSwarmWall && (
-        <AllowanceLimitDialogView
-          engagementContext={{
-            surface: limitSurface,
-            current_plan: creditsUpgrade.currentPlan,
-            effective_plan: creditsUpgrade.effectivePlan,
-          }}
-          isFreePlan={isFreeEffectivePlan}
-          title="Out of MCPJam credits"
-          description={swarmDescription}
-          isKnownNonManager={isKnownNonManager}
-          showRequestUpgrade={showCreditsUpgradeRequest}
-          requestRecipients={isBillingReady ? requestRecipients : []}
-          organizationId={billingOrgId}
-          organizationName={creditsUpgrade.organizationName}
-          teamName={creditsUpgrade.teamName}
-          onBuyCredits={handleTopUp}
-          onLearnMore={handleBYOK}
-          onExplorePlans={handleExplorePlans}
-          onDismiss={handleCreditsDismiss}
-        />
-      )}
-      {showCreditWall && !isSwarmWall && (
+      {showCreditWall && (
         <CreditsLimitDialogView
-          engagementContext={{
-            surface: limitSurface,
-            current_plan: creditsUpgrade.currentPlan,
-            effective_plan: creditsUpgrade.effectivePlan,
-          }}
+          engagementContext={engagementContext}
           isFreePlan={isFreeEffectivePlan}
-          description={creditDescription}
+          description={isSwarmWall ? swarmDescription : creditDescription}
+          isSwarm={isSwarmWall}
           isKnownNonManager={isKnownNonManager}
-          showUpgrade={showCreditsUpgrade}
           showRequestUpgrade={showCreditsUpgradeRequest}
           // Empty until billing resolves: the draft's wording depends on the
           // plan, and RequestUpgradeButton already renders nothing without a
           // recipient.
           requestRecipients={isBillingReady ? requestRecipients : []}
-          requestAction={creditsRequestAction}
           organizationId={billingOrgId}
           organizationName={creditsUpgrade.organizationName}
-          interval={creditsUpgrade.interval}
-          onIntervalChange={creditsUpgrade.setInterval}
-          annualPriceLabel={creditsUpgrade.annualPriceLabel}
-          monthlyPriceLabel={creditsUpgrade.monthlyPriceLabel}
-          annualDiscountPct={creditsUpgrade.annualDiscountPct}
-          annualSupported={creditsUpgrade.annualSupported}
-          monthlySupported={creditsUpgrade.monthlySupported}
-          priceUnit={creditsUpgrade.priceUnit}
           teamName={creditsUpgrade.teamName}
-          isStarting={creditsUpgrade.isStarting}
-          isLoadingPrices={creditsUpgrade.isLoadingPrices}
-          onUpgrade={() => void handleUpgrade()}
           onBuyCredits={handleTopUp}
           onUseOwnKey={handleBYOK}
           onExplorePlans={handleExplorePlans}

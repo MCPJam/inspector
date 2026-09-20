@@ -26,7 +26,11 @@ import {
  */
 
 type SharedHandlers =
-  "interval" | "onIntervalChange" | "onUpgrade" | "onDismiss" | "modal";
+  | "interval"
+  | "onIntervalChange"
+  | "onUpgrade"
+  | "onDismiss"
+  | "modal";
 
 type PreviewVariant = {
   id: string;
@@ -41,7 +45,7 @@ type CreditsVariant = {
   note: string;
   props: Omit<
     CreditsLimitDialogViewProps,
-    SharedHandlers | "onBuyCredits" | "onUseOwnKey"
+    "onDismiss" | "modal" | "onBuyCredits" | "onUseOwnKey" | "onExplorePlans"
   >;
 };
 
@@ -121,13 +125,7 @@ const VARIANTS: PreviewVariant[] = [
 
 const CREDITS_SHARED = {
   organizationName: "Acme Robotics",
-  annualPriceLabel: "$30",
-  monthlyPriceLabel: "$38",
-  annualDiscountPct: 21,
-  annualSupported: true,
-  monthlySupported: true,
   teamName: "Team",
-  isStarting: false,
 };
 
 const CREDITS_VARIANTS: CreditsVariant[] = [
@@ -138,9 +136,8 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
     props: {
       ...CREDITS_SHARED,
       description:
-        "Your Free credits reset daily. Upgrade to Pro or Team for a larger monthly credit allowance and access to top-ups, so you can run more evaluations and Swarms.",
+        "Your Free credits reset daily. Get more monthly credits and top-ups with Pro or Team.",
       isKnownNonManager: false,
-      showUpgrade: true,
       requestRecipients: [],
     },
   },
@@ -150,9 +147,9 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
     note: "Already on Team, so there is no plan to pitch. Credits are the actual answer here.",
     props: {
       ...CREDITS_SHARED,
-      description: "Buy shared credits to run more evaluations, Swarms, and user tests before your included allowance renews.",
+      description:
+        "Add shared credits to keep your team testing.",
       isKnownNonManager: false,
-      showUpgrade: false,
       requestRecipients: [],
     },
   },
@@ -163,9 +160,8 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
     props: {
       ...CREDITS_SHARED,
       description:
-        "Ask an organization owner to add shared credits so your team can continue testing before its included allowance renews.",
+        "Ask an owner to add shared credits and keep your team testing.",
       isKnownNonManager: true,
-      showUpgrade: false,
       requestRecipients: [
         { email: "dana@acmerobotics.com", name: "Dana Ruiz" },
       ],
@@ -198,8 +194,8 @@ export function PlanLimitDialogPreview() {
     wall === "guest" || wall === "frontier"
       ? []
       : wall === "evals"
-        ? VARIANTS
-        : CREDITS_VARIANTS;
+      ? VARIANTS
+      : CREDITS_VARIANTS;
   const activeVariantId = wall === "evals" ? variantId : creditsVariantId;
   const setActiveVariantId =
     wall === "evals" ? setVariantId : setCreditsVariantId;
@@ -207,10 +203,10 @@ export function PlanLimitDialogPreview() {
     wall === "frontier"
       ? "Preview: Sign in to use frontier models, or choose a standard model. Actions do not start authentication."
       : wall === "guest"
-        ? "Guest sign-up presentation; buttons report actions without starting authentication."
-        : wall === "evals"
-          ? variant.note
-          : creditsVariant.note;
+      ? "Guest sign-up presentation; buttons report actions without starting authentication."
+      : wall === "evals"
+      ? variant.note
+      : creditsVariant.note;
 
   return (
     <div className="min-h-screen bg-background p-6 text-foreground">
@@ -316,9 +312,6 @@ export function PlanLimitDialogPreview() {
           key={creditsVariant.id}
           {...creditsVariant.props}
           modal={false}
-          interval={interval}
-          onIntervalChange={setInterval}
-          onUpgrade={() => setLastAction(`checkout would start (${interval})`)}
           onBuyCredits={() =>
             setLastAction("would open the buy-credits dialog")
           }
