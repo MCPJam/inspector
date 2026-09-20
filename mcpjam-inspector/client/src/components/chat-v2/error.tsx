@@ -34,6 +34,7 @@ interface ErrorBoxProps {
   onRetry?: () => void;
   canTopUp?: boolean;
   onTopUp?: () => void;
+  creditActionLabel?: string;
   /** When top-up is the relevant fix but the current user lacks permission
    * to buy credits, render an "ask org admin" hint instead of the button. */
   askAdminToTopUp?: boolean;
@@ -78,6 +79,7 @@ export function ErrorBox({
   onRetry,
   canTopUp,
   onTopUp,
+  creditActionLabel = "Buy credits to keep chatting",
   askAdminToTopUp,
   walletLocked,
   limitKind,
@@ -100,7 +102,7 @@ export function ErrorBox({
       {typeof resetAt === "number" && Number.isFinite(resetAt) && <p>Resets {new Date(resetAt).toLocaleString()}.</p>}
       <div className="flex gap-2">
         <Button variant="outline" onClick={() => useModelPickerIntentStore.getState().requestOpenProvidersTab()}>Use your own API key</Button>
-        {canTopUp && onTopUp && <Button variant="outline" onClick={onTopUp}>Add credits</Button>}
+        {canTopUp && onTopUp && <Button variant="outline" onClick={onTopUp}>{creditActionLabel}</Button>}
       </div>
     </div>;
   }
@@ -303,14 +305,14 @@ export function ErrorBox({
         <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
           {canTopUp && onTopUp ? (
             <Button type="button" onClick={onTopUp}>
-              Buy credits to keep chatting
+              {creditActionLabel}
             </Button>
           ) : askAdminToTopUp ? (
             <span
               className="self-center text-sm text-muted-foreground"
               data-testid="chat-error-ask-admin"
             >
-              Ask org admin to top up credits
+              Ask an owner or admin to add credits
             </span>
           ) : null}
           {onChangeProtocolVersion ? (

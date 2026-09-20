@@ -81,15 +81,15 @@ describe("CaseScorecard", () => {
 
   it("says who wrote each scorer", () => {
     renderCard();
-    expect(rowFor("First tool called was… get_me")).toHaveAttribute(
+    expect(rowFor("Require this tool to be reached first")).toHaveAttribute(
       "data-provenance",
       "step",
     );
-    expect(rowFor("Final message non-empty")).toHaveAttribute(
+    expect(rowFor("Catch an empty answer")).toHaveAttribute(
       "data-provenance",
       "case",
     );
-    expect(rowFor("Token budget under 4000")).toHaveAttribute(
+    expect(rowFor("Track increases in token usage")).toHaveAttribute(
       "data-provenance",
       "suite",
     );
@@ -104,7 +104,7 @@ describe("CaseScorecard", () => {
 
   it("sends an inherited scorer to the suite instead of editing it here", () => {
     const { onOpenSuiteSettings } = renderCard();
-    const suite = rowFor("Token budget under 4000");
+    const suite = rowFor("Track increases in token usage");
     expect(
       within(suite).queryByRole("button", { name: /^Remove/ }),
     ).not.toBeInTheDocument();
@@ -149,7 +149,7 @@ describe("CaseScorecard — the left rail", () => {
     expect(
       within(step).getAllByTestId("scorecard-row-marker")[0],
     ).toHaveAttribute("title", "Step 3 — graded when the run reaches it");
-    const suite = rowFor("Token budget under 4000");
+    const suite = rowFor("Track increases in token usage");
     expect(
       within(suite).getAllByTestId("scorecard-row-marker")[0],
     ).toHaveAttribute("title", "Graded once, over the finished transcript");
@@ -197,12 +197,12 @@ describe("CaseScorecard — roles", () => {
         },
       },
     });
-    expect(rowFor("Final message non-empty")).toHaveAttribute(
+    expect(rowFor("Catch an empty answer")).toHaveAttribute(
       "data-role",
       "advisory",
     );
     expect(
-      within(rowFor("Final message non-empty")).getByText("Advisory"),
+      within(rowFor("Catch an empty answer")).getByText("Advisory"),
     ).toBeInTheDocument();
   });
 
@@ -242,7 +242,7 @@ describe("CaseScorecard — roles", () => {
         },
       },
     });
-    const row = rowFor("Final message does not end with a question");
+    const row = rowFor("Catch an answer that ends by asking");
     const group = within(row).getByRole("group", { name: "Assertion role" });
     expect(
       within(group).queryByRole("button", { name: "Required" }),
