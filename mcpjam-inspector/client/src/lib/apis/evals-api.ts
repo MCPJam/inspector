@@ -361,8 +361,6 @@ async function postEvalRequest<TResponse>(
           ? errorBody.error
           : `Request failed (${response.status})`;
 
-    rethrowIfBillingError(errorBody);
-
     const limitKind = (errorBody as { limitKind?: unknown } | null | undefined)
       ?.limitKind;
     notifyMCPJamLimitError({
@@ -374,6 +372,7 @@ async function postEvalRequest<TResponse>(
           ? limitKind
           : undefined,
     });
+    rethrowIfBillingError(errorBody);
     // Carry the route's machine-readable `code` onto the Error. The message
     // alone can't be branched on (it's prose the server may reword), and the
     // eval fan-out summarises failures per plan — without this, a launch
@@ -577,10 +576,6 @@ export async function streamEvalTestCase(
         errorBody = errorText;
       }
     }
-    // Billing caps (402) take precedence over the rate-limit dialog: rebuild
-    // the ConvexError so streamed single-case runs get the same eval-iteration
-    // upgrade UX the buffered path renders, instead of a generic failure.
-    rethrowIfBillingError(errorBody);
     const limitKindRaw =
       errorBody && typeof errorBody === "object"
         ? (errorBody as { limitKind?: unknown }).limitKind
@@ -599,6 +594,9 @@ export async function streamEvalTestCase(
           ? limitKindRaw
           : undefined,
     });
+    // Plan quotas are excluded by the credit classifier and retain their
+    // existing eval-iteration upgrade flow.
+    rethrowIfBillingError(errorBody);
     throw new Error(errorMessage);
   }
 
@@ -609,6 +607,7 @@ export async function streamEvalTestCase(
 
   const decoder = new TextDecoder();
   let buffer = "";
+  const limitRunId = crypto.randomUUID();
   const emitSseLine = (line: string) => {
     const trimmedLine = line.trim();
     if (!trimmedLine.startsWith("data: ")) {
@@ -639,6 +638,7 @@ export async function streamEvalTestCase(
           }
         }
         notifyMCPJamLimitError({
+          runId: limitRunId,
           details: event.details,
           message: event.message,
           limitKind,
