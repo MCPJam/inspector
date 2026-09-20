@@ -548,6 +548,7 @@ describe("ConformanceTab", () => {
     // and offering the pre-run catalog for a run already in flight.
     window.dispatchEvent(
       new MessageEvent("message", {
+        origin: window.location.origin,
         data: { type: "OAUTH_CALLBACK", code: "auth-code" },
       }),
     );
