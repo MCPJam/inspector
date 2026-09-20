@@ -33285,9 +33285,10 @@
                 "sessionsWithdrawn",
                 "sessionsRateLimited",
                 "partialRead",
-                "toolCatalogMissing"
+                "toolCatalogMissing",
+                "mechanismsRejected"
               ],
-              "description": "`sessionScanCapped`, `budgetExhausted`, `transcriptMissing`, `contextTooLarge`, `extractionRejected`, `chainUnmeasured`, `judgeNotRun`, `sessionsWithdrawn`, `sessionsRateLimited`, `partialRead`, `toolCatalogMissing`"
+              "description": "`sessionScanCapped`, `budgetExhausted`, `transcriptMissing`, `contextTooLarge`, `extractionRejected`, `chainUnmeasured`, `judgeNotRun`, `sessionsWithdrawn`, `sessionsRateLimited`, `partialRead`, `toolCatalogMissing`, `mechanismsRejected`"
             }
           },
           "outcomePhrase": {
@@ -33312,6 +33313,11 @@
                 "type": "string",
                 "maxLength": 1800
               },
+              "account": {
+                "nullable": true,
+                "type": "string",
+                "maxLength": 600
+              },
               "citations": {
                 "maxItems": 30,
                 "type": "array",
@@ -33330,6 +33336,18 @@
           "mechanismId": {
             "nullable": true,
             "type": "string"
+          },
+          "signal": {
+            "nullable": true,
+            "type": "string",
+            "enum": [
+              "outputTruncated",
+              "hallucinatedTool",
+              "toolErrored",
+              "noToolCalled",
+              "turnCapReached"
+            ],
+            "description": "`outputTruncated`, `hallucinatedTool`, `toolErrored`, `noToolCalled`, `turnCapReached`"
           }
         },
         "required": [
@@ -33467,9 +33485,10 @@
                 "sessionsWithdrawn",
                 "sessionsRateLimited",
                 "partialRead",
-                "toolCatalogMissing"
+                "toolCatalogMissing",
+                "mechanismsRejected"
               ],
-              "description": "`sessionScanCapped`, `budgetExhausted`, `transcriptMissing`, `contextTooLarge`, `extractionRejected`, `chainUnmeasured`, `judgeNotRun`, `sessionsWithdrawn`, `sessionsRateLimited`, `partialRead`, `toolCatalogMissing`"
+              "description": "`sessionScanCapped`, `budgetExhausted`, `transcriptMissing`, `contextTooLarge`, `extractionRejected`, `chainUnmeasured`, `judgeNotRun`, `sessionsWithdrawn`, `sessionsRateLimited`, `partialRead`, `toolCatalogMissing`, `mechanismsRejected`"
             }
           },
           "disclosure": {
@@ -33563,6 +33582,44 @@
             "items": {
               "$ref": "#/components/schemas/SwarmJourneyFinding"
             }
+          },
+          "verification": {
+            "type": "object",
+            "properties": {
+              "proposed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "confirmed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "rejected": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "unverified": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "omitted": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "proposed",
+              "confirmed",
+              "rejected",
+              "unverified",
+              "omitted"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [
