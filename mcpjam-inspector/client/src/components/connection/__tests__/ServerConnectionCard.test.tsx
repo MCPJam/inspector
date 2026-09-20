@@ -641,18 +641,14 @@ describe("ServerConnectionCard", () => {
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
+      fireEvent.click(screen.getByRole("button", { name: "Show details" }));
       expect(screen.getByText("Connection refused")).toBeInTheDocument();
     });
 
     it("renders long error messages via the ErrorCard", () => {
-      // The ErrorCard owns details disclosure; we just confirm the rich
-      // surface shows up (the docs link) rather than the old ad-hoc
-      // truncation.
-      //
-      // This message is unclassified and short enough that the describer
-      // shows it in full, so there is no further evidence to disclose and no
-      // "Show details" toggle. The card puts "Learn more" on the action row
-      // instead of offering a disclosure that opens onto nothing.
+      // The ErrorCard owns details disclosure. On the server card that
+      // disclosure is an info glyph; Learn more lives in the panel so the
+      // failed card stays one row.
       const longError = "A".repeat(150);
       const server = createServer({
         connectionStatus: "failed",
@@ -660,8 +656,9 @@ describe("ServerConnectionCard", () => {
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
+      expect(screen.queryByText("Learn more")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Show details" }));
       expect(screen.getByText("Learn more")).toBeInTheDocument();
-      expect(screen.queryByText("Show details")).not.toBeInTheDocument();
     });
 
     it("shows troubleshooting link when a failure carries no error card", () => {

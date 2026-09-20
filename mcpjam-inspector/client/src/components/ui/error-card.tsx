@@ -49,6 +49,13 @@ export type ErrorCardProps = {
   action?: { label: string; onClick: () => void };
   variant?: "inline" | "banner" | "toast";
   /**
+   * `row` is the server-card density: one line the height of the support
+   * pill, with the diagnostic rows behind an info glyph. `card` is the
+   * diagnostic report. A primary `action` also selects `row` — the action
+   * is the thing to do, and the rest is secondary.
+   */
+  density?: "card" | "row";
+  /**
    * Uncontrolled initial state for the details disclosure. Ignored when
    * `open` is provided (controlled mode).
    */
@@ -317,6 +324,7 @@ export function ErrorCard({
   onDismiss,
   action,
   variant = "inline",
+  density = "card",
   defaultOpen = false,
   open,
   onOpenChange,
@@ -372,6 +380,182 @@ export function ErrorCard({
    */
   const hasDetail =
     causes.length > 0 || steps.length > 0 || showRaw || Boolean(normalized.cause);
+  /**
+   * `row` (or a primary `action`) is one line the height of the server
+   * card's support pill: title, the click, and an info glyph. Badge,
+   * one-liner, Copy, and evidence wait behind the glyph. `card` stays a
+   * diagnostic report.
+   */
+  const compact = density === "row" || Boolean(action);
+  const showDetailsPanel = isOpen && (hasDetail || compact);
+
+  const detailsPanel = showDetailsPanel ? (
+    <div
+      className={
+        compact
+          ? "mt-2 space-y-3 rounded-md border border-border bg-muted/40 p-3 dark:bg-muted/20"
+          : "mt-3 space-y-3 border-t border-border pt-3"
+      }
+    >
+      {compact && badge ? (
+        <span
+          data-testid="error-card-origin-badge"
+          className={cn(
+            "inline-flex rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none",
+            badge.className,
+          )}
+        >
+          {badge.label}
+        </span>
+      ) : null}
+      {compact ? (
+        <div className="leading-relaxed text-muted-foreground">
+          {normalized.oneLine}
+        </div>
+      ) : null}
+      {compact && badge?.note ? (
+        <div className="leading-relaxed text-muted-foreground">
+          {badge.note}
+        </div>
+      ) : null}
+      {causes.length > 0 ? (
+        <div>
+          {/* A list means the wire genuinely doesn't settle which one
+              it was; a single entry means we know. Saying "likely"
+              over a cause we're certain of reads as the product not
+              knowing its own state. Not "Cause": that heading is
+              taken below by the nested exception, and one panel
+              cannot use it for two different things. */}
+          <SectionLabel>
+            {causes.length === 1 ? "Why this happened" : "Likely causes"}
+          </SectionLabel>
+          <SectionBody items={causes} />
+        </div>
+      ) : null}
+      {steps.length > 0 ? (
+        <div>
+          <SectionLabel>Next steps</SectionLabel>
+          <SectionBody items={steps} />
+        </div>
+      ) : null}
+      {showRaw ? (
+        <div>
+          <SectionLabel>Raw error</SectionLabel>
+          <MonoBlock>
+            {normalized.rawMessage}
+            {normalized.rawCode !== undefined ? (
+              <span className="ml-1.5 rounded border border-border px-1 py-px text-[10px] text-muted-foreground">
+                {normalized.rawCode}
+              </span>
+            ) : null}
+          </MonoBlock>
+        </div>
+      ) : null}
+      {normalized.cause ? (
+        <div>
+          <SectionLabel>Cause</SectionLabel>
+          <MonoBlock>
+            {normalized.cause.name}: {normalized.cause.message}
+          </MonoBlock>
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-0.5">
+        <a
+          href={docsHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ExternalLink className="h-3 w-3" />
+          Learn more
+        </a>
+        {compact ? (
+          <button
+            type="button"
+            onClick={handleCopy}
+            data-testid="error-card-copy"
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            {copyState === "copied" ? (
+              <Check className="h-3 w-3" />
+            ) : (
+              <Copy className="h-3 w-3" />
+            )}
+            {copyState === "copied"
+              ? "Copied"
+              : copyState === "failed"
+                ? "Copy failed"
+                : "Copy"}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  ) : null;
+
+  if (compact) {
+    return (
+      <div
+        role="alert"
+        data-compact=""
+        onPointerDown={(event) => event.stopPropagation()}
+        className={cn("text-xs select-text nodrag nopan", className)}
+      >
+        <div className="flex h-6.5 items-center gap-2">
+          <Icon
+            className={cn("h-3.5 w-3.5 shrink-0", styles.iconClass)}
+          />
+          <span className="min-w-0 flex-1 truncate font-medium leading-none text-foreground">
+            {displayTitle(normalized)}
+          </span>
+          {action ? (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={action.onClick}
+              data-testid="error-card-action"
+              className="h-5 shrink-0 gap-1 px-2 text-[11px]"
+            >
+              {action.label}
+              <ArrowRight className="h-3 w-3" />
+            </Button>
+          ) : null}
+          {onRetry ? (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={onRetry}
+              className="h-5 shrink-0 gap-1 px-2 text-[11px]"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Retry
+            </Button>
+          ) : null}
+          <button
+            type="button"
+            onClick={handleToggle}
+            aria-expanded={isOpen}
+            aria-label={isOpen ? "Hide details" : "Show details"}
+            data-testid="error-card-details"
+            className="inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-chrome-hover hover:text-foreground"
+          >
+            <Info className="size-3" aria-hidden />
+          </button>
+          {onDismiss ? (
+            <button
+              type="button"
+              onClick={onDismiss}
+              aria-label="Dismiss"
+              className="inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-chrome-hover hover:text-foreground"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          ) : null}
+        </div>
+        {detailsPanel}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -438,22 +622,10 @@ export function ErrorCard({
               behind the disclosure would undo that. "Learn more" is reading,
               not repair, so it sits in the panel with the rest of the detail. */}
           <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
-            {action ? (
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={action.onClick}
-                data-testid="error-card-action"
-              >
-                {action.label}
-                <ArrowRight className="h-3 w-3" />
-              </Button>
-            ) : null}
             {onRetry ? (
               <Button
                 type="button"
-                variant={action ? "ghost" : "secondary"}
+                variant="secondary"
                 size="sm"
                 onClick={onRetry}
               >
@@ -505,65 +677,7 @@ export function ErrorCard({
             </button>
           </div>
 
-          {isOpen && hasDetail ? (
-            <div className="mt-3 space-y-3 border-t border-border pt-3">
-              {causes.length > 0 ? (
-                <div>
-                  {/* A list means the wire genuinely doesn't settle which one
-                      it was; a single entry means we know. Saying "likely"
-                      over a cause we're certain of reads as the product not
-                      knowing its own state. Not "Cause": that heading is
-                      taken below by the nested exception, and one panel
-                      cannot use it for two different things. */}
-                  <SectionLabel>
-                    {causes.length === 1
-                      ? "Why this happened"
-                      : "Likely causes"}
-                  </SectionLabel>
-                  <SectionBody items={causes} />
-                </div>
-              ) : null}
-              {steps.length > 0 ? (
-                <div>
-                  <SectionLabel>Next steps</SectionLabel>
-                  <SectionBody items={steps} />
-                </div>
-              ) : null}
-              {showRaw ? (
-                <div>
-                  <SectionLabel>Raw error</SectionLabel>
-                  <MonoBlock>
-                    {normalized.rawMessage}
-                    {normalized.rawCode !== undefined ? (
-                      <span className="ml-1.5 rounded border border-border px-1 py-px text-[10px] text-muted-foreground">
-                        {normalized.rawCode}
-                      </span>
-                    ) : null}
-                  </MonoBlock>
-                </div>
-              ) : null}
-              {normalized.cause ? (
-                <div>
-                  <SectionLabel>Cause</SectionLabel>
-                  <MonoBlock>
-                    {normalized.cause.name}: {normalized.cause.message}
-                  </MonoBlock>
-                </div>
-              ) : null}
-
-              <div className="pt-0.5">
-                <a
-                  href={docsHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                  Learn more
-                </a>
-              </div>
-            </div>
-          ) : null}
+          {detailsPanel}
         </div>
       </div>
     </div>

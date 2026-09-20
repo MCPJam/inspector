@@ -1073,6 +1073,10 @@ export function ServerConnectionCard({
                 // Prefer the rich block; fall back to the message string
                 // (the card calls `describeError` internally when needed).
                 error={server.lastNormalizedError ?? server.lastError ?? ""}
+                // Same height as the support pill. The diagnostic rows
+                // sit behind the info glyph so a failed card does not
+                // grow a second status report under Failed.
+                density="row"
                 // Controlled — the status row above toggles
                 // `isErrorExpanded`; the card must reflect that on every
                 // change, not just at mount.
