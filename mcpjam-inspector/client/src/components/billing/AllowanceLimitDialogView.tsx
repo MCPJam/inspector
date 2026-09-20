@@ -1,13 +1,5 @@
-import { JamIllustration } from "./JamIllustration";
+import { CreditLimitDialogFrame } from "./CreditLimitDialogFrame";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@mcpjam/design-system/dialog";
 import {
   RequestUpgradeButton,
   type UpgradeRequestRecipient,
@@ -52,66 +44,46 @@ export function AllowanceLimitDialogView({
   modal = true,
 }: AllowanceLimitDialogViewProps) {
   return (
-    <Dialog
-      open
+    <CreditLimitDialogFrame
+      title={title}
+      description={description}
+      onDismiss={onDismiss}
       modal={modal}
-      onOpenChange={(next) => {
-        if (!next) onDismiss();
-      }}
     >
-      <DialogContent className="sm:max-w-md">
-        {isFreePlan && <JamIllustration />}
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription
-            className="text-pretty"
-            data-testid="limit-dialog-description"
-          >
-            {description}
-          </DialogDescription>
-        </DialogHeader>
-        {isFreePlan && !isKnownNonManager && !showRequestUpgrade ? (
-          <div className="grid grid-cols-2 gap-2">
-            <Button variant="outline" onClick={onLearnMore}>
+      {isFreePlan && !isKnownNonManager && !showRequestUpgrade ? (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <Button variant="outline" onClick={onLearnMore}>
+            Learn more about BYOK
+          </Button>
+          <Button onClick={onExplorePlans}>Compare plans</Button>
+        </div>
+      ) : isKnownNonManager || showRequestUpgrade ? (
+        <>
+          <RequestUpgradeButton
+            recipients={requestRecipients}
+            organizationName={organizationName}
+            teamName={teamName}
+            origin="credits"
+            limitKind="credits"
+            requestAction={isFreePlan ? "upgrade" : "buyCredits"}
+            organizationId={organizationId}
+          />
+          {showRequestUpgrade && (
+            <Button variant="link" onClick={onLearnMore}>
               Learn more about BYOK
             </Button>
-            <Button onClick={onExplorePlans}>Compare plans</Button>
-          </div>
-        ) : isKnownNonManager || showRequestUpgrade ? (
-          <>
-            <RequestUpgradeButton
-              recipients={requestRecipients}
-              organizationName={organizationName}
-              teamName={teamName}
-              origin="credits"
-              limitKind="credits"
-              requestAction={isFreePlan ? "upgrade" : "buyCredits"}
-              organizationId={organizationId}
-            />
-            {showRequestUpgrade && (
-              <Button variant="link" onClick={onLearnMore}>
-                Learn more about BYOK
-              </Button>
-            )}
-          </>
-        ) : (
-          <>
-            <Button type="button" className="w-full" onClick={onBuyCredits}>
-              Buy credits
-            </Button>
-            <DialogFooter className="sm:justify-start">
-              <Button
-                type="button"
-                variant="link"
-                className="px-0 text-muted-foreground"
-                onClick={onExplorePlans}
-              >
-                Compare plans
-              </Button>
-            </DialogFooter>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
+          )}
+        </>
+      ) : (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <Button type="button" variant="outline" onClick={onExplorePlans}>
+            Compare plans
+          </Button>
+          <Button type="button" onClick={onBuyCredits}>
+            Buy credits
+          </Button>
+        </div>
+      )}
+    </CreditLimitDialogFrame>
   );
 }

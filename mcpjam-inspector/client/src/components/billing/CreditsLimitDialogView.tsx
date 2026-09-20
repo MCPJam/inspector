@@ -1,13 +1,5 @@
-import { JamIllustration } from "./JamIllustration";
+import { CreditLimitDialogFrame } from "./CreditLimitDialogFrame";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@mcpjam/design-system/dialog";
 import type { BillingInterval } from "@/hooks/useOrganizationBilling";
 import { UpgradeIntervalPicker } from "@/components/billing/UpgradeIntervalPicker";
 import {
@@ -54,9 +46,6 @@ export interface CreditsLimitDialogViewProps {
  * dev preview at `/__preview/plan-limit` can render each variant with dummy
  * props. `MCPJamLimitDialog` owns the data, the org resolution, and the copy.
  *
- * Upgrade leads because both of the older actions (buy credits, bring your own
- * key) keep the org on Free at a variable cost. Credits stay available for a
- * genuine burst, one step down.
  */
 export function CreditsLimitDialogView({
   description,
@@ -87,82 +76,64 @@ export function CreditsLimitDialogView({
   modal = true,
 }: CreditsLimitDialogViewProps) {
   return (
-    <Dialog
-      open
+    <CreditLimitDialogFrame
+      title="Out of MCPJam credits"
+      description={description}
+      onDismiss={onDismiss}
       modal={modal}
-      onOpenChange={(next) => {
-        if (!next) onDismiss();
-      }}
     >
-      <DialogContent className="sm:max-w-md">
-        {isFreePlan && <JamIllustration />}
-        <DialogHeader>
-          <DialogTitle>Out of MCPJam credits</DialogTitle>
-          <DialogDescription
-            className="text-pretty"
-            data-testid="limit-dialog-description"
-          >
-            {description}
-          </DialogDescription>
-        </DialogHeader>
-        {isFreePlan && !isKnownNonManager && !showRequestUpgrade ? (
-          <div className="grid grid-cols-2 gap-2">
-            <Button variant="outline" onClick={onUseOwnKey}>
+      {isFreePlan && !isKnownNonManager && !showRequestUpgrade ? (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <Button variant="outline" onClick={onUseOwnKey}>
+            Learn more about BYOK
+          </Button>
+          <Button onClick={onExplorePlans}>Compare plans</Button>
+        </div>
+      ) : isKnownNonManager || showRequestUpgrade ? (
+        <>
+          <RequestUpgradeButton
+            recipients={requestRecipients}
+            organizationName={organizationName}
+            teamName={teamName}
+            origin="credits"
+            limitKind="credits"
+            requestAction={requestAction}
+            organizationId={organizationId}
+          />
+          {showRequestUpgrade && (
+            <Button variant="link" onClick={onUseOwnKey}>
               Learn more about BYOK
             </Button>
-            <Button onClick={onExplorePlans}>Compare plans</Button>
-          </div>
-        ) : isKnownNonManager || showRequestUpgrade ? (
-          <>
-            <RequestUpgradeButton
-              recipients={requestRecipients}
-              organizationName={organizationName}
+          )}
+        </>
+      ) : (
+        <>
+          {showUpgrade ? (
+            <UpgradeIntervalPicker
+              priceUnit={priceUnit}
+              interval={interval}
+              onIntervalChange={onIntervalChange}
+              annualPriceLabel={annualPriceLabel}
+              monthlyPriceLabel={monthlyPriceLabel}
+              annualDiscountPct={annualDiscountPct}
+              annualSupported={annualSupported}
+              monthlySupported={monthlySupported}
               teamName={teamName}
-              origin="credits"
-              limitKind="credits"
-              requestAction={requestAction}
-              organizationId={organizationId}
+              isStarting={isStarting}
+              isLoadingPrices={isLoadingPrices}
+              onUpgrade={onUpgrade}
             />
-            {showRequestUpgrade && (
-              <Button variant="link" onClick={onUseOwnKey}>
-                Learn more about BYOK
-              </Button>
-            )}
-          </>
-        ) : (
-          <>
-            {showUpgrade ? (
-              <UpgradeIntervalPicker
-                priceUnit={priceUnit}
-                interval={interval}
-                onIntervalChange={onIntervalChange}
-                annualPriceLabel={annualPriceLabel}
-                monthlyPriceLabel={monthlyPriceLabel}
-                annualDiscountPct={annualDiscountPct}
-                annualSupported={annualSupported}
-                monthlySupported={monthlySupported}
-                teamName={teamName}
-                isStarting={isStarting}
-                isLoadingPrices={isLoadingPrices}
-                onUpgrade={onUpgrade}
-              />
-            ) : null}
-            <DialogFooter className="sm:justify-between">
-              <Button
-                type="button"
-                variant="link"
-                className="px-0 text-muted-foreground"
-                onClick={onUseOwnKey}
-              >
-                Learn more about BYOK
-              </Button>
-              <Button type="button" variant="outline" onClick={onBuyCredits}>
-                Buy credits
-              </Button>
-            </DialogFooter>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
+          ) : null}
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <Button type="button" variant="outline" onClick={onUseOwnKey}>
+              Learn more about BYOK
+            </Button>
+            <Button type="button" onClick={onBuyCredits}>
+              Buy credits
+            </Button>
+          </div>
+        </>
+      )}
+    </CreditLimitDialogFrame>
   );
 }
