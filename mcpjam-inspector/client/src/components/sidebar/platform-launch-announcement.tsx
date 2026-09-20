@@ -335,15 +335,6 @@ export function PlatformLaunchAnnouncement({
           {FEATURES.map(({ id, name, title, body }) => (
             <TabsContent key={name} value={id} className="space-y-4 pt-3">
               <LaunchFeatureVisual feature={id} />
-              <div className="flex items-center justify-between gap-2 text-[10px] font-medium uppercase tracking-widest text-foreground">
-                <span>Feature preview</span>
-                <span>
-                  {String(
-                    FEATURES.findIndex((item) => item.id === id) + 1,
-                  ).padStart(2, "0")}{" "}
-                  / 04
-                </span>
-              </div>
               <h3 className="text-lg font-semibold">{title}</h3>
               <p className="mt-2 text-sm leading-relaxed text-foreground">
                 {body}
