@@ -829,6 +829,15 @@ describe("MCPJamLimitDialog", () => {
 
     await user.click(screen.getByRole("button", { name: /compare plans/i }));
 
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_explore_plans_clicked",
+      expect.objectContaining({
+        surface: "swarm",
+        current_plan: upgradeState.currentPlan,
+        effective_plan: upgradeState.effectivePlan,
+        outcome: "billing_opened",
+      }),
+    );
     expect(window.location.pathname).toBe("/organizations/org-active/plans");
     // Exploring plans must not open a credit purchase.
     expect(window.location.search).toBe("");

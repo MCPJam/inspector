@@ -16,6 +16,11 @@ export interface AllowanceLimitDialogViewProps {
   showRequestUpgrade?: boolean;
   requestRecipients: UpgradeRequestRecipient[];
   organizationId?: string | null;
+  engagementContext?: {
+    surface: string | null;
+    current_plan?: string;
+    effective_plan?: string;
+  };
   organizationName: string;
   teamName: string;
   onLearnMore?: () => void;
@@ -35,6 +40,7 @@ export function AllowanceLimitDialogView({
   showRequestUpgrade = false,
   requestRecipients,
   organizationId,
+  engagementContext,
   organizationName,
   teamName,
   onLearnMore,
@@ -67,6 +73,7 @@ export function AllowanceLimitDialogView({
             limitKind="credits"
             requestAction={isFreePlan ? "upgrade" : "buyCredits"}
             organizationId={organizationId}
+            engagementContext={engagementContext}
           />
           {showRequestUpgrade && (
             <Button variant="link" onClick={onLearnMore}>

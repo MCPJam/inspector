@@ -421,12 +421,14 @@ export function MCPJamLimitDialog() {
     if (!orgId) {
       track("plan_limit_buy_credits_clicked", {
         location: "plan_limit_dialog",
+        surface: limitSurface,
+        audience: creditsAudience,
+        current_plan: creditsUpgrade.currentPlan,
+        effective_plan: creditsUpgrade.effectivePlan,
         wall_kind: "organization_credits",
         organization_id: null,
         origin: "credits",
         outcome: "blocked_missing_organization",
-        current_plan: creditsUpgrade.currentPlan,
-        effective_plan: creditsUpgrade.effectivePlan,
       });
       return;
     }
@@ -437,22 +439,39 @@ export function MCPJamLimitDialog() {
     appNavigate(`/organizations/${orgId}/billing?topup=open`);
     track("plan_limit_buy_credits_clicked", {
       location: "plan_limit_dialog",
+      surface: limitSurface,
+      audience: creditsAudience,
+      current_plan: creditsUpgrade.currentPlan,
+      effective_plan: creditsUpgrade.effectivePlan,
       wall_kind: "organization_credits",
       organization_id: orgId,
       origin: "credits",
       outcome: "billing_opened",
-      current_plan: creditsUpgrade.currentPlan,
-      effective_plan: creditsUpgrade.effectivePlan,
     });
   };
 
   const handleBYOK = () => {
     const orgId = resolveBillingOrgId();
-    if (!orgId) return;
+    if (!orgId) {
+      track("plan_limit_byok_clicked", {
+        location: "plan_limit_dialog",
+        surface: limitSurface,
+        audience: creditsAudience,
+        current_plan: creditsUpgrade.currentPlan,
+        effective_plan: creditsUpgrade.effectivePlan,
+        organization_id: null,
+        outcome: "blocked_missing_organization",
+      });
+      return;
+    }
     close();
     appNavigate(`/organizations/${orgId}/billing/byok`);
     track("plan_limit_byok_clicked", {
       location: "plan_limit_dialog",
+      surface: limitSurface,
+      audience: creditsAudience,
+      current_plan: creditsUpgrade.currentPlan,
+      effective_plan: creditsUpgrade.effectivePlan,
       organization_id: orgId,
       outcome: "byok_explainer_opened",
     });
@@ -465,6 +484,10 @@ export function MCPJamLimitDialog() {
     if (!orgId) {
       track("plan_limit_explore_plans_clicked", {
         location: "plan_limit_dialog",
+        surface: limitSurface,
+        audience: creditsAudience,
+        current_plan: creditsUpgrade.currentPlan,
+        effective_plan: creditsUpgrade.effectivePlan,
         wall_kind: "organization_credits",
         organization_id: null,
         origin: "credits",
@@ -477,6 +500,10 @@ export function MCPJamLimitDialog() {
     appNavigate(`/organizations/${orgId}/plans`);
     track("plan_limit_explore_plans_clicked", {
       location: "plan_limit_dialog",
+      surface: limitSurface,
+      audience: creditsAudience,
+      current_plan: creditsUpgrade.currentPlan,
+      effective_plan: creditsUpgrade.effectivePlan,
       wall_kind: "organization_credits",
       organization_id: orgId,
       origin: "credits",
@@ -488,13 +515,14 @@ export function MCPJamLimitDialog() {
     close();
     track("plan_limit_dialog_dismissed", {
       location: "plan_limit_dialog",
+      surface: limitSurface,
+      audience: creditsAudience,
+      current_plan: creditsUpgrade.currentPlan,
+      effective_plan: creditsUpgrade.effectivePlan,
       wall_kind: "organization_credits",
       organization_id: billingOrgId,
       limit_kind: "credits",
       origin: "credits",
-      current_plan: creditsUpgrade.currentPlan,
-      effective_plan: creditsUpgrade.effectivePlan,
-      audience: creditsAudience,
     });
   };
 
@@ -519,6 +547,11 @@ export function MCPJamLimitDialog() {
       {showGuestDialog && !frontierOpen && <GuestCreditWall />}
       {showCreditWall && isSwarmWall && (
         <AllowanceLimitDialogView
+          engagementContext={{
+            surface: limitSurface,
+            current_plan: creditsUpgrade.currentPlan,
+            effective_plan: creditsUpgrade.effectivePlan,
+          }}
           isFreePlan={isFreeEffectivePlan}
           title="Out of MCPJam credits"
           description={swarmDescription}
@@ -536,6 +569,11 @@ export function MCPJamLimitDialog() {
       )}
       {showCreditWall && !isSwarmWall && (
         <CreditsLimitDialogView
+          engagementContext={{
+            surface: limitSurface,
+            current_plan: creditsUpgrade.currentPlan,
+            effective_plan: creditsUpgrade.effectivePlan,
+          }}
           isFreePlan={isFreeEffectivePlan}
           description={creditDescription}
           isKnownNonManager={isKnownNonManager}

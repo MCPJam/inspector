@@ -20,6 +20,11 @@ export interface CreditsLimitDialogViewProps {
   requestRecipients: UpgradeRequestRecipient[];
   requestAction?: UpgradeRequestAction;
   organizationId?: string | null;
+  engagementContext?: {
+    surface: string | null;
+    current_plan?: string;
+    effective_plan?: string;
+  };
   organizationName: string;
   interval: BillingInterval;
   onIntervalChange: (interval: BillingInterval) => void;
@@ -56,6 +61,7 @@ export function CreditsLimitDialogView({
   requestRecipients,
   requestAction = "upgrade",
   organizationId,
+  engagementContext,
   organizationName,
   interval,
   onIntervalChange,
@@ -99,6 +105,7 @@ export function CreditsLimitDialogView({
             limitKind="credits"
             requestAction={requestAction}
             organizationId={organizationId}
+            engagementContext={engagementContext}
           />
           {showRequestUpgrade && (
             <Button variant="link" onClick={onUseOwnKey}>

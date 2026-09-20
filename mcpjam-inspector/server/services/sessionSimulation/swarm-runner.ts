@@ -1496,6 +1496,7 @@ async function runJourneyFanOut(
                 : undefined;
               runStop.abort();
               logEvent("run.spend_cap_short_circuit", {
+                stopReason: isCreditExhaustion({ message: errorMessage, code: errorReason }) ? "credits_exhausted" : "organization_usage_limit",
                 runId,
                 hostId,
                 targetId,

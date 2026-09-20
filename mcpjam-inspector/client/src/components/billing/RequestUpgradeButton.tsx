@@ -93,6 +93,11 @@ interface RequestUpgradeButtonProps {
   limitKind: string;
   requestAction?: UpgradeRequestAction;
   organizationId?: string | null;
+  engagementContext?: {
+    surface: string | null;
+    current_plan?: string;
+    effective_plan?: string;
+  };
 }
 
 /**
@@ -117,6 +122,7 @@ export function RequestUpgradeButton({
   limitKind,
   requestAction = "upgrade",
   organizationId,
+  engagementContext,
 }: RequestUpgradeButtonProps) {
   const href = buildUpgradeRequestMail({
     recipients,
@@ -141,6 +147,8 @@ export function RequestUpgradeButton({
             // This is synchronous and failure-isolated, so the browser never
             // waits for analytics before opening the mail client.
             track("plan_limit_upgrade_requested", {
+              ...engagementContext,
+              outcome: "email_draft_requested",
               location: "plan_limit_dialog",
               limit_kind: limitKind,
               origin,

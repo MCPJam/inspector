@@ -1,3 +1,4 @@
+import { logger } from "../../../utils/logger";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const generateTextMock = vi.hoisted(() => vi.fn());
@@ -198,6 +199,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   it.each(["Credits exhausted", "Daily credit limit reached."])(
     "stops remaining iterations after %s and preserves completed results",
     async (message) => {
+      const infoSpy = vi.spyOn(logger, "info");
       const success = streamTextMock.getMockImplementation()!;
       streamTextMock
         .mockImplementationOnce(success)
@@ -213,6 +215,11 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           : { iterationId: "iteration" },
       );
       const result = await runEvalSuiteWithAiSdk(config as any);
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[evals] credits exhausted; remaining iterations skipped",
+        { event: "evals.credits_exhausted", iterationId: "iteration-2" },
+      );
+      infoSpy.mockRestore();
       expect(streamTextMock).toHaveBeenCalledTimes(2);
       expect(result?.quickRunIterationOutcomes).toHaveLength(2);
       expect(result?.quickRunIterationOutcomes?.[0].evaluation.passed).toBe(

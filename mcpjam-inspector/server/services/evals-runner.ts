@@ -2784,7 +2784,13 @@ const executeTestCase = async (params: {
       deadline: number,
     ) => {
       const outcome = await runner(signal, deadline, noteIterationStarted);
-      if (outcome.creditsExhausted) creditStop.exhausted = true;
+      if (outcome.creditsExhausted && !creditStop.exhausted) {
+        creditStop.exhausted = true;
+        logger.info("[evals] credits exhausted; remaining iterations skipped", {
+          event: "evals.credits_exhausted",
+          iterationId: startedIterationId,
+        });
+      }
       return outcome;
     };
     if (!isolatedIterationTimeoutEnabled()) {
