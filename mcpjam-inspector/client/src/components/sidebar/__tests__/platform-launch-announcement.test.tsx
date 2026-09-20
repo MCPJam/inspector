@@ -42,22 +42,29 @@ describe("PlatformLaunchAnnouncement", () => {
     render(<PlatformLaunchAnnouncement />);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(document.querySelector("iframe")).toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Check out our new platform" }),
+    ).toBeVisible();
     const trigger = screen.getByRole("button", {
       name: "Learn more about the new MCPJam",
     });
     await user.click(trigger);
     expect(
-      screen.getByRole("dialog", { name: "Our new platform" }),
+      screen.getByRole("dialog", { name: "Check out our new platform" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Our new platform" }),
+      screen.getByRole("heading", { name: "Check out our new platform" }),
     ).toHaveFocus();
+    expect(
+      screen.getByText(
+        "We've just launched a suite of new features to help you test the full lifecycle of your MCP servers!",
+      ),
+    ).toBeVisible();
     expect(document.querySelector("iframe")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Play launch video" }));
-    expect(screen.getByTitle("Our new platform video")).toHaveAttribute(
-      "src",
-      expect.stringContaining("/embed/vD06SWzNx0Y"),
-    );
+    expect(
+      screen.getByTitle("Check out our new platform video"),
+    ).toHaveAttribute("src", expect.stringContaining("/embed/vD06SWzNx0Y"));
     await user.keyboard("{Escape}");
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
@@ -275,17 +282,24 @@ describe("PlatformLaunchAnnouncement", () => {
     ]);
   });
 
-  it.each(["Swarm", "User Testing"])("disables navigation to unavailable %s", async (name) => {
-    const user = userEvent.setup();
-    render(<PlatformLaunchAnnouncement sandboxesEnabled={false} />);
-    await user.click(screen.getByRole("button", { name: "Learn more about the new MCPJam" }));
-    await user.click(screen.getByRole("tab", { name, exact: true }));
-    const action = screen.getByRole("button", { name: "Not available in this workspace" });
-    expect(action).toBeDisabled();
-    await user.click(action);
-    expect(onNavigate).not.toHaveBeenCalled();
-    expect(screen.getByRole("dialog")).toBeVisible();
-  });
+  it.each(["Swarm", "User Testing"])(
+    "disables navigation to unavailable %s",
+    async (name) => {
+      const user = userEvent.setup();
+      render(<PlatformLaunchAnnouncement sandboxesEnabled={false} />);
+      await user.click(
+        screen.getByRole("button", { name: "Learn more about the new MCPJam" }),
+      );
+      await user.click(screen.getByRole("tab", { name, exact: true }));
+      const action = screen.getByRole("button", {
+        name: "Not available in this workspace",
+      });
+      expect(action).toBeDisabled();
+      await user.click(action);
+      expect(onNavigate).not.toHaveBeenCalled();
+      expect(screen.getByRole("dialog")).toBeVisible();
+    },
+  );
 
   it("opens independently of sidebar state", async () => {
     const user = userEvent.setup();
