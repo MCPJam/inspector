@@ -30,6 +30,7 @@ import {
   removeCaseScorer,
   ROUTE_OWNED_KINDS,
   purposeOf,
+  RUBRIC_SOURCE_HINT,
   scorerRowLabel,
   spineLibraryKinds,
   stepScope,
@@ -129,8 +130,8 @@ describe("buildCaseScorecard — provenance", () => {
         .map((row) => [row.provenance, row.label]),
     ).toEqual([
       ["step", "No tool errors so far"],
-      ["case", "Final message non-empty"],
-      ["suite", "Token budget under 4000"],
+      ["case", "Catch an empty answer"],
+      ["suite", "Track increases in token usage"],
     ]);
   });
 
@@ -505,12 +506,16 @@ describe("labels", () => {
     expect(scorerRowLabel(predicate, "suite")).toBe("Tool errors (isError)");
   });
 
-  it("keeps the rule as the title for a check the catalog does not name", () => {
+  it("titles a check the catalog does not name by its purpose, not its rule", () => {
+    // The rule is the row's EXPECTED line; a title that repeated it would put
+    // the same words twice on the run page.
     const predicate = {
       type: "responseContains",
       value: "ORD-48213",
     } as Predicate;
-    expect(scorerRowLabel(predicate, "case")).toBe(
+    expect(scorerRowLabel(predicate, "case")).toBe(purposeOf(predicate));
+    expect(scorerRowLabel(predicate, "case")).toBe("Check what the answer says");
+    expect(scorerRowLabel(predicate, "case")).not.toBe(
       formatCriterion({ predicate }),
     );
   });
@@ -533,12 +538,17 @@ describe("expectationOf", () => {
     );
   });
 
-  it("names the rubric when the case authored no outcome", () => {
-    expect(expectationOf(judgeRow(base))).toBe(
-      "Satisfy the task according to the configured judge rubric.",
+  it("names what the judge graded against when the case authored no outcome", () => {
+    // The same sentence the authoring pane shows under the judge row, so the
+    // two panes agree on what an empty goal means for THIS case.
+    const row = judgeRow(base);
+    expect(expectationOf(row)).toBe(
+      RUBRIC_SOURCE_HINT[row.judge!.rubricSource],
     );
-    expect(expectationOf(judgeRow({ ...base, expectedOutput: "   " }))).toBe(
-      "Satisfy the task according to the configured judge rubric.",
+    expect(expectationOf(row)).not.toContain("configured judge rubric");
+    const blank = judgeRow({ ...base, expectedOutput: "   " });
+    expect(expectationOf(blank)).toBe(
+      RUBRIC_SOURCE_HINT[blank.judge!.rubricSource],
     );
   });
 
