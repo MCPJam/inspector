@@ -428,7 +428,7 @@ describe("describeMCPJamLimitMessage", () => {
     const described = describeMCPJamLimitMessage(
       'Failed to generate test cases: {"ok":false,"code":"user_rate_limit","limitKind":"total","error":"Daily MCPJam model limit reached. Use BYOK or try again tomorrow.","isRetryable":true}',
     );
-    expect(described).toMatch(/MCPJam (model )?limit reached\./);
+    expect(described).toMatch(/Out of MCPJam credits\./);
     expect(described).not.toContain("user_rate_limit");
   });
 
@@ -569,4 +569,8 @@ describe("credit exhaustion during a run", () => {
     notifyMCPJamLimitError({ ...input, runId: "credit-run-2" });
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
   });
+});
+
+it("recognizes the new credit-exhaustion wording without losing recovery actions", () => {
+  expect(describeMCPJamLimitMessage("Out of MCPJam credits.")).toContain("Out of MCPJam credits.");
 });

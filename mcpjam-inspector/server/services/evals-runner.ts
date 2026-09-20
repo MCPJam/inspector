@@ -3045,7 +3045,7 @@ const executeTestCase = async (params: {
           result: "failed",
           actualToolCalls: [],
           tokensUsed: 0,
-          error: "Credits exhausted. Remaining work was stopped.",
+          error: "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
         });
       }
       continue;
@@ -3819,7 +3819,7 @@ export const runEvalSuiteWithAiSdk = async ({
       await recorder.finalize({
         status: creditStop.exhausted ? "failed" : "completed",
         ...(creditStop.exhausted
-          ? { notes: "Credits exhausted. Remaining work was stopped." }
+          ? { notes: "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews." }
           : {}),
         summary: {
           total: summary.total,

@@ -48,14 +48,14 @@ export function buildUpgradeRequestMail(params: {
   const blocked = isCreditPurchase
     ? "Our organization has run out of MCPJam credits."
     : origin === "credits"
-    ? "I've run out of credits on MCPJam and can't keep using the models until they reset."
+    ? "Our organization has run out of MCPJam credits, so we can't continue testing until credits reset or we upgrade."
     : "I've hit the free plan's eval iteration limit on MCPJam and can't run evals until it resets.";
 
   const subject = isCreditPurchase
     ? `Credit purchase request for ${organizationName}`
     : `Upgrade request: MCPJam ${teamName} plan for ${organizationName}`;
   const request = isCreditPurchase
-    ? `Could you buy more credits for ${organizationName}?`
+    ? `Could you buy more shared credits for ${organizationName} so we can continue testing before our included allowance renews?`
     : `Could you upgrade ${organizationName} to the ${teamName} plan?`;
   const steps = isCreditPurchase
     ? [
@@ -81,7 +81,7 @@ export function buildUpgradeRequestMail(params: {
   ].join("\n");
 
   return `mailto:${to.join(",")}?subject=${encodeURIComponent(
-    subject
+    subject,
   )}&body=${encodeURIComponent(body)}`;
 }
 
@@ -147,13 +147,15 @@ export function RequestUpgradeButton({
               organization_id: organizationId,
               recipient_count: recipients.length,
               has_named_recipient: recipients.some((recipient) =>
-                Boolean(recipient.name?.trim())
+                Boolean(recipient.name?.trim()),
               ),
               request_action: requestAction,
             });
           }}
         >
-          Email your plan's owner
+          {requestAction === "buyCredits"
+            ? "Request credits"
+            : "Request upgrade"}
         </a>
       </Button>
       <p className="text-xs text-muted-foreground">

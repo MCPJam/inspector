@@ -23,7 +23,7 @@ export function isCreditExhaustion(value: unknown): boolean {
         ) ||
         /mcpjam[\w\s-]{0,40}model limit/i.test(item) ||
         /\b(?:daily|monthly) (?:MCPJam )?credit limit reached\b/i.test(item) ||
-        /\b(?:out of credits|insufficient credits|credits? (?:balance )?(?:exhausted|depleted)|credit limit (?:was )?(?:reached|exceeded))\b/i.test(
+        /\b(?:out of (?:MCPJam )?credits|insufficient credits|credits? (?:balance )?(?:exhausted|depleted)|credit limit (?:was )?(?:reached|exceeded))\b/i.test(
           item,
         )
       )

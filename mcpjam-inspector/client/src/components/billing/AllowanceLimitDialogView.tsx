@@ -75,7 +75,7 @@ export function AllowanceLimitDialogView({
             <Button variant="outline" onClick={onLearnMore}>
               Learn more about BYOK
             </Button>
-            <Button onClick={onExplorePlans}>Explore plans</Button>
+            <Button onClick={onExplorePlans}>Compare plans</Button>
           </div>
         ) : isKnownNonManager || showRequestUpgrade ? (
           <>
@@ -97,7 +97,7 @@ export function AllowanceLimitDialogView({
         ) : (
           <>
             <Button type="button" className="w-full" onClick={onBuyCredits}>
-              Buy MCPJam credits
+              Buy credits
             </Button>
             <DialogFooter className="sm:justify-start">
               <Button
@@ -106,7 +106,7 @@ export function AllowanceLimitDialogView({
                 className="px-0 text-muted-foreground"
                 onClick={onExplorePlans}
               >
-                Explore MCPJam plans
+                Compare plans
               </Button>
             </DialogFooter>
           </>

@@ -1,3 +1,4 @@
+import { creditUpgradeBenefit } from "@/lib/credit-limit-copy";
 import { FrontierSignInDialogView } from "./billing/FrontierSignInDialogView";
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 import { GuestCreditWallView } from "@/components/billing/GuestCreditWallView";
@@ -25,32 +26,12 @@ import { ScenarioOwnerLimitDialogView } from "@/components/billing/ScenarioOwner
 import { track } from "@/lib/analytics";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
-/**
- * The swarm wall's words, by which allowance ran out. The period itself is
- * resolved through the SDK error catalog, so this and the error card can never
- * disagree about what the backend refused — but the wording lives here, where
- * it can be edited without an SDK change.
- *
- * Every variant leads with the BYOK sentence: "I have my own key, why am I
- * blocked" is the question that filed this bug, and the modal is now the only
- * thing on screen to answer it.
- */
-const ALLOWANCE_COPY = {
-  daily: {
-    title: "Daily MCPJam limit reached",
-    description:
-      "Swarm generation is always billed to MCPJam, so your own API key doesn't cover it. This organization's daily allowance resets tomorrow.",
-  },
-  monthly: {
-    title: "Monthly MCPJam credits spent",
-    description:
-      "Swarm generation is always billed to MCPJam, so your own API key doesn't cover it. This organization's monthly credits renew with the billing period.",
-  },
-  unknown: {
-    title: "MCPJam model limit reached",
-    description:
-      "Swarm generation is always billed to MCPJam, so your own API key doesn't cover it. This organization's MCPJam allowance is spent.",
-  },
+/** Preserve the backend's allowance period without guessing a reset time. */
+const ALLOWANCE_RESET_COPY = {
+  daily: "Your organization's daily credits reset tomorrow.",
+  monthly:
+    "Your organization's included credits renew with the billing period.",
+  unknown: "",
 } as const;
 
 // BB-133 guest credit-wall A/B. PostHog multivariate flag: the "treatment"
@@ -242,10 +223,8 @@ export function MCPJamLimitDialog() {
     !user && intent === "guest" && isOpen && !isScenarioWall;
   const showTopupDialog =
     !!user && intent === "topup" && isOpen && !isScenarioWall;
-  // A swarm gets its own variant of the wall, not just different words: both
-  // the upgrade picker and the BYOK link dead-end there, so neither renders.
+  // Swarm recovery explains why a provider key cannot replace platform credits.
   const isSwarmWall = limitSurface === "swarm";
-  const allowanceCopy = ALLOWANCE_COPY[limitPeriod ?? "unknown"];
 
   useEffect(() => {
     setAuthStatus(isLoading ? "loading" : user ? "signedIn" : "guest");
@@ -332,9 +311,24 @@ export function MCPJamLimitDialog() {
   // the resolved owners. Admins can buy credits but cannot upgrade, so naming
   // them here promised a recipient the button never writes to — and, on Free,
   // implied admins could upgrade at all.
+  const upgradeBenefit = creditUpgradeBenefit(
+    creditsUpgrade.creditUpgradePlans,
+  );
   const memberDescription = isFreeEffectivePlan
-    ? "Ask an organization owner to upgrade the plan."
-    : "Ask an organization owner to buy credits.";
+    ? `Your organization's daily credits are used up. ${upgradeBenefit} Ask an organization owner to upgrade.`
+    : "Ask an organization owner to add shared credits so your team can continue testing before its included allowance renews.";
+  const creditDescription =
+    isKnownNonManager || showCreditsUpgradeRequest
+      ? memberDescription
+      : isFreeEffectivePlan
+      ? `Your Free credits reset daily. ${upgradeBenefit}`
+      : "Buy shared credits to run more evaluations, Swarms, and user tests before your included allowance renews.";
+  const swarmDescription = `${creditDescription} ${
+    ALLOWANCE_RESET_COPY[limitPeriod ?? "unknown"]
+  } Swarm generation requires MCPJam credits even when you use your own API key.`.replace(
+    / +/g,
+    " ",
+  );
   // Audience follows the billing permission, the same rule the eval wall uses.
   // `can_buy_credits` is what separates an admin from a plain member.
   const creditsAudience = creditsUpgrade.canManageBilling
@@ -522,16 +516,8 @@ export function MCPJamLimitDialog() {
       {showCreditWall && isSwarmWall && (
         <AllowanceLimitDialogView
           isFreePlan={isFreeEffectivePlan}
-          title={allowanceCopy.title}
-          // A member gets the owner guidance ON TOP of the explanation, not
-          // instead of it: "my own key is configured, why am I blocked" is the
-          // question that filed this bug, and it is not a question only
-          // billing managers ask.
-          description={
-            isKnownNonManager || showCreditsUpgradeRequest
-              ? `${allowanceCopy.description} ${memberDescription}`
-              : allowanceCopy.description
-          }
+          title="Out of MCPJam credits"
+          description={swarmDescription}
           isKnownNonManager={isKnownNonManager}
           showRequestUpgrade={showCreditsUpgradeRequest}
           requestRecipients={isBillingReady ? requestRecipients : []}
@@ -547,21 +533,7 @@ export function MCPJamLimitDialog() {
       {showCreditWall && !isSwarmWall && (
         <CreditsLimitDialogView
           isFreePlan={isFreeEffectivePlan}
-          description={
-            isFreeEffectivePlan &&
-            !isKnownNonManager &&
-            !showCreditsUpgradeRequest
-              ? "Your Free credits reset daily. Explore Pro or Team for more credits and credit top-ups."
-              : isKnownNonManager || showCreditsUpgradeRequest
-              ? memberDescription
-              : showCreditsUpgrade
-              ? `Free credits reset daily. The ${
-                  creditsUpgrade.teamName
-                } plan replaces the daily cap with a monthly allowance${
-                  creditsUpgrade.isFlatPlan ? "" : " per seat"
-                }, so usage isn't rationed day to day.`
-              : "Buy credits to keep your team going."
-          }
+          description={creditDescription}
           isKnownNonManager={isKnownNonManager}
           showUpgrade={showCreditsUpgrade}
           showRequestUpgrade={showCreditsUpgradeRequest}

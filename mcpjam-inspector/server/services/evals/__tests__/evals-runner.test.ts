@@ -227,6 +227,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           args.status === "skipped",
       );
       expect(skipped).toHaveLength(2);
+      for (const [, args] of skipped) {
+        expect(args.error).toContain("Completed results are saved; remaining iterations were skipped.");
+      }
       expect(skipped.map(([, args]) => args.iterationId)).toEqual([
         "iteration-3",
         "iteration-4",

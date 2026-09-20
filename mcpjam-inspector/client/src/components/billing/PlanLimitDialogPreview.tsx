@@ -138,7 +138,7 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
     props: {
       ...CREDITS_SHARED,
       description:
-        "Your Free credits reset daily. Explore Pro or Team for more credits and credit top-ups.",
+        "Your Free credits reset daily. Upgrade to Pro or Team for a larger monthly credit allowance and access to top-ups, so you can run more evaluations and Swarms.",
       isKnownNonManager: false,
       showUpgrade: true,
       requestRecipients: [],
@@ -150,7 +150,7 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
     note: "Already on Team, so there is no plan to pitch. Credits are the actual answer here.",
     props: {
       ...CREDITS_SHARED,
-      description: "Buy credits to keep your team going.",
+      description: "Buy shared credits to run more evaluations, Swarms, and user tests before your included allowance renews.",
       isKnownNonManager: false,
       showUpgrade: false,
       requestRecipients: [],
@@ -163,7 +163,7 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
     props: {
       ...CREDITS_SHARED,
       description:
-        "Ask an organization owner or admin to buy credits or upgrade the plan.",
+        "Ask an organization owner to add shared credits so your team can continue testing before its included allowance renews.",
       isKnownNonManager: true,
       showUpgrade: false,
       requestRecipients: [

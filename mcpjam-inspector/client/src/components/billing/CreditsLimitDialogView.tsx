@@ -97,7 +97,7 @@ export function CreditsLimitDialogView({
       <DialogContent className="sm:max-w-md">
         {isFreePlan && <JamIllustration />}
         <DialogHeader>
-          <DialogTitle>Your org is out of credits</DialogTitle>
+          <DialogTitle>Out of MCPJam credits</DialogTitle>
           <DialogDescription
             className="text-pretty"
             data-testid="limit-dialog-description"
@@ -110,7 +110,7 @@ export function CreditsLimitDialogView({
             <Button variant="outline" onClick={onUseOwnKey}>
               Learn more about BYOK
             </Button>
-            <Button onClick={onExplorePlans}>Explore plans</Button>
+            <Button onClick={onExplorePlans}>Compare plans</Button>
           </div>
         ) : isKnownNonManager || showRequestUpgrade ? (
           <>
