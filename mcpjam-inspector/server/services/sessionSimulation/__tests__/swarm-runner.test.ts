@@ -658,6 +658,8 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     // `*_rate_limit` codes carry wording `classifyTurnFailure` reads as a
     // rate-limit, so the billing codes land in `failed`.
     for (const { envelope, outcome } of [
+      { envelope: "Credits exhausted", outcome: "failed" },
+      { envelope: "Daily credit limit reached.", outcome: "failed" },
       {
         envelope: "Daily credit limit reached. (user_rate_limit, HTTP 429)",
         outcome: "rate_limited",
