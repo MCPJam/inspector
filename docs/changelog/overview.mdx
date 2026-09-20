@@ -9,6 +9,22 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-20
+
+#### Changed
+
+- **Swarm Findings card now names the cause and its fix separately** — the summary paragraph always stays in the headline; the suggested fix for the identified cause appears on its own labelled **Suggested fix** line below it. Previously, a fix replaced the summary, so a card could name a cause or suggest a fix but never both.
+
+- **Findings headline leads with the cause, not the stage** — the headline is now built from the verified mechanism phrase, how many sessions it affected, and how far it reached, with the full goal title intact. The previous composer truncated goal titles to four words and led with the stage rather than the cause.
+
+- **Cause and fix always refer to the same mechanism** — the lead cause is now selected by the number of distinct sessions it touched across all goals, not by the largest single row. This fixes a ranking bug where a cause affecting four sessions of one goal could outrank a cause affecting six sessions across three goals. The fix shown is always the fix for the cause just named; no fix is shown rather than borrowing one from a different cause.
+
+- **Findings card states what was recorded when no cause was confirmed** — when the analysis could not confirm a root cause, the card now reports the recorded signal (for example, "Reply cut off in 2 of 4 sessions read") instead of leaving the headline empty or generic.
+
+- **Footnotes distinguish rejected causes from unverified ones** — the footnote area now separately counts causes that were looked at and did not hold ("1 possible cause was rejected") and causes that could not be checked ("2 possible causes could not be verified"). An analysis that never ran is never reported as a rejection.
+
+- **Persona card shows a supporting session's account, not mechanism prose** — the persona card now quotes a real session's words for a representative session that the lead mechanism actually counted, rather than rendering the mechanism's group-level phrase as if a person had said it. The cited engineering detail and session id appear behind a disclosure, because the account describes that one session.
+
 ### 2026-09-18
 
 #### Changed
