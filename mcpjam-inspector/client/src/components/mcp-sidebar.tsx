@@ -854,13 +854,9 @@ export function MCPSidebar({
           )}
         </SidebarContent>
         <SidebarFooter>
-          {isAuthenticated && user ? (
-            <PlatformLaunchAnnouncement
-              key={user.id}
-              userId={user.id}
-              collapsed={state === "collapsed" && !isMobile}
-            />
-          ) : null}
+          <PlatformLaunchAnnouncement
+            collapsed={state === "collapsed" && !isMobile}
+          />
           {utilityItems.length > 0 ? (
             <div className="flex items-center gap-1 px-1 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-0">
               {utilityItems.map((item) => (

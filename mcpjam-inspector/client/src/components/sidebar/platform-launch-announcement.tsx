@@ -53,54 +53,59 @@ const FEATURES = [
   },
 ];
 
-/** Account-scoped, versioned dismissal; storage restrictions must never block use. */
+const STORAGE_KEY = `mcpjam:${LAUNCH.slug}:status`;
+type LaunchStatus = "unseen" | "seen" | "dismissed";
+
+/** Browser-scoped so guests keep their launch history when they sign in. */
 export function PlatformLaunchAnnouncement({
-  userId,
   collapsed = false,
 }: {
-  userId: string;
   collapsed?: boolean;
 }) {
-  const storageKey = `mcpjam:${LAUNCH.slug}:dismissed:${userId}`;
-  const [dismissed, setDismissed] = useState(() => {
+  const [status, setStatus] = useState<LaunchStatus>(() => {
     try {
-      return localStorage.getItem(storageKey) === "true";
+      const saved = localStorage.getItem(STORAGE_KEY);
+      return saved === "seen" || saved === "dismissed" ? saved : "unseen";
     } catch {
-      return false;
+      return "unseen";
     }
   });
+  // Keep the trigger stable for focus restoration; quiet the card on the next visit.
+  const showCard = useRef(status === "unseen").current;
   const [open, setOpen] = useState(false);
   const [playing, setPlaying] = useState(false);
   const titleRef = useRef<HTMLHeadingElement>(null);
 
-  function dismiss() {
-    setDismissed(true);
+  function remember(next: LaunchStatus) {
+    setStatus(next);
     try {
-      localStorage.setItem(storageKey, "true");
+      localStorage.setItem(STORAGE_KEY, next);
     } catch {
-      /* Dismiss locally even when persistence is unavailable. */
+      // Keep working when browser storage is unavailable.
     }
   }
 
-  if (dismissed) return null;
+  if (status === "dismissed") return null;
 
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
+        if (next) remember("seen");
         if (!next) setPlaying(false);
       }}
     >
-      {collapsed ? (
+      {collapsed || !showCard ? (
         <DialogTrigger asChild>
           <Button
             variant="ghost"
-            size="icon"
+            size={collapsed ? "icon" : "sm"}
             aria-label="Discover the new MCPJam"
             title="Discover the new MCPJam"
           >
             <Sparkles className="size-4" aria-hidden />
+            {!collapsed && "What’s new"}
           </Button>
         </DialogTrigger>
       ) : (
@@ -114,7 +119,7 @@ export function PlatformLaunchAnnouncement({
             size="icon"
             className="absolute right-1 top-1 size-7"
             aria-label="Dismiss launch announcement"
-            onClick={dismiss}
+            onClick={() => remember("dismissed")}
           >
             <X className="size-3.5" aria-hidden />
           </Button>

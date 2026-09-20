@@ -9,7 +9,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("PlatformLaunchAnnouncement", () => {
   it("stays non-blocking until opened, then restores focus on Escape", async () => {
     const user = userEvent.setup();
-    render(<PlatformLaunchAnnouncement userId="one" />);
+    render(<PlatformLaunchAnnouncement />);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(document.querySelector("iframe")).toBeNull();
     const trigger = screen.getByRole("button", { name: "See what’s new" });
@@ -37,9 +37,9 @@ describe("PlatformLaunchAnnouncement", () => {
     expect(document.querySelector("iframe")).toBeNull();
   });
 
-  it("remembers dismissal across remounts without dismissing another account", async () => {
+  it("remembers dismissal across remounts", async () => {
     const user = userEvent.setup();
-    const { unmount } = render(<PlatformLaunchAnnouncement userId="one" />);
+    const { unmount } = render(<PlatformLaunchAnnouncement />);
     await user.click(
       screen.getByRole("button", { name: "Dismiss launch announcement" }),
     );
@@ -47,20 +47,37 @@ describe("PlatformLaunchAnnouncement", () => {
       screen.queryByRole("region", { name: "Platform launch" }),
     ).not.toBeInTheDocument();
     unmount();
-    const next = render(<PlatformLaunchAnnouncement userId="one" />);
+    render(<PlatformLaunchAnnouncement />);
     expect(
       screen.queryByRole("button", { name: "See what’s new" }),
     ).not.toBeInTheDocument();
-    next.unmount();
-    render(<PlatformLaunchAnnouncement userId="two" />);
+  });
+
+  it("records seen only when opened and uses a quiet launcher on the next visit", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<PlatformLaunchAnnouncement />);
     expect(
-      screen.getByRole("button", { name: "See what’s new" }),
-    ).toBeInTheDocument();
+      localStorage.getItem("mcpjam:platform-launch-2026-09:status"),
+    ).toBeNull();
+    await user.click(screen.getByRole("button", { name: "See what’s new" }));
+    expect(localStorage.getItem("mcpjam:platform-launch-2026-09:status")).toBe(
+      "seen",
+    );
+    unmount();
+    render(<PlatformLaunchAnnouncement />);
+    expect(
+      screen.queryByRole("region", { name: "Platform launch" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Discover the new MCPJam" }),
+    );
+    expect(screen.getByRole("dialog")).toBeVisible();
   });
 
   it("supports keyboard feature navigation and returns to work without permanent dismissal", async () => {
     const user = userEvent.setup();
-    render(<PlatformLaunchAnnouncement userId="one" />);
+    render(<PlatformLaunchAnnouncement />);
     await user.click(screen.getByRole("button", { name: "See what’s new" }));
     await user.click(screen.getByRole("tab", { name: "Swarms" }));
     for (const name of ["User Testing", "Evals", "CI/CD"]) {
@@ -80,7 +97,7 @@ describe("PlatformLaunchAnnouncement", () => {
 
   it("opens from the collapsed sidebar", async () => {
     const user = userEvent.setup();
-    render(<PlatformLaunchAnnouncement userId="one" collapsed />);
+    render(<PlatformLaunchAnnouncement collapsed />);
     await user.click(
       screen.getByRole("button", { name: "Discover the new MCPJam" }),
     );
@@ -95,7 +112,7 @@ describe("PlatformLaunchAnnouncement", () => {
       throw new Error("Blocked");
     });
     const user = userEvent.setup();
-    render(<PlatformLaunchAnnouncement userId="one" />);
+    render(<PlatformLaunchAnnouncement />);
     await user.click(screen.getByRole("button", { name: "See what’s new" }));
     expect(screen.getByRole("dialog")).toBeVisible();
     await user.keyboard("{Escape}");

@@ -236,14 +236,29 @@ describe("sidebar invite CTA", () => {
     localStorage.clear();
   });
 
-  it("shows the launch announcement only after sign-in resolves", () => {
+  it("shows the launch announcement to signed-in users and guests", () => {
     const { unmount } = renderSidebar();
     expect(screen.getByRole("region", { name: "Platform launch" })).toBeInTheDocument();
     unmount();
     mockUseConvexAuth.mockReturnValue({ isAuthenticated: false, isLoading: false });
     mockUseAuth.mockReturnValue({ user: null });
     renderSidebar();
+    expect(screen.getByRole("region", { name: "Platform launch" })).toBeInTheDocument();
+  });
+
+  it("keeps guest launch history after signing in", () => {
+    mockUseConvexAuth.mockReturnValue({ isAuthenticated: false, isLoading: false });
+    mockUseAuth.mockReturnValue({ user: null });
+    const guest = renderSidebar();
+    fireEvent.click(screen.getByRole("button", { name: "See what’s new" }));
+    guest.unmount();
+
+    mockUseConvexAuth.mockReturnValue({ isAuthenticated: true, isLoading: false });
+    mockUseAuth.mockReturnValue({ user: { id: "owner", email: "owner@example.com" } });
+    renderSidebar();
     expect(screen.queryByRole("region", { name: "Platform launch" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Discover the new MCPJam" })).toBeInTheDocument();
   });
 
   it("shows the CTA for hosted guests, opening the sign-up nudge instead of the share dialog", () => {
