@@ -290,16 +290,10 @@ describe('announcementFor', () => {
     );
     assert.match(genText, /<https:\/\/app\/cases\/1\|follow it here>/);
 
-    const suiteText = announcementFor(
-      { operation: 'run_eval_suite', resource: { url: 'https://app/runs/2' } },
-      'U1',
-    );
+    const suiteText = announcementFor({ operation: 'run_eval_suite', resource: { url: 'https://app/runs/2' } }, 'U1');
     assert.match(suiteText, /<https:\/\/app\/runs\/2\|follow it here>/);
 
-    const caseText = announcementFor(
-      { operation: 'run_eval_case', resource: { url: 'https://app/runs/3' } },
-      'U1',
-    );
+    const caseText = announcementFor({ operation: 'run_eval_case', resource: { url: 'https://app/runs/3' } }, 'U1');
     assert.match(caseText, /<https:\/\/app\/runs\/3\|follow it here>/);
   });
 
