@@ -46,7 +46,7 @@ describe("buildUpgradeRequestMail", () => {
       origin: "credits",
     });
 
-    expect(decodeURIComponent(href!)).toContain("run out of credits");
+    expect(decodeURIComponent(href!)).toContain("run out of MCPJam credits");
   });
 
   it("asks a paid organization to buy credits instead of upgrading", () => {
@@ -64,7 +64,7 @@ describe("buildUpgradeRequestMail", () => {
       "Our organization has run out of MCPJam credits."
     );
     expect(decoded).toContain(
-      "Could you buy more credits for Acme Robotics?"
+      "Could you buy more shared credits for Acme Robotics so we can continue testing before our included allowance renews?"
     );
     expect(decoded).toContain("2. Under Credits, click Buy credits.");
     expect(decoded).not.toContain("upgrade Acme Robotics to the Team plan");
