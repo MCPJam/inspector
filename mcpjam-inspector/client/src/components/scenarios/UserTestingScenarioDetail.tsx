@@ -975,7 +975,6 @@ export function UserTestingScenarioDetail({
                     { replace: true },
                   );
                 }}
-                autoBackfillTopicMap
                 emptyState={<ScenarioShareEmptyPanel scenario={scenario} />}
                 className="px-8 py-4"
                 testIdPrefix="scenario-insights"

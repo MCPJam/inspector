@@ -14,6 +14,7 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 beforeEach(() => {
   useFrontierSignInDialogStore.getState().close();
   useMCPJamLimitDialogStore.setState({
+    notifiedRunIds: new Set<string>(),
     authStatus: "loading",
     hasPendingLimit: false,
     outOfCreditsHit: false,
@@ -428,7 +429,7 @@ describe("describeMCPJamLimitMessage", () => {
     const described = describeMCPJamLimitMessage(
       'Failed to generate test cases: {"ok":false,"code":"user_rate_limit","limitKind":"total","error":"Daily MCPJam model limit reached. Use BYOK or try again tomorrow.","isRetryable":true}',
     );
-    expect(described).toMatch(/MCPJam (model )?limit reached\./);
+    expect(described).toMatch(/Out of MCPJam credits\./);
     expect(described).not.toContain("user_rate_limit");
   });
 
@@ -602,4 +603,58 @@ describe("Ask MCPJam refusals", () => {
       describeAgentRefusalMessage(JSON.stringify({ code: "user_rate_limit" })),
     ).toBeNull();
   });
+});
+
+describe("credit exhaustion during a run", () => {
+  it.each([
+    { code: "org_rate_limit" },
+    { code: "billing_limit_reached" },
+    { message: "Daily credit limit reached." },
+    { message: "Monthly MCPJam credit limit reached." },
+    { message: "Credits exhausted" },
+    { message: "Your organization's credit limit was reached." },
+    { details: { failure: JSON.stringify({ code: "billing_limit_reached" }) } },
+  ])("recognizes credit exhaustion: %j", (input) => {
+    expect(notifyMCPJamLimitError(input)).toBe(true);
+  });
+
+  it.each([
+    { message: "Provider rate limit exceeded (429)" },
+    { code: "user_rate_limit", details: { limitKind: "concurrency" } },
+    {
+      code: "billing_limit_reached",
+      details: { code: "spend_budget_reached" },
+    },
+    {
+      message:
+        'Credits exhausted: {"code":"ORGANIZATION_SPEND_BUDGET_REACHED"}',
+    },
+    { code: "wallet_locked", message: "Credits exhausted" },
+    {
+      code: "billing_limit_reached",
+      details: { gateKey: "maxEvalIterationsPerMonth" },
+    },
+  ])(
+    "does not turn a throttle or spend cap into a credit wall: %j",
+    (input) => {
+      expect(notifyMCPJamLimitError(input)).toBe(false);
+      expect(useMCPJamLimitDialogStore.getState().hasPendingLimit).toBe(false);
+    },
+  );
+
+  it("opens once per run even after dismissal, and opens for a new run", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const input = { runId: "credit-run-1", code: "billing_limit_reached" };
+    expect(notifyMCPJamLimitError(input)).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+    useMCPJamLimitDialogStore.getState().close();
+    expect(notifyMCPJamLimitError(input)).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+    notifyMCPJamLimitError({ ...input, runId: "credit-run-2" });
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+});
+
+it("recognizes the new credit-exhaustion wording without losing recovery actions", () => {
+  expect(describeMCPJamLimitMessage("Out of MCPJam credits.")).toContain("Out of MCPJam credits.");
 });

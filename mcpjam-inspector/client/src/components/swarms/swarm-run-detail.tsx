@@ -53,7 +53,11 @@ import {
   waveSessionTotals,
 } from "@/components/swarms/swarm-overview-panel";
 import { SwarmFindingsTab } from "@/components/swarms/findings/swarm-findings-tab";
-import { narratedWaveSummary } from "@/components/swarms/findings/findings-headline";
+import {
+  narratedWaveSummary,
+  waveNarration,
+} from "@/components/swarms/findings/findings-headline";
+import { useInsightsEnvelope } from "@/components/shared/actionable-insights/use-insights-envelope";
 import { NewSwarmRunningStep } from "@/components/swarms/new-swarm-running-step";
 import {
   DETAIL_TAB_OPTIONS,
@@ -178,6 +182,12 @@ export function SwarmRunDetail({
     waveInsights.status,
     waveInsights.insights,
   );
+  const narration = waveNarration(waveInsights.status, waveInsights.insights);
+  const findingsEnvelope = useInsightsEnvelope({
+    kind: "journey_run",
+    projectId,
+    runId: wave?.anchor.runId,
+  });
 
   const handleTabChange = useCallback(
     (next: SwarmDetailTab) => {
@@ -243,8 +253,8 @@ export function SwarmRunDetail({
         tab: liveProgress
           ? "run"
           : parsedTab === "run"
-            ? "findings"
-            : parsedTab,
+          ? "findings"
+          : parsedTab,
         sel: selParam ?? undefined,
       }),
     );
@@ -584,6 +594,9 @@ export function SwarmRunDetail({
               onOpenSession={handleOpenSession}
               projectId={projectId ?? undefined}
               generatedSummary={generatedWaveSummary}
+              narration={narration}
+              journeyFindings={findingsEnvelope?.journeyFindings}
+              journeyFindingsJob={findingsEnvelope?.journeyFindingsJob}
             />
           </div>
         ) : null}
@@ -616,7 +629,6 @@ export function SwarmRunDetail({
                 onOpenSessionsTab={() => handleTabChange("sessions")}
                 urlSelection={urlSelection}
                 onSelectionChange={handleSelectionChange}
-                autoBackfillTopicMap
                 bodyLayout="scroll"
                 emptyState={
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
