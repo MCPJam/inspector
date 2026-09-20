@@ -55,6 +55,14 @@ interface ExaWebSearchResult {
 export function buildExaWebSearchTool(
   opts: ExaWebSearchToolOptions
 ): ToolSet[string] {
+  // Latched for the life of this tool instance, which `resolveHostTools`
+  // builds once per turn. Without it the refusal below is per-CALL rather
+  // than per-turn: the header check runs AFTER `fetch`, so every later search
+  // in the same answer would go out, be billed to the customer, and only then
+  // be refused. One turn can make many searches, so "we lose at most one" is
+  // only true if the first failure stops the rest.
+  let platformBillingUnconfirmed = false;
+
   return tool({
     description:
       "Search the web for current information. Use this for questions outside " +
@@ -81,6 +89,12 @@ export function buildExaWebSearchTool(
       opts.requireToolApproval === true,
     ),
     execute: async ({ query }, { toolCallId, abortSignal }) => {
+      // A claim already went out unhonoured on this turn. Every further
+      // search would be charged to the customer before we could refuse it,
+      // so stop before `fetch` rather than paying to learn the same thing.
+      if (opts.billingFeature && platformBillingUnconfirmed) {
+        return { error: "Web search is temporarily unavailable." };
+      }
       const convexUrl = process.env.CONVEX_HTTP_URL;
       if (!convexUrl) {
         return { error: "Web search is not configured." };
@@ -146,6 +160,7 @@ export function buildExaWebSearchTool(
           opts.billingFeature &&
           res.headers?.get("x-mcpjam-platform-paid") !== opts.billingFeature
         ) {
+          platformBillingUnconfirmed = true;
           return { error: "Web search is temporarily unavailable." };
         }
         const data = (await res.json()) as {

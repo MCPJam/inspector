@@ -40,6 +40,22 @@ function runSearch(opts: {
   return tool.execute({ query: "what changed in MCP" }, { toolCallId: "tc_1" });
 }
 
+/** One tool instance, invoked repeatedly — the per-turn scope the latch uses. */
+function buildTool(opts: { billingFeature?: string }) {
+  const t = buildExaWebSearchTool({
+    authHeader: "Bearer user-token",
+    projectId: "project-1",
+    chatSessionId: "session-1",
+    ...(opts.billingFeature ? { billingFeature: opts.billingFeature } : {}),
+  }) as unknown as {
+    execute: (
+      input: { query: string },
+      ctx: { toolCallId: string; abortSignal?: AbortSignal },
+    ) => Promise<{ error?: string; results?: unknown[] }>;
+  };
+  return (n: number) => t.execute({ query: `q${n}` }, { toolCallId: `tc_${n}` });
+}
+
 describe("exa web search — platform billing attestation", () => {
   const originalFetch = global.fetch;
 
@@ -112,6 +128,51 @@ describe("exa web search — platform billing attestation", () => {
     const result = await runSearch({});
     expect(result.error).toBeUndefined();
     expect(result.results).toHaveLength(1);
+  });
+
+  it("stops searching for the rest of the turn after a failed attestation", async () => {
+    // The header check runs AFTER `fetch`, so without a latch every later
+    // search in the same answer is charged to the customer before being
+    // refused — one turn can make many. The refusal has to be per-TURN, not
+    // per-call, for "we lose at most one search" to be true.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const fetchMock = vi.fn().mockResolvedValue(exaResponse(null));
+    global.fetch = fetchMock;
+
+    const run = buildTool({ billingFeature: BILLING_FEATURE });
+    const first = await run(1);
+    const second = await run(2);
+
+    expect(first.error).toBe("Web search is temporarily unavailable.");
+    expect(second.error).toBe("Web search is temporarily unavailable.");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps searching for the whole turn while attestation holds", async () => {
+    // The latch must not fire on a healthy turn: every search still goes out.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const fetchMock = vi.fn().mockImplementation(async () => exaResponse());
+    global.fetch = fetchMock;
+
+    const run = buildTool({ billingFeature: BILLING_FEATURE });
+    expect((await run(1)).results).toHaveLength(1);
+    expect((await run(2)).results).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("never latches an unclaimed search, even with no confirmation", async () => {
+    // The Playground is customer-paid by design; a missing header is not a
+    // signal there and must never stop its later searches.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async () => exaResponse(null));
+    global.fetch = fetchMock;
+
+    const run = buildTool({});
+    expect((await run(1)).results).toHaveLength(1);
+    expect((await run(2)).results).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("leaves an unclaimed search alone, token or no token", async () => {
