@@ -532,11 +532,11 @@ describe("MCPJamLimitDialog", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: /your org is out of credits/i,
+        name: /out of MCPJam credits/i,
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /^Explore plans$/i }),
+      screen.getByRole("button", { name: /^Compare plans$/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Learn more/i }),
@@ -560,7 +560,7 @@ describe("MCPJamLimitDialog", () => {
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
     render(<MCPJamLimitDialog />);
 
-    await user.click(screen.getByRole("button", { name: "Explore plans" }));
+    await user.click(screen.getByRole("button", { name: "Compare plans" }));
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
@@ -574,7 +574,7 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /Buy credits to keep your team going/,
+      /Add shared credits to keep your team testing/,
     );
     expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
     expect(
@@ -591,7 +591,7 @@ describe("MCPJamLimitDialog", () => {
     // Owners, not admins: the only action here emails the resolved owners, and
     // an admin can't upgrade anyway.
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /Ask an organization owner to upgrade/,
+      /Ask an owner to upgrade/,
     );
     expect(
       screen.getByTestId("limit-dialog-description"),
@@ -676,7 +676,7 @@ describe("MCPJamLimitDialog", () => {
     );
     expect(screen.getByTestId("request-upgrade-mail")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Explore plans" }),
+      screen.queryByRole("button", { name: "Compare plans" }),
     ).not.toBeInTheDocument();
   });
 
@@ -689,14 +689,16 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /Ask an organization owner to buy credits\./,
+      /Ask an owner to add shared credits/,
     );
     const href = decodeURIComponent(
       screen.getByTestId("request-upgrade-mail").getAttribute("href") ?? "",
     );
     expect(href).toContain("Credit purchase request for Acme Robotics");
     expect(href).toContain("Our organization has run out of MCPJam credits.");
-    expect(href).toContain("Could you buy more credits for Acme Robotics?");
+    expect(href).toContain(
+      "Could you buy more shared credits for Acme Robotics so we can continue testing before our included allowance renews?",
+    );
     expect(href).not.toContain("upgrade Acme Robotics to the Team plan");
   });
 
@@ -743,15 +745,15 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(
-      screen.getByRole("heading", { name: /daily MCPJam limit reached/i }),
+      screen.getByRole("heading", { name: /out of MCPJam credits/i }),
     ).toBeInTheDocument();
     // "I have my own key, why am I blocked" is the question that filed this
     // bug, and this modal is the only thing on screen to answer it.
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /your own API key doesn't cover it/i,
+      /Swarm generation requires MCPJam credits/i,
     );
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /resets tomorrow/i,
+      /reset tomorrow/i,
     );
   });
 
@@ -760,7 +762,7 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(
-      screen.getByRole("heading", { name: /monthly MCPJam credits spent/i }),
+      screen.getByRole("heading", { name: /out of MCPJam credits/i }),
     ).toBeInTheDocument();
     // Telling a monthly org to wait for "tomorrow" would be plain wrong: the
     // allowance renews with the billing period, which can be weeks out.
@@ -769,7 +771,7 @@ describe("MCPJamLimitDialog", () => {
     );
     expect(
       screen.getByTestId("limit-dialog-description"),
-    ).not.toHaveTextContent(/resets tomorrow/i);
+    ).not.toHaveTextContent(/reset tomorrow/i);
   });
 
   it("falls back to period-neutral copy when the message didn't say which", () => {
@@ -777,7 +779,7 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(
-      screen.getByRole("heading", { name: /MCPJam model limit reached/i }),
+      screen.getByRole("heading", { name: /out of MCPJam credits/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByTestId("limit-dialog-description"),
@@ -792,7 +794,7 @@ describe("MCPJamLimitDialog", () => {
       screen.getByRole("button", { name: /Learn more/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /explore plans/i }),
+      screen.getByRole("button", { name: /compare plans/i }),
     ).toBeInTheDocument();
     // Both dead ends on a swarm: no screen there mounts the model picker the
     // BYOK link drives, and the upgrade picker belongs to the credits wall.
@@ -813,18 +815,29 @@ describe("MCPJamLimitDialog", () => {
     // The owner guidance is ADDED to the explanation, not swapped for it. A
     // member asks "my own key is configured, why am I blocked" too.
     const description = screen.getByTestId("limit-dialog-description");
-    expect(description).toHaveTextContent(/your own API key doesn't cover it/i);
-    expect(description).toHaveTextContent(/resets tomorrow/i);
-    expect(description).toHaveTextContent(/ask an organization owner/i);
+    expect(description).toHaveTextContent(
+      /Swarm generation requires MCPJam credits/i,
+    );
+    expect(description).toHaveTextContent(/reset tomorrow/i);
+    expect(description).toHaveTextContent(/ask an owner/i);
   });
 
-  it("sends Explore plans to organization plans settings", async () => {
+  it("sends Compare plans to organization plans settings", async () => {
     const user = userEvent.setup();
     openSwarmWall({ _id: "org-active", myRole: "owner" });
     render(<MCPJamLimitDialog />);
 
-    await user.click(screen.getByRole("button", { name: /explore plans/i }));
+    await user.click(screen.getByRole("button", { name: /compare plans/i }));
 
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_explore_plans_clicked",
+      expect.objectContaining({
+        surface: "swarm",
+        current_plan: upgradeState.currentPlan,
+        effective_plan: upgradeState.effectivePlan,
+        outcome: "billing_opened",
+      }),
+    );
     expect(window.location.pathname).toBe("/organizations/org-active/plans");
     // Exploring plans must not open a credit purchase.
     expect(window.location.search).toBe("");
@@ -962,7 +975,7 @@ describe("MCPJamLimitDialog", () => {
     );
     // The tester's own org doesn't pay for this turn: nothing to buy or plan.
     expect(
-      screen.queryByRole("button", { name: /buy|explore plans/i }),
+      screen.queryByRole("button", { name: /buy|compare plans/i }),
     ).not.toBeInTheDocument();
     expect(
       upgradeHookOrganizationIdMock.mock.calls.every(([id]) => id === null),
@@ -1059,7 +1072,7 @@ describe.each(["swarm", "credits"] as const)(
         expect(screen.getAllByRole("dialog")).toHaveLength(1);
         if (plan === "free") {
           expect(
-            screen.getByRole("button", { name: "Explore plans" }),
+            screen.getByRole("button", { name: "Compare plans" }),
           ).toBeInTheDocument();
           expect(
             screen.queryByRole("button", { name: /buy.*credits/i }),
@@ -1092,7 +1105,7 @@ describe.each(["swarm", "credits"] as const)(
         screen.queryByRole("button", { name: /explore.*plans/i }),
       ).not.toBeInTheDocument();
       expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-        "Ask an organization owner to upgrade",
+        "Ask an owner to upgrade",
       );
       expect(impressions()[0][1].primary_action).toBe("request_owner");
       await userEvent
@@ -1130,7 +1143,7 @@ describe.each(["swarm", "credits"] as const)(
       act(() => useFrontierSignInDialogStore.getState().close());
       expect(screen.getAllByRole("dialog")).toHaveLength(1);
       expect(
-        screen.getByRole("button", { name: "Explore plans" }),
+        screen.getByRole("button", { name: "Compare plans" }),
       ).toBeInTheDocument();
       expect(impressions()).toHaveLength(1);
       act(() => useFrontierSignInDialogStore.getState().open());
