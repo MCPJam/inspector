@@ -822,5 +822,40 @@ describe("probeMcpServer", () => {
         "application/json"
       );
     });
+
+    it("redacts a credential whose own text contains the redaction marker", async () => {
+      // The first cut recognised an already-redacted header by looking for
+      // "[redacted]" in its value, which let the header value decide whether it
+      // was safe. A stored credential containing that text read as already
+      // redacted and shipped verbatim.
+      const serverUrl = "https://mcp.example.com/mcp";
+      const accessToken = "secret[redacted]value";
+
+      const fetchFn: typeof fetch = jest.fn(async (input) => {
+        if (String(input) === serverUrl) {
+          return jsonResponse({
+            jsonrpc: "2.0",
+            result: {
+              protocolVersion: "2025-11-25",
+              serverInfo: { name: "mock-server", version: "1.0.0" },
+              capabilities: { tools: {} },
+            },
+          });
+        }
+        return jsonResponse({ error: "missing" }, 404);
+      }) as typeof fetch;
+
+      const result = await probeMcpServer({
+        url: serverUrl,
+        accessToken,
+        headers: { "X-Api-Key": "vendor[redacted]key" },
+        fetchFn,
+      });
+
+      expect(result.status).toBe("ready");
+      const serialized = JSON.stringify(result.transport.attempts);
+      expect(serialized).not.toContain(accessToken);
+      expect(serialized).not.toContain("vendor[redacted]key");
+    });
   });
 });

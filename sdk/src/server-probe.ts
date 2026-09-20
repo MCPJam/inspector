@@ -417,17 +417,26 @@ function isRetryableProbeStatus(status: number): boolean {
  * value carries no diagnostic weight, and echoing it puts a live token into a
  * JSON body that reaches browser memory, HAR exports and support bundles.
  */
+const redactedAttempts = new WeakSet<ProbeHttpAttempt>();
+
 function redactAttemptCredentials(attempt: ProbeHttpAttempt): void {
+  // Runs twice on a dialled attempt — once in `performRequest`, once in the
+  // sweep at the end of `probeMcpServer` — so it has to be idempotent. The
+  // bookkeeping is out of band because the alternative, recognising an
+  // already-redacted value by its text, is decided by the header value: a
+  // stored credential containing "[redacted]" would read as already safe and
+  // ship verbatim.
+  if (redactedAttempts.has(attempt)) {
+    return;
+  }
+  redactedAttempts.add(attempt);
+
   attempt.request.headers = Object.fromEntries(
-    Object.entries(attempt.request.headers).map(([key, value]) => {
-      // Runs twice on a dialled attempt — once in `performRequest`, once in the
-      // sweep at the end of `probeMcpServer` — so it has to be idempotent
-      // rather than redact an already-redacted value a second time.
-      if (!isSensitiveHeaderName(key) || value.includes("[redacted]")) {
-        return [key, value];
-      }
-      return [key, redactSensitiveTraceValue(value)];
-    })
+    Object.entries(attempt.request.headers).map(([key, value]) =>
+      isSensitiveHeaderName(key)
+        ? [key, redactSensitiveTraceValue(value)]
+        : [key, value]
+    )
   );
 }
 
