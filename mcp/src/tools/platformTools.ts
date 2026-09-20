@@ -1055,6 +1055,13 @@ export function compactJourneyFindings(value: SwarmJourneyFindings) {
         );
         reportExcerpt = {
           actual: clampPhrase(reportExcerpt.actual, MODEL_EXCERPT_CAP)!,
+          // This object is REBUILT rather than spread, so a field left out
+          // here is silently dropped from everything the model reads.
+          ...(reportExcerpt.account
+            ? {
+                account: clampPhrase(reportExcerpt.account, MODEL_EXCERPT_CAP)!,
+              }
+            : {}),
           citations: reportExcerpt.citations.slice(
             0,
             MODEL_MAX_EVIDENCE_PER_FINDING
