@@ -327,11 +327,13 @@ function streamMatchesColumn(
 
 function RunLiveBridge({
   runId,
+  organizationId,
   streamEnabled,
   hostName,
   onSnapshot,
 }: {
   runId: string;
+  organizationId?: string;
   streamEnabled: boolean;
   hostName: (hostId: string) => string | undefined;
   onSnapshot: (runId: string, snapshot: RunLiveSnapshot | null) => void;
@@ -351,12 +353,13 @@ function RunLiveBridge({
     for (const attempt of run?.attempts ?? []) {
       notifyMCPJamLimitError({
         runId,
+        organizationId,
         code: attempt.errorCode ?? undefined,
         message: attempt.errorMessage,
         surface: "swarm",
       });
     }
-  }, [runId, run?.attempts]);
+  }, [runId, organizationId, run?.attempts]);
   const runStatus = run?.status ?? "running";
   // Convex supplies the whole matrix's progress over its shared connection.
   // Only the selected trace needs SSE: one stream per row exhausts the
@@ -1149,6 +1152,7 @@ export function NewSwarmRunningStep({
         <RunLiveBridge
           key={run.runId}
           runId={run.runId}
+          organizationId={organizationId}
           streamEnabled={selection?.runId === run.runId}
           hostName={hostName}
           onSnapshot={onSnapshot}

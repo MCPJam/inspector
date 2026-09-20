@@ -206,6 +206,24 @@ async function openTheSession() {
 }
 
 describe("NewSwarmRunningStep — provider rate-limit card", () => {
+  it("targets the swarm organization when an attempt automatically opens recovery", () => {
+    useMCPJamLimitDialogStore.setState(useMCPJamLimitDialogStore.getInitialState());
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    attempt.errorCode = "user_rate_limit";
+    attempt.errorMessage = "Credits exhausted";
+
+    renderStep();
+
+    expect(useMCPJamLimitDialogStore.getState()).toMatchObject({
+      isOpen: true,
+      intent: "topup",
+      organizationId: "org-1",
+      outOfCreditsOrganizationId: "org-1",
+      surface: "swarm",
+    });
+    useMCPJamLimitDialogStore.setState(useMCPJamLimitDialogStore.getInitialState());
+  });
+
   beforeEach(() => {
     attempts = [attempt];
     sessionRows = [sessionRow];
