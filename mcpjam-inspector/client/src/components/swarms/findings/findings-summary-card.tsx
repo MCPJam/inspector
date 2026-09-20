@@ -85,10 +85,15 @@ export function FindingsSummaryCard({
             <FindingText text={headline} />
           </p>
           {fix ? (
-            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-              <SectionLabel>Suggested fix</SectionLabel>{" "}
-              <FindingText text={fix} />
-            </p>
+            // A div, not a p: `SectionLabel` renders its own paragraph, and a
+            // paragraph inside a paragraph is invalid HTML that React reports
+            // as a hydration error and browsers silently restructure.
+            <div className="mt-3" data-testid="findings-suggested-fix">
+              <SectionLabel>Suggested fix</SectionLabel>
+              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                <FindingText text={fix} />
+              </p>
+            </div>
           ) : null}
         </div>
         {footnotes.length > 0 ? (

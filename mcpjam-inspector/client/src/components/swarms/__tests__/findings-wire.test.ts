@@ -413,7 +413,11 @@ describe("the wire headline says what was established", () => {
     // `derived` means the chain worker measured it; a model's reading would
     // be worded as a reading.
     expect(summary.lines[1]).toBe("Recorded at the tool response stage.");
-    expect(summary.lines.join(" ")).toContain("Reconcile payouts");
+    // One of the two goals is named IN FULL. Which one is decided by reach and
+    // then by id, never by payload order — see the reordering tests below.
+    expect(summary.lines.join(" ")).toContain(
+      "Export the quarterly ledger for the finance team",
+    );
     expect(summary.lines.join(" ")).not.toContain("…");
   });
 
@@ -531,5 +535,69 @@ describe("a recorded fact is evidence, not a verdict", () => {
     );
     // The chain never measured this stage, so it stays unstated.
     expect(response.state).toBe("none");
+  });
+});
+
+describe("a reordered payload says the same thing", () => {
+  const reversed = (wire: ReturnType<typeof truncatedWire>) =>
+    swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: [...wire.findings].reverse(),
+    });
+  const model = (wire: ReturnType<typeof truncatedWire>) =>
+    deriveSwarmFindingsModelFromWire({
+      journeyFindings: wire,
+      personas: [],
+      runs: [],
+    });
+
+  it("names the same goal whichever row came first", () => {
+    const wire = truncatedWire();
+    const lines = (w: typeof wire) =>
+      composeWireFindingsSummary(w, model(w), { terminal: true }).lines;
+    expect(lines(reversed(wire))).toEqual(lines(wire));
+  });
+
+  it("refuses to name a stage the grouped rows disagree about", () => {
+    const wire = truncatedWire();
+    // One row says the chain measured `response`; the other says `call`. There
+    // is no honest single answer, so the card states no stage at all rather
+    // than whichever the payload happened to list first.
+    let seen = 0;
+    const split = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: wire.findings.map((row) =>
+        row.basis === "verifiedMechanism" && seen++ === 0
+          ? { ...row, chainStage: "call" }
+          : row,
+      ),
+    });
+    expect(selectLeadWireMechanism(split)!.chainStage).toBeNull();
+    expect(
+      composeWireFindingsSummary(split, model(split), {
+        terminal: true,
+      }).lines.join(" "),
+    ).not.toContain("stage");
+  });
+
+  it("claims a measured stage only when every row measured it", () => {
+    const wire = truncatedWire();
+    let seen = 0;
+    const mixed = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: wire.findings.map((row) =>
+        row.basis === "verifiedMechanism" && seen++ === 0
+          ? { ...row, chainStageBasis: "reported" }
+          : row,
+      ),
+    });
+    // The stage still holds, but "recorded at" would claim the chain worker
+    // measured it in a row where it did not.
+    expect(selectLeadWireMechanism(mixed)!.chainStageBasis).toBe("reported");
+    expect(
+      composeWireFindingsSummary(mixed, model(mixed), {
+        terminal: true,
+      }).lines,
+    ).toContain("The explanation points at the tool response.");
   });
 });

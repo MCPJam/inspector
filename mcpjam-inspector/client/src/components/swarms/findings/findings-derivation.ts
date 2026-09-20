@@ -107,6 +107,38 @@ export type WireLeadMechanism = {
   chainStageBasis: SwarmJourneyFinding["chainStageBasis"];
 };
 
+/** Confidence order, so a group can only claim the weakest basis any row had. */
+const BASIS_STRENGTH: Record<SwarmJourneyFinding["chainStageBasis"], number> = {
+  unmeasured: 0,
+  reported: 1,
+  derived: 2,
+};
+
+/**
+ * The stage a grouped mechanism can honestly claim.
+ *
+ * The rows of one mechanism are the same cause seen per persona, goal and
+ * target, and they need not agree on where it was noticed. Taking `rows[0]`
+ * let payload order decide which stage the card named. When they disagree the
+ * answer is no stage at all; when they agree, the basis is the weakest any row
+ * had, because "recorded at" claims the chain worker measured it and one row
+ * where it did not is enough to make that untrue.
+ */
+function agreedStage(rows: readonly SwarmJourneyFinding[]): {
+  chainStage: SwarmJourneyFinding["chainStage"];
+  chainStageBasis: SwarmJourneyFinding["chainStageBasis"];
+} {
+  const stages = new Set(rows.map((row) => row.chainStage));
+  const stage = stages.size === 1 ? [...stages][0]! : null;
+  if (!stage) return { chainStage: null, chainStageBasis: "unmeasured" };
+  const basis = rows
+    .map((row) => row.chainStageBasis)
+    .reduce((weakest, next) =>
+      BASIS_STRENGTH[next] < BASIS_STRENGTH[weakest] ? next : weakest,
+    );
+  return { chainStage: stage, chainStageBasis: basis };
+}
+
 export function selectLeadWireMechanism(
   wire: SwarmJourneyFindings,
 ): WireLeadMechanism | null {
@@ -136,8 +168,7 @@ export function selectLeadWireMechanism(
       // recommendation would tell a reader to fix something the headline
       // never mentioned.
       fixPhrase: withFix?.fixPhrase?.trim() ?? null,
-      chainStage: rows[0]!.chainStage,
-      chainStageBasis: rows[0]!.chainStageBasis,
+      ...agreedStage(rows),
     };
   }
   return lead;
@@ -199,15 +230,16 @@ function personaAccount(
   "issue" | "account" | "accountSessionId" | "cited" | "signal"
 > {
   const leadGoal = goals.find((goal) => goal.diagnosisStage);
+  // Ranked, not `find`: two rows can both qualify, and picking whichever the
+  // payload happened to list first made the quoted session depend on wire
+  // order. Row id is the stable tie-break.
+  const rankLead = (candidates: readonly SwarmJourneyFinding[]) =>
+    [...candidates]
+      .filter((row) => !leadGoal || row.goal.runId === leadGoal.runId)
+      .sort((a, b) => a.id.localeCompare(b.id))[0] ?? null;
   const lead =
-    rows.find(
-      (row) =>
-        row.basis === "verifiedMechanism" &&
-        (!leadGoal || row.goal.runId === leadGoal.runId),
-    ) ??
-    rows.find(
-      (row) => row.signal && (!leadGoal || row.goal.runId === leadGoal.runId),
-    ) ??
+    rankLead(rows.filter((row) => row.basis === "verifiedMechanism")) ??
+    rankLead(rows.filter((row) => row.signal)) ??
     null;
   const supporting = (
     lead
