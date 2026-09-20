@@ -520,6 +520,8 @@ function resolveSlug(error: unknown): {
     return { slug: "auth/missing_bearer" };
   }
 
+  if (/\bout of MCPJam credits\b/i.test(message)) return { slug: "provider/mcpjam_limit" };
+
   // Same shape of problem as the bearer gate above, and the same surface: the
   // swarm create flow renders `err.message`, so the 429 and its `code` are
   // gone by the time this runs. Without the pre-check a spent MCPJam
