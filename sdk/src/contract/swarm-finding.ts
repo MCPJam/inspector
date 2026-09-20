@@ -45,6 +45,20 @@ export const SWARM_FINDING_COVERAGE_NOTES = [
   "sessionsRateLimited",
   "partialRead",
   "toolCatalogMissing",
+  "mechanismsRejected",
+] as const;
+/**
+ * A fact the runtime RECORDED about a session — not a model's reading of it.
+ * Rows carrying one are population facts: they say what was observed, with no
+ * claim about why. Ordered by the priority a session is keyed by, so a reply
+ * that was cut off is never filed under the tool error that preceded it.
+ */
+export const SWARM_FINDING_SIGNALS = [
+  "outputTruncated",
+  "hallucinatedTool",
+  "toolErrored",
+  "noToolCalled",
+  "turnCapReached",
 ] as const;
 export const SWARM_FINDING_SCOPE_LEVELS = [
   "session",
@@ -71,6 +85,7 @@ export type SwarmFindingSummaryKind =
 export type SwarmFindingCoverageNote =
   (typeof SWARM_FINDING_COVERAGE_NOTES)[number];
 export type SwarmFindingBasis = (typeof SWARM_FINDING_BASES)[number];
+export type SwarmFindingSignal = (typeof SWARM_FINDING_SIGNALS)[number];
 export const SWARM_FINDING_TONE_OF_DISPOSITION = Object.freeze({
   notRun: "muted",
   blockedConnecting: "fail",
@@ -163,10 +178,29 @@ export const swarmJourneyFindingSchema = z
     mechanismPhrase: z.string().nullable(),
     fixPhrase: z.string().nullable(),
     reportExcerpt: z
-      .object({ actual: z.string().max(1800), citations })
+      .object({
+        actual: z.string().max(1800),
+        /**
+         * The same session in the person's own words — what they tried and
+         * what happened to them. Deliberately UNCITED, like `uncertainty`:
+         * `actual` is the cited engineering account and stays exactly that.
+         */
+        account: z.string().max(600).nullable().optional(),
+        citations,
+      })
       .strict()
       .nullable(),
     mechanismId: z.string().nullable(),
+    /**
+     * The recorded fact this row reports, when it reports one. Rows sharing a
+     * signal fan out per persona, goal and target the way mechanism rows share
+     * a `mechanismId`; a reader aggregates by this value.
+     */
+    signal: z
+      .enum(SWARM_FINDING_SIGNALS)
+      .describe(vocabulary(SWARM_FINDING_SIGNALS))
+      .nullable()
+      .optional(),
   })
   .strict()
   .refine(toneMatchesDisposition, toneMismatch);
@@ -212,6 +246,30 @@ export const swarmJourneyFindingsSchema = z
         .refine(toneMatchesDisposition, toneMismatch)
     ),
     findings: z.array(swarmJourneyFindingSchema).max(200),
+    /**
+     * What became of every proposal a model actually made.
+     *
+     * `proposed === confirmed + rejected + unverified`; each proposal holds
+     * exactly one of those states. `omitted` OVERLAPS them — a confirmed cause
+     * dropped by a publication cap is confirmed AND omitted — so it is never
+     * summed in. `confirmed` may exceed the number of published mechanisms for
+     * the same reason.
+     *
+     * The distinction that matters: `rejected` means something was looked at
+     * and did not hold. An analysis that never ran leaves `unverified`, and a
+     * wave where the model simply had nothing to say leaves all zeros. Absence
+     * is never reported as a rejection.
+     */
+    verification: z
+      .object({
+        proposed: count,
+        confirmed: count,
+        rejected: count,
+        unverified: count,
+        omitted: count,
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export const swarmJourneyFindingsJobSchema = z
