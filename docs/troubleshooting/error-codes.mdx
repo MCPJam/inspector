@@ -624,19 +624,25 @@ A frontier model was selected but the request requires a signed-in account.
 - A sign-in prompt appears automatically. Click **Sign in** to authenticate and get access to frontier models.
 - Click **Not now** to dismiss and continue with a standard model. Your credit balance is not affected.
 
-### MCPJam model limit reached
+### Out of MCPJam credits
 
 `provider/mcpjam_limit_daily` · `provider/mcpjam_limit_monthly` · `provider/mcpjam_limit`
 
 MCPJam refused the call before it reached a provider, because the account's own
 allowance is spent. Which allowance depends on the plan: free accounts share a
-daily bucket per organization, Team plans spend a monthly per-seat allowance
-that renews with the billing period. The error card names the one you hit.
+daily bucket per organization, paid plans spend a monthly allowance that renews
+with the billing period.
 
 **Next steps**
-- **Free plan** — The limit dialog shows **Explore plans** to upgrade, and **Learn more about BYOK** to understand how provider keys and MCPJam credits work separately.
-- **Paid plan** — The limit dialog shows **Buy credits** to top up, or wait for the daily reset or billing period to renew.
+- **Free plan (owner)** — The limit dialog shows **Compare plans** to upgrade, and **Learn more about BYOK** to understand how provider keys and MCPJam credits work separately.
+- **Free plan (admin or member)** — The dialog shows a **Request upgrade** link to email an organization owner.
+- **Paid plan (owner or admin)** — The dialog shows **Buy credits** to add shared credits to your organization.
+- **Paid plan (member)** — The dialog shows a **Request credits** link to email an organization owner.
 - Add your own API key under **Settings → LLM Providers** for chat (BYOK does not cover Swarm, Evals, or other MCPJam-billed features).
+
+**Swarm and Eval runs**
+
+When credits run out during a Swarm or Eval run, blocked work stops and you receive one credit-exhaustion prompt per run. Completed results are preserved. Buying credits does not automatically restart the run — start a new run once credits are available.
 
 <Warning>
   Bring-your-own-key covers chat. Swarm persona generation and persona-driver
