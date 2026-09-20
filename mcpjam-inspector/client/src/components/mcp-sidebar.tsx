@@ -921,7 +921,7 @@ export function MCPSidebar({
       {!authResolving && (
         <PlatformLaunchAnnouncement
           onNavigate={appNavigate}
-          audience={user || isAuthenticated ? "signed_in" : "guest"}
+          audience={user ? "signed_in" : "guest"}
           sandboxesEnabled={sandboxesEnabled === true}
         />
       )}

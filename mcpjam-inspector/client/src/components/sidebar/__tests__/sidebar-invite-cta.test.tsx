@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MCPSidebar } from "@/components/mcp-sidebar";
 import { markPendingInviteDialog } from "@/lib/pending-invite-dialog";
 
+const { launchEngagement } = vi.hoisted(() => ({ launchEngagement: vi.fn() }));
+vi.mock("@/lib/launch-analytics", () => ({ trackLaunchEngagement: launchEngagement }));
+
 const mockUseConvexAuth = vi.fn();
 const mockUseAuth = vi.fn();
 const mockShareProjectDialog = vi.fn();
@@ -245,6 +248,15 @@ describe("sidebar invite CTA", () => {
     mockUseAuth.mockReturnValue({ user: null });
     renderSidebar();
     expect(screen.getByRole("region", { name: "Platform launch" })).toBeInTheDocument();
+  });
+
+  it("classifies authenticated anonymous Convex sessions as guests", () => {
+    launchEngagement.mockClear();
+    mockUseAuth.mockReturnValue({ user: null, isLoading: false });
+    mockUseConvexAuth.mockReturnValue({ isAuthenticated: true, isLoading: false });
+    renderSidebar();
+    fireEvent.click(screen.getByRole("button", { name: "Learn more about the new MCPJam" }));
+    expect(launchEngagement).toHaveBeenCalledWith(expect.objectContaining({ action: "opened", audience: "guest" }));
   });
 
   it("waits for auth resolution before showing the announcement", () => {
