@@ -357,10 +357,12 @@ describe("SimpleCaseForm step-authored checks", () => {
     // "so far": a step assert reads the transcript AT THAT POINT, unlike the
     // whole-run case predicate of the same kind.
     expect(screen.getByText("No tool errors so far")).toBeInTheDocument();
-    expect(screen.getByText("First tool called was… get_me")).toBeInTheDocument();
+    // A check outside the standard catalog is titled by its purpose; the
+    // configured rule opens with the row.
     expect(
-      screen.getByText('Response contains "marcelo@mcpjam.com"'),
+      screen.getByText("Require this tool to be reached first"),
     ).toBeInTheDocument();
+    expect(screen.getByText("Check what the answer says")).toBeInTheDocument();
     // Each row says who wrote it, and carries its own step number — the same
     // number the Steps pane shows for that step.
     expect(rows.every((row) => row.textContent?.includes("Step"))).toBe(true);
@@ -402,7 +404,7 @@ describe("SimpleCaseForm step-authored checks", () => {
     // A row is one line; its fields open on demand.
     await user.click(
       screen.getByRole("button", {
-        name: 'Edit Response contains "marcelo@mcpjam.com"',
+        name: "Edit Check what the answer says",
       }),
     );
     await user.type(screen.getByLabelText("Needle"), "!");
