@@ -3,8 +3,15 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ClientsPill } from "../clients-pill";
 
+const navigateMock = vi.hoisted(() => vi.fn());
+
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
+}));
+
+vi.mock("@/lib/app-navigation", () => ({
+  navigateApp: navigateMock,
+  routePaths: { hosts: "/hosts" },
 }));
 
 vi.mock("@/hooks/useClients", () => ({
@@ -42,6 +49,28 @@ vi.mock("@/components/hosts/CreateHostDialog", () => ({
 }));
 
 describe("ClientsPill create", () => {
+  it("opens the New Client modal from Add clients instead of leaving to the clients page", async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ClientsPill
+        projectId="proj-1"
+        value={["host-a"]}
+        onChange={onChange}
+        max={4}
+        testId="clients"
+      />,
+    );
+
+    await user.click(screen.getByTestId("clients"));
+    expect(screen.queryByText("Manage clients…")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add clients" }));
+    expect(screen.getByTestId("create-host-dialog")).toBeInTheDocument();
+    expect(navigateMock).not.toHaveBeenCalled();
+    await user.click(screen.getByTestId("create-host-dialog"));
+    expect(onChange).toHaveBeenCalledWith(["host-a", "host-new"]);
+  });
+
   it("does not select a created client when the budget is full", async () => {
     const onChange = vi.fn();
     const user = userEvent.setup();
