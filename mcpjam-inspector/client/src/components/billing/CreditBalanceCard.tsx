@@ -38,6 +38,7 @@ import { consumeUrlFlag } from "@/lib/url-flag";
 
 interface CreditBalanceCardProps {
   organizationId?: string | null;
+  organizationName?: string;
   canManageCredits?: boolean;
   pricingVersion?: "v1" | "v2";
   /** Optional override for the chat session id used by the top-up flow. */
@@ -46,6 +47,7 @@ interface CreditBalanceCardProps {
 
 export function CreditBalanceCard({
   organizationId,
+  organizationName,
   canManageCredits = false,
   chatSessionId,
   pricingVersion,
@@ -186,7 +188,8 @@ export function CreditBalanceCard({
 
         {balance?.platformPaidFallback && (
           <p className="text-xs text-muted-foreground" role="status">
-            MCPJam’s shared free allowance is unavailable. New requests use your purchased credits.
+            MCPJam’s shared free allowance is unavailable. New requests use your
+            purchased credits.
           </p>
         )}
 
@@ -231,8 +234,8 @@ export function CreditBalanceCard({
               isLoading
                 ? "Credits"
                 : balance?.platformFreeBudgetExhausted
-                  ? "Free allowance temporarily unavailable"
-                  : "Free daily credits"
+                ? "Free allowance temporarily unavailable"
+                : "Free daily credits"
             }
             rightText={
               isLoading || !balance
@@ -402,14 +405,10 @@ export function CreditBalanceCard({
                     organizationId,
                   )}/plans`}
                 >
-                  {paidRemaining > 0
-                    ? "Upgrade to Pro to buy more credits"
-                    : "Upgrade to Pro to buy credits"}
+                  Compare plans for more monthly credits and top-ups
                 </a>
-              ) : paidRemaining > 0 ? (
-                "Upgrade to Pro to buy more credits"
               ) : (
-                "Upgrade to Pro to buy credits"
+                "Compare plans for more monthly credits and top-ups"
               )}
             </p>
           )
@@ -437,13 +436,13 @@ export function CreditBalanceCard({
                     className="self-center text-xs text-muted-foreground"
                     data-testid="usage-ask-admin"
                   >
-                    Ask org admin to top up credits
+                    Ask an owner or admin to add credits
                   </span>
                 )}
               </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Add credits when you need them. Purchased credits are shared
-                across your organization.
+                Add shared credits so your organization can continue testing
+                after its included allowance runs out.
               </p>
             </section>
             <section
@@ -494,6 +493,7 @@ export function CreditBalanceCard({
           chatSessionId={chatSessionId ?? ""}
           lastUserMessage=""
           organizationId={organizationId}
+          organizationName={organizationName}
           source={topupSource}
         />
       )}

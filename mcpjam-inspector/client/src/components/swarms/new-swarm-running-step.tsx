@@ -1,3 +1,4 @@
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 /**
  * Running step of the New swarm create flow.
  *
@@ -18,7 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { toast } from "@/lib/toast";
-import { useAppNavigate } from "@/lib/app-navigation";
+import { isCreditExhaustion } from "@/shared/credit-exhaustion";
 import {
   StopSwarmRunButton,
   useStopSwarmRun,
@@ -326,11 +327,13 @@ function streamMatchesColumn(
 
 function RunLiveBridge({
   runId,
+  organizationId,
   streamEnabled,
   hostName,
   onSnapshot,
 }: {
   runId: string;
+  organizationId?: string;
   streamEnabled: boolean;
   hostName: (hostId: string) => string | undefined;
   onSnapshot: (runId: string, snapshot: RunLiveSnapshot | null) => void;
@@ -346,6 +349,17 @@ function RunLiveBridge({
     { journeyRunId: runId } as any,
     { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, 32) },
   );
+  useEffect(() => {
+    for (const attempt of run?.attempts ?? []) {
+      notifyMCPJamLimitError({
+        runId,
+        organizationId,
+        code: attempt.errorCode ?? undefined,
+        message: attempt.errorMessage,
+        surface: "swarm",
+      });
+    }
+  }, [runId, organizationId, run?.attempts]);
   const runStatus = run?.status ?? "running";
   // Convex supplies the whole matrix's progress over its shared connection.
   // Only the selected trace needs SSE: one stream per row exhausts the
@@ -700,7 +714,6 @@ export function NewSwarmRunningStep({
    */
   onRunsComplete?: () => void;
 }) {
-  const appNavigate = useAppNavigate();
   const hostById = useMemo(() => {
     return new Map(hosts.map((host) => [host.hostId, host] as const));
   }, [hosts]);
@@ -1074,12 +1087,13 @@ export function NewSwarmRunningStep({
         count += 1;
         const code = attempt.errorCode ?? info.code;
         if (
-          [
-            "user_rate_limit",
-            "org_rate_limit",
-            "billing_limit_reached",
-            "spend_cap_exceeded",
-          ].includes(code ?? "") &&
+          isCreditExhaustion({ code, message: attempt.errorMessage }) &&
+          ![
+            "holds_committed",
+            "wallet_locked",
+            "budget_reached",
+            "admission_invalid",
+          ].includes(info.refusalReason ?? "") &&
           !/in-flight|hold the remaining credits/i.test(info.message)
         )
           exhausted += 1;
@@ -1138,6 +1152,7 @@ export function NewSwarmRunningStep({
         <RunLiveBridge
           key={run.runId}
           runId={run.runId}
+          organizationId={organizationId}
           streamEnabled={selection?.runId === run.runId}
           hostName={hostName}
           onSnapshot={onSnapshot}
@@ -1242,7 +1257,7 @@ export function NewSwarmRunningStep({
                   <p className="font-medium">
                     {accountLimit.exhausted > 0 && allTerminal
                       ? `Stopped: this organization's MCPJam credits ran out after ${succeeded} of ${total} sessions.`
-                      : "Sessions stopped at the MCPJam model limit."}
+                      : "Sessions stopped at an organization usage limit."}
                   </p>
                   <p className="mt-0.5">
                     {`${succeeded} completed, ${Math.max(
@@ -1253,62 +1268,37 @@ export function NewSwarmRunningStep({
                         (providerRateLimit?.count ?? 0),
                     )} failed, ${
                       accountLimit.count
-                    } stopped at the MCPJam model limit${
+                    } stopped at an organization usage limit${
                       providerRateLimit
                         ? `, ${providerRateLimit.count} stopped at a provider limit`
                         : ""
                     }.`}
                   </p>
                   <p className="mt-0.5">
-                    {accountLimit.message ??
-                      "Add credit or connect your own provider key (BYOK) to keep running."}
+                    {accountLimit.exhausted > 0
+                      ? "Out of MCPJam credits. View your credit options to continue testing. Swarm generation requires MCPJam credits even when you use your own API key."
+                      : accountLimit.message ?? "Review your organization's usage limits before retrying."}
                   </p>
-                  {organizationId ? (
-                    <p className="mt-1 flex gap-3">
-                      <a
-                        className="underline underline-offset-4"
-                        onClick={(event) => {
-                          if (
-                            event.metaKey ||
-                            event.ctrlKey ||
-                            event.shiftKey ||
-                            event.altKey
-                          )
-                            return;
-                          event.preventDefault();
-                          appNavigate(
-                            event.currentTarget.getAttribute("href")!,
-                          );
-                        }}
-                        href={`/organizations/${encodeURIComponent(
-                          organizationId,
-                        )}/billing?topup=open`}
-                      >
-                        Add credits
-                      </a>
-                      <a
-                        className="underline underline-offset-4"
-                        onClick={(event) => {
-                          if (
-                            event.metaKey ||
-                            event.ctrlKey ||
-                            event.shiftKey ||
-                            event.altKey
-                          )
-                            return;
-                          event.preventDefault();
-                          appNavigate(
-                            event.currentTarget.getAttribute("href")!,
-                          );
-                        }}
-                        href={`/organizations/${encodeURIComponent(
-                          organizationId,
-                        )}/plans`}
-                      >
-                        View plan
-                      </a>
+                  {accountLimit.exhausted > 0 && (
+                    <p className="mt-0.5">
+                      Completed results are saved. Buying credits does not
+                      automatically restart this run.
                     </p>
-                  ) : null}
+                  )}
+                  {accountLimit.exhausted > 0 && (
+                    <Button
+                      variant="link"
+                      onClick={() =>
+                        notifyMCPJamLimitError({
+                          code: "mcpjam_rate_limit",
+                          organizationId,
+                          surface: "swarm",
+                        })
+                      }
+                    >
+                      View credit options
+                    </Button>
+                  )}
                 </div>
               ) : null}
 
@@ -1344,8 +1334,8 @@ export function NewSwarmRunningStep({
                   ))}
                   {bannerFailure.causes.some((cause) => cause.info.canTopUp) ? (
                     <p className="mt-0.5 text-[13px] opacity-90">
-                      Add credit or connect your own provider key (BYOK) to run
-                      now.
+                      View your credit options to continue testing. Your own API
+                      key does not cover Swarm generation.
                     </p>
                   ) : null}
                 </div>
