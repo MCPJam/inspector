@@ -574,7 +574,7 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /Buy shared credits to run more evaluations/,
+      /Add shared credits to keep your team testing/,
     );
     expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
     expect(
@@ -591,7 +591,7 @@ describe("MCPJamLimitDialog", () => {
     // Owners, not admins: the only action here emails the resolved owners, and
     // an admin can't upgrade anyway.
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /Ask an organization owner to upgrade/,
+      /Ask an owner to upgrade/,
     );
     expect(
       screen.getByTestId("limit-dialog-description"),
@@ -689,14 +689,16 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /Ask an organization owner to add shared credits/,
+      /Ask an owner to add shared credits/,
     );
     const href = decodeURIComponent(
       screen.getByTestId("request-upgrade-mail").getAttribute("href") ?? "",
     );
     expect(href).toContain("Credit purchase request for Acme Robotics");
     expect(href).toContain("Our organization has run out of MCPJam credits.");
-    expect(href).toContain("Could you buy more shared credits for Acme Robotics so we can continue testing before our included allowance renews?");
+    expect(href).toContain(
+      "Could you buy more shared credits for Acme Robotics so we can continue testing before our included allowance renews?",
+    );
     expect(href).not.toContain("upgrade Acme Robotics to the Team plan");
   });
 
@@ -813,9 +815,11 @@ describe("MCPJamLimitDialog", () => {
     // The owner guidance is ADDED to the explanation, not swapped for it. A
     // member asks "my own key is configured, why am I blocked" too.
     const description = screen.getByTestId("limit-dialog-description");
-    expect(description).toHaveTextContent(/Swarm generation requires MCPJam credits/i);
+    expect(description).toHaveTextContent(
+      /Swarm generation requires MCPJam credits/i,
+    );
     expect(description).toHaveTextContent(/reset tomorrow/i);
-    expect(description).toHaveTextContent(/ask an organization owner/i);
+    expect(description).toHaveTextContent(/ask an owner/i);
   });
 
   it("sends Compare plans to organization plans settings", async () => {
@@ -1092,7 +1096,7 @@ describe.each(["swarm", "credits"] as const)(
         screen.queryByRole("button", { name: /explore.*plans/i }),
       ).not.toBeInTheDocument();
       expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-        "Ask an organization owner to upgrade",
+        "Ask an owner to upgrade",
       );
       expect(impressions()[0][1].primary_action).toBe("request_owner");
       await userEvent

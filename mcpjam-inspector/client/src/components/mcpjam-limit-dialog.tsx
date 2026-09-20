@@ -315,17 +315,21 @@ export function MCPJamLimitDialog() {
     creditsUpgrade.creditUpgradePlans,
   );
   const memberDescription = isFreeEffectivePlan
-    ? `Your organization's daily credits are used up. ${upgradeBenefit} Ask an organization owner to upgrade.`
-    : "Ask an organization owner to add shared credits so your team can continue testing before its included allowance renews.";
+    ? `${upgradeBenefit} Ask an owner to upgrade.`
+    : "Ask an owner to add shared credits and keep your team testing.";
   const creditDescription =
     isKnownNonManager || showCreditsUpgradeRequest
       ? memberDescription
       : isFreeEffectivePlan
       ? `Your Free credits reset daily. ${upgradeBenefit}`
-      : "Buy shared credits to run more evaluations, Swarms, and user tests before your included allowance renews.";
-  const swarmDescription = `${creditDescription} ${
+      : "Add shared credits to keep your team testing.";
+  const swarmDescription = `${
+    limitPeriod && limitPeriod !== "unknown"
+      ? creditDescription.replace("Your Free credits reset daily. ", "")
+      : creditDescription
+  } ${
     ALLOWANCE_RESET_COPY[limitPeriod ?? "unknown"]
-  } Swarm generation requires MCPJam credits even when you use your own API key.`.replace(
+  } Swarm generation requires MCPJam credits, even with your own API key.`.replace(
     / +/g,
     " ",
   );

@@ -25,6 +25,6 @@ export function creditUpgradeBenefit(plans: PlanCatalogEntry[] = []): string {
   return offers.length
     ? `${offers.join(
         "; ",
-      )}. Upgrade to run more evaluations and Swarms, with credit top-ups when you need them.`
-    : "Upgrade to Pro or Team for a larger monthly credit allowance and access to top-ups, so you can run more evaluations and Swarms.";
+      )}. Run more evaluations and Swarms, with top-ups available.`
+    : "Get more monthly credits and top-ups with Pro or Team.";
 }
