@@ -7,18 +7,11 @@ export type MCPJamLimitAuthStatus = "loading" | "guest" | "signedIn";
  * variant is preserved across the loading→signedIn auth race. */
 export type MCPJamLimitIntent = "guest" | "topup";
 
-/**
- * Where the wall was raised. Picks which variant of the dialog renders:
- * `"swarm"` gets `AllowanceLimitDialogView`, anything else (or nothing) gets
- * the credits wall. The split exists because the swarm wall's two dropped
- * actions dead-end there — no swarm screen mounts the model picker the BYOK
- * link drives, and an own key can't lift the limit anyway, since generation
- * and persona turns are always MCPJam-billed. `"scenario"` is a User Testing
- * link: the owner pays, so the tester gets a notice with no billing actions.
- */
+/** Swarm selects its billing copy/actions; scenario testers see an owner notice. */
 export type MCPJamLimitSurface = "chat" | "swarm" | "scenario";
 
 export interface MCPJamLimitNotifyInput {
+  runId?: string;
   limitKind?: MCPJamLimitKind;
   organizationId?: string;
   surface?: MCPJamLimitSurface;
@@ -26,6 +19,7 @@ export interface MCPJamLimitNotifyInput {
 }
 
 interface MCPJamLimitDialogState {
+  notifiedRunIds: ReadonlySet<string>;
   isOpen: boolean;
   hasPendingLimit: boolean;
   outOfCreditsHit: boolean;
@@ -56,6 +50,7 @@ const intentForAuth = (
 
 export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
   (set) => ({
+    notifiedRunIds: new Set<string>(),
     isOpen: false,
     hasPendingLimit: false,
     outOfCreditsHit: false,
@@ -68,8 +63,13 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
     pendingInput: null,
     notifyLimitHit: (input = {}) =>
       set((state) => {
+        if (input.runId && state.notifiedRunIds.has(input.runId)) return state;
+        const notifiedRunIds = input.runId
+          ? new Set([...state.notifiedRunIds, input.runId])
+          : state.notifiedRunIds;
         if (state.authStatus === "loading") {
           return {
+            notifiedRunIds,
             hasPendingLimit: true,
             outOfCreditsHit: true,
             outOfCreditsOrganizationId: input.organizationId ?? null,
@@ -79,12 +79,14 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
         const intent = intentForAuth(state.authStatus, input);
         if (!intent) {
           return {
+            notifiedRunIds,
             hasPendingLimit: false,
             outOfCreditsHit: true,
             outOfCreditsOrganizationId: input.organizationId ?? null,
           };
         }
         return {
+          notifiedRunIds,
           hasPendingLimit: false,
           outOfCreditsHit: true,
           outOfCreditsOrganizationId: input.organizationId ?? null,
