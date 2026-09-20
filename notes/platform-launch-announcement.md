@@ -4,8 +4,12 @@ Task: https://app.kestral.ai/workspace/yhNILB2/task/1Lc811Qi
 Launch: https://www.mcpjam.com/blog/our-new-platform
 
 Add a compact, clickable bottom-left announcement for everyone: the existing
-swarm characters above a 2x2 feature grid. Opening it reveals illustrated
-Swarm, User Testing, Evals, and CI/CD tabs, with an optional launch video.
+swarm characters above a 2x2 feature grid. Opening it defaults to a click-to-play YouTube launch tab, followed by
+Swarm, User Testing, Evaluate, and CI/CD tabs using supplied product images.
+The announcement stays visible after opening; only explicit X dismissal hides it.
+The centered compact Learn more CTA and product navigation actions use the shared
+primary button. Neutral bordered tabs, the theme-aware MCPJam logo, and a subtle
+primary-token orange dialog glow complete the user-approved design.
 Feature actions navigate inside the app; CI/CD opens the current Evaluate tab,
 following the existing What's new preview-to-detail pattern. Keep initial discovery
 non-blocking, remember seen/dismissed status per launch in this browser across sign-in, and support keyboard navigation, small viewports,
@@ -21,10 +25,11 @@ Axiom event: `launch.engagement` (validated POST to `/tlm/launch-engagement`).
 Join individual deliveries with `event_id`; filter this launch by
 `launch_id = platform-launch-2026-09` and use `action` for the funnel:
 `shown → opened → feature_selected → feature_navigated`.
+The `launch-video` feature identifies the opening tab and video requests.
 
 Also records `video_requested`, `dismissed`, and `closed` (with modal duration
 and dismiss/back-to-work/navigation reason). A video request is not proof of
-playback. Events include feature, card/launcher/collapsed presentation, prior
+playback. Events include feature, card presentation, prior
 seen state, and guest/signed-in audience; Axiom values are client-reported,
 not authenticated identity. PostHog keeps its existing anonymous/person identity.
 

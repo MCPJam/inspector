@@ -250,15 +250,16 @@ describe("sidebar invite CTA", () => {
     mockUseConvexAuth.mockReturnValue({ isAuthenticated: false, isLoading: false });
     mockUseAuth.mockReturnValue({ user: null });
     const guest = renderSidebar();
-    fireEvent.click(screen.getByRole("button", { name: "See what’s new" }));
+    fireEvent.click(screen.getByRole("button", { name: "Learn more about the new MCPJam" }));
     guest.unmount();
 
     mockUseConvexAuth.mockReturnValue({ isAuthenticated: true, isLoading: false });
     mockUseAuth.mockReturnValue({ user: { id: "owner", email: "owner@example.com" } });
     renderSidebar();
-    expect(screen.queryByRole("region", { name: "Platform launch" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Platform launch" })).toBeInTheDocument();
+    expect(localStorage.getItem("mcpjam:platform-launch-2026-09:status")).toBe("seen");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Discover the new MCPJam" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Learn more about the new MCPJam" })).toBeInTheDocument();
   });
 
   it("shows the CTA for hosted guests, opening the sign-up nudge instead of the share dialog", () => {

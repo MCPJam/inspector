@@ -42,17 +42,19 @@ describe("PlatformLaunchAnnouncement", () => {
     render(<PlatformLaunchAnnouncement />);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(document.querySelector("iframe")).toBeNull();
-    const trigger = screen.getByRole("button", { name: "See what’s new" });
+    const trigger = screen.getByRole("button", {
+      name: "Learn more about the new MCPJam",
+    });
     await user.click(trigger);
     expect(
-      screen.getByRole("dialog", { name: "Meet the new MCPJam" }),
+      screen.getByRole("dialog", { name: "Our new platform" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Meet the new MCPJam" }),
+      screen.getByRole("heading", { name: "Our new platform" }),
     ).toHaveFocus();
     expect(document.querySelector("iframe")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Play launch video" }));
-    expect(screen.getByTitle("Meet the new MCPJam video")).toHaveAttribute(
+    expect(screen.getByTitle("Our new platform video")).toHaveAttribute(
       "src",
       expect.stringContaining("/embed/vD06SWzNx0Y"),
     );
@@ -76,17 +78,19 @@ describe("PlatformLaunchAnnouncement", () => {
     unmount();
     render(<PlatformLaunchAnnouncement />);
     expect(
-      screen.queryByRole("button", { name: "See what’s new" }),
+      screen.queryByRole("button", { name: "Learn more about the new MCPJam" }),
     ).not.toBeInTheDocument();
   });
 
-  it("records seen only when opened and uses a quiet launcher on the next visit", async () => {
+  it("records seen on open and keeps the announcement visible until explicitly dismissed", async () => {
     const user = userEvent.setup();
     const { unmount } = render(<PlatformLaunchAnnouncement />);
     expect(
       localStorage.getItem("mcpjam:platform-launch-2026-09:status"),
     ).toBeNull();
-    await user.click(screen.getByRole("button", { name: "See what’s new" }));
+    await user.click(
+      screen.getByRole("button", { name: "Learn more about the new MCPJam" }),
+    );
     expect(localStorage.getItem("mcpjam:platform-launch-2026-09:status")).toBe(
       "seen",
     );
@@ -94,10 +98,10 @@ describe("PlatformLaunchAnnouncement", () => {
     render(<PlatformLaunchAnnouncement />);
     expect(
       screen.queryByRole("region", { name: "Platform launch" }),
-    ).not.toBeInTheDocument();
+    ).toBeVisible();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: "Discover the new MCPJam" }),
+      screen.getByRole("button", { name: "Learn more about the new MCPJam" }),
     );
     expect(screen.getByRole("dialog")).toBeVisible();
   });
@@ -105,9 +109,11 @@ describe("PlatformLaunchAnnouncement", () => {
   it("supports keyboard feature navigation and returns to work without permanent dismissal", async () => {
     const user = userEvent.setup();
     render(<PlatformLaunchAnnouncement />);
-    await user.click(screen.getByRole("button", { name: "See what’s new" }));
+    await user.click(
+      screen.getByRole("button", { name: "Learn more about the new MCPJam" }),
+    );
     await user.click(screen.getByRole("tab", { name: "Swarm" }));
-    for (const name of ["User Testing", "Evals", "CI/CD"]) {
+    for (const name of ["User Testing", "Evaluate", "CI/CD"]) {
       await user.keyboard("{ArrowRight}");
       expect(screen.getByRole("tab", { name })).toHaveAttribute(
         "aria-selected",
@@ -118,14 +124,16 @@ describe("PlatformLaunchAnnouncement", () => {
     await user.click(screen.getByRole("button", { name: "Back to work" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "See what’s new" }),
+      screen.getByRole("button", { name: "Learn more about the new MCPJam" }),
     ).toBeVisible();
   });
 
   it("shows the character graphic and four feature tiles as one clear launch trigger", () => {
     render(<PlatformLaunchAnnouncement />);
-    const trigger = screen.getByRole("button", { name: "See what’s new" });
-    for (const label of ["Swarm", "User Testing", "Evals", "CI/CD"])
+    const trigger = screen.getByRole("button", {
+      name: "Learn more about the new MCPJam",
+    });
+    for (const label of ["Swarm", "User Testing", "Evaluate", "CI/CD"])
       expect(trigger).toHaveTextContent(label);
     expect(screen.getByTestId("swarm-hero-characters")).toBeInTheDocument();
   });
@@ -135,34 +143,40 @@ describe("PlatformLaunchAnnouncement", () => {
       "Swarm",
       "Explore Swarm",
       "/swarms",
-      "Swarm characters explore parallel user journeys across clients",
+      "Swarm insights showing user goals, behavior, outcomes, and sentiment",
     ],
     [
       "User Testing",
       "Explore User Testing",
       "/user-testing",
-      "A user tests a conversation and leaves a rating and feedback",
+      "User testing findings with tester feedback and root causes",
     ],
     [
-      "Evals",
-      "Explore Evals",
+      "Evaluate",
+      "Explore Evaluate",
       "/evaluate",
-      "An evaluation suite tracks improving results across repeated runs",
+      "Evaluate dashboard with suite health and cross-client run results",
     ],
     [
       "CI/CD",
       "Open Evaluate for CI/CD",
       "/evaluate",
-      "A pull request passes automated checks before release",
+      "MCPJam release checks and readiness across clients",
     ],
   ])(
     "shows a representative visual and navigates inside the app for %s",
     async (name, action, path, visual) => {
       const user = userEvent.setup();
       render(<PlatformLaunchAnnouncement />);
-      await user.click(screen.getByRole("button", { name: "See what’s new" }));
+      await user.click(
+        screen.getByRole("button", { name: "Learn more about the new MCPJam" }),
+      );
       await user.click(screen.getByRole("tab", { name, exact: true }));
       expect(screen.getByRole("img", { name: visual })).toBeVisible();
+      expect(screen.getByRole("img", { name: visual })).toHaveAttribute(
+        "src",
+        expect.stringContaining(".png"),
+      );
       expect(screen.queryByRole("link")).not.toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: action }));
       expect(onNavigate).toHaveBeenCalledWith(path);
@@ -185,18 +199,25 @@ describe("PlatformLaunchAnnouncement", () => {
         <PlatformLaunchAnnouncement />
       </StrictMode>,
     );
-    await user.click(screen.getByRole("button", { name: "See what’s new" }));
-    await user.click(screen.getByRole("tab", { name: "Evals", exact: true }));
+    await user.click(
+      screen.getByRole("button", { name: "Learn more about the new MCPJam" }),
+    );
+    expect(screen.getAllByRole("tab")[0]).toHaveTextContent("Launch video");
+    expect(screen.getByRole("tab", { name: "Launch video" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     await user.click(screen.getByRole("button", { name: "Play launch video" }));
     await user.click(
-      screen.getByRole("button", { name: "Show feature preview" }),
+      screen.getByRole("tab", { name: "Evaluate", exact: true }),
     );
-    await user.click(screen.getByRole("button", { name: "Explore Evals" }));
+    expect(document.querySelector("iframe")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Explore Evaluate" }));
     expect(engagement.mock.calls.map(([e]) => e.action)).toEqual([
       "shown",
       "opened",
-      "feature_selected",
       "video_requested",
+      "feature_selected",
       "feature_navigated",
       "closed",
     ]);
@@ -239,7 +260,9 @@ describe("PlatformLaunchAnnouncement", () => {
   it("distinguishes closing the modal from dismissing the announcement", async () => {
     const user = userEvent.setup();
     render(<PlatformLaunchAnnouncement />);
-    await user.click(screen.getByRole("button", { name: "See what’s new" }));
+    await user.click(
+      screen.getByRole("button", { name: "Learn more about the new MCPJam" }),
+    );
     await user.keyboard("{Escape}");
     await user.click(
       screen.getByRole("button", { name: "Dismiss launch announcement" }),
@@ -256,7 +279,7 @@ describe("PlatformLaunchAnnouncement", () => {
     const user = userEvent.setup();
     render(<PlatformLaunchAnnouncement collapsed />);
     await user.click(
-      screen.getByRole("button", { name: "Discover the new MCPJam" }),
+      screen.getByRole("button", { name: "Learn more about the new MCPJam" }),
     );
     expect(screen.getByRole("dialog")).toBeVisible();
   });
@@ -270,14 +293,16 @@ describe("PlatformLaunchAnnouncement", () => {
     });
     const user = userEvent.setup();
     render(<PlatformLaunchAnnouncement />);
-    await user.click(screen.getByRole("button", { name: "See what’s new" }));
+    await user.click(
+      screen.getByRole("button", { name: "Learn more about the new MCPJam" }),
+    );
     expect(screen.getByRole("dialog")).toBeVisible();
     await user.keyboard("{Escape}");
     await user.click(
       screen.getByRole("button", { name: "Dismiss launch announcement" }),
     );
     expect(
-      screen.queryByRole("button", { name: "See what’s new" }),
+      screen.queryByRole("button", { name: "Learn more about the new MCPJam" }),
     ).not.toBeInTheDocument();
   });
 });

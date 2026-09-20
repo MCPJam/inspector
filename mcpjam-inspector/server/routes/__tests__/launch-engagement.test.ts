@@ -12,7 +12,7 @@ const event = {
   event_id: "ba52198b-e99c-449a-b17d-deba083c8445",
   launch_id: "platform-launch-2026-09",
   action: "opened",
-  feature: "swarms",
+  feature: "launch-video",
   presentation: "card",
   prior_status: "unseen",
   audience: "guest",
