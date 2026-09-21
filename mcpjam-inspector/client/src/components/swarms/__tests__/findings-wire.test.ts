@@ -18,6 +18,7 @@ import {
   WIRE_MECHANISM_PHRASE,
   WIRE_PERSONA,
   WIRE_RUN_ID,
+  WIRE_SECOND_RUN_ID,
   WIRE_TRUNCATION_FIX,
 } from "./swarm-findings-wire-fixtures";
 import {
@@ -558,6 +559,40 @@ describe("a reordered payload says the same thing", () => {
     expect(lines(reversed(wire))).toEqual(lines(wire));
   });
 
+  it("names only the personas who actually had the goal it names", () => {
+    const wire = truncatedWire({ signalRows: false, mechanismRows: true });
+    const rows = wire.findings.filter(
+      (row) => row.basis === "verifiedMechanism",
+    );
+    // One cause, two NON-CARTESIAN pairs: Ana ran the first goal, Bo ran the
+    // second, and neither ran the other's. The goal is picked by reach, so
+    // naming every persona on the mechanism attributed Ana's goal to Bo, who
+    // was never given it. How far the cause reaches is the population
+    // clause's job, not this line's.
+    const bo = { name: "Bo", personaRefId: null };
+    const split = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      personas: [
+        ...wire.personas,
+        { ...wire.personas[0]!, persona: bo, goalRunIds: [WIRE_SECOND_RUN_ID] },
+      ],
+      findings: [
+        // Two sessions, so this goal leads on reach.
+        {
+          ...rows[0]!,
+          sessionIds: ["session-1", "session-1b"],
+          population: { count: 2, total: 4, unit: "sessions" as const },
+        },
+        { ...rows[1]!, persona: bo },
+      ],
+    });
+    const line = composeWireFindingsSummary(split, model(split), {
+      terminal: true,
+    }).lines.find((row) => row.includes(WIRE_GOAL.title));
+    expect(line).toBe(`"${WIRE_GOAL.title}" for Ana.`);
+    expect(line).not.toContain("other persona");
+  });
+
   it("refuses to name a stage the grouped rows disagree about", () => {
     const wire = truncatedWire();
     // One row says the chain measured `response`; the other says `call`. There
@@ -659,6 +694,65 @@ describe("the persona quotes a session that actually spoke", () => {
     expect(persona.cited?.actual).toBe(
       "The reply stopped at its output limit.",
     );
+  });
+
+  it("treats a whitespace-only account as no account at all", () => {
+    const wire = truncatedWire({ signalRows: false });
+    const mechanism = wire.findings.find(
+      (row) => row.basis === "verifiedMechanism",
+    )!;
+    const report = wire.findings.find((row) => row.basis === "sessionReport")!;
+    // `account` is free prose a model wrote; the contract bounds its length
+    // and nothing else. A blank one is still truthy, so ranking on the raw
+    // field picks the blank session over the speaking one -- and the trim
+    // that follows then hands the card nothing, with a real quote one row
+    // away. Rank on the value as it will be RENDERED.
+    const pair = (id: string, host: string, account?: string) => [
+      {
+        ...mechanism,
+        id,
+        target: { ...mechanism.target, id: host },
+        sessionIds: [`${host}-1`],
+      },
+      {
+        ...report,
+        id: `report-${id}`,
+        target: { ...mechanism.target, id: host },
+        sessionIds: [`${host}-1`],
+        reportExcerpt: {
+          actual: `What ${host} recorded.`,
+          ...(account === undefined ? {} : { account }),
+          citations: [`${host}-1/m:0`],
+        },
+      },
+    ];
+    const built = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: [
+        ...pair("aaa-blank", "host-blank", "  \n  "),
+        ...pair("zzz-speaking", "host-speaking", WIRE_ACCOUNT),
+      ],
+    });
+    const persona = deriveSwarmFindingsModelFromWire({
+      journeyFindings: built,
+      personas: [],
+      runs: [],
+    }).personas[0]!;
+    expect(persona.account).toBe(WIRE_ACCOUNT);
+    expect(persona.accountSessionId).toBe("host-speaking-1");
+    // ...and a blank one on its own is an absence, never an empty quote.
+    const blankOnly = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: pair("aaa-blank", "host-blank", "  \n  "),
+    });
+    const alone = deriveSwarmFindingsModelFromWire({
+      journeyFindings: blankOnly,
+      personas: [],
+      runs: [],
+    }).personas[0]!;
+    expect(alone.account).toBeUndefined();
+    expect(alone.accountSessionId).toBeUndefined();
+    expect(alone.issue.trim()).not.toBe("");
   });
 
   it("still breaks ties by id when neither candidate has an account", () => {

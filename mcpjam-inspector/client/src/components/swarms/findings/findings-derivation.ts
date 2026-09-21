@@ -230,6 +230,14 @@ function personaAccount(
   "issue" | "account" | "accountSessionId" | "cited" | "signal"
 > {
   const leadGoal = goals.find((goal) => goal.diagnosisStage);
+  /**
+   * The account as it will actually be RENDERED, which is the only version
+   * worth ranking by. `account` is a nullable free-prose field: a whitespace-
+   * only one is truthy, so ranking on the raw value could pick a row over one
+   * with real words, and the trim below would then hand the card nothing.
+   */
+  const accountOf = (row: SwarmJourneyFinding | null | undefined) =>
+    row?.reportExcerpt?.account?.trim() || undefined;
   const reportsFor = (lead: SwarmJourneyFinding | null) =>
     (lead
       ? rows.filter(
@@ -241,8 +249,7 @@ function personaAccount(
         )
       : rows.filter((row) => row.basis === "sessionReport")
     ).sort((a, b) => {
-      const account =
-        Number(!!b.reportExcerpt?.account) - Number(!!a.reportExcerpt?.account);
+      const account = Number(!!accountOf(b)) - Number(!!accountOf(a));
       if (account !== 0) return account;
       return (a.sessionIds[0] ?? "").localeCompare(b.sessionIds[0] ?? "");
     })[0] ?? null;
@@ -263,8 +270,7 @@ function personaAccount(
       .map((row) => ({ row, report: reportsFor(row) }))
       .sort((a, b) => {
         const account =
-          Number(!!b.report?.reportExcerpt?.account) -
-          Number(!!a.report?.reportExcerpt?.account);
+          Number(!!accountOf(b.report)) - Number(!!accountOf(a.report));
         if (account !== 0) return account;
         return a.row.id.localeCompare(b.row.id);
       })[0] ?? null;
@@ -274,7 +280,7 @@ function personaAccount(
     null;
   const lead = chosen?.row ?? null;
   const supporting = chosen ? chosen.report : reportsFor(null);
-  const account = supporting?.reportExcerpt?.account?.trim();
+  const account = accountOf(supporting);
   return {
     // Never empty on this path. The old expression bottomed out at `""`
     // whenever no goal had a located failure, which rendered as an empty

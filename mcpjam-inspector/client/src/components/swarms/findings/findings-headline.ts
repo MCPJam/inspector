@@ -552,7 +552,18 @@ function personaGoalLine(rows: readonly SwarmJourneyFinding[]): string | null {
   if (!lead) return null;
   // The FULL title. `shortenGoalTitle` cuts to four words, which turns most
   // real goals into an ellipsis and tells the reader nothing.
-  const names = [...new Set(rows.map((row) => row.persona.name))].sort();
+  //
+  // Only the personas who actually had THIS goal. One mechanism can span
+  // non-cartesian pairs -- Zoe on goal A, Amy on goal B -- and naming every
+  // persona on the lead goal's title told the reader Amy tried a goal she was
+  // never given. How far the cause reaches is the population clause's job.
+  const names = [
+    ...new Set(
+      rows
+        .filter((row) => row.goal.runId === lead[0])
+        .map((row) => row.persona.name),
+    ),
+  ].sort();
   const who =
     names.length > 1
       ? `${names[0]} and ${plural(names.length - 1, "other persona")}`
