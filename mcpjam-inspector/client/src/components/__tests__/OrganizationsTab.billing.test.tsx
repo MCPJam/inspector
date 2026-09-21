@@ -313,6 +313,7 @@ vi.mock("posthog-js/react", () => ({
 vi.mock("sonner", () => ({
   toast: {
     success: vi.fn(),
+    info: vi.fn(),
     error: vi.fn(),
     warning: vi.fn(),
   },
@@ -1017,6 +1018,47 @@ describe("OrganizationsTab billing", () => {
     expect(trackMock).not.toHaveBeenCalledWith(
       "billing_flow_succeeded",
       expect.objectContaining({ flow: "seat_payment_cancel" }),
+    );
+  });
+
+  it("records a failed cancellation when the seat payment wins the race", async () => {
+    const cancelSeatPayment = vi.fn().mockResolvedValue({
+      voided: false,
+      outcome: "paid",
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: pendingSeatPaymentIntentFixture(),
+        cancelSeatPayment,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(cancelSeatPayment).toHaveBeenCalled());
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "seat_payment_cancel",
+        failure_kind: "already_paid",
+      }),
+    );
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "billing_flow_succeeded",
+      expect.objectContaining({ flow: "seat_payment_cancel" }),
+    );
+    expect(toast.info).toHaveBeenCalledWith(
+      "Payment completed before cancellation; the member was added.",
     );
   });
 
@@ -2160,13 +2202,108 @@ describe("OrganizationsTab billing", () => {
     await waitFor(() => expect(startPlanChange).toHaveBeenCalled());
     expect(trackMock).toHaveBeenCalledWith(
       "billing_flow_failed",
-      expect.objectContaining({ flow: "plan_change" }),
+      expect.objectContaining({
+        flow: "plan_change",
+        failure_kind: "popup_blocked",
+      }),
     );
     expect(trackMock).not.toHaveBeenCalledWith(
       "billing_flow_succeeded",
       expect.objectContaining({
         flow: "plan_change",
         outcome: "checkout_handoff",
+      }),
+    );
+    openSpy.mockRestore();
+  });
+
+  it.each([
+    {
+      name: "billing portal",
+      buttonName: "Manage plan",
+      flow: "manage_billing",
+      openBilling: "portal" as const,
+    },
+    {
+      name: "interval-change portal",
+      buttonName: "Change to annual",
+      flow: "change_interval",
+      openBilling: "interval" as const,
+    },
+  ])(
+    "classifies a blocked $name as popup_blocked",
+    async ({ buttonName, flow, openBilling }) => {
+      const openPortal = vi
+        .fn()
+        .mockResolvedValue("https://stripe.test/portal");
+      const openIntervalChangePortal = vi
+        .fn()
+        .mockResolvedValue("https://stripe.test/portal/interval");
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({
+            plan: "team",
+            effectivePlan: "team",
+            billingInterval: "monthly",
+            subscriptionStatus: "active",
+            hasCustomer: true,
+            stripePriceId: "price_team_monthly",
+          }),
+          openPortal,
+          openIntervalChangePortal,
+        }),
+      );
+      const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+
+      render(<OrganizationsTab organizationId="org-1" section="plans" />);
+      fireEvent.click(screen.getByRole("button", { name: buttonName }));
+
+      const expectedCall =
+        openBilling === "portal" ? openPortal : openIntervalChangePortal;
+      await waitFor(() => expect(expectedCall).toHaveBeenCalled());
+      expect(trackMock).toHaveBeenCalledWith(
+        "billing_flow_failed",
+        expect.objectContaining({ flow, failure_kind: "popup_blocked" }),
+      );
+      openSpy.mockRestore();
+    },
+  );
+
+  it("classifies a blocked cancellation portal as popup_blocked", async () => {
+    const openCancellationPortal = vi
+      .fn()
+      .mockResolvedValue("https://stripe.test/portal/cancel");
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          billingInterval: "annual",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_annual",
+        }),
+        openCancellationPortal,
+      }),
+    );
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+    fireEvent.click(
+      within(getPlanColumn("Free")).getByRole("button", {
+        name: "Downgrade",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open cancellation flow" }),
+    );
+
+    await waitFor(() => expect(openCancellationPortal).toHaveBeenCalled());
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "cancel_subscription",
+        failure_kind: "popup_blocked",
       }),
     );
     openSpy.mockRestore();

@@ -146,6 +146,21 @@ interface ScheduledBillingChangeCancellationState {
   successMessage: string;
 }
 
+class BillingPopupBlockedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BillingPopupBlockedError";
+  }
+}
+
+function getBillingNavigationFailureKind(
+  error: unknown,
+): "popup_blocked" | "request_failed" {
+  return error instanceof BillingPopupBlockedError
+    ? "popup_blocked"
+    : "request_failed";
+}
+
 function formatBillingDate(timestampMs: number | null): string | null {
   if (timestampMs == null) {
     return null;
@@ -1128,14 +1143,14 @@ function OrganizationPage({
           "Stripe could not confirm cancellation yet. The payment is still pending; try again.",
         );
       } else if (result.outcome === "paid") {
-        track("billing_flow_succeeded", {
+        track("billing_flow_failed", {
           location: seatPaymentLocation(surface),
           flow: "seat_payment_cancel",
           source: surface,
-          outcome: result.outcome,
+          failure_kind: "already_paid",
           current_plan: billingStatus?.plan ?? "unknown",
         });
-        toast.success(
+        toast.info(
           "Payment completed before cancellation; the member was added.",
         );
       } else {
@@ -1342,7 +1357,7 @@ function OrganizationPage({
     try {
       const billingUrl = await openPortal(getBillingReturnUrl());
       if (!openBillingUrl(billingUrl, "new-tab", reservedTab)) {
-        throw new Error("Billing portal popup was blocked");
+        throw new BillingPopupBlockedError("Billing portal popup was blocked");
       }
       track("billing_flow_succeeded", {
         location: "organization_billing",
@@ -1357,7 +1372,7 @@ function OrganizationPage({
         location: "organization_billing",
         flow: "manage_billing",
         source: sharedBillingSource,
-        failure_kind: "request_failed",
+        failure_kind: getBillingNavigationFailureKind(error),
         current_plan: billingStatus?.plan ?? "unknown",
       });
       toast.error(
@@ -1385,7 +1400,7 @@ function OrganizationPage({
         targetBillingInterval,
       );
       if (!openBillingUrl(billingUrl, "new-tab", reservedTab)) {
-        throw new Error("Billing portal popup was blocked");
+        throw new BillingPopupBlockedError("Billing portal popup was blocked");
       }
       track("billing_flow_succeeded", {
         location: "organization_billing",
@@ -1401,7 +1416,7 @@ function OrganizationPage({
         location: "organization_billing",
         flow: "change_interval",
         source: sharedBillingSource,
-        failure_kind: "request_failed",
+        failure_kind: getBillingNavigationFailureKind(error),
         current_plan: billingStatus?.plan ?? "unknown",
         target_interval: targetBillingInterval,
       });
@@ -1519,7 +1534,7 @@ function OrganizationPage({
       // Leaving paid entirely is a Stripe cancellation, not a plan change.
       const billingUrl = await openCancellationPortal(getBillingReturnUrl());
       if (!openBillingUrl(billingUrl, "new-tab", reservedTab)) {
-        throw new Error("Billing portal popup was blocked");
+        throw new BillingPopupBlockedError("Billing portal popup was blocked");
       }
       track("billing_flow_succeeded", {
         location: "organization_billing",
@@ -1536,7 +1551,7 @@ function OrganizationPage({
         location: "organization_billing",
         flow: "cancel_subscription",
         source: sharedBillingSource,
-        failure_kind: "request_failed",
+        failure_kind: getBillingNavigationFailureKind(error),
         current_plan: billingStatus?.plan ?? "unknown",
         target_plan: "free",
       });
@@ -1608,7 +1623,7 @@ function OrganizationPage({
         result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
       options.onBeforeNavigate?.();
       if (!openBillingUrl(billingUrl, navigation, reservedTab)) {
-        throw new Error("Billing popup was blocked");
+        throw new BillingPopupBlockedError("Billing popup was blocked");
       }
       track("billing_flow_succeeded", {
         location: "organization_billing",
@@ -1626,7 +1641,7 @@ function OrganizationPage({
         location: "organization_billing",
         flow: "plan_change",
         source,
-        failure_kind: "request_failed",
+        failure_kind: getBillingNavigationFailureKind(error),
         current_plan: billingStatus?.plan ?? "unknown",
         target_plan: tier,
         target_interval: billingInterval,
