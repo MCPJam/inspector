@@ -4,35 +4,59 @@
       "releases": [
         {
           "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
+          "type": "patch"
         }
       ],
-      "summary": "Expose versioned, evidence-backed swarm journey findings through the SDK and API contract. Render persona and goal findings from the shared analysis output, disclose unread sessions, and avoid reassuring summaries when no model analysis ran.",
-      "id": "swarm-shared-findings"
+      "summary": "Report the model on every iteration an `EvalSuite` or `EvalTest` run uploads. A run started with `runWithClient` showed an empty MODEL column, because only the `promptsToEvalResult` path stamped the provider and model that the run had already recorded. When a case fails in setup and never reaches the model, the run now names the model it was configured with — the saved client's, for a `runWithClient` run.\n\nReport per-step verdicts too (`metadata.stepResults`), the same rows the hosted runner writes. An SDK case whose tool call matched still read \"0 of 1 assertion passed\" on the Steps tab, with a grey unknown icon, because no step ever carried a verdict.",
+      "id": "eval-suite-iteration-model"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "patch"
+        },
+        {
+          "name": "@mcpjam/sdk",
+          "type": "patch"
+        }
+      ],
+      "summary": "Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the\nwork already merged into main reaches npm. Version bump only — no code changes.",
+      "id": "release-inspector-cli-sdk"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "8.10.1",
+      "type": "patch",
+      "oldVersion": "8.11.0",
       "changesets": [
-        "swarm-shared-findings"
+        "eval-suite-iteration-model",
+        "release-inspector-cli-sdk"
       ],
-      "newVersion": "8.11.0"
+      "newVersion": "8.11.1"
     },
     {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "3.7.2",
+      "type": "patch",
+      "oldVersion": "3.8.0",
       "changesets": [
-        "swarm-shared-findings"
+        "release-inspector-cli-sdk"
       ],
-      "newVersion": "3.8.0"
+      "newVersion": "3.8.1"
+    },
+    {
+      "name": "@mcpjam/cli",
+      "type": "patch",
+      "oldVersion": "5.10.1",
+      "changesets": [
+        "release-inspector-cli-sdk"
+      ],
+      "newVersion": "5.10.2"
     },
     {
       "name": "@mcpjam/mcp",

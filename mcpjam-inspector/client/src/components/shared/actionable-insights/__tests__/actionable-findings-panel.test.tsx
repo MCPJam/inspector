@@ -371,3 +371,14 @@ describe("evidence", () => {
     );
   });
 });
+
+it("hides the legacy empty-state reassurance when its containing surface owns outcomes", () => {
+  const { rerender } = render(
+    <ActionableFindingsPanel hideEmpty envelope={envelope({ findings: [] })} />,
+  );
+  expect(
+    screen.queryByTestId("actionable-findings-empty"),
+  ).not.toBeInTheDocument();
+  rerender(<ActionableFindingsPanel hideEmpty envelope={envelope()} />);
+  expect(screen.getByTestId("actionable-finding-headline")).toBeInTheDocument();
+});

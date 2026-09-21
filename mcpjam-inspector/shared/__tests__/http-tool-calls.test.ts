@@ -1,3 +1,4 @@
+import { jsonSchema } from "ai";
 import { describe, it, expect, vi } from "vitest";
 import {
   hasUnresolvedToolCalls,
@@ -5,7 +6,10 @@ import {
   executeToolCallsFromMessages,
 } from "../http-tool-calls.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
-import { mcpCallToolResultToModelOutput } from "@mcpjam/sdk";
+import {
+  mcpCallToolResultToModelOutput,
+  mergeConnectionToolsets,
+} from "@mcpjam/sdk";
 
 describe("hasUnresolvedToolCalls", () => {
   describe("empty/basic cases", () => {
@@ -1357,6 +1361,8 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     });
 
     expect(tools.computer.toModelOutput).toHaveBeenCalledWith({
+      toolCallId: "call-cu-1",
+      input: { action: "screenshot" },
       output: implResult,
     });
     expect(newMessages).toHaveLength(1);
@@ -1506,6 +1512,8 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     });
 
     expect(tools.bench_write.toModelOutput).toHaveBeenCalledWith({
+      toolCallId: "call-cu-1",
+      input: { action: "screenshot" },
       output: implResult,
     });
     const part = (newMessages[0] as any).content[0];
@@ -1795,15 +1803,133 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
 });
 
 describe("approval recovery", () => {
-  it.each([true, false])("reconciles an unresolved approval response (%s) before raw tool replay", (approved) => {
-    const messages = [
-      { role: "assistant", content: [{ type: "tool-call", toolCallId: "call", toolName: "search", input: {} }, { type: "tool-approval-request", approvalId: "approval", toolCallId: "call" }] },
-      { role: "tool", content: [{ type: "tool-approval-response", approvalId: "approval", approved }] },
-    ] as ModelMessage[];
-    expect(hasUnresolvedToolCalls(messages)).toBe(true);
-    expect(hasUnresolvedApprovalResponses(messages)).toBe(true);
-    messages.push({ role: "tool", content: [{ type: "tool-result", toolCallId: "call", toolName: "search", output: { type: "text", value: "resolved" } }] });
-    expect(hasUnresolvedApprovalResponses(messages)).toBe(false);
-    expect(hasUnresolvedToolCalls(messages)).toBe(false);
+  it.each([true, false])(
+    "reconciles an unresolved approval response (%s) before raw tool replay",
+    (approved) => {
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call",
+              toolName: "search",
+              input: {},
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "approval",
+              toolCallId: "call",
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-approval-response",
+              approvalId: "approval",
+              approved,
+            },
+          ],
+        },
+      ] as ModelMessage[];
+      expect(hasUnresolvedToolCalls(messages)).toBe(true);
+      expect(hasUnresolvedApprovalResponses(messages)).toBe(true);
+      messages.push({
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call",
+            toolName: "search",
+            output: { type: "text", value: "resolved" },
+          },
+        ],
+      });
+      expect(hasUnresolvedApprovalResponses(messages)).toBe(false);
+      expect(hasUnresolvedToolCalls(messages)).toBe(false);
+    },
+  );
+});
+
+describe("account-aware chat execution", () => {
+  it("passes the routing call ID through output conversion and persists attribution", async () => {
+    const a = {
+      serverId: "server",
+      connectionId: "A",
+      key: "server",
+      label: "Acme",
+      isDefault: true,
+    };
+    const b = {
+      serverId: "server",
+      connectionId: "B",
+      key: "server#B",
+      label: "Side",
+    };
+    const schema = jsonSchema({ type: "object", properties: {} });
+    const aRead = vi.fn(async () => ({ type: "text", value: "A resource" }));
+    const bRead = vi.fn(async () => ({ type: "text", value: "B resource" }));
+    const aCall = vi.fn(async () => ({ content: [] }));
+    const bCall = vi.fn(async () => ({ content: [] }));
+    const tools = mergeConnectionToolsets(
+      {
+        server: {
+          read: { inputSchema: schema, execute: aCall, toModelOutput: aRead },
+        },
+        "server#B": {
+          read: { inputSchema: schema, execute: bCall, toModelOutput: bRead },
+        },
+      } as any,
+      { server: [a, b] },
+      {
+        snapshot: new Map([
+          ["A", "server"],
+          ["B", "server#B"],
+        ]),
+      },
+    );
+    const messages = await executeToolCallsFromMessages(
+      [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-b",
+              toolName: "read",
+              input: { account: "B" },
+            },
+          ],
+        },
+      ] as any,
+      { tools },
+    );
+    expect(aCall).not.toHaveBeenCalled();
+    expect(aRead).not.toHaveBeenCalled();
+    expect(bCall).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ toolCallId: "call-b" }),
+    );
+    expect(bRead).toHaveBeenCalledWith(
+      expect.objectContaining({ toolCallId: "call-b", input: {} }),
+    );
+    expect(messages[0]).toMatchObject({
+      content: [
+        {
+          output: { type: "text", value: "B resource" },
+          providerOptions: {
+            mcpjam: {
+              connection: {
+                connectionId: "B",
+                serverId: "server",
+                label: "Side",
+              },
+            },
+          },
+        },
+      ],
+    });
   });
 });

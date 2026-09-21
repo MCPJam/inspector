@@ -622,6 +622,194 @@ describe("the trace narrative join", () => {
     expect(rowByKey(rows, "step:a1").narrative).toBeUndefined();
   });
 
+  it("gives a predicate-only iteration its narrative, joined by criterion id", () => {
+    // The population the backend's evaluator list used to skip entirely: an
+    // iteration that recorded `metadata.predicates` and no score rows. The
+    // report's key for such a row is `predicate:<hostedCriterionId>` — the same
+    // string this file joins on — so the narrative lands and is not stale.
+    const rows = join(authored, {
+      iteration: iteration({
+        predicates: [
+          {
+            predicate: noToolErrors,
+            // An authored assert step always sits inside a turn, so its
+            // criterion id is the SCOPED one.
+            scope: { kind: "turn", promptIndex: 0 },
+            passed: true,
+            reason: "no tool errors",
+          },
+          { predicate: finalNonEmpty, passed: false, reason: "empty answer" },
+        ],
+      }),
+      report: report([
+        {
+          joinKey: `predicate:${hostedCriterionId(noToolErrors, {
+            kind: "turn",
+            promptIndex: 0,
+          })}`,
+          verdictSeen: "passed",
+          actual: "Every tool call came back clean.",
+        },
+        {
+          joinKey: `predicate:${hostedCriterionId(finalNonEmpty)}`,
+          verdictSeen: "failed",
+          actual: "The assistant stopped without answering.",
+        },
+      ]),
+    });
+    expect(rowByKey(rows, "step:a1").narrative).toMatchObject({
+      text: "Every tool call came back clean.",
+      stale: false,
+    });
+    expect(rowByKey(rows, "case:0").narrative).toMatchObject({
+      text: "The assistant stopped without answering.",
+      stale: false,
+    });
+  });
+
+  it("leaves an uncovered row with its recorded observation and no narrative", () => {
+    // Partial coverage is the normal case, not a failure: a `ready` report may
+    // speak to some evaluators and not others. The rows it skipped must still
+    // show what was recorded — never an empty line, and never a borrowed one.
+    const rows = join(authored, {
+      iteration: iteration({
+        predicates: [
+          {
+            predicate: noToolErrors,
+            scope: { kind: "turn", promptIndex: 0 },
+            passed: true,
+            reason: "no tool errors",
+          },
+          { predicate: finalNonEmpty, passed: false, reason: "empty answer" },
+        ],
+      }),
+      report: report([
+        {
+          joinKey: `predicate:${hostedCriterionId(noToolErrors, {
+            kind: "turn",
+            promptIndex: 0,
+          })}`,
+          verdictSeen: "passed",
+          actual: "Every tool call came back clean.",
+        },
+      ]),
+    });
+    expect(rowByKey(rows, "step:a1").narrative).toBeDefined();
+    const uncovered = rowByKey(rows, "case:0");
+    expect(uncovered.narrative).toBeUndefined();
+    expect(uncovered.result).toMatchObject({
+      state: "failed",
+      source: "predicateResult",
+      reason: "empty answer",
+    });
+  });
+
+  it("keeps a scoped check's narrative off the whole-run check with the same predicate", () => {
+    // Turn scope is part of the criterion id, so the two are different
+    // scorers. A narrative written for one must never be worn by the other.
+    const scopedSteps = [
+      prompt("p1", "first"),
+      assert("a1", noToolErrors),
+      prompt("p2", "second"),
+      assert("a2", noToolErrors),
+    ];
+    const rows = join(
+      {
+        ...authored,
+        steps: scopedSteps,
+        // The SAME check authored at case level too, so the whole-run scorer
+        // this test is named for is actually on the card. Without it the card
+        // holds only turn-scoped rows and a regression that conflated a scoped
+        // criterion with its unscoped twin would still pass.
+        predicates: { mode: "extend", list: [noToolErrors] },
+      },
+      {
+        iteration: iteration({
+          predicates: [
+            {
+              predicate: noToolErrors,
+              scope: { kind: "turn", promptIndex: 0 },
+              passed: true,
+              reason: "turn 0 clean",
+            },
+            {
+              predicate: noToolErrors,
+              scope: { kind: "turn", promptIndex: 1 },
+              passed: false,
+              reason: "turn 1 errored",
+            },
+            {
+              predicate: noToolErrors,
+              passed: false,
+              reason: "one turn errored over the whole run",
+            },
+          ],
+        }),
+        report: report([
+          {
+            joinKey: `predicate:${hostedCriterionId(noToolErrors, {
+              kind: "turn",
+              promptIndex: 1,
+            })}`,
+            verdictSeen: "failed",
+            actual: "The second turn hit a tool error.",
+          },
+        ]),
+      },
+    );
+    expect(rowByKey(rows, "step:a2").narrative).toMatchObject({
+      text: "The second turn hit a tool error.",
+      stale: false,
+    });
+    expect(rowByKey(rows, "step:a1").narrative).toBeUndefined();
+    expect(rowByKey(rows, "step:a1").result).toMatchObject({
+      state: "passed",
+      reason: "turn 0 clean",
+    });
+    // The whole-run scorer sees the same predicate and the same failure, and
+    // still gets no narrative: the turn-1 note was written about one turn.
+    const wholeRun = rowByKey(rows, "case:0");
+    expect(wholeRun.narrative).toBeUndefined();
+    expect(wholeRun.result).toMatchObject({
+      state: "failed",
+      source: "predicateResult",
+      reason: "one turn errored over the whole run",
+    });
+  });
+
+  it("marks a predicate narrative stale when a step verdict outranks it", () => {
+    // A step row reads `stepResults` before the predicate row. A report whose
+    // verdict came from the predicate row therefore describes a different
+    // outcome, and says so rather than reading as current.
+    const rows = join(authored, {
+      iteration: iteration({
+        predicates: [
+          {
+            predicate: noToolErrors,
+            scope: { kind: "turn", promptIndex: 0 },
+            passed: true,
+            reason: "no tool errors",
+          },
+        ],
+        stepResults: [
+          { stepId: "a1", stepIndex: 1, kind: "assert", status: "skipped" },
+        ],
+      }),
+      report: report([
+        {
+          joinKey: `predicate:${hostedCriterionId(noToolErrors, {
+            kind: "turn",
+            promptIndex: 0,
+          })}`,
+          verdictSeen: "passed",
+          actual: "Every tool call came back clean.",
+        },
+      ]),
+    });
+    expect(rowByKey(rows, "step:a1").result.state).toBe("skipped");
+    expect(rowByKey(rows, "step:a1").narrative?.stale).toBe(true);
+  });
+
   it("leaves every row alone when no report exists", () => {
     const rows = join(authored, { iteration: iteration({}) });
     expect(rows.every((row) => row.narrative === undefined)).toBe(true);

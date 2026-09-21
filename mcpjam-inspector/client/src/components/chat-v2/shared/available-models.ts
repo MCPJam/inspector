@@ -18,7 +18,7 @@ import {
 // while this composition stays real.
 
 export const GUEST_LOCKED_MODEL_REASON =
-  "Sign in to use MCPJam provided models";
+  "Sign in to use this frontier model";
 
 /**
  * Unauthenticated users keep BYOK/custom models but premium MCPJam-provided
@@ -48,7 +48,7 @@ export function applyGuestModelLocks(
 }
 
 export const OUT_OF_CREDITS_MODEL_REASON =
-  "You're out of credits. Upgrade, buy credits, or use your own key.";
+  "Out of MCPJam credits. View your organization's credit options or wait for your allowance to renew.";
 
 /**
  * Once the org/guest is out of MCPJam credits, MCPJam-provided ("free")

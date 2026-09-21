@@ -1,5 +1,7 @@
 import { ipcMain, BrowserWindow, autoUpdater, app } from "electron";
 import log from "electron-log";
+import fs from "fs";
+import path from "path";
 
 export type UpdateStatus =
   | { kind: "idle" }
@@ -34,6 +36,17 @@ export const DEFAULT_STALLED_DOWNLOAD_TIMEOUT_MS = 20 * 60_000;
 // status left to clear it, so this is the ONLY thing standing between that
 // user and a spinner that runs for the life of the process.
 export const DEFAULT_STALLED_QUIT_TIMEOUT_MS = 30_000;
+// Same cadence update-electron-app used, so nothing about how quickly a user
+// hears about a release changes — only that we can now STOP.
+export const UPDATE_POLL_INTERVAL_MS = 10 * 60_000;
+// How long a "relaunch and finish this install" marker stays good for. Long
+// enough to survive a slow boot, short enough that a laptop opened next week
+// does not silently install on launch.
+export const RELAUNCH_MARKER_MAX_AGE_MS = 15 * 60_000;
+// One restart to recover an install, never a second. If the fresh process
+// cannot install either, the problem is not stale state and relaunching again
+// would loop the app forever.
+const MAX_INSTALL_RELAUNCH_ATTEMPTS = 1;
 let stalledInstallTimeoutMs = DEFAULT_STALLED_INSTALL_TIMEOUT_MS;
 let stalledDownloadTimeoutMs = DEFAULT_STALLED_DOWNLOAD_TIMEOUT_MS;
 let stalledQuitTimeoutMs = DEFAULT_STALLED_QUIT_TIMEOUT_MS;
@@ -77,6 +90,32 @@ function isRefusedConcurrentCheck(error: unknown): boolean {
   );
 }
 
+/**
+ * Electron has forgotten the staged build, so `quitAndInstall()` is a no-op.
+ *
+ * `auto_updater_mac.mm` keeps ONE boolean, `g_update_available`, and clears it
+ * on every check that ends without a new build — including the 10-minute poll
+ * that runs right after a successful download and correctly answers "nothing
+ * newer". `QuitAndInstall()` reads that boolean and, when it is false, emits
+ * this exact string instead of doing anything. The staged app is still on
+ * disk; only Electron's memory of it is gone.
+ *
+ * Nothing in the event stream distinguishes that from a real failure, so the
+ * message is what we have. It is a literal in Electron's source, not a
+ * localized or formatted string.
+ */
+const INSTALL_REFUSED_MESSAGE = "No update available, can't quit and install";
+
+function isInstallRefusedByElectron(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  const { message } = error as { message?: unknown };
+  return (
+    typeof message === "string" && message.includes(INSTALL_REFUSED_MESSAGE)
+  );
+}
+
 let currentStatus: UpdateStatus = { kind: "idle" };
 let isQuittingForUpdate = false;
 let trustedWindow: BrowserWindow | null = null;
@@ -88,6 +127,15 @@ let stalledDownloadDeadline: number | null = null;
 let collapsedDownloads = 0;
 // Armed only after a `quitAndInstall()` that returned without throwing.
 let stalledQuitTimer: ReturnType<typeof setTimeout> | null = null;
+let updatePollTimer: ReturnType<typeof setInterval> | null = null;
+// True only between `installUpdateOnQuit()` and its outcome. The user asked
+// to QUIT, so a failure here must finish the quit, never relaunch.
+let isInstallingOnQuit = false;
+// Set on a launch that followed `relaunchToFinishInstall()`. The next
+// download installs itself instead of waiting for a second click.
+let installOnNextDownload = false;
+// How many times we have already restarted the app to rescue this install.
+let relaunchAttempts = 0;
 
 function clearStalledInstallWatchdog(): void {
   if (stalledInstallTimer !== null) {
@@ -260,6 +308,203 @@ function retireAfterUpdaterError(
   }
 }
 
+function relaunchMarkerPath(): string {
+  return path.join(app.getPath("userData"), ".install-update-on-relaunch");
+}
+
+/**
+ * Remember, across a relaunch, that we are in the middle of an install.
+ *
+ * Deliberately a file and not memory: the whole point is that this process is
+ * about to end. Best-effort — if it cannot be written the user simply gets
+ * the normal "Update" button on the next launch instead of a hands-free
+ * install, which is the pre-existing behaviour, not a new failure.
+ */
+function writeRelaunchMarker(attempts: number): boolean {
+  try {
+    fs.writeFileSync(
+      relaunchMarkerPath(),
+      JSON.stringify({ at: Date.now(), attempts }),
+      "utf8",
+    );
+    return true;
+  } catch (error) {
+    log.error("Failed to write relaunch marker:", error);
+    return false;
+  }
+}
+
+/**
+ * Consume the marker, if this launch is the one it was written for.
+ *
+ * Always deletes: a marker that is read once and left behind would re-arm a
+ * hands-free install on every later launch.
+ */
+function consumeRelaunchMarker(): { attempts: number; resume: boolean } {
+  // Two separate questions, and the cautious answer to each points the other
+  // way. "How many relaunches have we spent?" must never UNDER-count, or the
+  // budget resets and the app can relaunch forever. "Should we install
+  // without asking?" must never OVER-trigger, or a file we could not actually
+  // read starts an install nobody requested. So a marker we cannot make sense
+  // of spends the budget without resuming anything.
+  const spent = { attempts: 1, resume: false };
+  const none = { attempts: 0, resume: false };
+
+  const markerPath = relaunchMarkerPath();
+  let raw: string;
+  try {
+    raw = fs.readFileSync(markerPath, "utf8");
+  } catch (error) {
+    // Nothing there is the normal case — every launch that did not follow a
+    // relaunch lands here. Any OTHER failure means a marker may well exist
+    // and we simply cannot see it.
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return none;
+    }
+    log.error("Failed to read relaunch marker:", error);
+    return spent;
+  }
+  try {
+    fs.rmSync(markerPath, { force: true });
+  } catch (error) {
+    log.error("Failed to remove relaunch marker:", error);
+  }
+  let parsed: { at?: unknown; attempts?: unknown };
+  try {
+    parsed = JSON.parse(raw) as { at?: unknown; attempts?: unknown };
+  } catch (error) {
+    log.error("Relaunch marker is not readable JSON:", error);
+    return spent;
+  }
+  const { at, attempts } = parsed;
+  if (typeof at !== "number" || !Number.isFinite(at)) {
+    return spent;
+  }
+  const age = Date.now() - at;
+  // A negative age means the clock moved; treat it as untrustworthy rather
+  // than as "very fresh".
+  if (age < 0) {
+    return spent;
+  }
+  // Genuinely old: a laptop opened next week must not install on launch, and
+  // the budget is no longer about anything current.
+  if (age > RELAUNCH_MARKER_MAX_AGE_MS) {
+    return none;
+  }
+  return {
+    attempts:
+      Number.isInteger(attempts) && (attempts as number) > 0
+        ? (attempts as number)
+        : 1,
+    resume: true,
+  };
+}
+
+/**
+ * Restart the app so Squirrel can download the build it lost.
+ *
+ * The one recovery path for a `downloaded` status Electron will not install.
+ * A fresh process gets a fresh SQRLUpdater — new ETag memory, so the next
+ * check really downloads instead of answering 304 "you already have it" — and
+ * a `g_update_available` that is true at the moment we call `quitAndInstall`.
+ *
+ * Status goes to `idle` first so `installUpdateOnQuit()` does not try the very
+ * install that just failed and block the quit we are asking for.
+ */
+function relaunchToFinishInstall(reason: string): void {
+  clearStalledQuitWatchdog();
+  isQuittingForUpdate = false;
+  const version =
+    currentStatus.kind === "downloaded" ? currentStatus.version : undefined;
+  // Restarting the app is only a fix if it works. If we already relaunched
+  // for this and are back here, restarting again would just do it forever —
+  // an app that keeps disappearing on its own is worse than the dead button
+  // this recovers from. Hand over the releases page, which always works.
+  if (relaunchAttempts >= MAX_INSTALL_RELAUNCH_ATTEMPTS) {
+    log.error(
+      `Install still refused after ${relaunchAttempts} relaunch(es) (${reason}); offering manual download`,
+    );
+    setStatus({ kind: "manual", version });
+    broadcastUpdateError();
+    return;
+  }
+  // Relaunching without a marker on disk is the loop this bound exists to
+  // stop: the fresh process would count zero attempts, try again, fail again
+  // and restart again, with nothing ever accumulating. If the count cannot be
+  // persisted, do not spend the restart at all.
+  if (!writeRelaunchMarker(relaunchAttempts + 1)) {
+    log.error(
+      `Install refused by Electron (${reason}) and the retry could not be recorded; offering manual download`,
+    );
+    setStatus({ kind: "manual", version });
+    broadcastUpdateError();
+    return;
+  }
+  log.error(`Install refused by Electron (${reason}); relaunching to retry`);
+  setStatus({ kind: "idle" });
+  app.relaunch();
+  app.quit();
+}
+
+/**
+ * Poll for updates, and stop once there is a build staged.
+ *
+ * Replaces `update-electron-app`, which polls a blind `setInterval` forever.
+ * That extra poll is the whole bug: it answers `update-not-available` (there
+ * IS nothing newer than the build we just staged), Electron clears
+ * `g_update_available`, and from that moment the Update button and the
+ * install-on-quit path both fail with INSTALL_REFUSED_MESSAGE. It also drops
+ * Squirrel out of its "awaiting relaunch" state, after which its own
+ * housekeeping is free to delete the staged `update.*` directory while
+ * ShipItState.plist still points at it.
+ *
+ * So the fix is to stop asking. A staged build is the end of this process's
+ * update story; anything newer is the next launch's problem.
+ */
+export function startUpdatePolling(): void {
+  if (!app.isPackaged) {
+    log.info("Skipping update polling in development");
+    return;
+  }
+  if (process.platform !== "darwin" && process.platform !== "win32") {
+    log.info(`Auto-updates are not supported on ${process.platform}`);
+    return;
+  }
+  if (updatePollTimer !== null) {
+    return;
+  }
+
+  const version = app.getVersion();
+  // Byte-for-byte the URL and User-Agent update-electron-app built, so the
+  // update service sees the same request it always has.
+  const feedURL = `https://update.electronjs.org/MCPJam/inspector/${process.platform}-${process.arch}/${version}`;
+  const userAgent = `mcpjam-inspector/${version} (${process.platform}: ${process.arch})`;
+  log.info(`feedURL ${feedURL}`);
+  autoUpdater.setFeedURL({
+    url: feedURL,
+    headers: { "User-Agent": userAgent },
+    serverType: "default",
+  });
+
+  const checkNow = () => {
+    if (currentStatus.kind === "downloaded") {
+      log.info("Update staged — skipping poll until restart");
+      return;
+    }
+    autoUpdater.checkForUpdates();
+  };
+
+  checkNow();
+  updatePollTimer = setInterval(checkNow, UPDATE_POLL_INTERVAL_MS);
+}
+
+function stopUpdatePolling(): void {
+  if (updatePollTimer !== null) {
+    clearInterval(updatePollTimer);
+    updatePollTimer = null;
+  }
+}
+
 function isTrustedSender(senderId: number): boolean {
   return (
     trustedWindow !== null &&
@@ -309,6 +554,17 @@ function setStatus(next: UpdateStatus): void {
 }
 
 export function setupAutoUpdaterEvents(): void {
+  // Did the previous process relaunch us mid-install? Read it once, here,
+  // before any check can fire.
+  if (app.isPackaged) {
+    const marker = consumeRelaunchMarker();
+    relaunchAttempts = marker.attempts;
+    if (marker.resume) {
+      log.info("Resuming an update install that needed a relaunch");
+      installOnNextDownload = true;
+    }
+  }
+
   autoUpdater.on("checking-for-update", () => {
     log.info("Checking for updates...");
   });
@@ -342,7 +598,10 @@ export function setupAutoUpdaterEvents(): void {
       return;
     }
     log.info("Update available, downloading...");
-    setStatus({ kind: "pending", installRequested: false });
+    // After a relaunch-to-retry the user already clicked Update once, in the
+    // previous process. Show them the spinner they expect rather than an
+    // Update button asking for the same click again.
+    setStatus({ kind: "pending", installRequested: installOnNextDownload });
     // Armed on ENTERING pending, not only when the user clicks: a download
     // that dies quietly used to leave the button up for the life of the
     // process with nothing behind it.
@@ -351,6 +610,12 @@ export function setupAutoUpdaterEvents(): void {
 
   autoUpdater.on("update-not-available", () => {
     log.info("No updates available");
+    // The recovery this process was launched for is over and it produced no
+    // build. Disarm: left standing, the flag would auto-install whatever
+    // downloads NEXT — possibly a different release hours later — and take
+    // the app down without the user asking for it. The marker's own age limit
+    // is meant to prevent exactly that, and cannot once it is in memory.
+    installOnNextDownload = false;
     // A `pending` that ends here produced no installable build — retire it.
     // A `downloaded` one is real and survives a later check; `manual` has
     // already told the user where to go.
@@ -388,8 +653,36 @@ export function setupAutoUpdaterEvents(): void {
       return;
     }
     log.error("Auto-updater error:", error);
+    // A real error also ends the recovery. Only the refused concurrent check
+    // above keeps the flag, because that one says nothing about the download
+    // it collided with — it is still running and can still land.
+    installOnNextDownload = false;
+    // Electron lost track of a build that is still staged. Not a download
+    // failure and not something the user can fix by clicking again — the only
+    // way back is a fresh process, so take it rather than leaving a button
+    // that answers with this same error every time (BUG: 6 clicks, no effect,
+    // then 3 refused quits, INSPECTOR desktop 3.8.0).
+    if (isInstallRefusedByElectron(error) && currentStatus.kind !== "manual") {
+      if (isInstallingOnQuit) {
+        // `before-quit` called preventDefault() expecting the install to take
+        // the app down, and it never will. Finish the quit the user asked
+        // for. Status drops to `idle` first so the re-entered `before-quit`
+        // does not start this same install again and block them a second
+        // time — which is how a user ends up unable to quit at all.
+        log.error("Install refused at quit — quitting without installing");
+        isQuittingForUpdate = false;
+        isInstallingOnQuit = false;
+        clearStalledQuitWatchdog();
+        setStatus({ kind: "idle" });
+        app.quit();
+        return;
+      }
+      relaunchToFinishInstall("staged build no longer known to Electron");
+      return;
+    }
     const wasQuittingForUpdate = isQuittingForUpdate;
     isQuittingForUpdate = false;
+    isInstallingOnQuit = false;
     // A real error is an answer, and it reaches the user through the path
     // below — so the silent-quit watchdog has nothing left to catch.
     clearStalledQuitWatchdog();
@@ -408,8 +701,16 @@ export function setupAutoUpdaterEvents(): void {
     // manual fallback — `downloaded` always wins.
     collapsedDownloads = 0;
     log.info(`Update downloaded: ${releaseName}`);
+    // The click that started this may have happened in the PREVIOUS process,
+    // before the relaunch. Either way we install now, in the same tick as the
+    // download, which is the one moment Electron is guaranteed to still know
+    // about the staged build.
     const installRequested =
-      currentStatus.kind === "pending" ? currentStatus.installRequested : false;
+      installOnNextDownload ||
+      (currentStatus.kind === "pending"
+        ? currentStatus.installRequested
+        : false);
+    installOnNextDownload = false;
     setStatus({
       kind: "downloaded",
       version: releaseName || "new version",
@@ -564,10 +865,12 @@ export function installUpdateOnQuit(): boolean {
   if (currentStatus.kind === "downloaded" && !isQuittingForUpdate) {
     log.info("Staged update found at quit — installing before exit");
     isQuittingForUpdate = true;
+    isInstallingOnQuit = true;
     try {
       autoUpdater.quitAndInstall();
       return true;
     } catch (error) {
+      isInstallingOnQuit = false;
       // Same failure mode as the click-path quitAndInstall guards: a
       // mis-signed staged build or corrupted Squirrel staging dir can
       // throw synchronously. Don't trap the user in a quit-loop — log and
@@ -585,8 +888,12 @@ export function installUpdateOnQuit(): boolean {
 export function __resetUpdateStateForTests(): void {
   clearStalledInstallWatchdog();
   clearStalledQuitWatchdog();
+  stopUpdatePolling();
   currentStatus = { kind: "idle" };
   isQuittingForUpdate = false;
+  isInstallingOnQuit = false;
+  installOnNextDownload = false;
+  relaunchAttempts = 0;
   trustedWindow = null;
   updateListenersRegistered = false;
   collapsedDownloads = 0;
