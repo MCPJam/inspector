@@ -34,6 +34,16 @@ Test your MCP tools by manually invoking them with custom parameters:
 - **Multi-round input** - Tools that return `input_required` (MCP 2026-07-28) collect the needed input through the same dialog and retry automatically
 - **Save requests** - Save frequently used tool invocations for quick testing
 - **Quality badges** - See per-tool quality indicators in the sidebar for tools with definition issues
+- **Annotations and metadata** - View a tool's declared annotations and `_meta` bag directly in the tool detail panel, next to the Run button
+
+### Tool annotations and metadata
+
+When you select a tool, two optional accordion sections appear above the parameter form:
+
+- **Annotations** — the safety hints the server declares for the tool (`readOnlyHint`, `destructiveHint`, `openWorldHint`, and so on). These sections only appear when the tool actually declares them; a tool that ships no annotations shows no Annotations row.
+- **Metadata** — the tool's `_meta` bag, already merged with any per-tool metadata the server advertises. This is where markers such as `openai/profile` or Apps SDK visibility keys appear. The section is hidden when `_meta` is absent or empty.
+
+Both sections are collapsed by default and reset whenever you switch to a different tool.
 
 ### Elicitation requests
 
