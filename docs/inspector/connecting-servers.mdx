@@ -44,6 +44,24 @@ Click any revision row to expand it. The expanded panel shows:
 
 A **Diff / Snapshot** toggle appears at the top of the expanded panel when a previous revision exists. Revision 1 opens directly in Snapshot view since there is nothing to diff against.
 
+### Multiple OAuth accounts
+
+Personal OAuth servers support connecting more than one account. When a server uses OAuth, the server card and detail modal show an **accounts** section that lists every connected credential.
+
+From the accounts section you can:
+
+- **Connect another account** — starts a new OAuth flow and adds the credential as a second (or third, etc.) row without touching the existing connection. Up to 8 accounts per server.
+- **Reconnect** — re-runs the OAuth flow for an existing row, replacing only that credential. A row that shows **Needs reconnect** has expired or revoked tokens.
+- **Relabel** — type a name into the label field and click away to save it. Labels appear in chat when the model picks an account.
+- **Use in chat / Set default** — promotes a row to the default. The default account is used by non-chat consumers and as the fallback when no account is specified.
+- **Remove** — deletes the credential. If the removed row was the default, the next available account becomes the default.
+
+Shared OAuth servers remain single-account and do not show the **Connect another account** button.
+
+When two or more accounts are live, chat exposes an account selector so you (or the model) can choose which credential each tool call uses. Changing the default mid-conversation does not redirect tool calls that are already in flight.
+
+Rerunning a tool call from the trace view is disabled for calls that ran on a specific account, because rerun resolves a server rather than a connection and would replay through the default credential instead.
+
 ### Server information
 
 Each connected server card displays:
