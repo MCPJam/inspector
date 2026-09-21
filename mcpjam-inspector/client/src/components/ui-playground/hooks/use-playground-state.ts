@@ -514,7 +514,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         return { tools: aggregatedTools, metadata: aggregatedMetadata };
       } catch (err) {
         const message =
-          err instanceof Error ? err.message : "Failed to fetch tools";
+          getUserErrorMessage(err, ERROR_MESSAGES.failedToFetchTools);
         setExecutionError(message);
         throw createInspectorCommandClientError("execution_failed", message);
       } finally {

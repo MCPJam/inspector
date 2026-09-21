@@ -36,6 +36,10 @@ describe("user-facing error messages", () => {
     );
   });
 
+  it("directs provider authentication failures to settings without exposing provider text", () => {
+    expect(getUserErrorMessage({ code: "auth_error", message: "secret provider response" }, ERROR_MESSAGES.chatFailed)).toBe(ERROR_MESSAGES.modelProviderAuthenticationFailed);
+  });
+
   it("maps known codes independently of backend wording", () => {
     for (const error of [
       { code: "ENV_NO_SERVERS", message: "private server address" },

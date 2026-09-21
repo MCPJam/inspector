@@ -1,3 +1,5 @@
+import { ERROR_MESSAGES, ERROR_MESSAGE_TEMPLATES } from "@/lib/error-messages";
+import { toast } from "@/lib/toast";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   act,
@@ -27,6 +29,8 @@ import type {
   InspectorCommand,
   InspectorCommandResponse,
 } from "@/shared/inspector-command.js";
+
+vi.mock("@/lib/toast", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 // Mock the useRegistryServers hook
 const mockConnect = vi.fn();
@@ -347,6 +351,17 @@ describe("RegistryTab", () => {
       expect(
         screen.queryByRole("button", { name: /star this server/i })
       ).not.toBeInTheDocument();
+    });
+
+    it.each([
+      ["already exists in this workspace", ERROR_MESSAGE_TEMPLATES.registryServerNameCollision("Internal Docs")],
+      ["private backend diagnostic", ERROR_MESSAGES.couldNotConnectThisServer],
+    ])("preserves safe organization connection guidance for %s", async (message, expected) => {
+      mockOrgRegistryReturn = orgRegistryHookReturn({ organizationId: "org_1", canAdd: true, servers: [orgEntry] });
+      mockOrgRegistryConnect.mockRejectedValueOnce(new Error(message));
+      render(<RegistryTab {...defaultProps} />);
+      fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expected));
     });
 
     it("invites a member with an empty shelf to add one", () => {

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -714,7 +715,7 @@ describe("XAAServerModal", () => {
     const user = userEvent.setup();
     const onSave = vi
       .fn()
-      .mockRejectedValue(new Error("Hosted mode requires HTTPS server URLs"));
+      .mockRejectedValue(new Error("private backend diagnostic"));
     const onOpenChange = vi.fn();
     render(
       <XAAServerModal
@@ -745,7 +746,7 @@ describe("XAAServerModal", () => {
     // The modal surfaces the rejection inline and never closes.
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /Hosted mode requires HTTPS server URLs/i
+      ERROR_MESSAGES.couldnTSaveThisServerYourChangesWereKeptTryAgain
     );
 
     // Every entered value is still in the form, so there's nothing to re-type.

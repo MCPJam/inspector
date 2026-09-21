@@ -43,7 +43,7 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
       ? getCatalogTemplate(catalog, hostId)
       : undefined;
     if (!template) {
-      toast.error(ERROR_MESSAGES.couldNotLoadLiveClientTemplates2);
+      toast.error(ERROR_MESSAGES.couldNotLoadLiveClientTemplates);
       return;
     }
     const label =

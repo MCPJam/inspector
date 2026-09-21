@@ -70,7 +70,7 @@ function browserUnavailableMessage(error: unknown): string | null {
   const message = (data as { message?: unknown }).message;
   return typeof message === "string" && message.length > 0
     ? message
-    : "No browser is running on this computer yet.";
+    : ERROR_MESSAGES.noBrowserIsRunningOnThisComputerYet;
 }
 
 type LeaseState =

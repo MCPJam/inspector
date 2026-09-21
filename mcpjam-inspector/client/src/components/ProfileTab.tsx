@@ -45,13 +45,13 @@ export function ProfileTab() {
 
     // Validate file type
     if (!file.type.startsWith("image/")) {
-      alert("Please select an image file");
+      alert(ERROR_MESSAGES.pleaseSelectAnImageFile);
       return;
     }
 
     // Validate file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
-      alert("Image must be less than 5MB");
+      alert(ERROR_MESSAGES.imageMustBeLessThan5mb);
       return;
     }
 
@@ -78,7 +78,7 @@ export function ProfileTab() {
       await updateProfilePicture({ storageId });
     } catch (error) {
       console.error("Failed to upload profile picture:", error);
-      alert("Failed to upload profile picture. Please try again.");
+      alert(ERROR_MESSAGES.failedToUploadProfilePicturePleaseTryAgain);
     } finally {
       setIsUploading(false);
     }

@@ -126,7 +126,7 @@ export function useEnvironmentTools(
             message:
               caught instanceof Error
                 ? caught.message
-                : "Couldn't load this environment's tools.",
+                : ERROR_MESSAGES.couldnTLoadThisEnvironmentSTools,
           },
           isLoading: false,
         });

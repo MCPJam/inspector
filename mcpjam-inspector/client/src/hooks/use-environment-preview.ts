@@ -213,7 +213,7 @@ export function useEnvironmentPreview(
             message:
               caught instanceof Error
                 ? caught.message
-                : "This environment couldn't be resolved.",
+                : ERROR_MESSAGES.thisEnvironmentCouldnTBeResolved,
           },
           isLoading: false,
         });

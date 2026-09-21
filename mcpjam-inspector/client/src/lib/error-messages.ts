@@ -4,6 +4,9 @@
  * Backend messages and diagnostic details must never be added dynamically.
  */
 export const ERROR_MESSAGES = {
+  modelProviderAuthenticationFailed: "Your model provider could not verify the API key. Update the key in your organization’s model-provider settings, then try again.",
+  failedToUploadProfilePicturePleaseTryAgain: "Your profile picture could not be uploaded. Please try again.",
+  couldNotConnectThisServer: "This server could not be connected. Please try again.",
   environmentModelRequired: "A selected client has no model. Pick a model in Models and deselect Client defaults, or set a model on the client.",
   environmentUnavailableSelection: "One of the selected environments is no longer available. Remove it and pick another.",
   personaGenerationInterrupted: "Persona generation was interrupted when this view reloaded. Nothing was saved. Press Continue to generate again.",
@@ -317,7 +320,6 @@ export const ERROR_MESSAGES = {
   thatFolderCouldNotBeRegistered: "That folder could not be registered.",
   selectAProjectBeforeCreatingAClient:
     "Select a project before creating a client.",
-  couldNotLoadLiveClientTemplates2: "Could not load live client templates.",
   selectAProjectBeforeConnectingAServer:
     "Select a project before connecting a server.",
   linkUnavailable: "Link unavailable",
@@ -1096,6 +1098,8 @@ export type UserErrorMessage = (typeof ERROR_MESSAGES)[ErrorMessageKey];
 
 /** Contextual copy. Arguments are display names or counts, never backend errors. */
 export const ERROR_MESSAGE_TEMPLATES = {
+  registryServerNameCollision: (name: string) =>
+    `A server named "${name}" already exists in this project. Rename it, or rename the registry entry.`,
   isNotAvailableYet: (clientName: string | number) =>
     `${clientName} is not available yet.`,
   isNotAvailableInHostedMode: (featureName: string | number) =>

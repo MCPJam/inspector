@@ -98,7 +98,7 @@ const CLOSE_LEASE_HELD = 4409;
  * swallow a real failure that arrived in the meantime.
  */
 const SOMEBODY_ELSE_HAS_IT =
-  "Somebody else has taken control of this browser. The view will resume when they hand it back.";
+  ERROR_MESSAGES.somebodyElseHasTakenControlOfThisBrowserTheViewWillResume;
 
 /** How often to ask again while somebody else is holding the browser. */
 const LEASE_RECHECK_MS = 5_000;

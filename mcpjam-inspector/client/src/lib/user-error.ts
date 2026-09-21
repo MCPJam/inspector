@@ -4,6 +4,7 @@ const catalogMessages = new Set<string>(Object.values(ERROR_MESSAGES));
 
 /** Backend codes are mapped explicitly; backend prose is never user guidance. */
 const codeMessages: Readonly<Record<string, UserErrorMessage>> = {
+  auth_error: ERROR_MESSAGES.modelProviderAuthenticationFailed,
   RATE_LIMITED: ERROR_MESSAGES.rateLimited,
   ENV_MODEL_REQUIRED: ERROR_MESSAGES.environmentModelRequired,
   ENV_NO_SERVERS: ERROR_MESSAGES.environmentNoServers,

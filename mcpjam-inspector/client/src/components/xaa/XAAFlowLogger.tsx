@@ -961,7 +961,7 @@ export function XAAFlowLogger({
                       >
                         <Copy className="mr-1 h-3 w-3" />
                         {copyStepError === group.step
-                          ? "Copy failed"
+                          ? ERROR_MESSAGES.copyFailed
                           : copiedStep === group.step
                           ? "Copied!"
                           : "Copy step"}

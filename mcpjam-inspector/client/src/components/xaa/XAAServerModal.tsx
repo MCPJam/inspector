@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
@@ -268,9 +269,7 @@ export function XAAServerModal({
       onOpenChange(false);
     } catch (saveError) {
       setError(
-        saveError instanceof Error
-          ? saveError.message
-          : ERROR_MESSAGES.couldnTSaveThisServerYourChangesWereKeptTryAgain
+        getUserErrorMessage(saveError, ERROR_MESSAGES.couldnTSaveThisServerYourChangesWereKeptTryAgain)
       );
     } finally {
       setSaving(false);

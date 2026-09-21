@@ -73,8 +73,8 @@ export const ToolInvokePane = forwardRef<ToolInvokeHandle, ToolInvokePaneProps>(
           }
           setRawError(undefined);
           onInvoke(parsed as Record<string, unknown>);
-        } catch (error) {
-          setRawError(error instanceof Error ? error.message : ERROR_MESSAGES.invalidJson2);
+        } catch {
+          setRawError(ERROR_MESSAGES.invalidJson2);
         }
         return;
       }

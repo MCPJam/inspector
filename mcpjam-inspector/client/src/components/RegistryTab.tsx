@@ -1,5 +1,5 @@
 import { getUserErrorMessage } from "@/lib/user-error";
-import { ERROR_MESSAGES } from "@/lib/error-messages";
+import { ERROR_MESSAGES, ERROR_MESSAGE_TEMPLATES } from "@/lib/error-messages";
 import { useCallback, useState, useEffect } from "react";
 import {
   Package,
@@ -802,14 +802,14 @@ function OrgRegistrySectionContainer({
       try {
         await orgRegistry.connect(server);
       } catch (error) {
-        const message =
+        if (
           error instanceof Error &&
           /already exists in this workspace/i.test(error.message)
-            ? `A server named "${server.displayName}" already exists in this project. Rename it, or rename the registry entry.`
-            : error instanceof Error
-            ? error.message
-            : "Could not connect this server.";
-        toast.error(getUserErrorMessage(message));
+        ) {
+          toast.error(ERROR_MESSAGE_TEMPLATES.registryServerNameCollision(server.displayName));
+        } else {
+          toast.error(getUserErrorMessage(error, ERROR_MESSAGES.couldNotConnectThisServer));
+        }
       }
     },
     [orgRegistry],
