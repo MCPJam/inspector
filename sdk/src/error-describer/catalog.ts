@@ -77,6 +77,7 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // server as the failing boundary. Keep protocol codes that can also be
   // caused by the client or transport out of this bucket.
   "jsonrpc/internal_error": "user_server",
+  "jsonrpc/invalid_response_format": "user_server",
   // Parse errors, missing methods, invalid params, and unsupported versions
   // are direction-dependent protocol signals. A client can send malformed
   // JSON, call an unadvertised method, or request a version the server does
@@ -275,6 +276,19 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Retry the request once the server is healthy.",
     ],
     "internal-error",
+  ),
+  "jsonrpc/invalid_response_format": entry(
+    "jsonrpc/invalid_response_format",
+    "Invalid response format (-32603)",
+    "The server replied, but the result was not a valid MCP tool, resource, or prompt payload.",
+    [
+      "The handler returned a string or custom object instead of the MCP result shape (usually `{ content: [...] }`).",
+    ],
+    [
+      "Inspect the result in the Traffic Log and compare it to the MCP result shape.",
+      "Return `{ content: [{ type: \"text\", text: \"...\" }] }` from the handler, or the matching resource/prompt result.",
+    ],
+    "invalid-response-format",
   ),
   "jsonrpc/connection_closed": entry(
     "jsonrpc/connection_closed",
@@ -785,33 +799,33 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
   // names no period.
   "provider/mcpjam_limit_daily": entry(
     "provider/mcpjam_limit_daily",
-    "Daily MCPJam limit reached",
-    "This account's free daily MCPJam allowance is spent. It resets tomorrow.",
+    "Out of MCPJam credits",
+    "Your organization's daily MCPJam credits are used up. They reset tomorrow.",
     [
       "Chat, evals and swarm generation all draw on one daily bucket, shared across the organization.",
     ],
     [
-      "Top up credits or upgrade the plan — the limit dialog offers both.",
+      "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
       "Wait for the daily allowance to reset.",
       // Named precisely because the generic advice costs people an afternoon:
       // a swarm's generation and persona-driver calls are platform-billed and
       // have no BYOK path, so adding a key does nothing for them.
-      "Add your own key under Settings → LLM Providers for CHAT. Swarm generation and persona turns are always MCPJam-billed.",
+      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
     "mcpjam-model-limit-reached",
     "warning",
   ),
   "provider/mcpjam_limit_monthly": entry(
     "provider/mcpjam_limit_monthly",
-    "Monthly MCPJam credits spent",
-    "This team's monthly MCPJam credits are spent for the current billing period.",
+    "Out of MCPJam credits",
+    "Your organization's available MCPJam credits are used up for this billing period.",
     [
-      "Team plans draw on one monthly per-seat allowance instead of the daily bucket, and it renews when the billing period does.",
+      "Paid plans include a monthly credit allowance shared across the organization. It renews with the billing period.",
     ],
     [
-      "Top up credits or upgrade the plan — the limit dialog offers both.",
+      "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
       "Wait for the billing period to renew.",
-      "Add your own key under Settings → LLM Providers for CHAT. Swarm generation and persona turns are always MCPJam-billed.",
+      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
     "mcpjam-model-limit-reached",
     "warning",
@@ -830,15 +844,15 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
   ),
   "provider/mcpjam_limit": entry(
     "provider/mcpjam_limit",
-    "MCPJam model limit reached",
-    "This account's MCPJam model allowance is spent, so the call was refused before it reached a provider.",
+    "Out of MCPJam credits",
+    "Your organization is out of MCPJam credits, so this request could not continue.",
     [
       "Chat, evals and swarm generation all draw on the same MCPJam allowance.",
     ],
     [
-      "Top up credits or upgrade the plan — the limit dialog offers both.",
+      "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
       "Wait for the allowance to reset.",
-      "Add your own key under Settings → LLM Providers for CHAT. Swarm generation and persona turns are always MCPJam-billed.",
+      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
     "mcpjam-model-limit-reached",
     "warning",

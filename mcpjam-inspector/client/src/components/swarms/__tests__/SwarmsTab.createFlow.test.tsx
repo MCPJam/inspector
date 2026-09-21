@@ -93,6 +93,11 @@ vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
 
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
+}));
+
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,
   useDbUserBootstrapStatus: () => ({

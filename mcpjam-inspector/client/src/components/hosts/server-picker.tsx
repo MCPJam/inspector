@@ -867,6 +867,7 @@ export function ServerPicker({
           // is refused — so the control is withheld rather than offered and
           // then denied.
           canDeleteSelected={Boolean(onClearSelection)}
+          onAddServer={() => navigateApp(routePaths.servers)}
         />
       </PopoverContent>
     </Popover>

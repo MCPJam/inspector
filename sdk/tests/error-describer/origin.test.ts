@@ -45,6 +45,7 @@ describe("origin — the decisions that carry consequences", () => {
   const CASES: Array<[string, ErrorOrigin]> = [
     // Explicit server-side failure.
     ["jsonrpc/internal_error", "user_server"],
+    ["jsonrpc/invalid_response_format", "user_server"],
     // Direction-dependent protocol and transport signals.
     ["jsonrpc/parse_error", "ambiguous"],
     ["jsonrpc/method_not_found", "ambiguous"],

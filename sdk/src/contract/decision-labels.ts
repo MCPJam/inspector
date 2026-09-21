@@ -54,10 +54,12 @@ import {
   SWARM_FINDING_SUMMARY_KINDS,
   SWARM_FINDING_BASES,
   SWARM_FINDING_SCOPE_LEVELS,
+  SWARM_FINDING_SIGNALS,
   type SwarmFindingDisposition,
   type SwarmFindingCoverageNote,
   type SwarmFindingSummaryKind,
   type SwarmFindingBasis,
+  type SwarmFindingSignal,
 } from "./swarm-finding.js";
 import {
   EVAL_VERDICT_DECISION_REASONS,
@@ -580,6 +582,13 @@ export const SWARM_FINDING_COVERAGE_NOTE_LABELS = Object.freeze({
   sessionsRateLimited: "Some sessions were rate limited",
   partialRead: "Only part of this wave was read",
   toolCatalogMissing: "Tool catalog unavailable",
+  // "Rejected", not "checked and rejected": validation can refuse a proposal
+  // before any model is asked to verify it.
+  mechanismsRejected: "A possible cause was rejected",
+  // The opposite of `mechanismsRejected`, and the reason both exist: nothing
+  // was weighed. Without it a wave whose analysis never ran published the same
+  // empty counts as one where the model looked and had nothing to say.
+  analysisUnavailable: "Causes could not be analysed",
 } satisfies Record<SwarmFindingCoverageNote, string>);
 export const SWARM_FINDING_SUMMARY_KIND_LABELS = Object.freeze({
   notLaunched: "Not launched",
@@ -594,6 +603,14 @@ export const SWARM_FINDING_BASIS_LABELS = Object.freeze({
   sessionReport: "Session report",
   populationFact: "Population fact",
 } satisfies Record<SwarmFindingBasis, string>);
+/** What was recorded, in the words a reader of the wave would use. */
+export const SWARM_FINDING_SIGNAL_LABELS = Object.freeze({
+  outputTruncated: "Reply cut off",
+  hallucinatedTool: "Called a tool that does not exist",
+  toolErrored: "A tool errored",
+  noToolCalled: "No tool used",
+  turnCapReached: "Hit the turn limit",
+} satisfies Record<SwarmFindingSignal, string>);
 
 /** Every vocabulary this module renders, for tests that assert totality. */
 export const DECISION_LABEL_VOCABULARIES = Object.freeze({
@@ -602,6 +619,7 @@ export const DECISION_LABEL_VOCABULARIES = Object.freeze({
   swarmFindingSummaryKinds: SWARM_FINDING_SUMMARY_KINDS,
   swarmFindingBases: SWARM_FINDING_BASES,
   swarmFindingScopeLevels: SWARM_FINDING_SCOPE_LEVELS,
+  swarmFindingSignals: SWARM_FINDING_SIGNALS,
   // Tones are presentation vocabulary shared with unrelated UI schemas.
   // Their totality is tested directly against the disposition-to-tone map.
   stages: USER_VALUE_STAGES,
