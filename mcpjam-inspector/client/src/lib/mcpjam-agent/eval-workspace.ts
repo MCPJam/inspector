@@ -327,12 +327,9 @@ export function importedDraftBlockedReason(
       );
       if (unresolved) return "Resolve the blocking issues before adding.";
     }
-    if (
-      draft.authoring.additions.some(
-        (addition) => !draft.acceptedAdditionIds?.includes(addition.id),
-      )
-    )
-      return "Review each proposed addition before adding.";
+    // Additions are IN the steps, so the case on screen is the case that will
+    // be saved: reading it is the review, and "Add to suite" is the consent.
+    // A tick-box per addition asked for the same yes twice.
     return;
   }
 }
@@ -517,7 +514,10 @@ export async function saveGeneratedDraft(scope: EvalAgentScope, id: string) {
         operation: "accept",
         draftId: current.authoring.draftId,
         revision,
-        acceptedAdditionIds: current.acceptedAdditionIds ?? [],
+        // Every addition is already in the steps the reader just approved.
+        acceptedAdditionIds: current.authoring.additions.map(
+          (addition) => addition.id,
+        ),
       });
       updateGeneration(key, (state) => ({
         ...state,
@@ -692,26 +692,6 @@ export async function followAuthoringJob(
   } finally {
     authoringPolls.delete(jobId);
   }
-}
-export function acceptAuthoringAddition(
-  scope: Pick<EvalAgentScope, "projectId" | "suiteId">,
-  draftId: string,
-  additionId: string,
-  accepted: boolean,
-) {
-  updateGeneration(evalSuiteKey(scope), (state) => ({
-    ...state,
-    drafts: state.drafts.map((draft) =>
-      draft.id === draftId
-        ? {
-            ...draft,
-            acceptedAdditionIds: accepted
-              ? [...new Set([...(draft.acceptedAdditionIds ?? []), additionId])]
-              : draft.acceptedAdditionIds?.filter((id) => id !== additionId),
-          }
-        : draft,
-    ),
-  }));
 }
 export async function runScopedEvalSuite(scope: EvalAgentScope) {
   const key = evalSuiteKey(scope);

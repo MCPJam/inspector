@@ -34,7 +34,6 @@ import {
   importedDraftBlockedReason,
   importedDraftBlockedBadge,
   followAuthoringJob,
-  acceptAuthoringAddition,
   controlAuthoringJob,
 } from "@/lib/mcpjam-agent/eval-workspace";
 import type { EvalAgentScope } from "@/shared/eval-agent-scope";
@@ -388,33 +387,28 @@ export function EvalGeneratedDrafts({
                         )}
                       </div>
                     ))}
-                    {draft.authoring.additions.map((addition) => (
-                      <label
-                        key={addition.id}
-                        className="flex items-start gap-2"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={
-                            draft.acceptedAdditionIds?.includes(addition.id) ??
-                            false
-                          }
-                          disabled={locked}
-                          onChange={(event) =>
-                            acceptAuthoringAddition(
-                              scope,
-                              draft.id,
-                              addition.id,
-                              event.target.checked,
-                            )
-                          }
-                        />
-                        <span>
-                          Accept proposed addition at {addition.path}:{" "}
-                          {addition.explanation}
-                        </span>
-                      </label>
-                    ))}
+                    {draft.authoring.additions.length > 0 && (
+                      // The additions are in the steps above, so this says what
+                      // was added and why. Removing one is a step edit, and
+                      // saving the case is the agreement.
+                      <div className="space-y-1">
+                        <p className="font-medium text-foreground">
+                          {draft.authoring.additions.length === 1
+                            ? "Added by MCPJam, beyond the source document:"
+                            : `Added by MCPJam, beyond the source document (${draft.authoring.additions.length}):`}
+                        </p>
+                        <ul className="list-disc space-y-1 pl-5">
+                          {draft.authoring.additions.map((addition) => (
+                            <li key={addition.id}>
+                              <span className="font-mono text-[11px]">
+                                {addition.path}
+                              </span>{" "}
+                              — {addition.explanation}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 )}
                 <footer className="flex flex-wrap items-center gap-2">
