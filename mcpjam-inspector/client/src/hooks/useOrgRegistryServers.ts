@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import type { ServerFormData } from "@/shared/types.js";
@@ -184,14 +185,14 @@ export function useOrgRegistryServers({
   const add = useCallback(
     async (submission: OrgRegistrySubmission) => {
       if (!context?.organizationId) {
-        throw new Error("This project is not part of an organization.");
+        throw new Error(ERROR_MESSAGES.thisProjectIsNotPartOfAnOrganization);
       }
       if (!submission.derived) {
         // `addOrgRegistryServer` requires the snapshot, and the two doors that
         // reach here both produce one (the paste flow probes, promote reads
         // `initializationInfo`). Refusing beats minting a fake.
         throw new Error(
-          "We could not read this server's details. Try the address again."
+          ERROR_MESSAGES.weCouldNotReadThisServerSDetailsTryThe
         );
       }
       await addMutation({
@@ -211,7 +212,7 @@ export function useOrgRegistryServers({
   const update = useCallback(
     async (submission: OrgRegistrySubmission) => {
       if (!submission.registryServerId) {
-        throw new Error("Missing registry entry id");
+        throw new Error(ERROR_MESSAGES.missingRegistryEntryId);
       }
       await updateMutation({
         registryServerId: submission.registryServerId,
@@ -251,7 +252,7 @@ export function useOrgRegistryServers({
   const connect = useCallback(
     async (server: EnrichedOrgRegistryServer) => {
       if (!projectId) {
-        throw new Error("Select a project first.");
+        throw new Error(ERROR_MESSAGES.selectAProjectFirst);
       }
       setConnectingIds((prev) => new Set(prev).add(server._id));
       try {

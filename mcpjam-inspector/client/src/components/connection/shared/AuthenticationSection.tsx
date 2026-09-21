@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useState } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
@@ -292,9 +293,7 @@ export function AuthenticationSection({
       setRevealedClientSecretContextKey(null);
       setIsRevealedSecretVisible(false);
       setRevealError(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.failedToRevealClientSecret
+        getUserErrorMessage(error, ERROR_MESSAGES.failedToRevealClientSecret),
       );
     } finally {
       setIsRevealingClientSecret(false);
@@ -361,7 +360,7 @@ export function AuthenticationSection({
     activeMcpProfile?.mcpProtocolVersion;
   const effectiveOauthProtocolMode = resolveEffectiveOauthProtocolMode(
     oauthProtocolMode,
-    effectiveWireProtocolVersion
+    effectiveWireProtocolVersion,
   );
   const oauthPlan =
     authType === "oauth" || authType === "auto"
@@ -386,7 +385,7 @@ export function AuthenticationSection({
               registrationMode === "preregistered" &&
               clientId.trim() === "" &&
               blocker.code === "PREREGISTERED_MISSING_CLIENT_ID"
-            )
+            ),
         )
       : [];
   const showOauthPlanBanner =
@@ -791,7 +790,7 @@ export function AuthenticationSection({
                                 title="Copy client secret"
                                 onClick={() =>
                                   void handleCopyRevealedSecret(
-                                    secretFieldValue
+                                    secretFieldValue,
                                   )
                                 }
                                 className="p-1 text-muted-foreground/50 transition-colors hover:text-foreground cursor-pointer"

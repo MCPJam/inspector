@@ -551,7 +551,7 @@ function EvaluateTabContent({
         });
 
         if (!createdSuite?._id) {
-          throw new Error("Suite was created without an id");
+          throw new Error(ERROR_MESSAGES.suiteWasCreatedWithoutAnId);
         }
 
         // `createTestSuite` cannot take environments, so a suite born in
@@ -621,7 +621,7 @@ function EvaluateTabContent({
       const suiteServers = getEffectiveSuiteServers(suite);
       if (suiteServers.length === 0) {
         if (stageCase)
-          throw new Error("Attach servers before generating cases.");
+          throw new Error(ERROR_MESSAGES.attachServersBeforeGeneratingCases);
         return;
       }
       // Scope generation by the suite's saved server attachment when present.
@@ -691,13 +691,13 @@ function EvaluateTabContent({
               (run) => run.status === "running" || run.status === "pending",
             )
           )
-            throw new Error("A run is already in progress for this suite.");
+            throw new Error(ERROR_MESSAGES.aRunIsAlreadyInProgressForThisSuite);
           const result = await handleRerunWithQuota(selectedSuite, {
             stayOnPage: true,
           });
           if (!result)
             throw new Error(
-              "Run was not started. Check the suite configuration and usage allowance.",
+              ERROR_MESSAGES.runWasNotStartedCheckTheSuiteConfigurationAndUsage,
             );
           return result;
         },
@@ -1282,7 +1282,7 @@ function EvaluateTabContent({
           onRun={async (input) => {
             if (!guardEvalIterationQuota())
               throw new Error(
-                "Eval usage is unavailable. Check your usage limit before retrying.",
+                ERROR_MESSAGES.evalUsageIsUnavailableCheckYourUsageLimitBeforeRetrying,
               );
             const suites = await savePreparedEvalSuites({
               ...input,
@@ -1298,7 +1298,7 @@ function EvaluateTabContent({
               });
               if (!launch || launch.failedCount > 0) {
                 throw new Error(
-                  "Some evaluations could not start. Retry to launch the remaining clients.",
+                  ERROR_MESSAGES.someEvaluationsCouldNotStartRetryToLaunchTheRemaining,
                 );
               }
             }

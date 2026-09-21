@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useState } from "react";
 import { ChevronRight, FolderOpen, Laptop, Loader2 } from "lucide-react";
@@ -205,9 +206,10 @@ export function LocalHarnessTrustDialog({
       picked = await onPickWorkspace();
     } catch (error) {
       setError(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.thatFolderCouldNotBeRegistered,
+        getUserErrorMessage(
+          error,
+          ERROR_MESSAGES.thatFolderCouldNotBeRegistered,
+        ),
       );
       return;
     }
@@ -242,12 +244,12 @@ export function LocalHarnessTrustDialog({
       ? "MCPJam hasn't published a Claude Code runtime for this machine's " +
         "operating system and processor, so there is nothing to install."
       : availability !== null && availability.machineId == null
-        ? "This Inspector couldn't establish an identity for this machine, so " +
-          "it can't bind an authorization to it. Restart the Inspector, or " +
-          "check that it can write to its own state directory."
-        : displayRoot === null
-          ? "Choose a folder for Claude Code to work in."
-          : null);
+      ? "This Inspector couldn't establish an identity for this machine, so " +
+        "it can't bind an authorization to it. Restart the Inspector, or " +
+        "check that it can write to its own state directory."
+      : displayRoot === null
+      ? "Choose a folder for Claude Code to work in."
+      : null);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -284,7 +286,11 @@ export function LocalHarnessTrustDialog({
             </span>
           </div>
           {onPickWorkspace ? (
-            <Button size="sm" variant="outline" onClick={() => void handlePick()}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void handlePick()}
+            >
               Change…
             </Button>
           ) : (
@@ -320,7 +326,10 @@ export function LocalHarnessTrustDialog({
           aria-expanded={detailsOpen}
         >
           <ChevronRight
-            className={cn("size-3 transition-transform", detailsOpen && "rotate-90")}
+            className={cn(
+              "size-3 transition-transform",
+              detailsOpen && "rotate-90",
+            )}
             aria-hidden
           />
           Details
@@ -408,8 +417,7 @@ function blockingReason(
   switch (phase) {
     case "needs-signin":
       return (
-        reason ??
-        "Sign in to authorize Claude Code to run on this machine."
+        reason ?? "Sign in to authorize Claude Code to run on this machine."
       );
     case "unavailable":
       return (
@@ -441,7 +449,8 @@ function installFailureReason(message: string | null): string {
   if (/didn't match|does not match|digest|signature/i.test(message)) {
     return "verification";
   }
-  if (/download|network|offline|responded \d{3}/i.test(message)) return "network";
+  if (/download|network|offline|responded \d{3}/i.test(message))
+    return "network";
   if (/space|permission|ENOSPC|EACCES/i.test(message)) return "disk";
   return "unknown";
 }

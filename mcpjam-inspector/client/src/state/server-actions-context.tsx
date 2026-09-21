@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { createContext, useContext } from "react";
 import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
 
@@ -65,7 +66,7 @@ export function useServerActions(): ServerActions {
   const ctx = useContext(ServerActionsContext);
   if (!ctx) {
     throw new Error(
-      "useServerActions must be used within ServerActionsProvider",
+      ERROR_MESSAGES.useserveractionsMustBeUsedWithinServeractionsprovider,
     );
   }
   return ctx;

@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useId, useState } from "react";
 import { Check, Pencil, Plus, Trash2 } from "lucide-react";
@@ -158,7 +159,7 @@ export function PersonForm({
       }
       onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : ERROR_MESSAGES.couldnTSaveThisIdentity);
+      setError(getUserErrorMessage(e, ERROR_MESSAGES.couldnTSaveThisIdentity));
     } finally {
       setBusy(false);
     }
@@ -174,7 +175,7 @@ export function PersonForm({
       onDone();
     } catch (e) {
       setError(
-        e instanceof Error ? e.message : ERROR_MESSAGES.couldnTDeleteThisIdentity
+        getUserErrorMessage(e, ERROR_MESSAGES.couldnTDeleteThisIdentity),
       );
     } finally {
       setBusy(false);

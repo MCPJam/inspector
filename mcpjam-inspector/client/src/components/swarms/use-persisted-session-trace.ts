@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   requestPayloadEnvelopeFields,
@@ -150,7 +151,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setMessages(null);
         setError(
-          err instanceof Error ? err.message : ERROR_MESSAGES.failedToLoadTranscript,
+          getUserErrorMessage(err, ERROR_MESSAGES.failedToLoadTranscript),
         );
       } finally {
         if (active) setLoadingMessages(false);

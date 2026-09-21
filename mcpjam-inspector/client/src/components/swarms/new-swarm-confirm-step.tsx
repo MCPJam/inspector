@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Confirm step of the New swarm create flow.
@@ -251,7 +252,7 @@ function CompactPersonaCard({
             className={cn(
               "mb-1 line-clamp-1 text-sm font-semibold leading-5",
               muted ? "text-muted-foreground" : "text-foreground"
-            )}
+              )}
           >
             {role ? `${name} | ${role}` : name}
           </p>
@@ -926,7 +927,8 @@ export function NewSwarmConfirmStep({
     patch: (persona: ProposedPersona) => ProposedPersona
   ) => {
     onProposedChange(
-      proposed.map((persona) => (persona.key === key ? patch(persona) : persona))
+      proposed.map((persona) => persona.key === key ? patch(persona) : persona,
+      ),
     );
   };
 
@@ -941,7 +943,8 @@ export function NewSwarmConfirmStep({
     // authoring goals. Launch simply skips personas with no journeys.
     patchProposed(personaKey, (persona) => ({
       ...persona,
-      journeys: persona.journeys.filter((journey) => journey.key !== journeyKey),
+      journeys: persona.journeys.filter((journey) => journey.key !== journeyKey,
+      ),
     }));
   };
   const addPersona = () => {
@@ -1066,7 +1069,7 @@ export function NewSwarmConfirmStep({
             notes: persona.notes ?? "",
             goals: Object.fromEntries(
               goals.map((goal) => [goal.journeyId, goal.goal])
-            ),
+          ),
           };
         const next = {
           ...current,
@@ -1115,9 +1118,10 @@ export function NewSwarmConfirmStep({
         // and the open panel are deliberately left alone: the edit is still on
         // screen to retry, which is the whole reason it is held locally.
         toast.error(
-          error instanceof Error
-            ? error.message
-            : ERROR_MESSAGES.couldnTSaveThisPersonaYourChangesAreStillHere
+          getUserErrorMessage(
+            error ,
+            ERROR_MESSAGES.couldnTSaveThisPersonaYourChangesAreStillHere,
+          ),
         );
       } finally {
         setSavingReusedId(null);
@@ -1140,7 +1144,8 @@ export function NewSwarmConfirmStep({
    */
   const discardReused = useCallback(
     (persona: ReusedPersona, goals: ReusedGoal[]) => {
-      const { dirty } = diffReusedDraft(reusedDrafts[persona._id], persona, goals);
+      const { dirty } = diffReusedDraft(reusedDrafts[persona._id], persona, goals,
+      );
       if (dirty) {
         setReusedDrafts((drafts) => {
           const { [persona._id]: _discarded, ...rest } = drafts;

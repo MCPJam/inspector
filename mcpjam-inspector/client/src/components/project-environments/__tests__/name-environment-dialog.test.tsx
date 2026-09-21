@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * NameEnvironmentDialog — promotion of an ad-hoc row, in place.
  *
@@ -120,7 +121,7 @@ describe("NameEnvironmentDialog", () => {
     );
   });
 
-  it("renders the backend's rejection verbatim and stays open", async () => {
+  it("shows catalog guidance for a rejected save and stays open", async () => {
     promoteMock.mockRejectedValue({
       data: {
         code: "CONFLICT",
@@ -135,7 +136,7 @@ describe("NameEnvironmentDialog", () => {
 
     await waitFor(() =>
       expect(screen.getByTestId("name-environment-error")).toHaveTextContent(
-        'An environment named "Checkout flow" already exists.',
+        ERROR_MESSAGES.failedToSaveTheEnvironment,
       ),
     );
     expect(onOpenChange).not.toHaveBeenCalledWith(false);

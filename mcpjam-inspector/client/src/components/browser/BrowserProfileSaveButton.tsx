@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { Loader2, Save } from "lucide-react";
 import { useState } from "react";
@@ -29,7 +30,7 @@ export function BrowserProfileSaveButton({
     try {
       const result = await exportArchive();
       if (!result.savedFrom) {
-        throw new Error("This browser is not attached to a chat session yet.");
+        throw new Error(ERROR_MESSAGES.thisBrowserIsNotAttachedToAChatSessionYet);
       }
       await saveBrowserProfile({
         projectId,
@@ -40,9 +41,10 @@ export function BrowserProfileSaveButton({
       toast.success(`Saved browser profile “${name.trim()}”.`);
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.couldNotSaveTheBrowserProfile,
+        getUserErrorMessage(
+          error,
+          ERROR_MESSAGES.couldNotSaveTheBrowserProfile,
+        ),
       );
     } finally {
       setSaving(false);

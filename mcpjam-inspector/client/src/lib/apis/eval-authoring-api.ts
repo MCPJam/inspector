@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import { getApiAuthorizationHeader } from "@/lib/apis/web/context";
@@ -33,7 +34,7 @@ export async function authoringRequest(
   signal?: AbortSignal,
 ) {
   const authorization = await getApiAuthorizationHeader();
-  if (!authorization) throw new Error("Sign in to author cases.");
+  if (!authorization) throw new Error(ERROR_MESSAGES.signInToAuthorCases);
   const response = await authFetch(
     `/api/${HOSTED_MODE ? "web" : "mcp"}/evals/authoring-v1`,
     {

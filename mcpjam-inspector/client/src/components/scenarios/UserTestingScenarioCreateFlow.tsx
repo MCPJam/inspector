@@ -589,7 +589,7 @@ export function UserTestingScenarioCreateFlow({
             })
           ).environmentIds[0]
         : environmentId;
-      if (!resolved) throw new Error("Could not resolve this setup.");
+      if (!resolved) throw new Error(ERROR_MESSAGES.couldNotResolveThisSetup);
 
       const { scenarioId, created } = await onCreateScenario({
         environmentId: resolved,
@@ -663,19 +663,8 @@ export function UserTestingScenarioCreateFlow({
         setIsSaving(false);
         return;
       }
-      // Otherwise surface the backend's copy verbatim: publishing is
-      // project-admin gated, and "you need admin" is a different problem than
-      // "it failed". `ComposerResolveError` is an Error too, and its message
-      // already tells a user on an older backend to pick a saved environment
-      // instead.
-      //
-      // Through `convexErrMessage`, NOT `err.message`. A production Convex
-      // deployment redacts the message of EVERY throw, `ConvexError`
-      // included, to "[Request ID: …] Server Error"; only `err.data` crosses.
-      // Reading `.message` here printed that banner over a refusal that had
-      // said exactly what was wrong ("requires project admin"), so the one
-      // person who could act on it — the creator — was the only one who never
-      // saw it.
+      // Preserve locally authored setup guidance, and use catalog copy for
+      // unknown backend refusals. The draft remains available for correction.
       toast.error(convexErrMessage(err, ERROR_MESSAGES.failedToCreateTheStudy));
       savingRef.current = false;
       setIsSaving(false);

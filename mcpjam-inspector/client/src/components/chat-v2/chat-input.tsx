@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useRef,
@@ -113,10 +114,10 @@ const VOICE_TRANSCRIPTION_MODEL = "openai/whisper-1";
 const VOICE_TRANSCRIPTION_TIMEOUT_MS = 60_000;
 const VOICE_TRANSCRIPTION_GUARD_MS = VOICE_TRANSCRIPTION_TIMEOUT_MS + 2_000;
 const VOICE_TRANSCRIPTION_TIMEOUT_MESSAGE =
-  "Voice transcription timed out. Try a shorter recording.";
+  ERROR_MESSAGES.voiceTranscriptionTimedOutTryAShorterRecording;
 const VOICE_TRANSCRIPTION_IN_PROGRESS_CODE = "voice_transcription_in_progress";
 const VOICE_TRANSCRIPTION_IN_PROGRESS_MESSAGE =
-  "Another voice message is still processing. Try again in a moment.";
+  ERROR_MESSAGES.anotherVoiceMessageIsStillProcessingTryAgainInA;
 const VOICE_GLOBAL_MAX_SECONDS = 180;
 const VOICE_WARNING_THRESHOLD_SECONDS = 300;
 
@@ -185,7 +186,7 @@ async function blobToBase64(blob: Blob): Promise<string> {
         resolve(base64);
       };
       reader.onerror = () =>
-        reject(reader.error ?? new Error("Failed to read audio data."));
+        reject(reader.error ?? new Error(ERROR_MESSAGES.failedToReadAudioData));
       reader.readAsDataURL(blob);
     });
   }
@@ -966,16 +967,12 @@ export function ChatInput({
           const message =
             result?.code === VOICE_TRANSCRIPTION_IN_PROGRESS_CODE
               ? VOICE_TRANSCRIPTION_IN_PROGRESS_MESSAGE
-              : typeof result?.error === "string"
-              ? result.error
-              : typeof result?.message === "string"
-              ? result.message
-              : "Voice transcription failed";
+              : getUserErrorMessage( result, ERROR_MESSAGES.voiceTranscriptionFailed);
           throw new Error(message);
         }
 
         if (!result || typeof result.text !== "string") {
-          throw new Error("Voice transcription returned an empty transcript.");
+          throw new Error(ERROR_MESSAGES.voiceTranscriptionReturnedAnEmptyTranscript);
         }
 
         return result.text;
@@ -1013,7 +1010,7 @@ export function ChatInput({
   const handleRecordedAudio = useCallback(
     async (audioBlob: Blob): Promise<string> => {
       if (audioBlob.size === 0) {
-        throw new Error("No audio was captured. Try recording again.");
+        throw new Error(ERROR_MESSAGES.noAudioWasCapturedTryRecordingAgain);
       }
 
       return transcribeAudio(audioBlob);
@@ -1073,9 +1070,7 @@ export function ChatInput({
             return;
           }
           setVoiceInputError(
-            error instanceof Error
-              ? error.message
-              : ERROR_MESSAGES.voiceTranscriptionFailed
+            getUserErrorMessage(error , ERROR_MESSAGES.voiceTranscriptionFailed),
           );
         })
         .finally(() => {
@@ -1172,7 +1167,7 @@ export function ChatInput({
       mediaRecorderRef.current = null;
       setVoiceInputState("idle");
       setVoiceInputError(
-        error instanceof Error ? error.message : ERROR_MESSAGES.couldNotStartVoiceInput
+        getUserErrorMessage(error , ERROR_MESSAGES.couldNotStartVoiceInput),
       );
     }
   }, [
@@ -1209,7 +1204,7 @@ export function ChatInput({
       mediaRecorderRef.current = null;
       setVoiceInputState("idle");
       setVoiceInputError(
-        error instanceof Error ? error.message : ERROR_MESSAGES.couldNotStopVoiceInput
+        getUserErrorMessage(error , ERROR_MESSAGES.couldNotStopVoiceInput),
       );
       return;
     }

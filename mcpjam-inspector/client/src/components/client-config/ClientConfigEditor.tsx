@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Shared ClientConfigEditor.
@@ -2227,7 +2228,7 @@ function JsonRecordEditor({
         );
         onChange(parsed as Record<string, unknown>);
       } catch (err) {
-        setError(err instanceof Error ? err.message : ERROR_MESSAGES.invalidJson);
+        setError(getUserErrorMessage(err, ERROR_MESSAGES.invalidJson));
       }
     },
     [onChange, setError],

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGE_TEMPLATES } from "@/lib/error-messages";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useMemo, useState } from "react";
 import { useConvex } from "convex/react";
@@ -527,7 +528,7 @@ export function useEvalHandlers({
             ? `${suite.defaultConfig.modelId} (${suite.defaultConfig.provider})`
             : suite.defaultConfig?.modelId;
           toast.error(
-            `Suite default model ${label} is not available. Re-select it in the suite's default execution config, or add per-case models.`,
+            ERROR_MESSAGE_TEMPLATES.suiteDefaultModelIsNotAvailableReSelectItIn(label ?? "Selected model"),
           );
         } else if (probesSkippedMissingConfig > 0) {
           // Probe-only suites land here when every probe was skipped above;
@@ -739,7 +740,7 @@ export function useEvalHandlers({
     ) => {
       if (rerunningSuiteId) {
         if (options?.stayOnPage)
-          throw new Error("Another suite run is already starting.");
+          throw new Error(ERROR_MESSAGES.anotherSuiteRunIsAlreadyStarting);
         return;
       }
 
@@ -775,13 +776,13 @@ export function useEvalHandlers({
         if (rerunEligibility.replayableLatestRun?._id && !caseScoped) {
           if (options?.stayOnPage)
             throw new Error(
-              "Live suite servers are unavailable. Connect them before running from eval chat.",
+              ERROR_MESSAGES.liveSuiteServersAreUnavailableConnectThemBeforeRunningFrom,
             );
           await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
           return;
         }
         if (options?.stayOnPage)
-          throw new Error("Attach a client to this suite before running it.");
+          throw new Error(ERROR_MESSAGES.attachAClientToThisSuiteBeforeRunningIt);
         toast.error(ERROR_MESSAGES.attachAClientToThisSuiteBeforeRunningIt);
         return;
       }
@@ -794,7 +795,7 @@ export function useEvalHandlers({
           } else if (rerunEligibility.replayableLatestRun?._id && !caseScoped) {
             if (options?.stayOnPage)
               throw new Error(
-                "Live suite servers are unavailable. Connect them before running from eval chat.",
+                ERROR_MESSAGES.liveSuiteServersAreUnavailableConnectThemBeforeRunningFrom,
               );
             await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
             return;
@@ -838,7 +839,7 @@ export function useEvalHandlers({
       if (!executionContext) {
         if (options?.stayOnPage)
           throw new Error(
-            "The suite is not ready to run. Check its cases and client configuration.",
+            ERROR_MESSAGES.theSuiteIsNotReadyToRunCheckItsCases,
           );
         return;
       }
@@ -1418,9 +1419,7 @@ export function useEvalHandlers({
             // Kept even when the wall opened: it reports how many models did
             // land, which the wall doesn't say.
             toast.error(
-              `${successfulRuns.length}/${totalModelsRequested} model${
-                totalModelsRequested === 1 ? "" : "s"
-              } completed successfully.`,
+              ERROR_MESSAGE_TEMPLATES.modelCompletedSuccessfully(successfulRuns.length, totalModelsRequested, totalModelsRequested === 1 ? "" : "s"),
             );
           } else if (!evalIterationWallOpened) {
             toast.error(
@@ -1853,7 +1852,7 @@ export function useEvalHandlers({
     ) => {
       if (isGeneratingTests) {
         if (postOptions?.stageCase)
-          throw new Error("Generation is already running.");
+          throw new Error(ERROR_MESSAGES.generationIsAlreadyRunning);
         return;
       }
 
@@ -1861,7 +1860,7 @@ export function useEvalHandlers({
       if (suiteServers.length === 0) {
         if (postOptions?.stageCase)
           throw new Error(
-            "Attach servers to this suite before generating cases.",
+            ERROR_MESSAGES.attachServersToThisSuiteBeforeGeneratingCases,
           );
         toast.error(
           ERROR_MESSAGES.addAtLeastOneServerToThisSuiteBeforeGeneratingCases,
@@ -1899,7 +1898,7 @@ export function useEvalHandlers({
           } else {
             if (postOptions?.stageCase)
               throw new Error(
-                "Connect the suite servers before generating cases.",
+                ERROR_MESSAGES.connectTheSuiteServersBeforeGeneratingCases,
               );
             toast.error(
               formatMcpConnectServerPrompt(disconnected, {
@@ -1938,7 +1937,7 @@ export function useEvalHandlers({
         if (postOptions?.stageCase) {
           if (outcome.createdCount !== outcome.apiReturnedTests)
             throw new Error(
-              "Some generated drafts could not be staged. Review the available drafts before trying again.",
+              ERROR_MESSAGES.someGeneratedDraftsCouldNotBeStagedReviewTheAvailable,
             );
           return;
         }

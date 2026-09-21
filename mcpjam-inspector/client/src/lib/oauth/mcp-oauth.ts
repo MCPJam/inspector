@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Production OAuth implementation using the SDK state-machine runner with trace support.
  */
@@ -1660,7 +1661,7 @@ function resolveOAuthResourceUrl(input: {
   // would connect against metadata every other connect surface rejects.
   if (input.resourceMetadata && !prmResource) {
     throw new Error(
-      'Rejected OAuth resource indicator from protected resource metadata: the document is missing its required "resource" identifier (RFC 9728 §2).'
+      ERROR_MESSAGES.rejectedOauthResourceIndicatorFromProtectedResourceMetadataTheDocument
     );
   }
 
@@ -1732,7 +1733,7 @@ function readHostedOAuthExpectedState(state: OAuthFlowState): string {
   const expectedState =
     typeof state.state === "string" ? state.state.trim() : "";
   if (!expectedState) {
-    throw new Error("OAuth state not ready for hosted callback session.");
+    throw new Error(ERROR_MESSAGES.oauthStateNotReadyForHostedCallbackSession);
   }
 
   return expectedState;
@@ -1772,12 +1773,12 @@ async function createHostedOAuthSessionIfNeeded(input: {
 
   const clientId = input.state.clientId;
   if (!clientId) {
-    throw new Error("OAuth client ID not ready for hosted callback session.");
+    throw new Error(ERROR_MESSAGES.oauthClientIdNotReadyForHostedCallbackSession);
   }
 
   const codeVerifier = input.state.codeVerifier;
   if (!codeVerifier) {
-    throw new Error("Code verifier not ready for hosted callback session.");
+    throw new Error(ERROR_MESSAGES.codeVerifierNotReadyForHostedCallbackSession);
   }
   const expectedState = readHostedOAuthExpectedState(input.state);
   const oauthResourceUrl = resolveOAuthResourceUrl({
@@ -2177,13 +2178,13 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     if (!normalizedTokens) {
       localStorage.removeItem(`mcp-tokens-${this.serverName}`);
       throw new Error(
-        "OAuth token response missing access_token; cannot import tokens to Convex"
+        ERROR_MESSAGES.oauthTokenResponseMissingAccessTokenCannotImportTokensTo
       );
     }
     if (!this.convexBinding) {
       localStorage.removeItem(`mcp-tokens-${this.serverName}`);
       throw new Error(
-        "OAuth server is not synced; cannot store tokens securely"
+        ERROR_MESSAGES.oauthServerIsNotSyncedCannotStoreTokensSecurely
       );
     }
 
@@ -2196,7 +2197,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       // the OAuth-completion error surfaces in the UI rather than 401ing
       // silently on the next connect.
       throw new Error(
-        "OAuth client information missing client_id; cannot import tokens to Convex"
+        ERROR_MESSAGES.oauthClientInformationMissingClientIdCannotImportTokensTo
       );
     }
     const clientSecret =
@@ -2325,7 +2326,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   codeVerifier(): string {
     const verifier = localStorage.getItem(`mcp-verifier-${this.serverName}`);
     if (!verifier) {
-      throw new Error("Code verifier not found");
+      throw new Error(ERROR_MESSAGES.codeVerifierNotFound);
     }
     return verifier;
   }
@@ -2895,7 +2896,7 @@ export async function initiateOAuth(
       oauthTrace: trace,
     };
   } catch (error) {
-    let errorMessage = "Unknown OAuth error";
+    let errorMessage: string = ERROR_MESSAGES.unknownOauthError;
 
     if (error instanceof Error) {
       errorMessage = error.message;
@@ -3039,10 +3040,10 @@ export async function completeHostedOAuthCallback(
 
   try {
     if (!serverName) {
-      throw new Error("No pending OAuth flow found");
+      throw new Error(ERROR_MESSAGES.noPendingOauthFlowFound);
     }
     if (!context.projectId || !context.serverId) {
-      throw new Error("OAuth callback is missing server context");
+      throw new Error(ERROR_MESSAGES.oauthCallbackIsMissingServerContext);
     }
 
     startOAuthTraceStep(callbackTrace, "received_authorization_code", {
@@ -3054,7 +3055,7 @@ export async function completeHostedOAuthCallback(
     const serverUrl =
       context.serverUrl || localStorage.getItem(`mcp-serverUrl-${serverName}`);
     if (!serverUrl) {
-      throw new Error("Server URL not found for OAuth callback");
+      throw new Error(ERROR_MESSAGES.serverUrlNotFoundForOauthCallback);
     }
     const storedOAuthConfig = readStoredOAuthConfig(serverName);
     const storedSession = loadOAuthFlowSession(serverName);
@@ -3118,15 +3119,15 @@ export async function completeHostedOAuthCallback(
       );
       if (!expectedState || callbackState !== expectedState) {
         throw new Error(
-          "OAuth `state` mismatch — the callback did not return the value this flow issued (possible CSRF). Authorization was not completed."
+          ERROR_MESSAGES.oauthStateMismatchTheCallbackDidNotReturnTheValue
         );
       }
     }
     if (!context.sessionId && !legacyCodeVerifier) {
-      throw new Error("Code verifier not found");
+      throw new Error(ERROR_MESSAGES.codeVerifierNotFound);
     }
     if (!context.sessionId && !legacyClientInformation?.client_id) {
-      throw new Error("OAuth client ID not found");
+      throw new Error(ERROR_MESSAGES.oauthClientIdNotFound);
     }
 
     if (context.sessionId && convexSiteUrl) {
@@ -3493,14 +3494,14 @@ export async function handleOAuthCallback(
 
   try {
     if (!serverName) {
-      throw new Error("No pending OAuth flow found");
+      throw new Error(ERROR_MESSAGES.noPendingOauthFlowFound);
     }
 
     // Get server URL
     serverUrl =
       localStorage.getItem(`mcp-serverUrl-${serverName}`) ?? undefined;
     if (!serverUrl) {
-      throw new Error("Server URL not found for OAuth callback");
+      throw new Error(ERROR_MESSAGES.serverUrlNotFoundForOauthCallback);
     }
 
     // Get stored client credentials if any

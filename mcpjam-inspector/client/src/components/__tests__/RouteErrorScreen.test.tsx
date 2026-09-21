@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import React from "react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -94,7 +95,8 @@ describe("RouteErrorScreen", () => {
     renderCrashingRoute();
 
     expect(await screen.findByTestId("route-error-screen")).toBeInTheDocument();
-    expect(screen.getByText("route exploded")).toBeInTheDocument();
+    expect(screen.getByText(ERROR_MESSAGES.pageLoad)).toBeInTheDocument();
+    expect(screen.queryByText("route exploded")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Go home" })).toBeInTheDocument();
   });

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import type { MetadataSnapshot } from "./eval-tool-metadata";
 import { useDescribeSurface } from "./describe-surface";
 import {
@@ -156,11 +157,11 @@ export function useEvalAgentDraft<T extends EvalDraft>({
       const state = current.current;
       if (!state.draft || state.revision !== revision)
         throw new Error(
-          "Draft changed since it was read. Read context again; no edits were applied.",
+          ERROR_MESSAGES.draftChangedSinceItWasReadReadContextAgainNo,
         );
       if (!patch && (!undo.current || undo.current.expected !== revision))
         throw new Error(
-          "Cannot undo after another edit. Your current draft was preserved.",
+          ERROR_MESSAGES.cannotUndoAfterAnotherEditYourCurrentDraftWasPreserved,
         );
       const previous = state.draft;
       const next = patch ? { ...previous, ...patch } : undo.current!.draft;
@@ -196,7 +197,7 @@ export function useEvalAgentDraft<T extends EvalDraft>({
     return registerEvalDraft(scope, {
       read: () => {
         const state = current.current;
-        if (!state.draft) throw new Error("Case draft is loading.");
+        if (!state.draft) throw new Error(ERROR_MESSAGES.caseDraftIsLoading);
         return {
           draft: {
             title: state.draft.title,

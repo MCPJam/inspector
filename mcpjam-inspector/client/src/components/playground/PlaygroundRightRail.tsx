@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { BrowserActivityList } from "@/components/browser/BrowserActivityList";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
@@ -192,7 +193,7 @@ function RightRailTabbed({
   const mintHostedBrowserToken = useCallback(
     ({ projectId: tokenProjectId }: { projectId: string }) => {
       if (!browserSessionId)
-        throw new Error("The conversation is still loading.");
+        throw new Error(ERROR_MESSAGES.theConversationIsStillLoading);
       return mintConversationBrowserToken({
         projectId: tokenProjectId,
         conversationId: browserSessionId,

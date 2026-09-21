@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   render,
@@ -1025,7 +1026,7 @@ describe("ChatInput", () => {
       );
 
       expect(
-        await screen.findByText("Voice budget exhausted")
+        await screen.findByText(ERROR_MESSAGES.voiceTranscriptionFailed)
       ).toBeInTheDocument();
       expect(onChange).not.toHaveBeenCalled();
     });
@@ -1065,7 +1066,7 @@ describe("ChatInput", () => {
 
       expect(
         await screen.findByText(
-          "Guest rate limit exceeded. Try again later or sign in for higher limits."
+          ERROR_MESSAGES.rateLimited
         )
       ).toBeInTheDocument();
       expect(onChange).not.toHaveBeenCalled();

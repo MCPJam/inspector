@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useCallback,
   useEffect,
@@ -850,7 +851,7 @@ function NotifyButton() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email: trimmedEmail }),
         });
-        if (!response.ok) throw new Error("Subscribe failed");
+        if (!response.ok) throw new Error(ERROR_MESSAGES.subscribeFailed);
         setStatus("succeeded");
       } catch {
         setStatus("error");

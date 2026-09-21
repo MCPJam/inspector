@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * OAuth Client Registration Service
  * Supports three registration methods:
@@ -205,11 +206,11 @@ export class ClientRegistrationService {
         !Array.isArray(metadata.redirect_uris) ||
         metadata.redirect_uris.length === 0
       ) {
-        throw new Error("CIMD missing or invalid redirect_uris array");
+        throw new Error(ERROR_MESSAGES.cimdMissingOrInvalidRedirectUrisArray);
       }
 
       if (!metadata.client_name) {
-        throw new Error("CIMD missing required field: client_name");
+        throw new Error(ERROR_MESSAGES.cimdMissingRequiredFieldClientName);
       }
 
       // Verify our redirect URI is in the list

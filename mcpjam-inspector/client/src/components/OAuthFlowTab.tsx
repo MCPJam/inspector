@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
@@ -460,7 +461,7 @@ export const OAuthFlowTab = ({
         extra: { step: oauthFlowState.currentStep, protocolVersion },
       });
       toast.error(
-        err instanceof Error ? err.message : ERROR_MESSAGES.failedToAdvanceTheOauthFlow,
+        getUserErrorMessage(err, ERROR_MESSAGES.failedToAdvanceTheOauthFlow),
       );
     } finally {
       setIsAdvancing(false);
@@ -477,13 +478,13 @@ export const OAuthFlowTab = ({
   const continueLabel = !hasProfile
     ? "Configure Target"
     : oauthFlowState.currentStep === "complete"
-      ? "Flow Complete"
-      : oauthFlowState.isInitiatingAuth
-        ? "Continue"
-        : oauthFlowState.currentStep === "authorization_request" ||
-            oauthFlowState.currentStep === "generate_pkce_parameters"
-          ? "Authorize"
-          : "Continue";
+    ? "Flow Complete"
+    : oauthFlowState.isInitiatingAuth
+    ? "Continue"
+    : oauthFlowState.currentStep === "authorization_request" ||
+      oauthFlowState.currentStep === "generate_pkce_parameters"
+    ? "Authorize"
+    : "Continue";
   const continueDisabled =
     !hasProfile ||
     !oauthStateMachine ||
@@ -520,7 +521,9 @@ export const OAuthFlowTab = ({
           if (!registrationStrategy) {
             throw createInspectorCommandClientError(
               "invalid_request",
-              `Unknown registration mode "${String(payload.registrationMode)}" — use preregistered, dcr, or cimd.`,
+              `Unknown registration mode "${String(
+                payload.registrationMode,
+              )}" — use preregistered, dcr, or cimd.`,
             );
           }
         }
@@ -530,7 +533,10 @@ export const OAuthFlowTab = ({
           existingServerNames,
         });
         if ("reject" in plan) {
-          throw createInspectorCommandClientError("invalid_request", plan.reject);
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            plan.reject,
+          );
         }
         // Editing the selected server: a seeded registration mode must be one
         // its configured protocol version supports (e.g. 2025-03-26 has no
@@ -541,7 +547,9 @@ export const OAuthFlowTab = ({
           if (!supported.includes(registrationStrategy)) {
             throw createInspectorCommandClientError(
               "invalid_request",
-              `Registration mode "${registrationStrategy}" is not supported by protocol ${protocolVersion}. Supported: ${supported.join(", ")}.`,
+              `Registration mode "${registrationStrategy}" is not supported by protocol ${protocolVersion}. Supported: ${supported.join(
+                ", ",
+              )}.`,
             );
           }
         }
@@ -720,7 +728,7 @@ export const OAuthFlowTab = ({
     const processOAuthCallback = (
       code: string,
       state: string | undefined,
-      iss?: string | null
+      iss?: string | null,
     ) => {
       if (processedCodeRef.current === code) {
         return;
@@ -861,7 +869,7 @@ export const OAuthFlowTab = ({
           processOAuthCallback(
             event.data.code,
             event.data.state,
-            event.data.iss ?? undefined
+            event.data.iss ?? undefined,
           );
         }
       };
@@ -921,9 +929,7 @@ export const OAuthFlowTab = ({
                 onFocusStep={setFocusedStep}
                 hasProfile={hasProfile}
                 summary={{
-                  label: hasProfile
-                    ? serverIdentifier
-                    : "No target configured",
+                  label: hasProfile ? serverIdentifier : "No target configured",
                   description: headerDescription,
                   protocol: hasProfile ? protocolVersion : undefined,
                   registration: hasProfile
@@ -953,12 +959,9 @@ export const OAuthFlowTab = ({
                       ? undefined
                       : handleAdvance,
                   continueLabel,
-                  continueDisabled: Boolean(
-                    canApplyTokens || continueDisabled
-                  ),
+                  continueDisabled: Boolean(canApplyTokens || continueDisabled),
                   continuePending: isAdvancing,
-                  resetDisabled:
-                    !hasProfile || oauthFlowState.isInitiatingAuth,
+                  resetDisabled: !hasProfile || oauthFlowState.isInitiatingAuth,
                   onConnectServer:
                     canApplyTokens && !isServerConnected
                       ? handleConnectServer
@@ -1013,7 +1016,7 @@ export const OAuthFlowTab = ({
               profileModalMode === "add" ? undefined : activeServer?.name,
           });
           if (saved === false) {
-            throw new Error("Could not save the server. Please try again.");
+            throw new Error(ERROR_MESSAGES.couldNotSaveTheServerPleaseTryAgain);
           }
           setPendingServerSelection(formData.name);
           resetOAuthFlow(formData.url);

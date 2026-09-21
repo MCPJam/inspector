@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { describe, it, expect } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describeAsSlug, describeError } from "@mcpjam/sdk/browser";
@@ -14,25 +15,14 @@ import { ErrorCard } from "../error-card";
 describe("ErrorCard restraint", () => {
   const openDetails = () => fireEvent.click(screen.getByText("Show details"));
 
-  it("drops a raw row that only repeats the headline", () => {
-    // `describeError` promotes an unclassified message into `oneLine`, so the
-    // raw row would render the identical sentence a second time. The message
-    // must be one the describer genuinely cannot place — anything matching a
-    // catalog pattern gets catalog prose in `oneLine` and the raw row then
-    // carries something new, which is the next test.
+  it("keeps unknown backend text behind the diagnostic disclosure", () => {
     const message = "the widget declined to elaborate";
-    const normalized = describeError(new Error(message));
-    expect(normalized.slug).toBe("internal/unknown");
-    expect(normalized.oneLine).toBe(message);
-
-    render(<ErrorCard error={normalized} />);
-
-    // Nothing is left for the panel to hold, so the card does not offer a
-    // disclosure that would open onto an empty box. The docs link takes the
-    // toggle's place on the action row.
-    expect(screen.queryByText("Show details")).not.toBeInTheDocument();
-    expect(screen.queryByText("Raw error")).not.toBeInTheDocument();
-    expect(screen.getByText("Learn more")).toBeInTheDocument();
+    render(<ErrorCard error={describeError(new Error(message))} />);
+    expect(screen.getByText(ERROR_MESSAGES.unexpected)).toBeInTheDocument();
+    expect(screen.queryByText(message)).not.toBeInTheDocument();
+    openDetails();
+    expect(screen.getByText("Raw error")).toBeInTheDocument();
+    expect(screen.getByText(message)).toBeInTheDocument();
   });
 
   it("offers the disclosure whenever the panel has something to hold", () => {
@@ -74,21 +64,21 @@ describe("ErrorCard restraint", () => {
     expect(screen.queryByText(/file an issue/i)).not.toBeInTheDocument();
   });
 
-  it("calls an unclassified failure a connection error, not an unknown one", () => {
+  it("gives unclassified failures a catalog headline", () => {
     // "Unknown error" as a headline reads as a crash. The body already
     // carries the real text, so the title can say what kind of thing it was.
     render(
       <ErrorCard error={describeError(new Error("boom from the server"))} />,
     );
 
-    expect(screen.getByText("Connection error")).toBeInTheDocument();
+    expect(screen.getByText(ERROR_MESSAGES.unknownErrorTitle)).toBeInTheDocument();
     expect(screen.queryByText("Unknown error")).not.toBeInTheDocument();
   });
 
-  it("still admits to knowing nothing when there is no raw text at all", () => {
+  it("uses the same safe headline when diagnostic text is empty", () => {
     render(<ErrorCard error={describeAsSlug("internal/unknown")} />);
 
-    expect(screen.getByText("Unknown error")).toBeInTheDocument();
+    expect(screen.getByText(ERROR_MESSAGES.unknownErrorTitle)).toBeInTheDocument();
   });
 
   it("keeps a non-error severity off the destructive palette", () => {

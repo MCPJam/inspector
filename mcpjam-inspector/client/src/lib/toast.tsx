@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useState } from "react";
 import { toast as sonnerToast } from "sonner";
 import { Check, Copy } from "lucide-react";
@@ -91,7 +92,13 @@ function protocolPinFallbackAction(
 ) {
   if (data?.action) return undefined;
   if (typeof message !== "string") return undefined;
-  if (!isProtocolVersionPinFailure(undefined, message)) return undefined;
+  const description = typeof data?.description === "string" ? data.description : "";
+  if (
+    !isProtocolVersionPinFailure(undefined, message) &&
+    !isProtocolVersionPinFailure(undefined, description) &&
+    message !== ERROR_MESSAGES.protocolVersionUnsupported &&
+    description !== ERROR_MESSAGES.protocolVersionUnsupported
+  ) return undefined;
   return {
     action: {
       label: "Change protocol version",

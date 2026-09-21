@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Full-page New swarm create flow: Describe → Confirm details → Run swarm.
  *
@@ -578,7 +579,7 @@ export function NewSwarmCreateFlow({
   // restoring a Describe step that looks like the user never pressed Continue.
   const [describeStepError, setDescribeStepError] = useState<unknown | null>(
     restoredDraft?.generatingSince != null
-      ? "Persona generation was interrupted when this view reloaded. Nothing was saved — press Continue to generate again."
+      ? ERROR_MESSAGES.personaGenerationInterrupted
       : null,
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -1090,7 +1091,7 @@ export function NewSwarmCreateFlow({
       });
       if (result.personas.length === 0) {
         throw new Error(
-          "Generation returned no personas. Try again, or make sure the environment's servers have been connected so their tools are inspected.",
+          ERROR_MESSAGES.generationReturnedNoPersonasTryAgainOrMakeSureThe,
         );
       }
       // A fresh slate is a fresh set of rows to create — drop any memory of

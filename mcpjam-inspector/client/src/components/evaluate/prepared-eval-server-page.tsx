@@ -119,7 +119,7 @@ export function PreparedEvalServerPage({
     pending.current = pending.current
       .then(async () => {
         if (conflict.current)
-          throw new Error("Reload this review before editing.");
+          throw new Error(ERROR_MESSAGES.reloadThisReviewBeforeEditing);
         revision.current = await saveReview({
           ...args,
           draft,
@@ -175,7 +175,7 @@ export function PreparedEvalServerPage({
       persist(readEvalServerPreviewDraft(server.id) ?? initial);
       await pending.current;
       if (conflict.current)
-        throw new Error("Reload this review before refining.");
+        throw new Error(ERROR_MESSAGES.reloadThisReviewBeforeRefining);
       const result = await refineReview({
         ...args,
         expectedRevision: revision.current ?? 0,
@@ -429,7 +429,7 @@ export function PreparedEvalServerPage({
                 await pending.current;
                 if (conflict.current) return;
                 if (!input.clients.length)
-                  throw new Error("Select a configured client before running.");
+                  throw new Error(ERROR_MESSAGES.selectAConfiguredClientBeforeRunning);
                 if (
                   input.clients.some(
                     (client) =>
@@ -439,7 +439,7 @@ export function PreparedEvalServerPage({
                   )
                 )
                   throw new Error(
-                    "A selected client is no longer available. Remove it and select another.",
+                    ERROR_MESSAGES.aSelectedClientIsNoLongerAvailableRemoveItAnd,
                   );
                 await onRun({
                   ...input,

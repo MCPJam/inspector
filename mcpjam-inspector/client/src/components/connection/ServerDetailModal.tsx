@@ -1,3 +1,5 @@
+import { ERROR_MESSAGE_TEMPLATES } from "@/lib/error-messages";
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useCallback,
@@ -82,7 +84,7 @@ interface ServerDetailModalProps {
   defaultTab?: ServerDetailTab;
   onSubmit: (
     formData: ServerFormData,
-    originalServerName: string
+    originalServerName: string,
   ) => Promise<ServerUpdateResult>;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
@@ -90,7 +92,7 @@ interface ServerDetailModalProps {
     options?: {
       forceOAuthFlow?: boolean;
       allowInteractiveOAuthFlow?: boolean;
-    }
+    },
   ) => Promise<void>;
   existingServerNames: string[];
   projectClientConfig?: Project["clientConfig"];
@@ -161,10 +163,10 @@ export function ServerDetailModal({
     isUserReady && shouldQueryProjectId(projectId);
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
-    canQueryProjectServerConfig ? ({ projectId } as never) : "skip"
+    canQueryProjectServerConfig ? ({ projectId } as never) : "skip",
   ) as ProjectServerConfigDto | null | undefined;
   const setProjectServerConfigMutation = useMutation(
-    "projectServerConfig:setConfig" as never
+    "projectServerConfig:setConfig" as never,
   ) as unknown as (args: {
     projectId: string;
     input: ProjectServerConfigInput;
@@ -188,7 +190,7 @@ export function ServerDetailModal({
         ? (projectServerConfigDto?.overrides?.[serverId]
             ?.mcpProtocolVersionOverride as McpProtocolVersion | undefined)
         : undefined,
-    [projectServerConfigDto, serverId]
+    [projectServerConfigDto, serverId],
   );
   // Host default — prefer the explicit prop passed by the Servers tab
   // (which has direct access to `previewedHost.config.mcpProfile`),
@@ -207,7 +209,7 @@ export function ServerDetailModal({
   const canEditMcpProtocolVersionOverride = Boolean(
     canQueryProjectServerConfig &&
       serverId &&
-      projectServerConfigDto !== undefined
+      projectServerConfigDto !== undefined,
   );
   const protocolOverrideAutoEnrolledRef = useRef<
     Map<string, ProtocolOverrideAutoEnrollRecord>
@@ -234,7 +236,7 @@ export function ServerDetailModal({
         window.clearTimeout(fallbackReconnectTimerRef.current);
       }
     },
-    []
+    [],
   );
   /**
    * The wire-mode override's own reconnect, flagged in flight so the
@@ -271,11 +273,11 @@ export function ServerDetailModal({
   ]);
 
   const handleMcpProtocolVersionOverrideChange = async (
-    next: McpProtocolVersion | undefined
+    next: McpProtocolVersion | undefined,
   ): Promise<void> => {
     if (!canQueryProjectServerConfig || !projectId) {
       toast.error(
-        ERROR_MESSAGES.wireModeOverrideRequiresAProjectContextCannotSaveWithoutProjectid
+        ERROR_MESSAGES.wireModeOverrideRequiresAProjectContextCannotSaveWithoutProjectid,
       );
       return;
     }
@@ -290,7 +292,7 @@ export function ServerDetailModal({
     // hint instead.
     if (projectServerConfigDto === undefined) {
       toast.error(
-        ERROR_MESSAGES.projectConfigurationIsStillLoadingTryAgainInAMoment
+        ERROR_MESSAGES.projectConfigurationIsStillLoadingTryAgainInAMoment,
       );
       return;
     }
@@ -336,9 +338,7 @@ export function ServerDetailModal({
       setPendingReconnectTick((t) => t + 1);
     } catch (err) {
       toast.error(
-        err instanceof Error
-          ? err.message
-          : ERROR_MESSAGES.failedToUpdateWireModeOverride
+        getUserErrorMessage(err, ERROR_MESSAGES.failedToUpdateWireModeOverride),
       );
     }
   };
@@ -388,9 +388,10 @@ export function ServerDetailModal({
         if (!isCancelled) {
           console.error("Failed to load tools metadata:", error);
           setToolsLoadError(
-            error instanceof Error
-              ? error.message
-              : ERROR_MESSAGES.failedToLoadToolsMetadata
+            getUserErrorMessage(
+              error,
+              ERROR_MESSAGES.failedToLoadToolsMetadata,
+            ),
           );
           setToolsData(null);
         }
@@ -411,7 +412,7 @@ export function ServerDetailModal({
   const handleSave = async () => {
     if (isDuplicateServerName) {
       toast.error(
-        `A server named "${trimmedName}" already exists. Choose a different name.`
+        ERROR_MESSAGE_TEMPLATES.aServerNamedAlreadyExistsChooseADifferentName(trimmedName),
       );
       return;
     }
@@ -436,7 +437,7 @@ export function ServerDetailModal({
 
       if (formState.clientSecret) {
         const clientSecretError = formState.validateClientSecret(
-          formState.clientSecret
+          formState.clientSecret,
         );
         if (clientSecretError) {
           toast.error(clientSecretError);
@@ -458,7 +459,7 @@ export function ServerDetailModal({
       if (formState.needsStoredHeaderReveal) {
         if (!projectId || !hostedServerId) {
           toast.error(
-            ERROR_MESSAGES.revealSavedHeadersBeforeChangingAuthenticationSoExistingHiddenHeadersArenT
+            ERROR_MESSAGES.revealSavedHeadersBeforeChangingAuthenticationSoExistingHiddenHeadersArenT,
           );
           return;
         }
@@ -470,12 +471,12 @@ export function ServerDetailModal({
           // A null headers payload means the stored set couldn't be read;
           // merging against it would wipe the saved headers, so fail closed.
           if (!secrets.headers) {
-            throw new Error("Stored headers missing from reveal response");
+            throw new Error(ERROR_MESSAGES.storedHeadersMissingFromRevealResponse);
           }
           revealedHeaders = secrets.headers;
         } catch {
           toast.error(
-            ERROR_MESSAGES.couldnTLoadThisServerSSavedHeadersToApplyThisChange
+            ERROR_MESSAGES.couldnTLoadThisServerSSavedHeadersToApplyThisChange,
           );
           return;
         }

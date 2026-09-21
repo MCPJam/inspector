@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Swarm (journey-execution) client contract — the ONE place the Swarms surface
  * reaches the backend.
@@ -1239,7 +1240,7 @@ export async function streamJourneyRun(
 
   const reader = response.body?.getReader();
   if (!reader) {
-    throw new Error("No response body for swarm run stream");
+    throw new Error(ERROR_MESSAGES.noResponseBodyForSwarmRunStream);
   }
 
   const decoder = new TextDecoder();

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import React from "react";
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -120,9 +121,11 @@ export class ErrorBoundary extends React.Component<
         <div className="flex items-center justify-center min-h-[400px] p-6">
           <div className="text-center max-w-md">
             <AlertTriangle className="h-12 w-12 text-destructive mx-auto mb-4" />
-            <h2 className="text-xl font-semibold mb-2">Something went wrong</h2>
+            <h2 className="text-xl font-semibold mb-2">
+              {ERROR_MESSAGES.pageTitle}
+            </h2>
             <p className="text-sm text-muted-foreground mb-4">
-              {this.state.error?.message || "An unexpected error occurred"}
+              {ERROR_MESSAGES.pageLoad}
             </p>
             <Button onClick={this.handleReset} variant="outline">
               Try again

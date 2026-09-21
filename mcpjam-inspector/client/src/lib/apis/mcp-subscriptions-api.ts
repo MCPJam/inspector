@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { authFetch } from "@/lib/session-token";
 import type {
   SubscriptionDesiredInterestsView,
@@ -38,7 +39,7 @@ async function postState(
   }
   const state = parsed.state as SubscriptionServerStateView | undefined;
   if (!state || typeof state !== "object" || !Array.isArray(state.streams)) {
-    throw new Error("Subscription bridge returned no state");
+    throw new Error(ERROR_MESSAGES.subscriptionBridgeReturnedNoState);
   }
   return state;
 }

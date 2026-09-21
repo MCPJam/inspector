@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState } from "react";
 import { Plus, Loader2, Server } from "lucide-react";
@@ -39,13 +40,14 @@ export function HostIndexPage({
       await deleteHost({ hostId: host.hostId });
       toast.success(`Client "${clientDisplayName(host)}" deleted`);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to delete client";
+      const msg =
+        err instanceof Error ? err.message : "Failed to delete client";
       if (msg.includes("consumer")) {
         toast.error(
-          `${msg} — use force delete or remove dependent user testing scenarios/evals first`,
+          ERROR_MESSAGES.useForceDeleteOrRemoveDependentUserTestingScenariosEvals,
         );
       } else {
-        toast.error(msg);
+        toast.error(getUserErrorMessage(msg));
       }
     } finally {
       setDeletingId(null);
@@ -59,7 +61,9 @@ export function HostIndexPage({
       toast.success(`Client duplicated`);
       onSelectHost(hostId);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : ERROR_MESSAGES.failedToDuplicateClient);
+      toast.error(
+        getUserErrorMessage(err, ERROR_MESSAGES.failedToDuplicateClient),
+      );
     } finally {
       setDuplicatingId(null);
     }

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { describe, expect, it } from "vitest";
 import {
   describeEnvironmentError,
@@ -73,9 +74,8 @@ describe("describeEnvironmentError", () => {
       "This environment has no servers to run against"
     );
     expect(normalized.severity).toBe("warning");
-    // The backend's own sentence survives verbatim — it names the specific
-    // environment, which no client-side copy can do.
-    expect(normalized.oneLine).toBe(NO_SERVERS_SENTENCE);
+    expect(normalized.oneLine).toBe(ERROR_MESSAGES.environmentNoServers);
+    expect(normalized.rawMessage).toBe(NO_SERVERS_SENTENCE);
     expect(normalized.rawCode).toBe("ENV_NO_SERVERS");
     expect(normalized.likelyCauses.length).toBeGreaterThan(0);
     expect(normalized.nextSteps.length).toBeGreaterThan(0);
@@ -83,19 +83,18 @@ describe("describeEnvironmentError", () => {
     // which the sentence cannot distinguish and which needs a different fix
     // than connecting a server. The card is where the user learns that.
     expect(normalized.likelyCauses.join(" ")).toMatch(
-      /local .*cloud run can't reach/i
+      /Cloud runs.*reach servers.*localhost/i
     );
     expect(normalized.nextSteps.join(" ")).toMatch(/tunnel/i);
   });
 
-  // An ENV_ code we have no bespoke copy for still beats describeError: it
-  // keeps the backend prose and surfaces the code in the details block.
-  it("keeps the message and code for an unrecognized ENV_ code", () => {
+  it("keeps unknown codes in diagnostics and uses catalog guidance", () => {
     const normalized = describeEnvironmentError({
       message: "Something environment-shaped went wrong.",
       code: "ENV_SOMETHING_NEW",
     });
-    expect(normalized.oneLine).toBe("Something environment-shaped went wrong.");
+    expect(normalized.oneLine).toBe(ERROR_MESSAGES.environmentUnavailable);
+    expect(normalized.rawMessage).toBe("Something environment-shaped went wrong.");
     expect(normalized.rawCode).toBe("ENV_SOMETHING_NEW");
     expect(normalized.nextSteps.length).toBeGreaterThan(0);
   });

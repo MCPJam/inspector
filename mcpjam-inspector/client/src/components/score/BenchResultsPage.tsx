@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
 import { Button } from "@mcpjam/design-system/button";
@@ -50,7 +51,7 @@ export function BenchResultsPage() {
           setNotFound(true);
           return;
         }
-        setError(err instanceof Error ? err.message : String(err));
+        setError(getUserErrorMessage(err));
       });
     return () => {
       cancelled = true;

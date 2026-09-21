@@ -1,7 +1,8 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import type { ReactNode } from "react";
 
 export const SHARE_LINK_DENIED_MESSAGE =
-  "This share link is invalid or has been revoked.";
+  ERROR_MESSAGES.thisShareLinkIsInvalidOrHasBeenRevoked;
 
 /**
  * Chrome-less shell for redeemed artifact viewers. All denials collapse

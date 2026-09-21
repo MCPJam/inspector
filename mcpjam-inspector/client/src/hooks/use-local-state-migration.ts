@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useRef, useState } from "react";
 import { useConvex, useMutation } from "convex/react";
 import {
@@ -252,7 +253,7 @@ export function useLocalStateMigration({
         });
         if (typeof result !== "string") {
           throw new Error(
-            "projects:ensureDefaultProject returned a non-string id",
+            ERROR_MESSAGES.projectsEnsuredefaultprojectReturnedANonStringId,
           );
         }
         return result;

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
@@ -57,25 +58,25 @@ export function useAutoTopup(organizationId: string | null | undefined) {
   const { error, isSaving, run } = useOrgScopedWrite(organizationId ?? null);
   const requireOrganization = () => {
     if (!canQuery || !organizationId)
-      throw new Error("Sign in and select an organization first.");
+      throw new Error(ERROR_MESSAGES.signInAndSelectAnOrganizationFirst);
     return organizationId;
   };
   const save = useCallback(
     async (configuration: AutoTopupConfiguration) => {
       if (!canQuery || !organizationId)
-        throw new Error("Select an organization first.");
+        throw new Error(ERROR_MESSAGES.selectAnOrganizationFirst);
       await run(() => set({ organizationId, ...configuration }));
     },
     [canQuery, organizationId, run, set],
   );
   const disable = useCallback(async () => {
     if (!canQuery || !organizationId)
-      throw new Error("Select an organization first.");
+      throw new Error(ERROR_MESSAGES.selectAnOrganizationFirst);
     await run(() => turnOff({ organizationId }));
   }, [canQuery, organizationId, run, turnOff]);
   const clear = useCallback(async () => {
     if (!canQuery || !organizationId)
-      throw new Error("Select an organization first.");
+      throw new Error(ERROR_MESSAGES.selectAnOrganizationFirst);
     await run(() => clearPreferences({ organizationId }));
   }, [canQuery, organizationId, run, clearPreferences]);
   const begin = async (): Promise<AutoTopupSetup> => {
@@ -87,7 +88,7 @@ export function useAutoTopup(organizationId: string | null | undefined) {
       view.refillPriceCents == null
     ) {
       throw new Error(
-        "Automatic refills are unavailable. Save settings and review the current quote first.",
+        ERROR_MESSAGES.automaticRefillsAreUnavailableSaveSettingsAndReviewTheCurrent,
       );
     }
     return await beginAction({

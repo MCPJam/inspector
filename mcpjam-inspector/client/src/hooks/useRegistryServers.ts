@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useQuery, useMutation } from "convex/react";
@@ -462,7 +463,7 @@ export function useRegistryServers({
         error instanceof WebApiError
           ? error.message
           : "Failed to load registry catalog";
-      toast.error(message);
+      toast.error(getUserErrorMessage(message));
       setRawCatalog((prev) => prev ?? []);
     }
   }, []);
@@ -503,8 +504,7 @@ export function useRegistryServers({
         if (cancelled) return;
         mergeRanRef.current = true;
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
+        const message = error instanceof Error ? error.message : String(error);
         if (
           message === "Signed-in user required" ||
           message === "User not found"
@@ -515,17 +515,12 @@ export function useRegistryServers({
         }
         if (!isBackgroundAuthError(error)) {
           toast.error(
-            error instanceof WebApiError
-              ? error.message
-              : ERROR_MESSAGES.couldNotMergeGuestStars,
+            getUserErrorMessage(error, ERROR_MESSAGES.couldNotMergeGuestStars),
           );
         }
         // Schedule a retry by bumping the nonce, which is in this effect's
         // deps. Backoff grows with attempt count; capped by MAX_MERGE_ATTEMPTS.
-        if (
-          !cancelled &&
-          mergeAttemptCountRef.current < MAX_MERGE_ATTEMPTS
-        ) {
+        if (!cancelled && mergeAttemptCountRef.current < MAX_MERGE_ATTEMPTS) {
           const delayMs = 1_000 * 2 ** (mergeAttemptCountRef.current - 1);
           retryTimeout = setTimeout(() => {
             if (!cancelled) setMergeRetryNonce((n) => n + 1);
@@ -702,7 +697,7 @@ export function useRegistryServers({
       });
       const message =
         error instanceof WebApiError ? error.message : "Could not update star";
-      toast.error(message);
+      toast.error(getUserErrorMessage(message));
     }
   }, []);
 

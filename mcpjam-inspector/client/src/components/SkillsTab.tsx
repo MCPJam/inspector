@@ -1,3 +1,4 @@
+import { ERROR_MESSAGE_TEMPLATES } from "@/lib/error-messages";
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -427,9 +428,8 @@ export function SkillsTab({
       // The person who clicked is the one who needs to know it failed, and
       // they are not reading the console. `webPost` throws a `WebApiError`
       // carrying the server's own message.
-      const message = err instanceof Error ? err.message : String(err);
       console.error("Error promoting skill:", err);
-      toast.error(`Couldn't publish "${selectedItem.name}": ${message}`);
+      toast.error(ERROR_MESSAGE_TEMPLATES.couldnTPublishPleaseTryAgain(selectedItem.name));
     }
   };
 

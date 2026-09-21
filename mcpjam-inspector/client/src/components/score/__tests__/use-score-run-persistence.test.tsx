@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConformanceScore } from "@mcpjam/sdk/browser";
@@ -125,7 +126,7 @@ describe("useScoreRunPersistence", () => {
     await flush();
 
     expect(setError).toHaveBeenCalledWith(
-      "Scan finished, but the shareable link could not be saved: Storage unavailable",
+      ERROR_MESSAGES.scanFinishedButTheShareableLinkCouldNotBeSaved,
     );
     expect(setResultToken).not.toHaveBeenCalled();
     expect(setPhase).toHaveBeenLastCalledWith("done");

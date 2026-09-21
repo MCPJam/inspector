@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { getInitialThemePreference, updateThemeMode } from "@/lib/theme-utils";
 import { resolveThemeMode } from "@/lib/theme-mode";
 import { createContext, useContext, useEffect, useRef } from "react";
@@ -65,7 +66,7 @@ export const usePreferencesStore = <T,>(
   selector: (state: PreferencesState) => T,
 ): T => {
   const store = useContext(PreferencesStoreContext);
-  if (!store) throw new Error("Missing PreferencesStoreProvider");
+  if (!store) throw new Error(ERROR_MESSAGES.missingPreferencesstoreprovider);
   return useStore(store, selector);
 };
 

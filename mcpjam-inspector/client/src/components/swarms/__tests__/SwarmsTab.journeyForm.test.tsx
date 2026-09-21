@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * New-goal form: the goal text is the only field. Where it runs and how hard
  * it pushes follow the same defaults the swarm create flow and Generate use.
@@ -253,7 +254,7 @@ describe("SwarmsTab — new goal form", () => {
     await createGoal("buy a plan");
 
     await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent(/backend said no/i);
+      expect(screen.getByRole("alert")).toHaveTextContent(ERROR_MESSAGES.couldNotCreateTheGoal);
     });
     // The text survives so the user can retry without retyping it.
     expect((screen.getByLabelText("Goal") as HTMLTextAreaElement).value).toBe(
@@ -267,7 +268,7 @@ describe("SwarmsTab — new goal form", () => {
     await createGoal("buy a plan");
 
     await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent(/no setup for that/i);
+      expect(screen.getByRole("alert")).toHaveTextContent(ERROR_MESSAGES.couldNotCreateTheGoal);
     });
     expect(createJourneyMutation).not.toHaveBeenCalled();
   });

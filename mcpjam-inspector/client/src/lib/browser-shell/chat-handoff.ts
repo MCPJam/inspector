@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useRef } from "react";
 
 type Holder = {
@@ -107,7 +108,7 @@ export async function releaseBrowserForChat(
       .then((released) => {
         if (!released) {
           throw new Error(
-            "Couldn't return browser control to the agent. Try sending your message again.",
+            ERROR_MESSAGES.couldnTReturnBrowserControlToTheAgentTrySending,
           );
         }
         holder.holding = false;

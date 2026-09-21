@@ -1,3 +1,6 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
+import { getUserErrorMessage } from "@/lib/user-error";
+import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
 import { toast } from "@/lib/toast";
 import { splitServerAttribution } from "@/lib/server-error-copy";
 
@@ -16,6 +19,9 @@ export function toastServerConnectionFailure(
   message: string,
   options?: { action?: ToastAction },
 ): void {
-  const { title, description } = splitServerAttribution(serverName, message);
+  const safeMessage = isProtocolVersionPinFailure(undefined, message)
+    ? ERROR_MESSAGES.protocolVersionUnsupported
+    : getUserErrorMessage(message, ERROR_MESSAGES.connectionFailed);
+  const { title, description } = splitServerAttribution(serverName, safeMessage);
   toast.error(title, { description, action: options?.action });
 }

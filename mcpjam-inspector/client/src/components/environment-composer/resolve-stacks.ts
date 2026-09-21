@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Turn composer state into real project-environment ids, for every surface that
  * has to launch something.
@@ -218,7 +219,7 @@ export async function resolveComposerEnvironments(args: {
         // a target that can never launch, so make the user detach it instead.
         throw new ComposerResolveError(
           "UNRESOLVED_ENVIRONMENT",
-          "One of the selected environments is no longer available. Remove it and pick another.",
+          ERROR_MESSAGES.environmentUnavailableSelection,
         );
       }
       environments.push(env);
@@ -339,7 +340,7 @@ export async function resolveComposerEnvironments(args: {
       if (isAdhocUnavailable(err)) {
         throw new ComposerResolveError(
           "ADHOC_UNAVAILABLE",
-          "This workspace's backend doesn't support quick setups yet. Pick a saved environment instead.",
+          ERROR_MESSAGES.quickSetupUnavailable,
         );
       }
       throw new ComposerResolveError(

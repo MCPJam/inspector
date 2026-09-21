@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 import { isCreditExhaustion } from "@/shared/credit-exhaustion";
 import { describeAsSlug, describeError } from "@mcpjam/sdk/browser";
@@ -30,7 +31,7 @@ export function isSpendBudgetReachedCode(code: string | undefined): boolean {
  * refused.
  */
 export const SPEND_BUDGET_REACHED_MESSAGE =
-  "This organization's spend budget is reached. An owner or admin can raise it in Organization \u2192 Billing.";
+  ERROR_MESSAGES.thisOrganizationSSpendBudgetIsReachedAnOwnerOr;
 export type MCPJamLimitKind = "total" | "concurrency";
 
 /** Which allowance ran out. Free orgs draw on a daily bucket, Team orgs on a

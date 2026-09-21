@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { swarmVerdictValueLabel } from "@mcpjam/sdk/contract";
 import { swarmTargetCaseId } from "@mcpjam/sdk/contract";
@@ -193,10 +194,10 @@ export function journeyHostOutcome(
   return decision?.verdict === "passed"
     ? "pass"
     : decision?.verdict === "failed"
-      ? "fail"
-      : decision?.verdict === "inconclusive"
-        ? "part"
-        : "none";
+    ? "fail"
+    : decision?.verdict === "inconclusive"
+    ? "part"
+    : "none";
 }
 
 function hostSummaryFor(run: JourneyRun, targetKey: string) {
@@ -334,8 +335,8 @@ function JourneyBlock({
     [journey, hosts, latestRun, environments, environmentsEnabled],
   );
   const serverGroupName = journey.serverAttachmentId
-    ? (serverAttachments.find((a) => a._id === journey.serverAttachmentId)
-        ?.name ?? null)
+    ? serverAttachments.find((a) => a._id === journey.serverAttachmentId)
+        ?.name ?? null
     : null;
   const configHint = `${journey.config.sessionsPerTarget}/host · ${journey.config.maxTurns} turns`;
   // Cost-relevant journey config, so an edit re-prices an already-open estimate
@@ -385,7 +386,7 @@ function JourneyBlock({
       // plus the actions that clear it. Repeating it inline under the goal
       // would say the same thing twice with nothing to act on.
       if (e instanceof LaunchJourneyRunError && e.limitDialogRaised) return;
-      setLaunchError(e instanceof Error ? e.message : ERROR_MESSAGES.failedToStartRun);
+      setLaunchError(getUserErrorMessage(e, ERROR_MESSAGES.failedToStartRun));
     } finally {
       setLaunching(false);
     }
@@ -571,7 +572,7 @@ function JourneyBlock({
                   >
                     {summary
                       ? `${summary.succeeded}/${summary.total} ok`
-                      : (meta?.label ?? "No data")}
+                      : meta?.label ?? "No data"}
                   </span>
                 </span>
               </button>
@@ -698,7 +699,9 @@ function JourneyGradingEditor({
       toast.success("Grading updated — applies to future runs");
       setOpen(false);
     } catch (e) {
-      toast.error(getBillingErrorMessage(e, ERROR_MESSAGES.failedToUpdateGrading));
+      toast.error(
+        getBillingErrorMessage(e, ERROR_MESSAGES.failedToUpdateGrading),
+      );
     } finally {
       setSaving(false);
     }
@@ -715,7 +718,9 @@ function JourneyGradingEditor({
         >
           <span className="min-w-0 truncate">
             {criteriaCount > 0
-              ? `${criteriaCount} ${criteriaCount === 1 ? "evaluator" : "evaluators"}`
+              ? `${criteriaCount} ${
+                  criteriaCount === 1 ? "evaluator" : "evaluators"
+                }`
               : "Grading"}
           </span>
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
@@ -847,7 +852,9 @@ function JourneyEnvironmentsEditor({
       toast.success("Goal environments updated");
       setOpen(false);
     } catch (e) {
-      toast.error(getBillingErrorMessage(e, ERROR_MESSAGES.failedToUpdateEnvironments));
+      toast.error(
+        getBillingErrorMessage(e, ERROR_MESSAGES.failedToUpdateEnvironments),
+      );
     } finally {
       setSaving(false);
     }
@@ -881,7 +888,9 @@ function JourneyEnvironmentsEditor({
       toast.success("Goal switched back to clients");
       setOpen(false);
     } catch (e) {
-      toast.error(getBillingErrorMessage(e, ERROR_MESSAGES.failedToUpdateEnvironments));
+      toast.error(
+        getBillingErrorMessage(e, ERROR_MESSAGES.failedToUpdateEnvironments),
+      );
     } finally {
       setSaving(false);
     }
@@ -889,8 +898,8 @@ function JourneyEnvironmentsEditor({
 
   const label =
     current.length === 1
-      ? (environments.find((e) => e.environmentId === current[0])?.name ??
-        "1 environment")
+      ? environments.find((e) => e.environmentId === current[0])?.name ??
+        "1 environment"
       : `${current.length} environments`;
 
   return (

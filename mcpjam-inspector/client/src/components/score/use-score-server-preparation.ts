@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback } from "react";
 import { useMutation } from "convex/react";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
@@ -15,7 +16,7 @@ async function waitForServerId(serverName: string): Promise<string> {
   }
 
   throw new Error(
-    "Timed out preparing the workspace for this server. Reload and try again.",
+    ERROR_MESSAGES.timedOutPreparingTheWorkspaceForThisServerReloadAnd,
   );
 }
 
@@ -44,7 +45,7 @@ export function useScoreServerPreparation(projectId: string | null) {
     async (serverUrl: string): Promise<PreparedScoreServer> => {
       if (!projectId) {
         throw new Error(
-          "Still setting up your workspace. Give it a moment and try again.",
+          ERROR_MESSAGES.stillSettingUpYourWorkspaceGiveItAMomentAnd,
         );
       }
 

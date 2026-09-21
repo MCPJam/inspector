@@ -1,3 +1,4 @@
+import { ERROR_MESSAGE_TEMPLATES } from "@/lib/error-messages";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * The data-bound picker: trigger + popover + `ServerPickerPanel`.
@@ -275,12 +276,12 @@ export function ServerPicker({
         if (result.readyServerNames.includes(serverName)) return;
         if (result.reauthServerNames.includes(serverName)) {
           toast.error(
-            `${serverName} needs authorizing before it can connect.`,
+            ERROR_MESSAGE_TEMPLATES.needsAuthorizingBeforeItCanConnect(serverName),
             goToServers,
           );
           return;
         }
-        toast.error(`${serverName} didn't connect.`, goToServers);
+        toast.error(ERROR_MESSAGE_TEMPLATES.didnTConnect(serverName), goToServers);
       } catch (err) {
         if (!isCurrent()) return;
         const raw = err instanceof Error ? err.message : "";
@@ -603,7 +604,7 @@ export function ServerPicker({
       // throwing keeps the draft rather than costing the user what they picked.
       if (!attachmentsKnown) {
         toast.error(ERROR_MESSAGES.stillLoadingThisProjectSServerGroups);
-        throw new Error("Attachments not loaded");
+        throw new Error(ERROR_MESSAGES.attachmentsNotLoaded);
       }
       /**
        * THROWN, so the panel keeps the draft; resolving would discard what the
@@ -612,7 +613,7 @@ export function ServerPicker({
        */
       if (writing.current) {
         toast.error(ERROR_MESSAGES.stillSavingTheLastChangeTryAgainInAMoment);
-        throw new Error("A write is already in flight");
+        throw new Error(ERROR_MESSAGES.aWriteIsAlreadyInFlight);
       }
       writing.current = true;
       setCreating(true);

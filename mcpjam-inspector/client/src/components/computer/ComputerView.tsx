@@ -133,7 +133,7 @@ export function ComputerView({
   const hasComputer = liveStatus !== undefined && !isGone;
 
   const mintToken = useCallback(async () => {
-    if (!effectiveProjectId) throw new Error("No project selected.");
+    if (!effectiveProjectId) throw new Error(ERROR_MESSAGES.noProjectSelected);
     const result = await mintTerminalToken({ projectId: effectiveProjectId });
     return result.token;
   }, [effectiveProjectId, mintTerminalToken]);

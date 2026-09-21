@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, SquareSlash } from "lucide-react";
@@ -125,7 +126,7 @@ export function ProjectEnvironmentSkillsPicker({
       } catch (err) {
         if (!active) return;
         setLoadError(
-          err instanceof Error ? err.message : ERROR_MESSAGES.failedToLoadSkills,
+          getUserErrorMessage(err, ERROR_MESSAGES.failedToLoadSkills),
         );
       }
     })();

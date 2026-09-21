@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * score.mcpjam.com persistence client.
  *
@@ -96,7 +97,7 @@ export async function submitScoreRun(input: {
     throw new Error(await readError(response, "Could not save this run."));
   }
   const body = (await response.json()) as { token?: string };
-  if (!body.token) throw new Error("Could not save this run.");
+  if (!body.token) throw new Error(ERROR_MESSAGES.couldNotSaveThisRun);
   return { token: body.token };
 }
 
@@ -118,6 +119,6 @@ export async function fetchScoreRun(token: string): Promise<StoredScoreRun> {
     throw new Error(await readError(response, "Could not load this result."));
   }
   const body = (await response.json()) as { run?: StoredScoreRun };
-  if (!body.run) throw new Error("Could not load this result.");
+  if (!body.run) throw new Error(ERROR_MESSAGES.couldNotLoadThisResult);
   return body.run;
 }

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import type { EvalMatchOptions, CasePredicates } from "@/shared/eval-matching";
 import type { ConvexReactClient } from "convex/react";
 import {
@@ -257,7 +258,7 @@ export async function generateAndPersistEvalTests(
   // use-convex-access-token), so no `isDirectGuest` branch is needed here.
   const accessToken = HOSTED_MODE ? null : await getAccessToken();
   if (!HOSTED_MODE && !accessToken) {
-    throw new Error("Not authenticated");
+    throw new Error(ERROR_MESSAGES.notAuthenticated);
   }
 
   const result = await generateEvalTests({

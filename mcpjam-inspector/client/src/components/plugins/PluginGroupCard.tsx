@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { useEffect, useState } from "react";
 import {
   ChevronRight,
@@ -120,14 +121,12 @@ export function PluginGroupCard({
   const health = rollUpPluginHealth(plugin, setupStatus);
   const healthPresentation = describePluginHealth(health);
 
-  const runAction = async (label: string, run: () => Promise<void>) => {
+  const runAction = async (_label: string, run: () => Promise<void>) => {
     setPendingAction(true);
     try {
       await run();
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : `Could not ${label}.`,
-      );
+      toast.error(getUserErrorMessage(error));
     } finally {
       setPendingAction(false);
     }
@@ -186,7 +185,9 @@ export function PluginGroupCard({
               variant="ghost"
               size="sm"
               disabled={pendingAction}
-              aria-label={`Plugin actions for ${plugin.displayName || plugin.name}`}
+              aria-label={`Plugin actions for ${
+                plugin.displayName || plugin.name
+              }`}
             >
               {pendingAction ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -340,9 +341,7 @@ export function PluginGroupCard({
                                 runAction("save the setup values", async () => {
                                   await updateServerWithClientSecret({
                                     serverId: materializedServerId,
-                                    ...(values.env
-                                      ? { env: values.env }
-                                      : {}),
+                                    ...(values.env ? { env: values.env } : {}),
                                     ...(values.headers
                                       ? { headers: values.headers }
                                       : {}),
@@ -386,10 +385,7 @@ export function PluginGroupCard({
 
               {version.componentCounts.unsupported > 0 ? (
                 <p className="text-[11px] text-muted-foreground">
-                  {pluralize(
-                    version.componentCounts.unsupported,
-                    "component",
-                  )}{" "}
+                  {pluralize(version.componentCounts.unsupported, "component")}{" "}
                   in this bundle are preserved but not run by MCPJam.
                 </p>
               ) : null}
@@ -426,15 +422,18 @@ export function PluginGroupCard({
                             className="ml-auto h-6 px-2 text-xs"
                             disabled={pendingAction}
                             onClick={() =>
-                              void runAction("activate that revision", async () => {
-                                await management.activateVersion(
-                                  plugin.pluginId,
-                                  v.pluginVersionId,
-                                );
-                                track("plugin_version_upgraded", {
-                                  location: "plugin_card",
-                                });
-                              })
+                              void runAction(
+                                "activate that revision",
+                                async () => {
+                                  await management.activateVersion(
+                                    plugin.pluginId,
+                                    v.pluginVersionId,
+                                  );
+                                  track("plugin_version_upgraded", {
+                                    location: "plugin_card",
+                                  });
+                                },
+                              )
                             }
                           >
                             Activate

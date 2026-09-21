@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { isSignOutInProgress } from "@/lib/auth/sign-out-latch";
 import { reportCaught } from "@/lib/error-reporting";
@@ -40,7 +41,7 @@ export function handleWorkosRefreshFailure({
   }) => void | Promise<void>;
 }): void {
   if (isSignOutInProgress()) return;
-  reportCaught(new Error("WorkOS session refresh failed"), {
+  reportCaught(new Error(ERROR_MESSAGES.workosSessionRefreshFailed), {
     source: "workos_refresh_failure",
     level: "warning",
   });

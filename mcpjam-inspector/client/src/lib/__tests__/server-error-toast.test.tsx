@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   render,
@@ -36,17 +37,19 @@ describe("toastServerConnectionFailure", () => {
     toastServerConnectionFailure("Excalidraw (App)", "Request failed (500)");
 
     expect(await screen.findByText("Excalidraw (App)")).toBeInTheDocument();
-    expect(screen.getByText("Request failed (500)")).toBeInTheDocument();
+    expect(screen.getByText(ERROR_MESSAGES.connectionFailed)).toBeInTheDocument();
+    expect(screen.queryByText("Request failed (500)")).not.toBeInTheDocument();
   });
 
-  it("keeps a message that already names the server on one line", async () => {
+  it("does not expose unknown backend text even when it names the server", async () => {
     render(<Toaster />);
     const message =
       'MCP server "champions" doesn\'t support MCP protocol version 2026-07-28.';
 
     toastServerConnectionFailure("champions", message);
 
-    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(await screen.findByText(ERROR_MESSAGES.connectionFailed)).toBeInTheDocument();
+    expect(screen.queryByText(message)).not.toBeInTheDocument();
   });
 
   it("copies the description, not just the server name", async () => {
@@ -61,9 +64,16 @@ describe("toastServerConnectionFailure", () => {
 
     await waitFor(() =>
       expect(copyMock).toHaveBeenCalledWith(
-        "Excalidraw (App): Request failed (500)",
+        `Excalidraw (App): ${ERROR_MESSAGES.connectionFailed}`,
       ),
     );
+  });
+
+  it("keeps protocol-version recovery available after replacing backend copy", async () => {
+    render(<Toaster />);
+    toastServerConnectionFailure("example", "Server does not support 2020-01-01, which this client is pinned to");
+    expect(await screen.findByText(ERROR_MESSAGES.protocolVersionUnsupported)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Change protocol version" })).toBeInTheDocument();
   });
 
   it("carries an action that fixes the failure", async () => {

@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
@@ -107,11 +108,11 @@ function closeMessage(code: number, reason: string): string {
 }
 
 const STATUS_CONFIG: Record<TerminalState, { dot: string; label: string }> = {
-  connecting:   { dot: "bg-amber-400 animate-pulse", label: "Connecting" },
-  connected:    { dot: "bg-emerald-500",              label: "Connected" },
-  exited:       { dot: "bg-zinc-400",                 label: "Exited" },
-  disconnected: { dot: "bg-zinc-400",                 label: "Disconnected" },
-  error:        { dot: "bg-red-500",                  label: "Error" },
+  connecting: { dot: "bg-amber-400 animate-pulse", label: "Connecting" },
+  connected: { dot: "bg-emerald-500", label: "Connected" },
+  exited: { dot: "bg-zinc-400", label: "Exited" },
+  disconnected: { dot: "bg-zinc-400", label: "Disconnected" },
+  error: { dot: "bg-red-500", label: "Error" },
 };
 
 /**
@@ -223,7 +224,7 @@ export function ComputerTerminal({
       if (isStale()) return;
       setState("error");
       setDetail(
-        err instanceof Error ? err.message : "Could not start the terminal."
+        err instanceof Error ? err.message : "Could not start the terminal.",
       );
       return;
     }
@@ -257,7 +258,7 @@ export function ComputerTerminal({
       onClose: (code, reason) => {
         if (isStale()) return;
         setState((prev) =>
-          prev === "exited" || prev === "error" ? prev : "disconnected"
+          prev === "exited" || prev === "error" ? prev : "disconnected",
         );
         setDetail((prev) => prev || closeMessage(code, reason));
       },
@@ -295,7 +296,7 @@ export function ComputerTerminal({
       dragDepthRef.current += 1;
       setDragActive(true);
     },
-    [uploadEnabled]
+    [uploadEnabled],
   );
 
   const handleDragOver = useCallback(
@@ -308,7 +309,7 @@ export function ComputerTerminal({
       if (!uploadEnabled) return;
       e.dataTransfer.dropEffect = "copy";
     },
-    [uploadEnabled]
+    [uploadEnabled],
   );
 
   const handleDragLeave = useCallback(
@@ -318,7 +319,7 @@ export function ComputerTerminal({
       dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
       if (dragDepthRef.current === 0) setDragActive(false);
     },
-    [uploadEnabled]
+    [uploadEnabled],
   );
 
   const handleDrop = useCallback(
@@ -355,12 +356,13 @@ export function ComputerTerminal({
           written[0]?.path.slice(0, written[0].path.lastIndexOf("/")) || "~";
         const single = written.length === 1 ? written[0] : undefined;
         // Copy the path so the user can paste it straight into chat ("read <path>").
-        if (single) void navigator.clipboard?.writeText(single.path).catch(() => {});
+        if (single)
+          void navigator.clipboard?.writeText(single.path).catch(() => {});
         toast.success(
           single
             ? `Uploaded to ${single.path} (path copied)`
             : `Uploaded ${written.length} files to ${destDir}`,
-          { duration: 4000 }
+          { duration: 4000 },
         );
         // Surface the result in the user's real shell. Ctrl-U (\x15) clears any
         // half-typed input first so this can't interleave with their command.
@@ -369,15 +371,15 @@ export function ComputerTerminal({
         const quotedDir =
           destDir === "~" ? "~" : `'${destDir.replace(/'/g, `'\\''`)}'`;
         connRef.current?.sendInput(
-          new TextEncoder().encode(`\x15ls -la ${quotedDir}/\n`)
+          new TextEncoder().encode(`\x15ls -la ${quotedDir}/\n`),
         );
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : ERROR_MESSAGES.uploadFailed);
+        toast.error(getUserErrorMessage(err, ERROR_MESSAGES.uploadFailed));
       } finally {
         setUploading(false);
       }
     },
-    [state, mintToken, baseUrl, cwd, uploadEnabled]
+    [state, mintToken, baseUrl, cwd, uploadEnabled],
   );
 
   // Create the xterm instance once; wire input + resize; auto-connect.
@@ -423,10 +425,10 @@ export function ComputerTerminal({
 
     const encoder = new TextEncoder();
     const dataSub = term.onData((data) =>
-      connRef.current?.sendInput(encoder.encode(data))
+      connRef.current?.sendInput(encoder.encode(data)),
     );
     const resizeSub = term.onResize(({ cols, rows }) =>
-      connRef.current?.resize(cols, rows)
+      connRef.current?.resize(cols, rows),
     );
     const selSub = term.onSelectionChange(() => {
       setHasSelection(term.hasSelection());
@@ -518,7 +520,11 @@ export function ComputerTerminal({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
-          <div ref={containerRef} className="absolute inset-0 p-1" onClick={() => termRef.current?.focus()} />
+          <div
+            ref={containerRef}
+            className="absolute inset-0 p-1"
+            onClick={() => termRef.current?.focus()}
+          />
           {uploadEnabled && (dragActive || uploading) ? (
             <div className="pointer-events-none absolute inset-2 z-10 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-primary/60 bg-background/85 text-sm">
               {uploading ? (

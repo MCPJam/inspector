@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Suite schedule editor — rendered as a section of the suite settings sheet,
@@ -89,7 +90,7 @@ export function ScheduleEditor({
   environmentIds?: string[];
 }) {
   const setSuiteSchedule = useMutation(
-    "testSuites:setSuiteSchedule" as any
+    "testSuites:setSuiteSchedule" as any,
   ) as unknown as (args: {
     suiteId: string;
     enabled: boolean;
@@ -104,7 +105,7 @@ export function ScheduleEditor({
   // until the next enable (the server only stores intervals on enabled
   // writes). Re-seeds when the persisted value changes from elsewhere.
   const [draftIntervalMinutes, setDraftIntervalMinutes] = useState(
-    persistedIntervalMinutes
+    persistedIntervalMinutes,
   );
   useEffect(() => {
     setDraftIntervalMinutes(persistedIntervalMinutes);
@@ -123,7 +124,7 @@ export function ScheduleEditor({
   const attachedEnvironmentIds = useMemo(
     () =>
       attachedEnvironmentIdsKey ? attachedEnvironmentIdsKey.split(",") : [],
-    [attachedEnvironmentIdsKey]
+    [attachedEnvironmentIdsKey],
   );
   // NOT flag-gated. A suite that fans out over ≥2 cells has to say which one a
   // scheduled run uses, whatever minted them — and a client × model matrix is
@@ -141,11 +142,11 @@ export function ScheduleEditor({
     requiresEnvironmentPin ? projectId : null,
     // A suite composed from the header attaches nameless ad-hoc rows, and a pin
     // labeled by a bare id tells the user nothing about what it pinned.
-    { includeAdhoc: true }
+    { includeAdhoc: true },
   );
   const labelContext = useEnvironmentLabelContext(
     requiresEnvironmentPin ? projectId : null,
-    environments
+    environments,
   );
   // Ad-hoc rows label by their client, so two setups on one client would read
   // identically without disambiguation — the case a composed suite makes normal.
@@ -156,10 +157,10 @@ export function ScheduleEditor({
           (environments ?? []).map((environment) => ({
             environmentId: environment.environmentId,
             label: environmentRowLabel(environment, labelContext),
-          }))
-        ).map(({ environmentId, label }) => [environmentId, label])
+          })),
+        ).map(({ environmentId, label }) => [environmentId, label]),
       ),
-    [environments, labelContext]
+    [environments, labelContext],
   );
   // Defensive: a persisted pin whose environment was detached from the
   // suite still renders (marked) so the user sees why a re-pin is needed.
@@ -180,7 +181,7 @@ export function ScheduleEditor({
     const effectiveEnvironmentId = args.environmentId ?? draftEnvironmentId;
     if (args.enabled && requiresEnvironmentPin && !effectiveEnvironmentId) {
       toast.error(
-        ERROR_MESSAGES.pickWhichEnvironmentScheduledRunsShouldUseBeforeEnabling
+        ERROR_MESSAGES.pickWhichEnvironmentScheduledRunsShouldUseBeforeEnabling,
       );
       return;
     }
@@ -201,7 +202,7 @@ export function ScheduleEditor({
       toast.success(args.enabled ? "Schedule updated" : "Schedule disabled");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : ERROR_MESSAGES.failedToUpdateSchedule
+        getUserErrorMessage(error, ERROR_MESSAGES.failedToUpdateSchedule),
       );
     } finally {
       setIsSaving(false);
@@ -244,7 +245,10 @@ export function ScheduleEditor({
             }
           }}
         >
-          <SelectTrigger className="h-8 w-44 text-xs" aria-label="Schedule interval">
+          <SelectTrigger
+            className="h-8 w-44 text-xs"
+            aria-label="Schedule interval"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

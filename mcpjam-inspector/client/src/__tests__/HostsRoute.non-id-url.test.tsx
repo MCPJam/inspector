@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { routePaths } from "../lib/app-navigation";
@@ -227,7 +228,7 @@ describe("HostsRoute — a URL segment that is not a Convex host id", () => {
     const { rerender } = render(<HostsRoute />);
 
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith("host limit reached")
+      expect(toast.error).toHaveBeenCalledWith(ERROR_MESSAGES.couldnTOpenThatClient)
     );
     // A later render (the other flag settling, a host-list update) must not
     // retry a create that may have committed before it failed.

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * The controller's contract: one request per click, one controller per scope,
  * and an older backend that says so instead of failing silently.
@@ -236,7 +237,7 @@ describe("build", () => {
     await act(async () => {
       result.current.build.onRun();
     });
-    expect(result.current.build.error).toContain("already being built");
+    expect(result.current.build.error).toContain(ERROR_MESSAGES.unknownError);
   });
 });
 
@@ -439,7 +440,7 @@ describe("state is scoped to ONE run", () => {
     await act(async () => {
       result.current.build.onRun();
     });
-    expect(result.current.build.error).toContain("could not be built");
+    expect(result.current.build.error).toContain(ERROR_MESSAGES.unknownError);
 
     rerender({ suiteRunId: "run_B" });
     expect(result.current.build.error).toBeNull();
@@ -596,7 +597,7 @@ describe("a stale build callback cannot reach a live request", () => {
     await act(async () => {
       settlers[1]?.(new Error("the live request failed"));
     });
-    expect(result.current.build.error).toContain("the live request failed");
+    expect(result.current.build.error).toContain(ERROR_MESSAGES.unknownError);
   });
 });
 
@@ -678,7 +679,7 @@ describe("one Analyze findings action", () => {
       }),
     );
     await act(async () => result.current.analyze.onRun());
-    expect(result.current.analyze.error).toContain("Evidence unavailable");
+    expect(result.current.analyze.error).toContain(ERROR_MESSAGES.unknownError);
     expect(result.current.analyze.pending).toBe(false);
     expect(borrowed.requestInsight).not.toHaveBeenCalled();
   });

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { create } from "zustand";
 import {
   buildDefaultProjectConnectionConfig,
@@ -162,7 +163,7 @@ function isPendingRemoteEchoMatch(
 function parseRecordJson(text: string): Record<string, unknown> {
   const parsed = JSON.parse(text) as unknown;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Value must be a JSON object");
+    throw new Error(ERROR_MESSAGES.valueMustBeAJsonObject);
   }
   return parsed as Record<string, unknown>;
 }
@@ -179,19 +180,19 @@ function parseConnectionDefaultsJson(text: string): ProjectConnectionDefaults {
       requestTimeout <= 0)
   ) {
     throw new Error(
-      "connectionDefaults.requestTimeout must be a positive number",
+      ERROR_MESSAGES.connectiondefaultsRequesttimeoutMustBeAPositiveNumber,
     );
   }
 
   if (headers !== undefined) {
     if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
-      throw new Error("connectionDefaults.headers must be a JSON object");
+      throw new Error(ERROR_MESSAGES.connectiondefaultsHeadersMustBeAJsonObject);
     }
 
     for (const [key, value] of Object.entries(headers)) {
       if (key.toLowerCase() === "authorization") {
         throw new Error(
-          "connectionDefaults.headers must not include Authorization",
+          ERROR_MESSAGES.connectiondefaultsHeadersMustNotIncludeAuthorization,
         );
       }
 

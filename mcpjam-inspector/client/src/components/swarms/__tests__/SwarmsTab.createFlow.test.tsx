@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * New swarm create flow: Describe → Confirm details → Create & launch.
  *
@@ -1061,7 +1062,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
 
     expect(
-      (await screen.findAllByText(/Claude has no model/)).length,
+      (await screen.findAllByText(ERROR_MESSAGES.environmentModelRequired)).length,
     ).toBeGreaterThan(0);
     expect(convexQueryMock).toHaveBeenCalledWith(
       "projectEnvironments:resolveEnvironmentForLaunch",
@@ -1337,7 +1338,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /out of credits/i,
+      ERROR_MESSAGES.unexpected,
     );
     expect(
       screen.queryByTestId("new-swarm-proposed-personas"),
@@ -2723,7 +2724,7 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
 
     await vi.waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
-        expect.stringContaining("persona rejected"),
+        ERROR_MESSAGES.couldnTSaveThisPersonaYourChangesAreStillHere,
       );
     });
     // ONCE. `savePersonaField` also toasts and rethrows, so routing Confirm's
@@ -2748,7 +2749,7 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
 
     await vi.waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
-        expect.stringContaining("goal rejected"),
+        ERROR_MESSAGES.couldnTSaveThisPersonaYourChangesAreStillHere,
       );
     });
     expect(screen.getByTestId("new-swarm-persona-detail")).toBeInTheDocument();

@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -72,7 +73,7 @@ export function EvalGenerationWorkspace({
         config ? toGenerationOptions(config) : undefined,
       );
     } catch (error) {
-      setStartError(error instanceof Error ? error.message : String(error));
+      setStartError(getUserErrorMessage(error));
     }
   };
   useEffect(() => {
@@ -99,7 +100,7 @@ export function EvalGenerationWorkspace({
   // The limit dialog already opened on the refusal; the inline line only has
   // to say why generation stopped, not echo the raw JSON body.
   const errorText = error
-    ? (describeMCPJamLimitMessage(error) ?? error)
+    ? describeMCPJamLimitMessage(error) ?? error
     : undefined;
   const scopeIsUnfixableByRetry = isUnretryableGenerationScope(error);
   /**
@@ -156,10 +157,10 @@ export function EvalGenerationWorkspace({
           {running
             ? "Generating cases…"
             : revealing
-              ? "Loading cases…"
-              : error
-                ? "Generation stopped"
-                : "Generation complete"}
+            ? "Loading cases…"
+            : error
+            ? "Generation stopped"
+            : "Generation complete"}
         </div>
       </header>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">

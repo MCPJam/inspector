@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ClientCapabilitiesOverrideDialog } from "../ClientCapabilitiesOverrideDialog";
@@ -73,7 +74,7 @@ describe("ClientCapabilitiesOverrideDialog", () => {
     });
 
     expect(
-      screen.getByText(/not valid JSON/i),
+      screen.getByText(ERROR_MESSAGES.invalidJson),
     ).toBeInTheDocument();
   });
 });

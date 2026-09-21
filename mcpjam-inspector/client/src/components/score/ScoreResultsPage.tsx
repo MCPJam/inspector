@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
 import { Button } from "@mcpjam/design-system/button";
@@ -45,7 +46,7 @@ function describeStoredScore(summary: ScoreSummary, pending = 0): string {
     parts.push(
       `${summary.advisoryCount} advisor${
         summary.advisoryCount === 1 ? "y" : "ies"
-      }`
+      }`,
     );
   }
   if (pending > 0) {
@@ -133,7 +134,7 @@ export function ScoreResultsPage() {
           setNotFound(true);
           return;
         }
-        setError(err instanceof Error ? err.message : String(err));
+        setError(getUserErrorMessage(err));
       });
     return () => {
       cancelled = true;
@@ -161,7 +162,10 @@ export function ScoreResultsPage() {
       .filter((entry) => entry.summary || entry.checks.length > 0);
   }, [run]);
 
-  const pendingTotal = suites.reduce((total, suite) => total + suite.pending, 0);
+  const pendingTotal = suites.reduce(
+    (total, suite) => total + suite.pending,
+    0,
+  );
 
   if (notFound) {
     return (

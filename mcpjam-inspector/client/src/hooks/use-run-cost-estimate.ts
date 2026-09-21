@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { useConvex } from "convex/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -126,17 +127,16 @@ function useFetchOnOpenEstimate({
         // be: an abandoned concurrent render can advance it without committing.)
         // It is memoized on the same inputs as `argsKey`, so the args and the
         // key that triggered this fetch always agree.
-        const result = (await convex.query(
-          queryName as any,
-          args as any,
-        )) as RunCostEstimate | undefined;
+        const result = (await convex.query(queryName as any, args as any)) as
+          | RunCostEstimate
+          | undefined;
         if (requestId !== requestIdRef.current) return;
         setEstimate(result ?? null);
         setStatus(result ? "ready" : "error");
       } catch (err) {
         if (requestId !== requestIdRef.current) return;
         setEstimate(null);
-        setError(err instanceof Error ? err.message : String(err));
+        setError(getUserErrorMessage(err));
         setStatus("error");
       }
     })();

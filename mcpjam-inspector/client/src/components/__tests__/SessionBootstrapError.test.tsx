@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * The bootstrap error branch is the actual claim of BB-118: an expected
  * host-denial 403 must show the self-serve guidance and NOT report to Sentry,
@@ -31,7 +32,7 @@ describe("resolveBootstrapErrorScreen", () => {
 
     expect(report).toBe(true);
     render(element);
-    expect(screen.getByText("Authentication Error")).toBeInTheDocument();
+    expect(screen.getByText(ERROR_MESSAGES.authenticationError)).toBeInTheDocument();
   });
 
   it("non-SessionTokenError failure: renders the generic screen and reports", () => {
@@ -41,6 +42,6 @@ describe("resolveBootstrapErrorScreen", () => {
 
     expect(report).toBe(true);
     render(element);
-    expect(screen.getByText("Authentication Error")).toBeInTheDocument();
+    expect(screen.getByText(ERROR_MESSAGES.authenticationError)).toBeInTheDocument();
   });
 });

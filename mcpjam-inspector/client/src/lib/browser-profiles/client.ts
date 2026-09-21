@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { authFetch } from "@/lib/session-token";
 
 export interface BrowserProfile {
@@ -29,7 +30,7 @@ async function postJson<T>(
     );
   }
   if (payload === null) {
-    throw new Error("The browser profile request failed.");
+    throw new Error(ERROR_MESSAGES.theBrowserProfileRequestFailed);
   }
   return payload as T;
 }
@@ -68,7 +69,7 @@ export async function saveBrowserProfile(args: {
     projectId: args.projectId,
   });
   if (typeof uploadUrl !== "string" || !uploadUrl) {
-    throw new Error("The browser profile upload URL was not returned.");
+    throw new Error(ERROR_MESSAGES.theBrowserProfileUploadUrlWasNotReturned);
   }
   const upload = await fetch(uploadUrl, {
     method: "POST",
@@ -77,13 +78,13 @@ export async function saveBrowserProfile(args: {
     redirect: "error",
   });
   if (!upload.ok) {
-    throw new Error("The browser profile archive could not be uploaded.");
+    throw new Error(ERROR_MESSAGES.theBrowserProfileArchiveCouldNotBeUploaded);
   }
   const storageId = (await upload.json().catch(() => null)) as {
     storageId?: unknown;
   } | null;
   if (typeof storageId?.storageId !== "string" || !storageId.storageId) {
-    throw new Error("The browser profile upload did not return a storage id.");
+    throw new Error(ERROR_MESSAGES.theBrowserProfileUploadDidNotReturnAStorageId);
   }
   const result = await postJson<{ profile?: unknown }>("commit", {
     projectId: args.projectId,
@@ -92,7 +93,7 @@ export async function saveBrowserProfile(args: {
     storageId: storageId.storageId,
   });
   if (!result.profile || typeof result.profile !== "object") {
-    throw new Error("The browser profile was not created.");
+    throw new Error(ERROR_MESSAGES.theBrowserProfileWasNotCreated);
   }
   return result.profile as BrowserProfile;
 }

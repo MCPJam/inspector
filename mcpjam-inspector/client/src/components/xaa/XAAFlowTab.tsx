@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useCallback,
   useEffect,
@@ -952,12 +953,12 @@ export function XAAFlowTab({
           const current = dcrCredentialCacheRef.current.get(cacheKey);
           if (!current || current.clientId !== input.clientId) {
             throw new Error(
-              "This session's dynamic registration credentials are no longer available. Register another client and rerun the flow."
+              ERROR_MESSAGES.thisSessionSDynamicRegistrationCredentialsAreNoLongerAvailable
             );
           }
           if (isXaaDcrClientSecretExpired(current)) {
             throw new Error(
-              "This session's dynamic client secret has expired. Register another client and rerun the flow."
+              ERROR_MESSAGES.thisSessionSDynamicClientSecretHasExpiredRegisterAnother
             );
           }
           return {
@@ -1955,7 +1956,7 @@ export function XAAFlowTab({
               : {}),
           });
           if (saved === false) {
-            throw new Error("Could not save the server. Please try again.");
+            throw new Error(ERROR_MESSAGES.couldNotSaveTheServerPleaseTryAgain);
           }
           setConfigurationSaveVersion((version) => version + 1);
           onSelectServer?.(formData.name);

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { HOSTED_MODE } from "@/lib/config";
 import type { ModelDefinition } from "@/shared/types";
 import type { EvalCase, EvalSuite } from "./types";
@@ -240,14 +241,14 @@ export async function prepareSingleTestCaseRun({
     selectedModel ?? getDefaultTestCaseModelValue(testCase) ?? null;
 
   if (!modelValue) {
-    throw new Error("Add a model first");
+    throw new Error(ERROR_MESSAGES.addAModelFirst);
   }
 
   const [provider, ...modelParts] = modelValue.split("/");
   const model = modelParts.join("/");
 
   if (!provider || !model) {
-    throw new Error("Invalid model selection");
+    throw new Error(ERROR_MESSAGES.invalidModelSelection);
   }
 
   const convexAuthToken = HOSTED_MODE ? null : await getAccessToken();

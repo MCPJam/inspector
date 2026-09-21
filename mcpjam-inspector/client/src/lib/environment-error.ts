@@ -1,3 +1,5 @@
+import { getUserErrorMessage } from "@/lib/user-error";
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { describeError, type NormalizedError } from "@mcpjam/sdk/browser";
 
 /**
@@ -11,15 +13,12 @@ import { describeError, type NormalizedError } from "@mcpjam/sdk/browser";
  * the code away and rendered the bare sentence as red text, which is why an
  * environment with no servers produced a wall of prose with nothing to click.
  *
- * The remedy is deliberately client-side. The backend sentence stays the
- * `oneLine` verbatim — it is the accurate statement of what went wrong — while
- * the likely causes and next steps are authored HERE, because they depend on
- * which surface is asking and the backend has no idea whether it is talking to
- * the Playground, a swarm launch, or an eval. No backend copy change needed.
+ * User guidance is selected locally by code; the original sentence remains in
+ * rawMessage for the explicit diagnostic disclosure.
  */
 
 export interface EnvironmentErrorPayload {
-  /** The backend's own sentence. Rendered verbatim as the card's one-liner. */
+  /** Original diagnostic sentence; display copy is selected by code. */
   message: string;
   /** `details.code` from the 409 — e.g. `ENV_NO_SERVERS`. */
   code?: string;
@@ -47,7 +46,7 @@ const DOCS_ANCHOR = "/troubleshooting/error-codes";
  */
 export function readEnvironmentErrorPayload(
   payload: unknown,
-  fallback: string
+  fallback: string,
 ): EnvironmentErrorPayload {
   if (!payload || typeof payload !== "object") return { message: fallback };
   const record = payload as {
@@ -84,7 +83,7 @@ export function readEnvironmentErrorPayload(
 }
 
 export function isEnvironmentErrorPayload(
-  value: unknown
+  value: unknown,
 ): value is EnvironmentErrorPayload {
   return (
     !!value &&
@@ -111,39 +110,43 @@ const ENV_COPY: Record<
   // and "make the server you already have reachable" — different fixes, and the
   // user has no way to guess which applies.
   ENV_NO_SERVERS: {
-    title: "This environment has no servers to run against",
+    title: ERROR_MESSAGES.thisEnvironmentHasNoServersToRunAgainst,
     severity: "warning",
     likelyCauses: [
-      "The client this environment points at has no servers connected",
-      "The attached server group is empty",
-      "Every server contributed by a pinned plugin has been removed",
-      "The only servers are local — stdio, or a localhost/private-address url — and a cloud run can't reach them",
+      ERROR_MESSAGES.theClientThisEnvironmentPointsAtHasNoServersConnected,
+      ERROR_MESSAGES.theAttachedServerGroupIsEmpty,
+      ERROR_MESSAGES.everyServerContributedByAPinnedPluginHasBeenRemoved,
+      ERROR_MESSAGES.theOnlyServersAreLocalStdioOrALocalhostPrivate,
     ],
     nextSteps: [
-      "Connect a server to the client, or attach a server group",
-      "For a local server, expose it over HTTPS (Create tunnel on its card) and point the client at that url — or run this from a local surface instead",
-      "Check the environment's pinned plugins if it relied on one for servers",
+      ERROR_MESSAGES.connectAServerToTheClientOrAttachAServer,
+      ERROR_MESSAGES.forALocalServerExposeItOverHttpsCreateTunnel,
+      ERROR_MESSAGES.checkTheEnvironmentSPinnedPluginsIfItReliedOn,
     ],
   },
   ENV_ARCHIVED: {
-    title: "This environment is archived",
+    title: ERROR_MESSAGES.thisEnvironmentIsArchived,
     severity: "warning",
-    likelyCauses: ["Someone archived it after this was configured"],
+    likelyCauses: [ERROR_MESSAGES.someoneArchivedItAfterThisWasConfigured],
     nextSteps: [
-      "Restore it from the Environments list, or pick a different one",
+      ERROR_MESSAGES.restoreItFromTheEnvironmentsListOrPickADifferent,
     ],
   },
   ENV_HOST_MISSING: {
-    title: "This environment's client no longer exists",
+    title: ERROR_MESSAGES.thisEnvironmentSClientNoLongerExists,
     severity: "error",
-    likelyCauses: ["The client was deleted after the environment was created"],
-    nextSteps: ["Point the environment at a different client, or recreate it"],
+    likelyCauses: [
+      ERROR_MESSAGES.theClientWasDeletedAfterTheEnvironmentWasCreated,
+    ],
+    nextSteps: [
+      ERROR_MESSAGES.pointTheEnvironmentAtADifferentClientOrRecreateIt,
+    ],
   },
   ENV_ATTACHMENT_MISSING: {
-    title: "This environment's server group is gone",
+    title: ERROR_MESSAGES.thisEnvironmentSServerGroupIsGone,
     severity: "error",
-    likelyCauses: ["The attached server group was deleted"],
-    nextSteps: ["Attach a different server group, or clear the attachment"],
+    likelyCauses: [ERROR_MESSAGES.theAttachedServerGroupWasDeleted],
+    nextSteps: [ERROR_MESSAGES.attachADifferentServerGroupOrClearTheAttachment],
   },
 };
 
@@ -162,13 +165,11 @@ export function describeEnvironmentError(input: unknown): NormalizedError {
   const copy = ENV_COPY[code];
   return {
     slug: `environment/${code.toLowerCase()}`,
-    title: copy?.title ?? "This environment can't run right now",
-    // The backend's sentence, verbatim. It names the specific environment and
-    // is the most accurate one-line statement available.
-    oneLine: message,
+    title: copy?.title ?? ERROR_MESSAGES.thisEnvironmentCanTRunRightNow,
+    oneLine: getUserErrorMessage(input, ERROR_MESSAGES.environmentUnavailable),
     likelyCauses: copy?.likelyCauses ?? [],
     nextSteps: copy?.nextSteps ?? [
-      "Open the environment and check its client, servers, and pins",
+      ERROR_MESSAGES.openTheEnvironmentAndCheckItsClientServersAndPins,
     ],
     docsAnchor: DOCS_ANCHOR,
     severity: copy?.severity ?? "error",

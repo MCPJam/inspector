@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import type {
   CallToolResult,
   ElicitRequest,
@@ -104,7 +105,7 @@ export async function listTools({
   return runByMode({
     hosted: async () => {
       if (!serverId) {
-        throw new Error("serverId is required in hosted mode");
+        throw new Error(ERROR_MESSAGES.serveridIsRequiredInHostedMode);
       }
       // Hosted direct-ops always bypass the response cache server-side, so
       // there's never a `servedFromCache` to surface here.
@@ -251,7 +252,7 @@ export async function callTool(
 
   if (response.status === "elicitation_required") {
     throw new Error(
-      "Tool execution requires elicitation, which is not supported in the emulator yet.",
+      ERROR_MESSAGES.toolExecutionRequiresElicitationWhichIsNotSupportedInThe,
     );
   }
 

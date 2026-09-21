@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { loadStripeJs } from "./seat-payment-stripe";
 export interface AutoTopupCardSession {
   confirm: (clientSecret: string, setupIntentId: string) => Promise<void>;
@@ -9,11 +10,11 @@ export async function mountAutoTopupCard(
   element: HTMLElement,
 ): Promise<AutoTopupCardSession> {
   if (!/^pk_(test|live)_/.test(publishableKey))
-    throw new Error("Card setup is not configured for this environment.");
+    throw new Error(ERROR_MESSAGES.cardSetupIsNotConfiguredForThisEnvironment);
   await loadStripeJs();
   const stripe = window.Stripe?.(publishableKey);
   if (!stripe?.elements || !stripe.confirmCardSetup)
-    throw new Error("Could not initialize secure card setup.");
+    throw new Error(ERROR_MESSAGES.couldNotInitializeSecureCardSetup);
   const card = stripe.elements().create("card");
   card.mount(element);
   return {
@@ -30,7 +31,7 @@ export async function mountAutoTopupCard(
         result.setupIntent.id !== setupIntentId
       )
         throw new Error(
-          "Card setup was not completed. Check its status before continuing.",
+          ERROR_MESSAGES.cardSetupWasNotCompletedCheckItsStatusBeforeContinuing,
         );
     },
     destroy: () => card.destroy(),

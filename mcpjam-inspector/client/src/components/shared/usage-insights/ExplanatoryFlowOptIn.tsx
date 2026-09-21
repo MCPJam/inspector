@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 /**
  * The flow diagram, behind the decision to pay for it.
  *
@@ -144,7 +145,7 @@ function FlowBody({
         // A refusal is reported, not swallowed. "Nothing happened" and "we
         // declined to spend on this" look identical from the outside, and only
         // one of them is worth waiting through.
-        setError(err instanceof Error ? err.message : String(err));
+        setError(getUserErrorMessage(err));
       })
       .finally(() => setBusy(false));
   }, [rebuild]);

@@ -36,7 +36,7 @@ export function planSuiteClients(
     );
     if (!row)
       throw new Error(
-        "An attached client is unavailable. Reload the suite and try again.",
+        ERROR_MESSAGES.anAttachedClientIsUnavailableReloadTheSuiteAndTry,
       );
     return row;
   });
@@ -62,7 +62,7 @@ export function planSuiteClients(
           // instead of silently removing them; other clients remain editable.
           if (template?.pluginVersionIds?.length) {
             throw new Error(
-              "Change this client's pinned plugins in Environments before adding a model.",
+              ERROR_MESSAGES.changeThisClientSPinnedPluginsInEnvironmentsBeforeAdding,
             );
           }
           const stack: Stack = {
@@ -139,7 +139,7 @@ export function SuiteClientsSettings({
         next,
         sourceHosts,
       );
-      if (!plan.length) throw new Error("Keep at least one client and model.");
+      if (!plan.length) throw new Error(ERROR_MESSAGES.keepAtLeastOneClientAndModel);
       if (plan.length > MAX_SUITE_ENVIRONMENTS)
         throw new Error(
           `Choose up to ${MAX_SUITE_ENVIRONMENTS} client/model combinations.`,
@@ -157,7 +157,7 @@ export function SuiteClientsSettings({
       );
       if (ids.some((id) => !id))
         throw new Error(
-          "Could not save the selected clients and models. Try again.",
+          ERROR_MESSAGES.couldNotSaveTheSelectedClientsAndModelsTryAgain,
         );
       await setSuiteEnvironments({
         suiteId: suite._id,

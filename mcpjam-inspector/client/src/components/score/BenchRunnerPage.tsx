@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
@@ -180,7 +181,7 @@ export function BenchRunnerPage({
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     throw new Error(
-      "Timed out preparing the workspace for this server. Reload and try again.",
+      ERROR_MESSAGES.timedOutPreparingTheWorkspaceForThisServerReloadAnd,
     );
   }, []);
 
@@ -190,7 +191,7 @@ export function BenchRunnerPage({
       setDisabled(err.message);
       return;
     }
-    setError(err instanceof Error ? err.message : String(err));
+    setError(getUserErrorMessage(err));
   }, []);
 
   const runPreflight = useCallback(
@@ -205,7 +206,7 @@ export function BenchRunnerPage({
         name = await deriveScoreServerName(normalizedUrl);
         if (!projectId) {
           throw new Error(
-            "Still setting up your workspace. Give it a moment and try again.",
+            ERROR_MESSAGES.stillSettingUpYourWorkspaceGiveItAMomentAnd,
           );
         }
         await createServerIfMissing({
@@ -245,7 +246,7 @@ export function BenchRunnerPage({
         const target = tryResolveProjectServer(name);
         if (!target?.serverId) {
           throw new Error(
-            "Timed out preparing the workspace for this server. Reload and try again.",
+            ERROR_MESSAGES.timedOutPreparingTheWorkspaceForThisServerReloadAnd,
           );
         }
         const receipt = await preflightBench({
@@ -670,7 +671,10 @@ export function BenchRunnerPage({
           // nothing and the offer never appears there.
           <BenchReport
             result={result}
-            flowScope={{ kind: "benchmark", benchmarkRunId: run.benchmarkRunId }}
+            flowScope={{
+              kind: "benchmark",
+              benchmarkRunId: run.benchmarkRunId,
+            }}
           />
         ) : run.status === "failed" || run.status === "cancelled" ? (
           <div className="space-y-2 rounded-md border border-border/50 px-4 py-3">

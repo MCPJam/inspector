@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * "Where this runs", defaulted rather than asked for.
  *
@@ -167,7 +168,7 @@ export function useSwarmDefaultTarget({
       max: MAX_ENVIRONMENTS_PER_JOURNEY,
     });
     if (resolved.environmentIds.length === 0) {
-      throw new Error("Could not resolve where this should run.");
+      throw new Error(ERROR_MESSAGES.couldNotResolveWhereThisShouldRun);
     }
     return resolved.environmentIds;
   }, [envList, resolveTargets, state]);

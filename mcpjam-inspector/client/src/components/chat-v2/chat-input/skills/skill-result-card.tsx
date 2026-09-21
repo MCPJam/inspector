@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { X, ChevronDown, ChevronUp, SquareSlash, Loader2 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
@@ -53,7 +54,7 @@ export function SkillResultCard({
           setFiles(fetchedFiles);
         })
         .catch((err) => {
-          setError(err.message || ERROR_MESSAGES.failedToLoadFiles);
+          setError(getUserErrorMessage(err, ERROR_MESSAGES.failedToLoadFiles));
         })
         .finally(() => {
           setLoading(false);

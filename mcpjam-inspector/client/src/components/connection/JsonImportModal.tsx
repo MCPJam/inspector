@@ -96,9 +96,8 @@ export function JsonImportModal({
       );
       handleClose();
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      toast.error(`Failed to import servers: ${errorMessage}`);
+
+      toast.error(ERROR_MESSAGES.failedToImportServersPleaseTryAgain);
     } finally {
       setIsImporting(false);
     }

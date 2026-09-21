@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { createContext, useContext } from "react";
 import type { AppState } from "./app-types";
 
@@ -20,7 +21,7 @@ export function AppStateProvider({
 export function useSharedAppState(): AppState {
   const ctx = useContext(AppStateContext);
   if (!ctx) {
-    throw new Error("useSharedAppState must be used within AppStateProvider");
+    throw new Error(ERROR_MESSAGES.usesharedappstateMustBeUsedWithinAppstateprovider);
   }
   return ctx;
 }

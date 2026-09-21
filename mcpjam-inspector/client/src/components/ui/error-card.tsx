@@ -1,3 +1,5 @@
+import { getUserErrorMessage } from "@/lib/user-error";
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -249,18 +251,10 @@ function originBadge(
  */
 const UNKNOWN_SLUG = "internal/unknown";
 
-/**
- * `describeError` already promotes an unclassified raw message into `oneLine`
- * (see `maybePromoteRawMessage`), so the body carries the real text and the
- * title is free to say what kind of thing happened. "Unknown error" as a
- * headline reads as a crash; it is usually an ordinary connection failure we
- * simply have not catalogued.
- *
- * Only when there is no raw text at all do we admit to knowing nothing.
- */
+/** Unknown failures use a catalog headline; raw evidence stays in details. */
 function displayTitle(normalized: NormalizedError): string {
   if (normalized.slug !== UNKNOWN_SLUG) return normalized.title;
-  return normalized.rawMessage.trim() ? "Connection error" : normalized.title;
+  return ERROR_MESSAGES.unknownErrorTitle;
 }
 
 /**
@@ -330,7 +324,12 @@ export function ErrorCard({
   onOpenChange,
   className,
 }: ErrorCardProps) {
-  const normalized = useMemo(() => resolveNormalized(error), [error]);
+  const normalized = useMemo(() => {
+    const resolved = resolveNormalized(error);
+    return resolved.slug === UNKNOWN_SLUG
+      ? { ...resolved, title: ERROR_MESSAGES.unknownErrorTitle, oneLine: getUserErrorMessage(error, getUserErrorMessage(resolved.rawMessage)) }
+      : resolved;
+  }, [error]);
   // Support both controlled (`open` provided) and uncontrolled (`defaultOpen`)
   // modes. `useState` only reads `defaultOpen` once at mount, so callers that
   // need the toggle to react to outside state must use the controlled form.

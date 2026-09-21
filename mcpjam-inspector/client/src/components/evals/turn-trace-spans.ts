@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   expandPersistedRequestPayloads,
   type PersistedRequestPayloadEntry,
@@ -225,10 +226,10 @@ export async function hydrateTurnRequestPayloads(
           if (!turn.requestPayloadsBlobUrl) return [];
           const response = await fetch(turn.requestPayloadsBlobUrl);
           if (!response.ok)
-            throw new Error("Failed to load saved model requests");
+            throw new Error(ERROR_MESSAGES.failedToLoadSavedModelRequests);
           const value: unknown = await response.json();
           if (!Array.isArray(value))
-            throw new Error("Invalid saved model requests");
+            throw new Error(ERROR_MESSAGES.invalidSavedModelRequests);
           return expandPersistedRequestPayloads(
             value as PersistedRequestPayloadEntry[],
           );

@@ -21,7 +21,7 @@ import { ToolCallDiff } from "./tool-call-diff";
 import { resolveTraceModel } from "./compare-playground-helpers";
 import {
   PredicatesList,
-  parseIterationPredicates,
+  parseIterationPredicates
 } from "./predicates-list";
 import {
   ScoresList,
@@ -37,7 +37,7 @@ import {
 } from "@/lib/client-config-v2";
 import {
   TraceViewModeTabs,
-  type TraceViewMode,
+  type TraceViewMode
 } from "./trace-view-mode-tabs";
 import { PreviewHeaderSlot } from "./preview/preview-header-slot";
 import { BrowserArtifactsView } from "./browser-artifacts-view";
@@ -62,7 +62,8 @@ import {
 } from "@mcpjam/design-system/collapsible";
 import { cn } from "@/lib/utils";
 import { formatConvexBlobLoadError } from "@/lib/convex-action-error";
-import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
+import { Alert, AlertDescription, AlertTitle ,
+} from "@mcpjam/design-system/alert";
 import { Button } from "@mcpjam/design-system/button";
 import {
   isModelFree,
@@ -467,7 +468,8 @@ export function IterationDetails({
     setPreviewTraceMode(
       scorecard
         ? "scorecard"
-        : snapshotSteps.some((s) => s.kind === "interact" || s.kind === "assert")
+        : snapshotSteps.some((s) => s.kind === "interact" || s.kind === "assert",
+          )
         ? "steps"
         : "chat",
     );
@@ -535,7 +537,7 @@ export function IterationDetails({
                 ),
               }));
             }
-          },
+          }
         )
         .catch((loadError: unknown) => {
           if (cancelled) return;
@@ -942,7 +944,7 @@ export function IterationDetails({
   const stepStatusById = useMemo(
     () =>
       parseStepStatusById(
-        iteration.metadata as StepReplayMetadata | undefined,
+        iteration.metadata as StepReplayMetadata | undefined
       ),
     [iteration.metadata],
   );
@@ -1204,12 +1206,15 @@ export function IterationDetails({
           )}
         </div>
       ) : null}
-      {iterationError && <ErrorCard key={iteration._id} error={iterationError} variant="inline" />}
+      {iterationError && (
+        <ErrorCard key={iteration._id} error={iterationError} variant="inline" />)}
 
       {!hasTrace && !scorecard && !isProbe && (
         <TranscriptEmptyState {...(iteration.status === "running" || iteration.status === "pending"
           ? { kind: "streaming" as const }
-          : { kind: "unrecorded" as const, execution: iteration.tokensUsed > 0 || iteration.actualToolCalls.length > 0 ? "observed" as const : "unknown" as const })} />
+          : { kind: "unrecorded" as const, execution: iteration.tokensUsed > 0 || iteration.actualToolCalls.length > 0 ? ("observed" as const )
+                    : ("unknown" as const ),
+              })} />
       )}
       {caseInsightFallback}
 
@@ -1230,14 +1235,17 @@ export function IterationDetails({
             onJudgeVisibilityChange: setJudgeHidden,
             scoresSection,
           })
-        ) : (
+        ) :
           !hasTrace && previewTraceMode === "tools" ? (
             <div className="space-y-3" data-testid="iteration-tools-without-trace">{toolCallsGrids}</div>
           ) : !hasTrace && previewTraceMode !== "steps" ? (
             <TranscriptEmptyState {...(iteration.status === "running" || iteration.status === "pending"
               ? { kind: "streaming" as const }
-              : { kind: "unrecorded" as const, execution: iteration.tokensUsed > 0 || iteration.actualToolCalls.length > 0 ? "observed" as const : "unknown" as const })} />
-          ) : traceSection
+              : { kind: "unrecorded" as const, execution: iteration.tokensUsed > 0 || iteration.actualToolCalls.length > 0 ? ("observed" as const )
+                      : ("unknown" as const ),
+                })} />
+          ) : (
+          traceSection
         )
       ) : traceFirst ? (
         <>

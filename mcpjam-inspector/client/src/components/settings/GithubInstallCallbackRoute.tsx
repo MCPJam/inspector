@@ -119,11 +119,10 @@ export function GithubInstallCallbackRoute() {
   const fail = useCallback((error: unknown) => {
     setPhase({
       kind: "failed",
-      // The backend words these; `githubChecksWriteErrorMessage` reads the
-      // `ConvexError` payload rather than the masked `message`. The constant is
-      // only the fallback for a failure that carried no message of its own.
+      // Known refusals get catalog guidance; unknown failures keep the
+      // recovery instruction specific to connecting a GitHub account.
       message:
-        githubChecksWriteErrorMessage(error) || GITHUB_BINDING_FAILED_MESSAGE,
+        githubChecksWriteErrorMessage(error, GITHUB_BINDING_FAILED_MESSAGE),
     });
   }, []);
 
@@ -163,7 +162,7 @@ export function GithubInstallCallbackRoute() {
             // A redirect the guard refused is NOT a backend refusal, and must
             // not be reported as one: `UnsafeRedirectError`'s message is
             // developer text ("Refused to redirect outside GitHub"), and
-            // `fail` would put it on screen verbatim. The user gets the flat
+            // The user gets the flat
             // binding copy; there is nothing for them to do differently.
             console.error("[github-checks] refused an unsafe authorize URL");
             setPhase({

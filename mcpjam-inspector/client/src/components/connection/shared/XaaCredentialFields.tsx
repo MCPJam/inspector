@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useId, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
@@ -14,10 +15,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
-import {
-  XAA_DEMO_IDENTITY,
-  isCompleteIdentityPair,
-} from "@/lib/xaa/identity";
+import { XAA_DEMO_IDENTITY, isCompleteIdentityPair } from "@/lib/xaa/identity";
 import {
   Tooltip,
   TooltipContent,
@@ -120,7 +118,7 @@ export function XaaCredentialFields({
   // the same endpoint (the secret lives in the same vault column).
   const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
   const [revealedContextKey, setRevealedContextKey] = useState<string | null>(
-    null
+    null,
   );
   const [isRevealedVisible, setIsRevealedVisible] = useState(false);
   const [isRevealing, setIsRevealing] = useState(false);
@@ -169,9 +167,7 @@ export function XaaCredentialFields({
       setRevealedContextKey(null);
       setIsRevealedVisible(false);
       setRevealError(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.failedToRevealClientSecret
+        getUserErrorMessage(error, ERROR_MESSAGES.failedToRevealClientSecret),
       );
     } finally {
       setIsRevealing(false);

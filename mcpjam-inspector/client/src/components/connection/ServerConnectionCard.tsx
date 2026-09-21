@@ -1,3 +1,4 @@
+import { ERROR_MESSAGE_TEMPLATES } from "@/lib/error-messages";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useState,
@@ -418,9 +419,8 @@ export function ServerConnectionCard({
         id: toastId,
       });
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      toast.error(`Failed to export ${server.name}: ${errorMessage}`);
+
+      toast.error(ERROR_MESSAGE_TEMPLATES.failedToExportPleaseTryAgain(server.name));
     } finally {
       setIsExporting(false);
     }
@@ -439,9 +439,8 @@ export function ServerConnectionCard({
         server_id: server.name,
       });
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      toast.error(`Failed to copy agent brief: ${errorMessage}`);
+
+      toast.error(ERROR_MESSAGES.failedToCopyAgentBriefPleaseTryAgain);
     } finally {
       setIsCopyingBrief(false);
     }
@@ -480,7 +479,7 @@ export function ServerConnectionCard({
       if (errorMessage.includes("No access token available")) {
         toast.error(ERROR_MESSAGES.signInToCreateTunnels);
       } else {
-        toast.error(`Tunnel creation failed: ${errorMessage}`);
+        toast.error(ERROR_MESSAGES.tunnelCreationFailedPleaseTryAgain);
       }
     } finally {
       setIsCreatingTunnel(false);
@@ -507,9 +506,8 @@ export function ServerConnectionCard({
         server_id: server.name,
       });
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Failed to close tunnel";
-      toast.error(`Failed to close tunnel: ${errorMessage}`);
+
+      toast.error(ERROR_MESSAGES.failedToCloseTunnelPleaseTryAgain);
     } finally {
       setIsClosingTunnel(false);
     }
@@ -528,9 +526,8 @@ export function ServerConnectionCard({
         server_id: server.name,
       });
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Failed to rotate tunnel";
-      toast.error(`Failed to rotate tunnel: ${errorMessage}`);
+
+      toast.error(ERROR_MESSAGES.failedToRotateTunnelPleaseTryAgain);
       // A failed rotation may have already torn down the listener (the old
       // secret dies at close). Re-sync with the server's live state so the
       // card never offers a copyable URL that no longer works.

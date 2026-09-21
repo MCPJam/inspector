@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { useAppNavigate, useCurrentPathname } from "@/lib/app-navigation";
@@ -56,7 +57,12 @@ import {
 // ---------------------------------------------------------------------------
 
 type ProviderKind =
-  "api-key-only" | "azure" | "bedrock" | "ollama" | "openrouter" | "custom";
+  | "api-key-only"
+  | "azure"
+  | "bedrock"
+  | "ollama"
+  | "openrouter"
+  | "custom";
 
 interface ProviderCatalogEntry {
   key: string;
@@ -259,7 +265,7 @@ function OrganizationProviderSettings({
       toast.success(`${deleteTarget.name} removed`);
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : ERROR_MESSAGES.failedToRemoveProvider,
+        getUserErrorMessage(err, ERROR_MESSAGES.failedToRemoveProvider),
       );
     } finally {
       setDeleteConfirmOpen(false);
@@ -360,7 +366,9 @@ function OrganizationProviderSettings({
                     size="sm"
                     onClick={() =>
                       navigate(
-                        `/organizations/${encodeURIComponent(organizationId)}/models/usage`,
+                        `/organizations/${encodeURIComponent(
+                          organizationId,
+                        )}/models/usage`,
                       )
                     }
                   >
@@ -392,7 +400,7 @@ function OrganizationProviderSettings({
               setConfigTarget(null);
             } catch (err) {
               toast.error(
-                err instanceof Error ? err.message : ERROR_MESSAGES.failedToSaveProvider,
+                getUserErrorMessage(err, ERROR_MESSAGES.failedToSaveProvider),
               );
             }
           }}
@@ -421,9 +429,10 @@ function OrganizationProviderSettings({
             setEditingCustom(null);
           } catch (err) {
             toast.error(
-              err instanceof Error
-                ? err.message
-                : ERROR_MESSAGES.failedToSaveCustomProvider,
+              getUserErrorMessage(
+                err,
+                ERROR_MESSAGES.failedToSaveCustomProvider,
+              ),
             );
           }
         }}
@@ -733,7 +742,7 @@ function KnownProviderConfigDialog({
       setBaseUrl(
         kind === "bedrock"
           ? bedrockRegionFromEndpoint(existing?.baseUrl)
-          : (existing?.baseUrl ?? ""),
+          : existing?.baseUrl ?? "",
       );
       setSelectedModels(existing?.selectedModels?.join(", ") ?? "");
     }
@@ -742,7 +751,7 @@ function KnownProviderConfigDialog({
   const storedBaseUrl =
     kind === "bedrock"
       ? bedrockRegionFromEndpoint(existing?.baseUrl)
-      : (existing?.baseUrl ?? "");
+      : existing?.baseUrl ?? "";
   useSettingsDraft(
     open &&
       (!!secret ||
@@ -1169,8 +1178,8 @@ function OrgCustomProviderDialog({
             {isSaving
               ? "Saving..."
               : editProvider
-                ? "Save Changes"
-                : "Add Provider"}
+              ? "Save Changes"
+              : "Add Provider"}
           </Button>
         </DialogFooter>
       </DialogContent>

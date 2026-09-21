@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useState } from "react";
 import { useQuery, useAction } from "convex/react";
 
@@ -121,7 +122,7 @@ export function useOrgModelConfig(
       displayName?: string;
       selectedModels?: string[];
     }): Promise<{ success: true }> => {
-      if (!organizationId) throw new Error("Organization is required");
+      if (!organizationId) throw new Error(ERROR_MESSAGES.organizationIsRequired);
       setIsSaving(true);
       setError(null);
       try {
@@ -144,7 +145,7 @@ export function useOrgModelConfig(
 
   const deleteProvider = useCallback(
     async (providerKey: string): Promise<{ success: true }> => {
-      if (!organizationId) throw new Error("Organization is required");
+      if (!organizationId) throw new Error(ERROR_MESSAGES.organizationIsRequired);
       setIsSaving(true);
       setError(null);
       try {

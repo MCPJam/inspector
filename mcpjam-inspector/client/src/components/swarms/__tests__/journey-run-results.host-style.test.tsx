@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SwarmLiveStreamPane } from "../journey-run-results";
@@ -99,7 +100,7 @@ describe("swarm transcript host resolution", () => {
   it("keeps transcript fetch failure distinct from streaming or an absent recording", () => {
     persisted.error = "Transcript download failed";
     render(<SwarmLiveStreamPane {...props} fallbackTrace={null} />);
-    expect(screen.getByRole("alert")).toHaveTextContent("Transcript download failed");
+    expect(screen.getByRole("alert")).toHaveTextContent(ERROR_MESSAGES.unexpected);
     expect(screen.queryByText("No transcript recorded")).not.toBeInTheDocument();
     expect(screen.queryByRole("status", { name: "Waiting for transcript" })).not.toBeInTheDocument();
   });

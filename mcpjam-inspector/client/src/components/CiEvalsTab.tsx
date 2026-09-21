@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { createElement } from "react";
 import { ModelDisplayNamesContext } from "@/lib/model-display-name";
@@ -269,8 +270,8 @@ export function CiEvalsTab({
         ? "Manual"
         : group.shortSha
       : route.fromCommit.length > 7
-        ? route.fromCommit.slice(0, 7)
-        : route.fromCommit;
+      ? route.fromCommit.slice(0, 7)
+      : route.fromCommit;
     return { commitSha: route.fromCommit, label };
   }, [route, commitGroups]);
 
@@ -341,11 +342,11 @@ export function CiEvalsTab({
     () =>
       Boolean(
         selectedSuiteId &&
-        selectedSuite &&
-        route.type !== "list" &&
-        route.type !== "create" &&
-        route.type !== "commit-detail" &&
-        hasVisibleSuites,
+          selectedSuite &&
+          route.type !== "list" &&
+          route.type !== "create" &&
+          route.type !== "commit-detail" &&
+          hasVisibleSuites,
       ),
     [selectedSuiteId, selectedSuite, route.type, hasVisibleSuites],
   );
@@ -384,7 +385,7 @@ export function CiEvalsTab({
         (entry) => entry.suite._id === suiteId,
       );
       navigateApp(
-        isCiVisible ? buildEvalsRunsPath(target) : buildEvalsPath(target)
+        isCiVisible ? buildEvalsRunsPath(target) : buildEvalsPath(target),
       );
     },
     [visibleSuites],
@@ -400,8 +401,8 @@ export function CiEvalsTab({
         route.type === "commit-detail"
           ? route.commitSha
           : route.type === "suite-overview" && route.fromCommit
-            ? route.fromCommit
-            : null;
+          ? route.fromCommit
+          : null;
       if (!commitSha) return;
       navigateToCiEvalsPath({
         type: "suite-overview",
@@ -431,7 +432,7 @@ export function CiEvalsTab({
         }
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : ERROR_MESSAGES.failedToDeleteSuite,
+          getUserErrorMessage(error, ERROR_MESSAGES.failedToDeleteSuite),
         );
       } finally {
         setDeletingSuiteId(null);
@@ -466,7 +467,7 @@ export function CiEvalsTab({
         }
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : ERROR_MESSAGES.failedToDeleteRun,
+          getUserErrorMessage(error, ERROR_MESSAGES.failedToDeleteRun),
         );
       } finally {
         setDeletingRunId(null);
@@ -668,8 +669,8 @@ export function CiEvalsTab({
                     route.type === "run-detail"
                       ? Boolean(
                           route.insightsFocus &&
-                          !route.iteration &&
-                          !route.testCaseId,
+                            !route.iteration &&
+                            !route.testCaseId,
                         )
                       : false
                   }

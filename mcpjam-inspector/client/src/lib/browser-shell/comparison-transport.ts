@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import type { BrowserComparisonClient } from "@/stores/browser-comparison-store";
 import {
   createBrowserTokenCache,
@@ -19,7 +20,7 @@ import { runBrowserCommandWithHandoff } from "./chat-handoff";
 
 const handoffFailed = () =>
   new Error(
-    "Couldn't return browser control to the agent. Try sending your message again.",
+    ERROR_MESSAGES.couldnTReturnBrowserControlToTheAgentTrySending,
   );
 
 /** Metadata and explicit commands only: never ensure, watch, resize, or stream. */

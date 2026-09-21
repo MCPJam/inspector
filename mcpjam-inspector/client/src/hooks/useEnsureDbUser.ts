@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
@@ -15,7 +16,7 @@ import { useActorKey } from "@/hooks/use-actor-key";
 // code for write-conflicts. Update if Convex changes the wording — without
 // it, retries silently stop firing and conflicts re-surface in Sentry.
 const CONVEX_WRITE_CONFLICT_MESSAGE =
-  "changed while this mutation was being run";
+  ERROR_MESSAGES.changedWhileThisMutationWasBeingRun;
 const ENSURE_USER_RETRY_DELAYS_MS = [50, 150];
 
 // Spaced retries for a run that failed outright (anything the fast

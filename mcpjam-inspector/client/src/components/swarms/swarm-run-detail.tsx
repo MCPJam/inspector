@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Dedicated Swarm Run (wave) detail at `/swarms/:swarmId`.
@@ -311,7 +312,7 @@ export function SwarmRunDetail({
       );
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : ERROR_MESSAGES.couldNotStartSwarmRun,
+        getUserErrorMessage(err, ERROR_MESSAGES.couldNotStartSwarmRun),
       );
     } finally {
       setRunAgainBusy(false);

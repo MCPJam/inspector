@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * What the agent browser adds to a turn, for the surfaces that show a host's
  * tools: the six `browser_*` tools MCPJam gives the model, and the WebMCP
@@ -240,7 +241,7 @@ export function useBrowserTools(args: {
     fetchBrowserToolDefinitions(engine, controller.signal)
       .then((items) => {
         if (cancelled) return;
-        if (items.length === 0) throw new Error("Empty Browser catalog");
+        if (items.length === 0) throw new Error(ERROR_MESSAGES.emptyBrowserCatalog);
         DEFINITIONS_CACHE.set(engine, items);
         setTools(items);
       })

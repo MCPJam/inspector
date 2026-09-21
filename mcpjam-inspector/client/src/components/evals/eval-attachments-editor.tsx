@@ -1,3 +1,5 @@
+import { ERROR_MESSAGE_TEMPLATES } from "@/lib/error-messages";
+import { getUserErrorMessage } from "@/lib/user-error";
 import { useRef, useState } from "react";
 import { Paperclip, X, Loader2 } from "lucide-react";
 import { useMutation } from "convex/react";
@@ -55,10 +57,10 @@ export function EvalAttachmentsEditor({
   disabled = false,
 }: EvalAttachmentsEditorProps) {
   const generateUploadUrl = useMutation(
-    "testSuites:generateEvalAttachmentUploadUrl" as any
+    "testSuites:generateEvalAttachmentUploadUrl" as any,
   ) as unknown as (args: { suiteId: string }) => Promise<string>;
   const setTestCaseAttachments = useMutation(
-    "testSuites:setTestCaseAttachments" as any
+    "testSuites:setTestCaseAttachments" as any,
   ) as unknown as (args: {
     testCaseId: string;
     attachments: { name: string; storageId: string; contentHash: string }[];
@@ -87,15 +89,15 @@ export function EvalAttachmentsEditor({
     if (!files || files.length === 0) return;
     const picked = Array.from(files);
     if (value.length + picked.length > MAX_COUNT) {
-      toast.error(`A case can have at most ${MAX_COUNT} attachments.`);
+      toast.error(ERROR_MESSAGE_TEMPLATES.aCaseCanHaveAtMostAttachments(MAX_COUNT));
       return;
     }
     const addedBytes = picked.reduce((sum, f) => sum + f.size, 0);
     if (totalBytes + addedBytes > MAX_TOTAL_BYTES) {
       toast.error(
-        `Attachments exceed the ${Math.round(
-          MAX_TOTAL_BYTES / (1024 * 1024)
-        )} MB per-case limit.`
+        ERROR_MESSAGE_TEMPLATES.attachmentsExceedTheMbPerCaseLimit(Math.round(
+          MAX_TOTAL_BYTES / (1024 * 1024),
+        )),
       );
       return;
     }
@@ -105,7 +107,7 @@ export function EvalAttachmentsEditor({
       const uploaded: EvalAttachment[] = [];
       for (const file of picked) {
         if (existingNames.has(file.name)) {
-          toast.error(`An attachment named "${file.name}" already exists.`);
+          toast.error(ERROR_MESSAGE_TEMPLATES.anAttachmentNamedAlreadyExists(file.name));
           continue;
         }
         const buf = await file.arrayBuffer();
@@ -131,11 +133,7 @@ export function EvalAttachmentsEditor({
         await persist([...value, ...uploaded]);
       }
     } catch (err) {
-      toast.error(
-        `Failed to attach file: ${
-          err instanceof Error ? err.message : String(err)
-        }`
-      );
+      toast.error(getUserErrorMessage(err));
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = "";
@@ -147,11 +145,7 @@ export function EvalAttachmentsEditor({
     try {
       await persist(value.filter((a) => a.name !== name));
     } catch (err) {
-      toast.error(
-        `Failed to remove attachment: ${
-          err instanceof Error ? err.message : String(err)
-        }`
-      );
+      toast.error(getUserErrorMessage(err));
     } finally {
       setBusy(false);
     }

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -150,7 +151,7 @@ describe("SwarmsTab — Run journey launch", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("This journey has no pinned hosts to run")
+        screen.getByText(ERROR_MESSAGES.failedToStartRun)
       ).toBeInTheDocument()
     );
   });

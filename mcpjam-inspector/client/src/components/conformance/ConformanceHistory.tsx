@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Conformance history, detail, and sharing — Convex-backed.
@@ -120,7 +121,7 @@ export function ConformanceHistory({
   serverId?: string | null;
 }) {
   const [scope, setScope] = useState<"current" | "all">(
-    serverId ? "current" : "all"
+    serverId ? "current" : "all",
   );
   const [outcome, setOutcome] = useState<string>("");
   const [source, setSource] = useState<string>("");
@@ -143,7 +144,7 @@ export function ConformanceHistory({
           protocolVersion: protocolVersion || undefined,
           paginationOpts: { numItems: 20, cursor },
         } as any)
-      : "skip"
+      : "skip",
   ) as
     | {
         page: ConformanceRunListItem[];
@@ -357,7 +358,7 @@ export function ConformanceRunDetailPage({
   const navigate = useAppNavigate();
   const detail = useQuery(
     "conformanceRuns:getRun" as any,
-    runId ? ({ runId } as any) : "skip"
+    runId ? ({ runId } as any) : "skip",
   ) as
     | (ConformanceRunListItem & {
         reports: Array<{
@@ -378,7 +379,8 @@ export function ConformanceRunDetailPage({
     | undefined
     | null;
   const setSharing = useAction("conformanceRuns:setSharing" as any);
-  const unifiedShare = useFeatureFlagEnabled("unified-share-conformance") === true;
+  const unifiedShare =
+    useFeatureFlagEnabled("unified-share-conformance") === true;
   const [openSuites, setOpenSuites] = useState<Record<string, boolean>>({});
   const [shareBusy, setShareBusy] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -386,7 +388,7 @@ export function ConformanceRunDetailPage({
   const coverage = useMemo(() => {
     if (!detail) return "";
     const executed = detail.reports.filter(
-      (report) => report.status === "completed" || report.status === "failed"
+      (report) => report.status === "completed" || report.status === "failed",
     ).length;
     return `${executed}/${detail.requestedSuites.length} suites`;
   }, [detail]);
@@ -411,13 +413,13 @@ export function ConformanceRunDetailPage({
         }
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : ERROR_MESSAGES.couldNotUpdateSharing
+          getUserErrorMessage(error, ERROR_MESSAGES.couldNotUpdateSharing),
         );
       } finally {
         setShareBusy(false);
       }
     },
-    [detail, setSharing]
+    [detail, setSharing],
   );
 
   if (detail === undefined) {
@@ -463,7 +465,7 @@ export function ConformanceRunDetailPage({
             {detail.score != null ? ` · score ${Math.round(detail.score)}` : ""}
             {scoreDelta != null
               ? ` · ${scoreDelta > 0 ? "+" : ""}${Math.round(
-                  scoreDelta
+                  scoreDelta,
                 )} vs previous`
               : ""}
           </p>
@@ -653,7 +655,9 @@ export function ConformanceSharedPage({ token }: { token: string }) {
       )}
       <p className="text-sm">
         Outcome {String(body.outcome ?? "unknown")}
-        {typeof body.score === "number" ? ` · score ${Math.round(body.score)}` : ""}
+        {typeof body.score === "number"
+          ? ` · score ${Math.round(body.score)}`
+          : ""}
       </p>
       <pre className="max-h-[70vh] overflow-auto rounded bg-muted/40 p-3 text-xs">
         {JSON.stringify(body, null, 2)}

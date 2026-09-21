@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * One-time migration shim from legacy localStorage state to Convex.
  *
@@ -706,7 +707,7 @@ export async function runLocalStateMigration(
           });
           if (typeof ensured !== "string" || !ensured) {
             throw new Error(
-              "ensureDefaultProject returned no project id"
+              ERROR_MESSAGES.ensuredefaultprojectReturnedNoProjectId
             );
           }
           await deps.mergeServersIntoExistingProject!({

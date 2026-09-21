@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useState } from "react";
 import { Check, ChevronDown, Loader2, Trash2 } from "lucide-react";
@@ -27,9 +28,7 @@ export function BrowserProfilesSettings({ projectId }: { projectId: string }) {
       setProfiles(await listBrowserProfiles(projectId));
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.couldNotLoadBrowserProfiles,
+        getUserErrorMessage(error, ERROR_MESSAGES.couldNotLoadBrowserProfiles),
       );
     } finally {
       setLoading(false);
@@ -58,9 +57,7 @@ export function BrowserProfilesSettings({ projectId }: { projectId: string }) {
       toast.success(`“${profile.name}” will be used for new chats.`);
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.couldNotSelectThatProfile,
+        getUserErrorMessage(error, ERROR_MESSAGES.couldNotSelectThatProfile),
       );
     }
   };
@@ -78,9 +75,7 @@ export function BrowserProfilesSettings({ projectId }: { projectId: string }) {
       toast.success("Browser profile deleted.");
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.couldNotDeleteThatProfile,
+        getUserErrorMessage(error, ERROR_MESSAGES.couldNotDeleteThatProfile),
       );
     }
   };

@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router";
@@ -44,7 +45,10 @@ import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
 import { emitClientSaveTelemetry } from "./client-save-telemetry";
 import { useBrowserProfileName } from "@/hooks/useBrowserProfileName";
-import { useComputersEnabled, useBrowserEnabled } from "@/hooks/useComputersEnabled";
+import {
+  useComputersEnabled,
+  useBrowserEnabled,
+} from "@/hooks/useComputersEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { HOSTED_MODE } from "@/lib/config";
 import { useComputerStatus } from "@/hooks/useProjectComputer";
@@ -150,7 +154,10 @@ export function HostBuilderViewRedesigned({
   const [draftConfig, setDraftConfig] = useState<HostConfigInputV2 | null>(
     null,
   );
-  const browserProfileName = useBrowserProfileName(projectId, draftConfig?.browserProfileId);
+  const browserProfileName = useBrowserProfileName(
+    projectId,
+    draftConfig?.browserProfileId,
+  );
   const [isSaving, setIsSaving] = useState(false);
   const saveInFlightRef = useRef(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -204,7 +211,9 @@ export function HostBuilderViewRedesigned({
     setDraftName(host.name);
     setDraftConfig({
       ...hostConfigDtoToInput(host.config),
-      ...(!HOSTED_MODE ? { localBrowserEnabled: host.config.localBrowserEnabled } : {}),
+      ...(!HOSTED_MODE
+        ? { localBrowserEnabled: host.config.localBrowserEnabled }
+        : {}),
       optionalServerIds: [],
     });
     // draftName / draftConfig intentionally excluded: keying the effect on
@@ -248,7 +257,13 @@ export function HostBuilderViewRedesigned({
   const savedConfig = useMemo(
     () =>
       host
-        ? { ...hostConfigDtoToInput(host.config), ...(!HOSTED_MODE ? { localBrowserEnabled: host.config.localBrowserEnabled } : {}), optionalServerIds: [] }
+        ? {
+            ...hostConfigDtoToInput(host.config),
+            ...(!HOSTED_MODE
+              ? { localBrowserEnabled: host.config.localBrowserEnabled }
+              : {}),
+            optionalServerIds: [],
+          }
         : null,
     [host],
   );
@@ -476,7 +491,8 @@ export function HostBuilderViewRedesigned({
           hostId,
           name,
           input,
-          ...(!HOSTED_MODE && localBrowserEnabled !== savedConfig?.localBrowserEnabled
+          ...(!HOSTED_MODE &&
+          localBrowserEnabled !== savedConfig?.localBrowserEnabled
             ? { localBrowserEnabled }
             : {}),
         });
@@ -513,7 +529,7 @@ export function HostBuilderViewRedesigned({
         return true;
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : ERROR_MESSAGES.failedToSaveClient,
+          getUserErrorMessage(err, ERROR_MESSAGES.failedToSaveClient),
         );
         return false;
       } finally {
@@ -561,7 +577,9 @@ export function HostBuilderViewRedesigned({
         setSelectedNodeId(`server-card:${serverId}`);
         toast.success(`Server "${formData.name}" added`);
       } catch (err) {
-        toast.error(getBillingErrorMessage(err, ERROR_MESSAGES.failedToAddServer));
+        toast.error(
+          getBillingErrorMessage(err, ERROR_MESSAGES.failedToAddServer),
+        );
       }
     },
     [createServer, projectId],

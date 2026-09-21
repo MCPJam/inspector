@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { useCallback, useEffect, useState } from "react";
 import { useConvexAuth } from "convex/react";
@@ -78,7 +79,7 @@ export function ApiKeysRoute({ organizationId }: ApiKeysRouteProps = {}) {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to create API key";
-      toast.error(message);
+      toast.error(getUserErrorMessage(message));
       throw error;
     }
   };
@@ -93,7 +94,7 @@ export function ApiKeysRoute({ organizationId }: ApiKeysRouteProps = {}) {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to revoke API key";
-      toast.error(message);
+      toast.error(getUserErrorMessage(message));
       throw error;
     }
   };

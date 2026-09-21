@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Browser side of the WebMCP frame socket. Speaks the protocol served by
  * `server/routes/web/webmcp-frames.ts`:
@@ -203,7 +204,7 @@ export function openWebMcpFrameStream(
       clearTimeout(pending.timer);
       pending.reject(
         new Error(
-          "Browser input was interrupted; it may already have executed. It was not replayed.",
+          ERROR_MESSAGES.browserInputWasInterruptedItMayAlreadyHaveExecutedIt,
         ),
       );
     }
@@ -312,7 +313,7 @@ export function openWebMcpFrameStream(
       if (awaitingInput.size >= 16)
         return Promise.reject(
           new Error(
-            "Browser input is busy. Wait for the current gesture to finish.",
+            ERROR_MESSAGES.browserInputIsBusyWaitForTheCurrentGestureTo,
           ),
         );
       const seq = ++inputSeq;

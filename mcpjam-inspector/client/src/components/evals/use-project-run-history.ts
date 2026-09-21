@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useConvex } from "convex/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EvalIteration, EvalSuiteRun } from "./types";
@@ -88,7 +89,7 @@ export function useProjectRunHistory(
           const run = (await convex.query("testSuites:getTestSuiteRun" as any, {
             runId: row._id,
           })) as EvalSuiteRun | null;
-          if (!run) throw new Error("Run is unavailable");
+          if (!run) throw new Error(ERROR_MESSAGES.runIsUnavailable);
           const iterations = new Map<string, EvalIteration>();
           let cursor: string | null = null;
           let complete = false;
@@ -114,7 +115,7 @@ export function useProjectRunHistory(
             cursor = page.continueCursor;
           }
           // A partial population cannot supply totals or latency percentiles.
-          if (!complete) throw new Error("Iteration history is incomplete");
+          if (!complete) throw new Error(ERROR_MESSAGES.iterationHistoryIsIncomplete);
           const detail = { run, iterations: [...iterations.values()] };
           details.set(row._id, detail);
           const key = rowCacheKey(row);

@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -110,7 +111,7 @@ export function useApiKeys({
       setError(null);
     } catch (err) {
       if (!isCurrent()) return;
-      setError(err instanceof Error ? err.message : ERROR_MESSAGES.failedToLoadApiKeys);
+      setError(getUserErrorMessage(err, ERROR_MESSAGES.failedToLoadApiKeys));
     } finally {
       // Same guard: a superseded request must not clear the spinner that the
       // request now in flight is responsible for.

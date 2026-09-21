@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { createElement, type ComponentType } from "react";
 import type {
   McpUiHostCapabilities,
@@ -53,7 +54,7 @@ export const DEFAULT_HOST_STYLE: HostStyleDefinition = MCPJAM_HOST_STYLE;
 export function registerHostStyle(definition: HostStyleDefinition): void {
   const id = definition.id.trim();
   if (!id) {
-    throw new Error("[host-styles] Host style id is required.");
+    throw new Error(ERROR_MESSAGES.hostStylesHostStyleIdIsRequired);
   }
   if (id !== definition.id) {
     throw new Error(

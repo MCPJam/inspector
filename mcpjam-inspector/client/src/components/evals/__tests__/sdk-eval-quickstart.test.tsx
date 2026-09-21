@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent, waitFor } from "@/test";
 import type { Project } from "@/state/app-types";
@@ -193,7 +194,7 @@ describe("SdkEvalQuickstart", () => {
     // The WorkOS-org-sync 409 is the one failure a first-time user actually
     // hits, and its copy already tells them to retry.
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("try again shortly");
+    expect(alert.textContent).toContain(ERROR_MESSAGES.failedToCreateApiKeyPleaseTryAgain);
     expect(document.body.textContent).not.toContain("MCPJAM_API_KEY=sk_");
   });
 

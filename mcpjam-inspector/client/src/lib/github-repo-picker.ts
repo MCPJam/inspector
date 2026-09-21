@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import type {
   GithubCheckOutagePolicy,
   GithubInstallationBinding,
@@ -140,7 +141,7 @@ export function verifiedConnectArgs(
   repositoryId: number;
 } {
   if (!isSelectableGithubRepo(repo)) {
-    throw new Error("Connect a GitHub account and reload the repository list.");
+    throw new Error(ERROR_MESSAGES.connectAGithubAccountAndReloadTheRepositoryList);
   }
   return {
     repoFullName: repo.fullName,

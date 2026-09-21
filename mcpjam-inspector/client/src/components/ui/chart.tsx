@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import * as React from "react";
 import * as RechartsPrimitive from "recharts";
 
@@ -62,7 +63,7 @@ function useChart() {
   const context = React.useContext(ChartContext);
 
   if (!context) {
-    throw new Error("useChart must be used within a <ChartContainer />");
+    throw new Error(ERROR_MESSAGES.usechartMustBeUsedWithinAChartcontainer);
   }
 
   return context;

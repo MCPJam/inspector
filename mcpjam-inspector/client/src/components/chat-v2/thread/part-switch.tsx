@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { WidgetPlaceholder } from "@mcpjam/chat-ui";
 import { useState, useCallback, useEffect, useRef } from "react";
@@ -452,7 +453,7 @@ export function PartSwitch({
         const res = await executeToolApi(serverId, toolInfo.toolName, params);
         if (runSeqRef.current !== seq) return;
         if ("error" in res) {
-          toast.error(`Execution failed: ${res.error}`);
+          toast.error(ERROR_MESSAGES.executionFailedPleaseTryAgain);
           return;
         }
         if (res.status === "elicitation_required") {
@@ -473,7 +474,7 @@ export function PartSwitch({
           extra: { toolName: toolInfo.toolName },
         });
         if (runSeqRef.current === seq) {
-          toast.error(err instanceof Error ? err.message : ERROR_MESSAGES.executionFailed);
+          toast.error(getUserErrorMessage(err, ERROR_MESSAGES.executionFailed));
         }
       } finally {
         if (runSeqRef.current === seq) setIsRunning(false);
@@ -512,16 +513,26 @@ export function PartSwitch({
     // Session review records the presence of a widget, without mounting its
     // runtime or fetching HTML from today's server. This policy also overrides
     // frozen screenshots: the Browser tab owns recorded renders for Sessions.
-    if (widgetPolicy === "placeholder" && (
-      uiType === UIType.OPENAI_SDK || uiType === UIType.MCP_APPS ||
-      uiType === UIType.OPENAI_SDK_AND_MCP_APPS || renderOverride?.resourceUri ||
-      renderOverride?.cachedWidgetHtmlUrl || renderOverride?.frozenScreenshotUrl
-    )) {
+    if (
+      widgetPolicy === "placeholder" &&
+      (uiType === UIType.OPENAI_SDK ||
+        uiType === UIType.MCP_APPS ||
+        uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
+        renderOverride?.resourceUri ||
+        renderOverride?.cachedWidgetHtmlUrl ||
+        renderOverride?.frozenScreenshotUrl)
+    ) {
       return (
         <>
-          <ToolPart part={toolPart} chatSessionId={chatSessionId} uiType={uiType}
-            minimalMode={minimalMode} serverId={serverId}
-            mcpToolResultImageRendering={mcpToolResultImageRendering} rawOutput={rawToolOutput} />
+          <ToolPart
+            part={toolPart}
+            chatSessionId={chatSessionId}
+            uiType={uiType}
+            minimalMode={minimalMode}
+            serverId={serverId}
+            mcpToolResultImageRendering={mcpToolResultImageRendering}
+            rawOutput={rawToolOutput}
+          />
           <WidgetPlaceholder toolName={toolInfo.toolName} />
         </>
       );

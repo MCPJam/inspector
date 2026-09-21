@@ -90,7 +90,7 @@ export function selectReviewTargets(
   selected: readonly string[],
 ): EvalSuite {
   if (selected.length === 0)
-    throw new Error("Select at least one client and model.");
+    throw new Error(ERROR_MESSAGES.selectAtLeastOneClientAndModel);
   const filtered = suite.environmentIds?.length
     ? {
         ...suite,
@@ -113,7 +113,7 @@ export function selectReviewTargets(
       !filtered.hostAttachments?.length)
   )
     throw new Error(
-      "The selected targets are no longer attached to this suite.",
+      ERROR_MESSAGES.theSelectedTargetsAreNoLongerAttachedToThisSuite,
     );
   return filtered;
 }

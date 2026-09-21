@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { isValidFileType, isImageFile, formatFileSize } from "@/lib/chat-utils";
 
 /**
@@ -118,7 +119,7 @@ function fileToDataUrl(file: File): Promise<string> {
       if (typeof reader.result === "string") {
         resolve(reader.result);
       } else {
-        reject(new Error("Failed to read file as data URL"));
+        reject(new Error(ERROR_MESSAGES.failedToReadFileAsDataUrl));
       }
     };
     reader.onerror = () => reject(reader.error);

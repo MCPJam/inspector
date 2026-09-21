@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { EnvironmentToolsPane } from "../panes/EnvironmentToolsPane";
@@ -122,7 +123,7 @@ describe("EnvironmentToolsPane", () => {
     setTools({ error: "This environment couldn't be resolved." });
     render(<EnvironmentToolsPane projectId="p_1" environmentId="env_1" />);
     expect(
-      screen.getByText("This environment couldn't be resolved."),
+      screen.getByText(ERROR_MESSAGES.thisEnvironmentCouldnTBeResolved),
     ).toBeInTheDocument();
   });
 

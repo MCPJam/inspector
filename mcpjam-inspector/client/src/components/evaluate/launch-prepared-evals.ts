@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import type { PreparedRunInput } from "./prepared-eval-server-page";
 import type { EvalSuite } from "../evals/types";
 
@@ -12,9 +13,9 @@ export async function savePreparedEvalSuites(
 ): Promise<EvalSuite[]> {
   const suites = input.suites.filter((suite) => suite.cases.length);
   if (!suites.length)
-    throw new Error("Select at least one case before running.");
+    throw new Error(ERROR_MESSAGES.selectAtLeastOneCaseBeforeRunning);
   if (!input.clients.length)
-    throw new Error("Select a configured client before running.");
+    throw new Error(ERROR_MESSAGES.selectAConfiguredClientBeforeRunning);
   for (const suite of suites)
     for (const test of suite.cases) {
       if (!test.steps?.length)
@@ -36,7 +37,7 @@ export async function savePreparedEvalSuites(
       })),
       idempotencyKey: `prepared:${input.reviewKey}:${suite.id}`,
     });
-    if (!saved?._id) throw new Error("Could not save the prepared suite.");
+    if (!saved?._id) throw new Error(ERROR_MESSAGES.couldNotSaveThePreparedSuite);
     for (const test of suite.cases) {
       if (!test.steps?.length)
         throw new Error(

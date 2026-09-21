@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useState } from "react";
 import { authFetch } from "@/lib/session-token";
 import type { AgentOpCatalogEntry } from "@/hooks/useOrgSlackSettings";
@@ -58,7 +59,7 @@ export function useAgentOpCatalog(enabled = true): UseAgentOpCatalogResult {
           // A 200 with the wrong shape is a failure, not an empty registry.
           // Caching `[]` here would tell an admin their agent has no tools —
           // the exact misreading this hook's hard-fail posture exists to avoid.
-          throw new Error("agent-ops returned no operations array");
+          throw new Error(ERROR_MESSAGES.agentOpsReturnedNoOperationsArray);
         }
         const items = body.operations;
         cachedCatalog = items;

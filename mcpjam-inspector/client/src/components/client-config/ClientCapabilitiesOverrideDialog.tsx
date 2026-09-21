@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
@@ -77,7 +78,7 @@ export function ClientCapabilitiesOverrideDialog({
       }
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : ERROR_MESSAGES.invalidJson);
+      setError(getUserErrorMessage(err, ERROR_MESSAGES.invalidJson));
     }
   }, []);
 
@@ -93,7 +94,7 @@ export function ClientCapabilitiesOverrideDialog({
       onSave(parsed);
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : ERROR_MESSAGES.invalidJson);
+      setError(getUserErrorMessage(err, ERROR_MESSAGES.invalidJson));
     }
   }, [text, onSave, onOpenChange]);
 
@@ -104,19 +105,14 @@ export function ClientCapabilitiesOverrideDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="max-w-2xl"
-        aria-describedby={undefined}
-      >
+      <DialogContent className="max-w-2xl" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>Client capabilities override</DialogTitle>
         </DialogHeader>
 
         <div className="grid gap-2 py-2">
           <div className="flex items-center justify-between gap-2">
-            <Label htmlFor="host-capabilities-override-textarea">
-              JSON
-            </Label>
+            <Label htmlFor="host-capabilities-override-textarea">JSON</Label>
             {isOverriding ? (
               <span className="text-xs text-muted-foreground">
                 Custom override active
@@ -132,9 +128,7 @@ export function ClientCapabilitiesOverrideDialog({
             placeholder={profilePresetJson}
             spellCheck={false}
           />
-          {error && (
-            <p className="text-xs text-destructive">{error}</p>
-          )}
+          {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">

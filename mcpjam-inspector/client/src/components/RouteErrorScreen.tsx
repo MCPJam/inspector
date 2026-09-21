@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useRef } from "react";
 import { useRouteError } from "react-router";
 import { AlertTriangle, Lock, LogIn } from "lucide-react";
@@ -9,8 +10,6 @@ import { scrubSensitiveUrl } from "@/lib/PosthogUtils";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { track } from "@/lib/analytics";
-
-const GENERIC_MESSAGE = "An unexpected error occurred";
 
 /**
  * What a signed-in non-member sees instead of a stack trace (BB-250).
@@ -26,10 +25,10 @@ const GENERIC_MESSAGE = "An unexpected error occurred";
  * catches sessions, personas and swarms alike, and naming the thing the URL
  * asked for would confirm the id resolved to something.
  */
-const ACCESS_DENIED_HEADING = "You don't have access to this";
+const ACCESS_DENIED_HEADING = ERROR_MESSAGES.youDonTHaveAccessToThis;
 const ACCESS_DENIED_BODY =
-  "It belongs to a project you're not a member of, or it no longer exists. " +
-  "If someone shared this link with you, ask them to invite you to the project.";
+  ERROR_MESSAGES.itBelongsToAProjectYouReNotAMember +
+  ERROR_MESSAGES.ifSomeoneSharedThisLinkWithYouAskThemTo;
 
 /**
  * What a SIGNED-OUT visitor sees instead of the copy above.
@@ -48,27 +47,10 @@ const ACCESS_DENIED_BODY =
  * membership copy does — it is a statement about the VIEWER, not the target —
  * so the enumeration property above is preserved.
  */
-const SIGN_IN_HEADING = "Sign in to continue";
+const SIGN_IN_HEADING = ERROR_MESSAGES.signInToContinue;
 const SIGN_IN_BODY =
-  "You're not signed in, so we can't tell whether this is yours to see. " +
-  "Sign in and you'll come straight back here.";
-
-function errorMessage(error: unknown): string {
-  // Every branch goes through `nonEmpty`: an Error with an empty `message`, or
-  // a route response with `statusText: ""`, would otherwise render a blank
-  // detail line instead of falling through to the generic text.
-  const nonEmpty = (value: unknown): string | null =>
-    typeof value === "string" && value.trim() !== "" ? value : null;
-
-  if (error instanceof Error) return nonEmpty(error.message) ?? GENERIC_MESSAGE;
-  const direct = nonEmpty(error);
-  if (direct) return direct;
-  if (error && typeof error === "object" && "statusText" in error) {
-    const statusText = nonEmpty((error as { statusText: unknown }).statusText);
-    if (statusText) return statusText;
-  }
-  return GENERIC_MESSAGE;
-}
+  ERROR_MESSAGES.youReNotSignedInSoWeCanTTell +
+  ERROR_MESSAGES.signInAndYouLlComeStraightBackHere;
 
 /**
  * `errorElement` for the root route.
@@ -192,9 +174,11 @@ export function RouteErrorScreen() {
     >
       <div className="text-center max-w-md">
         <AlertTriangle className="h-12 w-12 text-destructive mx-auto mb-4" />
-        <h2 className="text-xl font-semibold mb-2">Something went wrong</h2>
+        <h2 className="text-xl font-semibold mb-2">
+          {ERROR_MESSAGES.pageTitle}
+        </h2>
         <p className="text-sm text-muted-foreground mb-4">
-          {errorMessage(error)}
+          {ERROR_MESSAGES.pageLoad}
         </p>
         <div className="flex items-center justify-center gap-2">
           <Button onClick={() => location.reload()} variant="outline">

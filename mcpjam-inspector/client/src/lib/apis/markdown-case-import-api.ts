@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { authFetch } from "@/lib/session-token";
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import { HOSTED_MODE } from "@/lib/config";
@@ -10,7 +11,7 @@ import {
 
 async function post(path: string, body: object, signal?: AbortSignal) {
   const authorization = await getApiAuthorizationHeader();
-  if (!authorization) throw new Error("Sign in to import cases.");
+  if (!authorization) throw new Error(ERROR_MESSAGES.signInToImportCases);
   const response = await authFetch(
     `/api/${HOSTED_MODE ? "web" : "mcp"}/evals/${path}`,
     {
@@ -34,7 +35,7 @@ async function readImportResponse(response: Response) {
     data = JSON.parse(await response.text());
   } catch {
     throw new Error(
-      "The import service returned an invalid response. Your Markdown file was not the problem. Please try again.",
+      ERROR_MESSAGES.theImportServiceReturnedAnInvalidResponseYourMarkdownFile,
     );
   }
   if (!response.ok) {
@@ -99,7 +100,7 @@ export async function saveMarkdownCases(
     result.committed.length + result.failed.length !== body.cases.length
   ) {
     throw new Error(
-      "The save response was incomplete. Retry the same save to confirm which cases were imported.",
+      ERROR_MESSAGES.theSaveResponseWasIncompleteRetryTheSameSaveTo,
     );
   }
   const indices = [...result.committed, ...result.failed].map(
@@ -113,7 +114,7 @@ export async function saveMarkdownCases(
     new Set(indices).size !== body.cases.length
   ) {
     throw new Error(
-      "The save response could not be matched to the selected cases. Retry the same save.",
+      ERROR_MESSAGES.theSaveResponseCouldNotBeMatchedToTheSelected,
     );
   }
   return result;

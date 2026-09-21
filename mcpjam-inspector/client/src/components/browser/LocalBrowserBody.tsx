@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   releaseBrowserForChat,
@@ -294,7 +295,7 @@ export function LocalBrowserBody({
       // the install response carries no `installed`, so ask for the rest.
       if (state.status === "ready") setStatus(await fetchLocalBrowserStatus());
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(getUserErrorMessage(err));
     }
   }, [consentToken]);
 
@@ -462,7 +463,7 @@ export function LocalBrowserBody({
       ) {
         return;
       }
-      setError(err instanceof Error ? err.message : String(err));
+      setError(getUserErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -511,7 +512,7 @@ export function LocalBrowserBody({
 
   const exportProfile = useCallback(async () => {
     if (!session || !projectId) {
-      throw new Error("Open a browser before saving its profile.");
+      throw new Error(ERROR_MESSAGES.openABrowserBeforeSavingItsProfile);
     }
     const generation = railGeneration.current;
     await releaseBrowserForChat(projectId, sessionId);
@@ -567,7 +568,7 @@ export function LocalBrowserBody({
         return true;
       } catch (err) {
         if (railGeneration.current !== generation) return false;
-        setError(err instanceof Error ? err.message : String(err));
+        setError(getUserErrorMessage(err));
         return false;
       }
     },
@@ -762,7 +763,7 @@ export function LocalBrowserBody({
   // apart, and a report that called them the same thing could not say whether
   // the native surface helped.
   const engineRef = useRef<string>("local");
-  engineRef.current = native ? "local-native" : (status?.runtime ?? "local");
+  engineRef.current = native ? "local-native" : status?.runtime ?? "local";
   useEffect(
     () => () => captureBrowserPaneSessionSummary(engineRef.current),
     [],
@@ -883,10 +884,10 @@ export function LocalBrowserBody({
     lease.state === "free"
       ? "agent"
       : holding
-        ? "you"
-        : lease.holderKind === "script"
-          ? "script"
-          : "other";
+      ? "you"
+      : lease.holderKind === "script"
+      ? "script"
+      : "other";
 
   /**
    * The shell's transport, for this engine.
@@ -1237,7 +1238,7 @@ export function LocalBrowserBody({
           opened.socket.send(JSON.stringify({ type: "ping", t: Date.now() }));
         }, 20_000);
       } catch (err) {
-        if (!closed) setError(err instanceof Error ? err.message : String(err));
+        if (!closed) setError(getUserErrorMessage(err));
       }
     })();
 
@@ -1343,8 +1344,8 @@ export function LocalBrowserBody({
               lease.state === "free"
                 ? "agent"
                 : lease.holderKind === "script"
-                  ? "script"
-                  : "human",
+                ? "script"
+                : "human",
             ...(lease.state !== "free" && lease.holder
               ? { holder: lease.holder }
               : {}),

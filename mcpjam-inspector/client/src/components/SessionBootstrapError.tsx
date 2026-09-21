@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { type ReactElement } from "react";
 import { NetworkAccessError } from "./NetworkAccessError";
 import { isSessionTokenHostDenied } from "@/lib/session-token";
@@ -40,14 +41,13 @@ export function GenericBootstrapError() {
           style={{ width: "120px", height: "auto", marginBottom: "1.5rem" }}
         />
         <h1 style={{ color: "#dc2626", marginBottom: "0.5rem" }}>
-          Authentication Error
+          {ERROR_MESSAGES.authenticationError}
         </h1>
         <p style={{ marginBottom: "0.25rem" }}>
-          Failed to establish secure session.
+          {ERROR_MESSAGES.failedToEstablishSecureSession}
         </p>
         <p style={{ color: "#666", fontSize: "0.875rem" }}>
-          This is usually temporary. Retry below, and check the console if it
-          persists.
+          {ERROR_MESSAGES.thisIsUsuallyTemporaryRetryBelowAndCheckTheConsole}
         </p>
         <button
           onClick={() => location.reload()}

@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Circle, ImageIcon, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -79,7 +80,7 @@ export function RenderPreviewPanel({
       setToolCallId(`preview-${Date.now()}`);
       setStatus("rendered");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(getUserErrorMessage(e));
       setStatus("error");
     }
   };

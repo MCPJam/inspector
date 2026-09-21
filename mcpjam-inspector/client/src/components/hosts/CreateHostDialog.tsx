@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
@@ -73,7 +74,7 @@ export function CreateHostDialog({
             cursorCli: cursorCliEnabled,
           }).sort((a, b) => a.label.localeCompare(b.label))
         : [],
-    [catalogState, claudeCodeEnabled, codexEnabled, cursorCliEnabled]
+    [catalogState, claudeCodeEnabled, codexEnabled, cursorCliEnabled],
   );
   const defaultHostId =
     visibleCatalogHosts.find((host) => host.id === DEFAULT_CATALOG_HOST_ID)
@@ -82,7 +83,7 @@ export function CreateHostDialog({
     DEFAULT_CATALOG_HOST_ID;
   const visibleHostIds = useMemo(
     () => new Set(visibleCatalogHosts.map((host) => host.id)),
-    [visibleCatalogHosts]
+    [visibleCatalogHosts],
   );
   const [name, setName] = useState("");
   // True once the user hand-types a (non-empty) name; the template-label
@@ -92,7 +93,7 @@ export function CreateHostDialog({
   // misread the defaulted name as user-typed, pinning it forever.
   const userEditedNameRef = useRef(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(
-    initialTemplateId ?? DEFAULT_CATALOG_HOST_ID
+    initialTemplateId ?? DEFAULT_CATALOG_HOST_ID,
   );
   const [isSaving, setIsSaving] = useState(false);
   const selectedTemplateInput =
@@ -123,7 +124,13 @@ export function CreateHostDialog({
     const requested = initialTemplateId ?? DEFAULT_CATALOG_HOST_ID;
     const allowed = visibleHostIds.has(requested);
     setSelectedTemplateId(allowed ? requested : defaultHostId);
-  }, [isOpen, initialTemplateId, visibleCatalogHosts.length, visibleHostIds, defaultHostId]);
+  }, [
+    isOpen,
+    initialTemplateId,
+    visibleCatalogHosts.length,
+    visibleHostIds,
+    defaultHostId,
+  ]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -187,7 +194,9 @@ export function CreateHostDialog({
         // swallow — analytics must not block the success path
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : ERROR_MESSAGES.failedToCreateClient);
+      toast.error(
+        getUserErrorMessage(err, ERROR_MESSAGES.failedToCreateClient),
+      );
     } finally {
       setIsSaving(false);
     }
@@ -220,7 +229,7 @@ export function CreateHostDialog({
                       isSelected
                         ? "border-primary ring-2 ring-primary/30 bg-accent"
                         : "border-border hover:bg-accent/50",
-                      !templateAvailable && "cursor-not-allowed opacity-50"
+                      !templateAvailable && "cursor-not-allowed opacity-50",
                     )}
                     aria-pressed={isSelected}
                   >

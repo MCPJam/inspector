@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * The suite's schedule, read as an AUTOMATION rather than a checkbox.
@@ -145,7 +146,7 @@ export function SuiteAutomationRow({
   // spends somebody's access, and a bare id would hide that this one no longer
   // has anybody's.
   const ownerName = ownerId
-    ? (userMap?.get(ownerId)?.name ?? "a former member")
+    ? userMap?.get(ownerId)?.name ?? "a former member"
     : null;
 
   const recentScheduledRuns = useMemo(
@@ -163,9 +164,7 @@ export function SuiteAutomationRow({
       toast.success(success);
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.failedToUpdateTheSchedule,
+        getUserErrorMessage(error, ERROR_MESSAGES.failedToUpdateTheSchedule),
       );
     } finally {
       setIsWriting(false);
@@ -198,9 +197,7 @@ export function SuiteAutomationRow({
             ) : null}
           </div>
           {chip.detail ? (
-            <p className="text-[11px] text-warning">
-              {chip.detail}
-            </p>
+            <p className="text-[11px] text-warning">{chip.detail}</p>
           ) : null}
           <p className="text-[11px] text-muted-foreground/60">
             Next run: {enabled ? formatNextDue(scheduleNextDueAt) : "—"}
@@ -317,8 +314,8 @@ export function SuiteAutomationRow({
             <DialogHeader>
               <DialogTitle>Schedule</DialogTitle>
               <DialogDescription>
-                Saves immediately — this editor writes as you change it, with its
-                own validation.
+                Saves immediately — this editor writes as you change it, with
+                its own validation.
               </DialogDescription>
             </DialogHeader>
             <ScheduleEditor

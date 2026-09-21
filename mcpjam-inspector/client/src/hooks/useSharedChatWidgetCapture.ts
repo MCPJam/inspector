@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useRef } from "react";
 import { useMutation } from "convex/react";
 import type { UIMessage } from "@ai-sdk/react";
@@ -436,7 +437,7 @@ export function useSharedChatWidgetCapture({
 
       const result = (await response.json()) as { storageId?: string };
       if (!result.storageId) {
-        throw new Error("Snapshot upload did not return a storageId");
+        throw new Error(ERROR_MESSAGES.snapshotUploadDidNotReturnAStorageid);
       }
 
       return result.storageId;
@@ -540,7 +541,7 @@ export function useSharedChatWidgetCapture({
       }
 
       if (shouldRetryPendingSnapshot(snapshotResult, null)) {
-        throw new Error("Session not found for chat session");
+        throw new Error(ERROR_MESSAGES.sessionNotFoundForChatSession);
       }
 
       uploadedHashesRef.current.set(toolCallId, htmlHash);

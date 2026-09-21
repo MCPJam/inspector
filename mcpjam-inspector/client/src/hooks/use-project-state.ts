@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useCallback,
@@ -98,7 +99,7 @@ interface PendingClientConfigSync {
 }
 
 const PROJECT_CLIENT_CONFIG_SYNC_INTERRUPTED_ERROR_MESSAGE =
-  "Project client config sync was interrupted.";
+  ERROR_MESSAGES.projectClientConfigSyncWasInterrupted;
 
 interface ClientConfigSaveController<T> {
   beginSave: (input: {
@@ -1091,7 +1092,7 @@ export function useProjectState({
           logger.error("Failed to update project", {
             error: errorMessage,
           });
-          toast.error(errorMessage);
+          toast.error(getUserErrorMessage(errorMessage));
           throw error instanceof Error ? error : new Error(errorMessage);
         }
       } else {
@@ -1230,7 +1231,7 @@ export function useProjectState({
             error: errorMessage,
             projectId,
           });
-          toast.error(errorMessage);
+          toast.error(getUserErrorMessage(errorMessage));
           throw error instanceof Error ? error : new Error(errorMessage);
         }
         // Optimistically update only the slice the user edited. Using
@@ -1527,7 +1528,7 @@ export function useProjectState({
         try {
           await convexDeleteProject({ projectId });
         } catch (error) {
-          let errorMessage = "Failed to delete project";
+          let errorMessage: string = ERROR_MESSAGES.failedToDeleteProject;
           if (
             error &&
             typeof error === "object" &&

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useReducer, type FormEvent } from "react";
 import { ScoreRunnerView } from "./ScoreRunnerView";
 import {
@@ -9,8 +10,8 @@ import {
 } from "./score-run-draft";
 import { useScoreRunnerController } from "./use-score-runner-controller";
 
-const INVALID_URL_MESSAGE = "Enter a valid http(s) MCP server URL.";
-const INVALID_EMAIL_MESSAGE = "Enter a valid email address.";
+const INVALID_URL_MESSAGE = ERROR_MESSAGES.enterAValidHttpSMcpServerUrl;
+const INVALID_EMAIL_MESSAGE = ERROR_MESSAGES.enterAValidEmailAddress;
 
 export function ScoreRunnerPage({
   convexProjectId,

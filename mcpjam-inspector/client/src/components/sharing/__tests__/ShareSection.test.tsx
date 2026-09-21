@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -240,7 +241,7 @@ describe("ShareSection", () => {
     await user.type(screen.getByPlaceholderText("Add people, emails..."), "a@b.com");
     await user.click(screen.getByRole("button", { name: "Invite", exact: true }));
     expect(onInvite).toHaveBeenCalledWith("a@b.com");
-    expect(toast.error).toHaveBeenCalledWith("invite denied");
+    expect(toast.error).toHaveBeenCalledWith(ERROR_MESSAGES.failedToInvite);
   });
 
   it("keeps the email invite while access is invited-only", () => {
@@ -440,7 +441,7 @@ describe("guest sharing signup", () => {
       screen.getByRole("button", { name: /Invited users only/i }),
     );
     await user.click(screen.getByText("Anyone with the link"));
-    expect(toast.error).toHaveBeenCalledWith(error.message);
+    expect(toast.error).toHaveBeenCalledWith(ERROR_MESSAGES.failedToUpdateAccessSettings);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

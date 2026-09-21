@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import type { PrepareSendMessagesRequest, UIMessage } from "ai";
 import {
   LOCAL_HARNESS_GRANT_HEADER,
@@ -94,7 +95,7 @@ export function prepareLocalHarnessSendRequest<UI_MESSAGE extends UIMessage>(
   snapshot: LocalHarnessSendSnapshot | null,
 ): ChatSendRequest {
   if (snapshot === null) {
-    throw new Error("Local execution is not authorized for this turn");
+    throw new Error(ERROR_MESSAGES.localExecutionIsNotAuthorizedForThisTurn);
   }
   return {
     body: {

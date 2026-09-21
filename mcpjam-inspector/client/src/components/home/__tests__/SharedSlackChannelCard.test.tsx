@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -230,7 +231,7 @@ describe("SharedSlackChannelCard", () => {
       })
     );
     render(<SharedSlackChannelCard organizationId="org_1" />);
-    expect(screen.getByText(/our team has been notified/)).toBeInTheDocument();
+    expect(screen.getByText(ERROR_MESSAGES.slackConnectIsnTAvailableRightNowOurTeamHas)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(trackMock).toHaveBeenCalledWith("home_shared_slack_retry_clicked", {
       location: "home",
@@ -257,7 +258,7 @@ describe("SharedSlackChannelCard", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("toasts ConvexError.data.message when provision fails", async () => {
+  it("uses code-specific catalog guidance when provision fails", async () => {
     mockUseQuery.mockReturnValue(dto());
     mockProvision.mockRejectedValue({
       data: { code: "slack_connect_limit", message: "limit hit" },
@@ -269,7 +270,7 @@ describe("SharedSlackChannelCard", () => {
       { location: "home", state: "none" }
     );
     await vi.waitFor(() => {
-      expect(toastError).toHaveBeenCalledWith("limit hit");
+      expect(toastError).toHaveBeenCalledWith(ERROR_MESSAGES.thisSlackWorkspaceHasReachedItsSlackConnectConnectionLimit);
     });
   });
 });

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { ConvexError } from "convex/values";
 import { convexErrMessage } from "@/lib/convex-error";
 import type {
@@ -527,20 +528,8 @@ export function getBillingErrorMessage(
   }
 
   if (payload.code === "billing_organization_context_required") {
-    return (
-      payload.message ??
-      "This resource must be linked to an organization before billing enforcement can apply."
-    );
+    return ERROR_MESSAGES.organizationRequired;
   }
 
-  // A payload carrying only a message is not a billing rejection at all —
-  // `extractBillingErrorPayload` wraps every thrown `Error` that way. Shape it
-  // like any other Convex failure so the redacted "[Request ID: …] Server
-  // Error" prefix never reaches the toast. Shape the PARSED message rather than
-  // re-reading the error: for a JSON-encoded `Error.message`, `convexErrMessage`
-  // hands back the raw JSON blob instead of the sentence inside it.
-  const parsed =
-    typeof payload.message === "string" ? payload.message.trim() : "";
-  if (!parsed) return convexErrMessage(error, fallback);
-  return parsed.replace(/^\[.*?\]\s*/, "").slice(0, 400) || fallback;
+  return convexErrMessage(error, fallback);
 }

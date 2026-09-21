@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState } from "react";
 import { useConvex, useConvexAuth } from "convex/react";
 import { useHostList } from "@/hooks/useClients";
@@ -57,7 +58,7 @@ export function planRunMatrix(
     const environment = environments.find((item) => item.environmentId === id);
     if (!environment)
       throw new Error(
-        "The suite's clients are still loading. Try again shortly.",
+        ERROR_MESSAGES.theSuiteSClientsAreStillLoadingTryAgainShortly,
       );
     return environment;
   });
@@ -187,7 +188,7 @@ export function ConfiguredSuiteRunReview(
           )) as { ephemeralEnvironmentLaunch?: boolean };
           if (!capabilities?.ephemeralEnvironmentLaunch) {
             throw new Error(
-              "This deployment does not support one-run client/model changes yet. Save these pairings in suite settings or use the configured pairings.",
+              ERROR_MESSAGES.thisDeploymentDoesNotSupportOneRunClientModelChanges,
             );
           }
         }
@@ -204,7 +205,7 @@ export function ConfiguredSuiteRunReview(
         );
         if (environmentIds.some((id) => !id))
           throw new Error(
-            "Could not resolve the selected clients and models. Try again.",
+            ERROR_MESSAGES.couldNotResolveTheSelectedClientsAndModelsTryAgain,
           );
         await props.onStart(
           {

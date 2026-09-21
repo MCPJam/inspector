@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 // Tier B — `useWidgetHost`, the inspector-side adapter for the `WidgetHost`
 // dependency-inversion contract (see ./widget-host.ts). It reads the ambient
 // stores/contexts the widget renderer used to reach into directly and exposes
@@ -188,7 +189,7 @@ export function useWidgetHost(): WidgetHostImpl {
       listResourceTemplates: async (serverId: string) => {
         if (HOSTED_MODE || webManagedServersRef.current) {
           throw new Error(
-            "Resource templates are not supported in hosted mode",
+            ERROR_MESSAGES.resourceTemplatesAreNotSupportedInHostedMode,
           );
         }
         return listResourceTemplates(serverId);

@@ -1,3 +1,5 @@
+import { ERROR_MESSAGE_TEMPLATES } from "@/lib/error-messages";
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useServerActionsOptional } from "@/state/server-actions-context";
 import {
@@ -1754,7 +1756,7 @@ export function TestTemplateEditor({
           });
           if (!result.readyServerNames.includes(name))
             throw new Error(
-              "Server authorization is required. Check the connection and retry.",
+              ERROR_MESSAGES.serverAuthorizationIsRequiredCheckTheConnectionAndRetry,
             );
         }
       }
@@ -2713,7 +2715,7 @@ export function TestTemplateEditor({
             "Changes could not be saved. Edit again or retry.",
           );
           toast.error(
-            getBillingErrorMessage(error, ERROR_MESSAGES.failedToSaveEvaluatorChanges),
+            getBillingErrorMessage(error, ERROR_MESSAGES.failedToSaveEvaluatorChanges,),
             {
               action: { label: "Retry", onClick: () => enqueue(true) },
             },
@@ -3264,7 +3266,7 @@ export function TestTemplateEditor({
           modelValue,
           modelLabel,
           iteration: null,
-          error: getBillingErrorMessage(error, ERROR_MESSAGES.failedToPrepareCompareRun),
+          error: getBillingErrorMessage(error, ERROR_MESSAGES.failedToPrepareCompareRun,),
           startedAt: null,
           completedAt: Date.now(),
         });
@@ -3579,9 +3581,7 @@ export function TestTemplateEditor({
         );
       } else if (successfulCount > 0) {
         toast.error(
-          `${successfulCount}/${totalRequestedModels} model${
-            totalRequestedModels === 1 ? "" : "s"
-          } completed successfully.`,
+          ERROR_MESSAGE_TEMPLATES.modelCompletedSuccessfully(successfulCount, totalRequestedModels, totalRequestedModels === 1 ? "" : "s"),
         );
       } else {
         toast.error(ERROR_MESSAGES.compareRunFailedForAllSelectedModels);
@@ -3802,7 +3802,7 @@ export function TestTemplateEditor({
     ? {
         stepStatusById: parseStepStatusById(
           workspaceOverlayIteration.metadata as
-            Parameters<typeof parseStepStatusById>[0] | undefined,
+            | Parameters<typeof parseStepStatusById>[0] | undefined,
         ),
       }
     : null;
@@ -3951,9 +3951,10 @@ export function TestTemplateEditor({
                     );
                   } catch (error) {
                     toast.error(
-                      error instanceof Error
-                        ? error.message
-                        : ERROR_MESSAGES.couldNotUndoEdit,
+                      getUserErrorMessage(
+                        error ,
+                        ERROR_MESSAGES.couldNotUndoEdit,
+                      ),
                     );
                   }
                 }}
@@ -4130,7 +4131,8 @@ export function TestTemplateEditor({
                   className="mt-2"
                 />
               </div>
-              {!readOnly && <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+              {!readOnly && (
+                <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                 {onExportDraft && !useWorkspace ? (
                   <Button
                     type="button"
@@ -4527,7 +4529,7 @@ export function TestTemplateEditor({
                   }
                   side="top"
                 />
-              </div>}
+              </div>)}
             </div>
           </div>
           {useWorkspace ? (
@@ -5307,7 +5309,7 @@ export function TestTemplateEditor({
                           testCaseId={currentTestCase._id}
                           value={
                             (currentTestCase.attachments as
-                              EvalAttachment[] | undefined) ?? []
+                              | EvalAttachment[] | undefined) ?? []
                           }
                         />
                       </div>
@@ -5818,7 +5820,7 @@ function RunColumn({
    */
   const snapshotHostStyle = (
     record.iteration?.testCaseSnapshot as
-      { hostConfigOverride?: { hostStyle?: string } } | undefined
+      | { hostConfigOverride?: { hostStyle?: string } } | undefined
   )?.hostConfigOverride?.hostStyle;
   const hostStyle =
     snapshotHostStyle ?? baselineHostStyle ?? globalPreferenceHostStyle;

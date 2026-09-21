@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import {
@@ -338,7 +339,7 @@ function useLeaveOrganization(organization: Organization) {
       setLeaveConfirmOpen(false);
       appNavigate("/servers");
     } catch (error) {
-      toast.error((error as Error).message || ERROR_MESSAGES.failedToLeaveOrganization);
+      toast.error((error as Error).message || ERROR_MESSAGES.failedToLeaveOrganization,);
     } finally {
       setIsLeaving(false);
     }
@@ -814,7 +815,7 @@ function OrganizationPage({
       });
 
       if (!result.ok) {
-        throw new Error("Failed to upload file");
+        throw new Error(ERROR_MESSAGES.failedToUploadFile);
       }
 
       const { storageId } = await result.json();
@@ -896,9 +897,10 @@ function OrganizationPage({
       }
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.paymentWasNotCompletedTheMemberWasNotAdded,
+        getUserErrorMessage(
+          error ,
+          ERROR_MESSAGES.paymentWasNotCompletedTheMemberWasNotAdded,
+        ),
       );
     }
   };
@@ -919,9 +921,10 @@ function OrganizationPage({
       }
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.paymentWasNotCompletedTheMemberWasNotAdded,
+        getUserErrorMessage(
+          error ,
+          ERROR_MESSAGES.paymentWasNotCompletedTheMemberWasNotAdded,
+        ),
       );
     }
   };
@@ -968,9 +971,10 @@ function OrganizationPage({
       }
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.failedToCancelPendingSeatPayment,
+        getUserErrorMessage(
+          error ,
+          ERROR_MESSAGES.failedToCancelPendingSeatPayment,
+        ),
       );
     } finally {
       if (isInviteRemoval) {
@@ -1040,7 +1044,7 @@ function OrganizationPage({
       });
       toast.success(`Updated role for ${member.email}`);
     } catch (error) {
-      toast.error((error as Error).message || ERROR_MESSAGES.failedToUpdateMemberRole);
+      toast.error((error as Error).message || ERROR_MESSAGES.failedToUpdateMemberRole,);
     } finally {
       setRoleUpdatingEmail(null);
     }
@@ -1083,7 +1087,7 @@ function OrganizationPage({
         appNavigate("/servers");
       }
     } catch (error) {
-      toast.error((error as Error).message || ERROR_MESSAGES.failedToDeleteOrganization);
+      toast.error((error as Error).message || ERROR_MESSAGES.failedToDeleteOrganization,);
     } finally {
       setIsDeleting(false);
     }
@@ -1136,9 +1140,7 @@ function OrganizationPage({
       openBillingUrl(billingUrl);
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.failedToOpenBillingPortal,
+        getUserErrorMessage(error , ERROR_MESSAGES.failedToOpenBillingPortal),
       );
     }
   };
@@ -1154,9 +1156,10 @@ function OrganizationPage({
       openBillingUrl(billingUrl);
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.failedToOpenBillingIntervalChange,
+        getUserErrorMessage(
+          error ,
+          ERROR_MESSAGES.failedToOpenBillingIntervalChange,
+        ),
       );
     }
   };
@@ -1202,9 +1205,10 @@ function OrganizationPage({
       toast.success(scheduledBillingChangeCancellation.successMessage);
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.failedToCancelScheduledBillingChange,
+        getUserErrorMessage(
+          error ,
+          ERROR_MESSAGES.failedToCancelScheduledBillingChange,
+        ),
       );
     }
   };
@@ -1220,7 +1224,7 @@ function OrganizationPage({
       setPendingDowngradeConfirmation(null);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : ERROR_MESSAGES.failedToChangePlan,
+        getUserErrorMessage(error , ERROR_MESSAGES.failedToChangePlan),
       );
     }
   };
@@ -1258,7 +1262,7 @@ function OrganizationPage({
       openBillingUrl(billingUrl, options.navigation);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : ERROR_MESSAGES.failedToChangePlan,
+        getUserErrorMessage(error , ERROR_MESSAGES.failedToChangePlan),
       );
     }
   };
@@ -1323,7 +1327,7 @@ function OrganizationPage({
           )
         ) {
           toast.error(
-            error instanceof Error ? error.message : ERROR_MESSAGES.failedToChangePlan,
+            getUserErrorMessage(error , ERROR_MESSAGES.failedToChangePlan),
           );
         }
         throw error;
@@ -2060,4 +2064,4 @@ function OrganizationPage({
   );
 }
 const PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE =
-  "Paid plan changes require an explicit confirmation.";
+  ERROR_MESSAGES.paidPlanChangesRequireAnExplicitConfirmation;

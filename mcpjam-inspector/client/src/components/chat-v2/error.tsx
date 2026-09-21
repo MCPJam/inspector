@@ -1,3 +1,5 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
+import { getUserErrorMessage } from "@/lib/user-error";
 import {
   CircleAlert,
   ChevronDown,
@@ -288,10 +290,11 @@ export function ErrorBox({
             // must cost a scrollbar, never the whole screen.
             <p className="text-sm leading-6 max-h-40 overflow-y-auto break-words">
               {isAuthError ? (
-                message
+                getUserErrorMessage({ code, message }, ERROR_MESSAGES.chatFailed)
               ) : (
                 <>
-                  <span className="font-medium">{errorPrefix}</span> {message}
+                  <span className="font-medium">{errorPrefix}</span>{" "}
+                  {getUserErrorMessage({ code, message }, ERROR_MESSAGES.chatFailed)}
                 </>
               )}
             </p>

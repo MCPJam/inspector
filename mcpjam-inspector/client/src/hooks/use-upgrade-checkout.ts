@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { canCheckoutPlan } from "@/lib/pricing-catalog";
 import { useCallback, useEffect, useState } from "react";
@@ -432,9 +433,10 @@ export function useUpgradeCheckout({
       return { redirected: false, shouldDismiss: true };
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.couldnTStartCheckoutPleaseTryAgain,
+        getUserErrorMessage(
+          error,
+          ERROR_MESSAGES.couldnTStartCheckoutPleaseTryAgain,
+        ),
       );
       track("plan_limit_upgrade_failed", {
         location: "plan_limit_dialog",

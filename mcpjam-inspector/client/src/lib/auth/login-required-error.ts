@@ -1,9 +1,10 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * The message authkit fixes on `LoginRequiredError`
  * (`readonly message = "No access token available"`), so it is identical for
  * every throw site.
  */
-export const LOGIN_REQUIRED_ERROR_MESSAGE = "No access token available";
+export const LOGIN_REQUIRED_ERROR_MESSAGE = ERROR_MESSAGES.noAccessTokenAvailable;
 
 /**
  * Is this failure authkit's `LoginRequiredError` — i.e. WorkOS has no session

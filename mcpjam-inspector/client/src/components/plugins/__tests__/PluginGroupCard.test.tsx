@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Plugin GROUP card: the card is a bundle, not a server. It must never claim a
  * plugin is ready while a component is not, it must show the components of the
@@ -243,7 +244,7 @@ describe("PluginGroupCard", () => {
       );
     });
     expect(h.toastError).toHaveBeenCalledWith(
-      'still pinned by environment "Staging"',
+      ERROR_MESSAGES.unknownError,
     );
     expect(h.track).not.toHaveBeenCalled();
   });
@@ -451,7 +452,7 @@ describe("PluginGroupCard — inline component setup", () => {
       fireEvent.click(screen.getByTestId("plugin-server-setup-save"));
     });
     expect(h.toastError).toHaveBeenCalledWith(
-      "Structural edits to plugin servers are not allowed",
+      ERROR_MESSAGES.unknownError,
     );
     expect(screen.getByTestId("plugin-server-setup")).toBeTruthy();
   });

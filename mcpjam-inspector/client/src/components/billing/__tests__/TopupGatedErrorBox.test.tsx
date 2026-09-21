@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 const billingState = vi.hoisted(() => ({ effectivePlan: "team", canManageBilling: true, isLoadingBilling: false }));
 vi.mock("@/hooks/use-upgrade-checkout", () => ({ useUpgradeCheckout: () => billingState }));
@@ -172,7 +173,7 @@ describe("TopupGatedErrorBox", () => {
     // The error copy is still rendered so the user understands what
     // happened, just without the gated Top-up CTA.
     expect(
-      screen.getAllByText(/Provider unavailable/).length
+      screen.getAllByText(ERROR_MESSAGES.chatFailed, { exact: false }).length
     ).toBeGreaterThanOrEqual(1);
     errorSpy.mockRestore();
   });

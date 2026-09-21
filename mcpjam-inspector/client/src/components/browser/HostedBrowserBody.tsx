@@ -543,7 +543,7 @@ export function HostedBrowserBody({
   );
 
   const exportProfile = useCallback(async () => {
-    if (!tokens) throw new Error("The hosted browser is not ready yet.");
+    if (!tokens) throw new Error(ERROR_MESSAGES.theHostedBrowserIsNotReadyYet);
     await releaseBrowserForChat(projectId, sessionId);
     return fetchHostedBrowserProfileArchive(tokens);
   }, [tokens, projectId, sessionId]);

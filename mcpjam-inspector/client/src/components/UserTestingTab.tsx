@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router";
 import { AlertTriangle, Boxes, Inbox, Loader2, Plus } from "lucide-react";
@@ -371,7 +372,7 @@ export function UserTestingTab({
           // the agent it removed something it did not.
           if (result?.deleted === false) {
             throw new Error(
-              "The scenario was not deleted — it may already be gone.",
+              ERROR_MESSAGES.theScenarioWasNotDeletedItMayAlreadyBeGone,
             );
           }
           return {

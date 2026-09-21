@@ -1,8 +1,9 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { describe, expect, it } from "vitest";
 import { formatErrorMessage, UPSTREAM_ERROR_PAGE_CODE } from "../chat-helpers";
 
 const UPSTREAM_UNREACHABLE_MESSAGE =
-  "MCPJam was briefly unreachable. Nothing in this chat was lost — retry to send your message again.";
+  ERROR_MESSAGES.upstreamUnavailable;
 
 // A gateway 502 as it actually arrives: the AI SDK throws
 // `new Error(await response.text())`, so an entire HTML document lands in

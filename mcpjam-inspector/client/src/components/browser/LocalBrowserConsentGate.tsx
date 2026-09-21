@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   Dialog,
@@ -111,9 +112,10 @@ export function LocalBrowserConsentGate({
       });
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message
-          : ERROR_MESSAGES.couldnTFinishBrowserSetupTryAgain,
+        getUserErrorMessage(
+          err,
+          ERROR_MESSAGES.couldnTFinishBrowserSetupTryAgain,
+        ),
       );
       track("local_browser_consent_granted", {
         location,

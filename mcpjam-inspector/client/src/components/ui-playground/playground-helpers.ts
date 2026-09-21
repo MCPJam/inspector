@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * playground-helpers.ts
  *
@@ -54,7 +55,7 @@ export function createDeterministicToolMessages(
 ): { messages: UIMessage[]; toolCallId: string } {
   // Validate toolName
   if (!toolName?.trim()) {
-    throw new Error("toolName is required");
+    throw new Error(ERROR_MESSAGES.toolnameIsRequired);
   }
 
   const toolCallId = options?.toolCallId ?? `playground-${generateId()}`;

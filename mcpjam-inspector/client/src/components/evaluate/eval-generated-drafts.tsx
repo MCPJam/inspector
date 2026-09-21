@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { RunIterationControl } from "./run-iteration-control";
 import { EvalModelChoices } from "./eval-target-matrix";
@@ -53,7 +54,7 @@ export function isWriteConflictMessage(message: string): boolean {
 
 /** Named the retry, because retrying is the entire fix. */
 const WRITE_CONFLICT_MESSAGE =
-  "Another change to this suite landed first. Try adding it again.";
+  ERROR_MESSAGES.anotherChangeToThisSuiteLandedFirstTryAddingIt;
 
 /**
  * The one place a stored draft/generation error becomes user-facing copy. The

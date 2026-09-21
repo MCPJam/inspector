@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { HOSTED_MODE } from "@/lib/config";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
@@ -140,7 +141,7 @@ export function getApiContextRevision(): number {
 
 function assertHostedMode() {
   if (!HOSTED_MODE) {
-    throw new Error("Hosted API context is only available in hosted mode");
+    throw new Error(ERROR_MESSAGES.hostedApiContextIsOnlyAvailableInHostedMode);
   }
 }
 
@@ -300,7 +301,7 @@ function shouldIncludeHostedRefInNotFoundError(
 }
 
 const HOSTED_SERVER_NOT_FOUND_OPAQUE_MESSAGE =
-  "Hosted server not found. The server is not in your hosted project, or the server list is still loading.";
+  ERROR_MESSAGES.hostedServerNotFoundTheServerIsNotInYour;
 
 export function resolveHostedServerId(serverNameOrId: string): string {
   // Context-gated, not mode-gated — see getHostedProjectId.

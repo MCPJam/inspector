@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { hydrateTurnRequestPayloads } from "@/components/evals/turn-trace-spans";
 import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
@@ -469,7 +470,7 @@ export interface UseChatSessionOptions {
 }
 
 export type ChatSessionResetReason =
-  "auth-bootstrap" | "hydrate" | "fork" | "servers-changed" | "reset";
+  | "auth-bootstrap" | "hydrate" | "fork" | "servers-changed" | "reset";
 
 /**
  * Shown when `detachToLocalFork` could not confirm its fork went live. The
@@ -478,7 +479,7 @@ export type ChatSessionResetReason =
  * detach does. Shared so both chat surfaces say the same thing.
  */
 export const DETACH_FORK_FAILED_MESSAGE =
-  "Couldn't move this conversation to a new thread. Reload the page before sending again.";
+  ERROR_MESSAGES.couldnTMoveThisConversationToANewThreadReload;
 
 export interface TokenUsage {
   inputTokens: number;
@@ -2176,7 +2177,7 @@ export function useChatSession(
           if (!send) {
             // Unreachable in a mounted hook; throwing keeps the dialog (and the
             // user's answers) rather than silently dropping a live round.
-            throw new Error("Chat is not ready to resume this operation.");
+            throw new Error(ERROR_MESSAGES.chatIsNotReadyToResumeThisOperation);
           }
           await send(round, responses);
         },
@@ -2193,7 +2194,8 @@ export function useChatSession(
         const session = chatSessionIdRef.current ?? "new";
         if (!paidFallbackNotices.current.has(session)) {
           paidFallbackNotices.current.add(session);
-          toast.info("MCPJam's shared free allowance is unavailable; this chat is using your credits.");
+          toast.info("MCPJam's shared free allowance is unavailable; this chat is using your credits.",
+          );
           track("platform_paid_fallback_notice", { chatSessionId: session });
         }
         return;
@@ -2373,8 +2375,8 @@ export function useChatSession(
               ];
             const server =
               (log.serverName
-                ? (appState?.servers?.[log.serverName] ??
-                  activeProject?.servers?.[log.serverName])
+                ? appState?.servers?.[log.serverName] ??
+                  activeProject?.servers?.[log.serverName]
                 : undefined) ??
               appState?.servers?.[log.serverId] ??
               activeProject?.servers?.[log.serverId];
@@ -2847,7 +2849,8 @@ export function useChatSession(
             });
             if (!response.ok) {
               const replayError =
-                await classifyScenarioAccessResponse(response);
+                await classifyScenarioAccessResponse(response,
+              );
               if (replayError?.kind === "denied") {
                 hostedOnAccessRevoked?.(replayError);
               }
@@ -2924,7 +2927,8 @@ export function useChatSession(
       limitKind,
       ...(hostedScenarioId ? { surface: "scenario" as const } : {}),
     });
-  }, [hostedScenarioId]);
+  }, [hostedScenarioId],
+  );
 
   // Create transport
   const pendingWidgetModelContextRef = useRef<
@@ -3015,7 +3019,7 @@ export function useChatSession(
     // Submit is blocked until hostedProjectId and selected server ids resolve.
     const buildHostedBody = () => {
       if (!hostedProjectId) {
-        throw new Error("Hosted chat context is not ready: missing projectId.");
+        throw new Error(ERROR_MESSAGES.hostedChatContextIsNotReadyMissingProjectid);
       }
       const isHostedDirectChat = !hostedScenarioId;
       // Prefer ids resolved by the `sendMessage` preflight (ad-hoc/App servers
@@ -3112,7 +3116,7 @@ export function useChatSession(
         // the data-part handler, whose closure is recreated on a project
         // switch and would stamp the NEW project on a late part.
         turnTaskScopeRef.current = shouldUseOrgAwareChatApi
-          ? (hostedProjectId ?? undefined)
+          ? hostedProjectId ?? undefined
           : getTrackedTaskScope();
         // And the approval value this turn is SENT with, for the same reason.
         // The server declares each tool's `needsApproval` from the value in
@@ -3550,7 +3554,7 @@ export function useChatSession(
           Awaited<ReturnType<typeof entry.bridge.callTool>>
         >((resolve, reject) => {
           const onAbort = () =>
-            reject(new Error("App iframe was torn down mid-dispatch"));
+            reject(new Error(ERROR_MESSAGES.appIframeWasTornDownMidDispatch));
           if (controller.signal.aborted) {
             onAbort();
             return;
@@ -4254,9 +4258,10 @@ export function useChatSession(
             pendingWidgetModelContextRef.current = undefined;
             resolvedHostedServersRef.current = null;
             toast.error(
-              error instanceof Error
-                ? error.message
-                : ERROR_MESSAGES.couldnTPrepareTheSelectedServersForThisRun,
+              getUserErrorMessage(
+                error ,
+                ERROR_MESSAGES.couldnTPrepareTheSelectedServersForThisRun,
+              ),
             );
             return false; // fail closed — do not send with unresolved servers
           }
@@ -4268,16 +4273,17 @@ export function useChatSession(
             browserProjectIdRef.current !== browserProjectAtSend
           ) {
             throw new Error(
-              "The chat changed while returning browser control. Send your message again.",
+              ERROR_MESSAGES.theChatChangedWhileReturningBrowserControlSendYourMessage,
             );
           }
         } catch (error) {
           pendingWidgetModelContextRef.current = undefined;
           resolvedHostedServersRef.current = null;
           toast.error(
-            error instanceof Error
-              ? error.message
-              : ERROR_MESSAGES.couldnTReturnBrowserControl,
+            getUserErrorMessage(
+              error ,
+              ERROR_MESSAGES.couldnTReturnBrowserControl,
+            ),
           );
           return false;
         }
@@ -5303,7 +5309,7 @@ export function useChatSession(
         }
       } catch (error) {
         console.warn("[elicitation] respond failed", error);
-        toast.error(ERROR_MESSAGES.couldnTSendYourResponseTheRequestWillTimeOut);
+        toast.error(ERROR_MESSAGES.couldnTSendYourResponseTheRequestWillTimeOut,);
       } finally {
         setElicitationResponding(false);
       }

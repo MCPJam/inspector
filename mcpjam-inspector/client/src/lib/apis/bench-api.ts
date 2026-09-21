@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Connector Bench client.
  *
@@ -710,7 +711,7 @@ export async function fetchBenchResult(secret: string): Promise<BenchResult> {
     await throwFromResponse(response, "Could not load this benchmark result.");
   }
   const body = (await response.json()) as { result?: BenchResult };
-  if (!body.result) throw new Error("Could not load this benchmark result.");
+  if (!body.result) throw new Error(ERROR_MESSAGES.couldNotLoadThisBenchmarkResult);
   const envelope = body.result as BenchResult & {
     ready?: boolean;
     benchmarkRunId?: string;

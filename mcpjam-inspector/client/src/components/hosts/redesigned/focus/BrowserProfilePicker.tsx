@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useState } from "react";
 import { toast } from "@/lib/toast";
@@ -30,9 +31,10 @@ export function BrowserProfilePicker({
       .catch((error) => {
         if (!cancelled) {
           toast.error(
-            error instanceof Error
-              ? error.message
-              : ERROR_MESSAGES.couldNotLoadSavedBrowserProfiles,
+            getUserErrorMessage(
+              error,
+              ERROR_MESSAGES.couldNotLoadSavedBrowserProfiles,
+            ),
           );
         }
       });
@@ -78,8 +80,8 @@ export function BrowserProfilePicker({
         {loading
           ? "Loading saved profiles…"
           : loaded.length === 0
-            ? "No saved profiles yet — new chats use your default."
-            : "Used by browser tools for this host"}
+          ? "No saved profiles yet — new chats use your default."
+          : "Used by browser tools for this host"}
       </span>
     </div>
   );

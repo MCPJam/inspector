@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { create } from "zustand";
 
 export interface EvalToolMetadata {
@@ -74,7 +75,7 @@ async function withTimeout<T>(request: Promise<T>): Promise<T> {
       request,
       new Promise<never>((_, reject) => {
         timer = setTimeout(
-          () => reject(new Error("Tool metadata timed out")),
+          () => reject(new Error(ERROR_MESSAGES.toolMetadataTimedOut)),
           12_000,
         );
       }),

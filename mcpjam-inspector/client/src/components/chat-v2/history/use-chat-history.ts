@@ -1,3 +1,5 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
+import { getUserErrorMessage } from "@/lib/user-error";
 import {
   startTransition,
   useCallback,
@@ -61,9 +63,9 @@ export function useChatHistory({
   const [personalFallback, setPersonalFallback] = useState<
     ChatHistorySession[]
   >([]);
-  const [projectFallback, setProjectFallback] = useState<
-    ChatHistorySession[]
-  >([]);
+  const [projectFallback, setProjectFallback] = useState<ChatHistorySession[]>(
+    [],
+  );
   const [fallbackLoading, setFallbackLoading] = useState(false);
   const [fallbackError, setFallbackError] = useState<string | null>(null);
   const fetchCountRef = useRef(0);
@@ -138,7 +140,7 @@ export function useChatHistory({
       });
     } catch (err) {
       if (fetchId !== fetchCountRef.current) return;
-      setFallbackError(err instanceof Error ? err.message : String(err));
+      setFallbackError(getUserErrorMessage(err));
     } finally {
       if (fetchId === fetchCountRef.current) {
         setFallbackLoading(false);
@@ -186,7 +188,7 @@ export function useChatHistory({
           return;
         case "share":
           if (!projectId) {
-            throw new Error("Cannot share a session without a project.");
+            throw new Error(ERROR_MESSAGES.cannotShareASessionWithoutAProject);
           }
           await shareCurrentSession({
             ...payload,
@@ -229,7 +231,7 @@ export function useChatHistory({
       let scopedParams = params;
       if (action === "share") {
         if (!projectId) {
-          throw new Error("Cannot share a session without a project.");
+          throw new Error(ERROR_MESSAGES.cannotShareASessionWithoutAProject);
         }
         scopedParams = { ...params, projectId };
       }
@@ -238,7 +240,13 @@ export function useChatHistory({
       });
       await fetchHistory();
     },
-    [fetchHistory, isReactive, performReactiveAction, projectId, requestHeaders],
+    [
+      fetchHistory,
+      isReactive,
+      performReactiveAction,
+      projectId,
+      requestHeaders,
+    ],
   );
 
   const archiveManySessionIds = useCallback(
@@ -294,8 +302,8 @@ export function useChatHistory({
   const loading = isReactive
     ? reactiveResult === undefined
     : enabled && isAuthLoading
-      ? true
-      : fallbackLoading;
+    ? true
+    : fallbackLoading;
   const refetch = useCallback(() => {
     if (!isReactive) {
       void fetchHistory();

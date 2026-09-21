@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useRef, useState } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
@@ -39,7 +40,7 @@ export function ImportDatasetDialog({
   // to say why the import stopped. The wire sentence ("… Use BYOK or try
   // again tomorrow.") is authored by a Convex backend outside this repo, so
   // matching the other two case-creation surfaces has to happen here.
-  const errorText = error ? describeMCPJamLimitMessage(error) ?? error : null;
+  const errorText = error ? describeMCPJamLimitMessage(error) ?? getUserErrorMessage(error, ERROR_MESSAGES.couldNotReadOrExtractThisFile) : null;
   const controller = useRef<AbortController | null>(null);
   const generation = useRef(0);
   const startIdentity = useRef({ file: null as File | null, key: "" });
@@ -102,7 +103,7 @@ export function ImportDatasetDialog({
       const markdown = new TextDecoder("utf-8", { fatal: true }).decode(
         await file.arrayBuffer(),
       );
-      if (!markdown.trim()) throw new Error("The file is empty.");
+      if (!markdown.trim()) throw new Error(ERROR_MESSAGES.theFileIsEmpty);
       if (current !== generation.current) return;
       if (sharedAuthoring) {
         const result = await authoringRequest(
@@ -152,9 +153,7 @@ export function ImportDatasetDialog({
     } catch (e) {
       if (current === generation.current)
         setError(
-          e instanceof Error
-            ? e.message
-            : ERROR_MESSAGES.couldNotReadOrExtractThisFile,
+          e instanceof Error ? e.message : ERROR_MESSAGES.couldNotReadOrExtractThisFile,
         );
     } finally {
       if (current === generation.current) {

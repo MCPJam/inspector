@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { ConvexError } from "convex/values";
 /**
  * Scenario detail. Two behaviours are load-bearing beyond layout:
@@ -1139,7 +1140,7 @@ describe("UserTestingScenarioDetail", () => {
       );
     });
 
-    it("a refused rebind rolls the strip back and shows the backend's sentence", async () => {
+    it("a refused rebind rolls the strip back and shows catalog guidance", async () => {
       environmentState.row = namedRow;
       resolveTargetsMock.mockResolvedValue({
         environmentIds: ["env-2"],
@@ -1163,7 +1164,7 @@ describe("UserTestingScenarioDetail", () => {
 
       await waitFor(() =>
         expect(toast.error).toHaveBeenCalledWith(
-          'That setup already has a scenario — "Other". Open it instead, or change the setup.',
+          ERROR_MESSAGES.couldNotUpdateThisScenarioSSetup,
         ),
       );
       // Rolled back to what the scenario actually runs.

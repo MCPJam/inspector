@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useMemo } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import type {
@@ -509,7 +510,7 @@ export function useUsageInsights({
   const rebuild = useCallback(
     async (args?: { force?: boolean }) => {
       if (!effectiveScope) {
-        throw new Error("No insights scope to rebuild");
+        throw new Error(ERROR_MESSAGES.noInsightsScopeToRebuild);
       }
       if (effectiveScope.kind === "benchmark") {
         const outcome = await generateBenchmarkFlow({

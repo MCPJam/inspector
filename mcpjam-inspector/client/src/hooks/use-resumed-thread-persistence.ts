@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useCallback,
   useEffect,
@@ -54,7 +55,7 @@ export const NO_RECEIPT_RECONCILE_WINDOW_MS = 10_000;
  * had changed anywhere, their turn had simply been dropped.
  */
 export const RESUMED_THREAD_CONFLICT_MESSAGE =
-  "Someone else updated this chat while you were replying. Your reply stayed here; your next message will start a new thread.";
+  ERROR_MESSAGES.someoneElseUpdatedThisChatWhileYouWereReplyingYour;
 
 /**
  * Shown when the reply is not in chat history and reconciliation could not
@@ -62,7 +63,7 @@ export const RESUMED_THREAD_CONFLICT_MESSAGE =
  * thread, because the thread stays attached.
  */
 export const RESUMED_THREAD_UNSAVED_MESSAGE =
-  "This reply couldn't be saved to your chat history. It's still visible here.";
+  ERROR_MESSAGES.thisReplyCouldnTBeSavedToYourChatHistory;
 
 type PendingReconcile = {
   sessionId: string;

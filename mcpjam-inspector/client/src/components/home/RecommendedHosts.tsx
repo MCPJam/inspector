@@ -1,3 +1,4 @@
+import { ERROR_MESSAGE_TEMPLATES } from "@/lib/error-messages";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState } from "react";
 import { toast } from "@/lib/toast";
@@ -58,8 +59,8 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
       toast.success(`Created ${label} client.`);
       navigate(buildHostsPath(hostId));
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed to create ${label}: ${message}`);
+
+      toast.error(ERROR_MESSAGE_TEMPLATES.failedToCreatePleaseTryAgain(label));
     } finally {
       setCreatingId(null);
     }

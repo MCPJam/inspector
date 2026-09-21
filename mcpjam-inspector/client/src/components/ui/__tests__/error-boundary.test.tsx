@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import React from "react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -22,6 +23,12 @@ function Boom({ shouldThrow }: { shouldThrow: boolean }): React.ReactElement {
 }
 
 describe("ErrorBoundary", () => {
+  it("shows catalog guidance while keeping raw details out of the default screen", () => {
+    render(<ErrorBoundary><Boom shouldThrow /></ErrorBoundary>);
+    expect(screen.getByText(ERROR_MESSAGES.pageLoad)).toBeInTheDocument();
+    expect(screen.queryByText("kaboom")).not.toBeInTheDocument();
+  });
+
   let consoleError: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {

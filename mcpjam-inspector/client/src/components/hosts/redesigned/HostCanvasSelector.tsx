@@ -1,3 +1,5 @@
+import { getUserErrorMessage } from "@/lib/user-error";
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useMemo, useState } from "react";
 import { ChevronsUpDown, Plus, Trash2 } from "lucide-react";
 import { useConvexAuth } from "convex/react";
@@ -143,10 +145,10 @@ export function HostCanvasSelector({
       const msg = err instanceof Error ? err.message : "Failed to delete host";
       if (msg.includes("consumer")) {
         toast.error(
-          `${msg} — use force delete or remove dependent user testing scenarios/evals first`,
+          ERROR_MESSAGES.useForceDeleteOrRemoveDependentUserTestingScenariosEvals,
         );
       } else {
-        toast.error(msg);
+        toast.error(getUserErrorMessage(msg));
       }
     } finally {
       setIsDeleting(false);

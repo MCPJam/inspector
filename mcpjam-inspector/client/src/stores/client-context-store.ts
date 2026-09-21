@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { create } from "zustand";
 import {
   pickProjectHostContext,
@@ -149,7 +150,7 @@ function isPendingRemoteEchoMatch(
 function parseRecordJson(text: string): ProjectHostContextDraft {
   const parsed = JSON.parse(text) as unknown;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Value must be a JSON object");
+    throw new Error(ERROR_MESSAGES.valueMustBeAJsonObject);
   }
   return parsed as ProjectHostContextDraft;
 }

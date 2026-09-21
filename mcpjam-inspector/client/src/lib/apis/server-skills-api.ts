@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Skills served BY connected MCP servers (SEP-2640), client side.
  *
@@ -131,7 +132,7 @@ async function localPost<T>(path: string, body: unknown): Promise<T> {
     throw new Error(json?.error ?? `Request failed (${response.status})`);
   }
   if (!json) {
-    throw new Error("The server returned a response that was not JSON.");
+    throw new Error(ERROR_MESSAGES.theServerReturnedAResponseThatWasNotJson);
   }
   return json;
 }

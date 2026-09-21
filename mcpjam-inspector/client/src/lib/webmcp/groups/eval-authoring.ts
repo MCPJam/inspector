@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   askDescribeQuestion,
   proposeDescribeCases,
@@ -106,11 +107,11 @@ export function buildEvalAuthoringTools(): UiToolDefinition[] {
     },
     execute: async (args, context) => {
       if (!context?.scope)
-        throw new Error("Eval authoring requires a scoped agent session.");
+        throw new Error(ERROR_MESSAGES.evalAuthoringRequiresAScopedAgentSession);
       assertEvalToolAllowed(context.scope, spec.name);
       const scope = evalTurnScope(context.scope);
       if (!scope)
-        throw new Error("Open Ask MCPJam from the eval workspace first.");
+        throw new Error(ERROR_MESSAGES.openAskMcpjamFromTheEvalWorkspaceFirst);
       let result: unknown;
       if (spec.name === "ui_eval_question") {
         result = askDescribeQuestion(

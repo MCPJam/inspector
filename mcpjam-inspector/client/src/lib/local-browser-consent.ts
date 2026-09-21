@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Client side of the local-browser consent CAPABILITY.
  *
@@ -240,7 +241,7 @@ export function enableLocalBrowserForAllClients(): Promise<boolean> {
     if (stored) {
       const verified = await consentRequest("verify", { token: stored.token });
       if (!verified.ok)
-        throw new Error("Couldn't verify Browser permission. Retry setup.");
+        throw new Error(ERROR_MESSAGES.couldnTVerifyBrowserPermissionRetrySetup);
       const result = (await verified.json()) as { valid?: boolean };
       if (!result.valid) stored = null;
     }
@@ -259,7 +260,7 @@ export function enableLocalBrowserForAllClients(): Promise<boolean> {
     );
     if (!response.ok) {
       throw new Error(
-        "Browser permission was saved, but clients could not be enabled. Retry setup.",
+        ERROR_MESSAGES.browserPermissionWasSavedButClientsCouldNotBeEnabled,
       );
     }
     // A revoke or grant in another tab wins over this delayed completion.

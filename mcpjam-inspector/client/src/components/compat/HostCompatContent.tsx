@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -230,9 +231,7 @@ export function HostCompatContent({
       onClose?.();
       navigate(routePaths.playground);
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : `Couldn't open in ${label}`,
-      );
+      toast.error(getUserErrorMessage(err));
     } finally {
       setCreatingTemplateId(null);
     }

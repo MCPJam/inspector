@@ -1,3 +1,4 @@
+import { ERROR_MESSAGE_TEMPLATES } from "@/lib/error-messages";
 /**
  * Raw trace panel — single JsonEditor with bordered chrome around the tree.
  *
@@ -92,7 +93,7 @@ function copyToClipboard(data: unknown, label: string, onCopied?: () => void) {
       onCopied?.();
       toast.success(`${label} copied to clipboard`);
     })
-    .catch(() => toast.error(`Failed to copy ${label}`));
+    .catch(() => toast.error(ERROR_MESSAGE_TEMPLATES.failedToCopy2(label)));
 }
 
 export function TraceRawView({

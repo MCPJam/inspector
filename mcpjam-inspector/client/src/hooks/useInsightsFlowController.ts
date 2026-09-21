@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "@/lib/toast";
@@ -220,9 +221,10 @@ export function useInsightsRebuild(rebuild: RebuildFn, cohortKey: string) {
         toast[tone](message);
       } catch (error) {
         toast.error(
-          error instanceof Error
-            ? error.message
-            : ERROR_MESSAGES.rebuildFailedTryAgainInAFewMinutes,
+          getUserErrorMessage(
+            error,
+            ERROR_MESSAGES.rebuildFailedTryAgainInAFewMinutes,
+          ),
         );
       } finally {
         if (rebuildNonceRef.current === myNonce) {

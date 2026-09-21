@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -378,7 +379,9 @@ export function UserTestingScenarioDetail({
     try {
       await updateScenario({ scenarioId: scenario.scenarioId, name } as any);
     } catch (err) {
-      toast.error(getBillingErrorMessage(err, ERROR_MESSAGES.failedToRenameTheScenario));
+      toast.error(
+        getBillingErrorMessage(err, ERROR_MESSAGES.failedToRenameTheScenario),
+      );
       // Rethrow so EditableTitle reverts to the persisted name.
       throw err;
     }
@@ -519,7 +522,7 @@ export function UserTestingScenarioDetail({
       onDeleted();
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : ERROR_MESSAGES.failedToDeleteTheScenario,
+        getUserErrorMessage(err, ERROR_MESSAGES.failedToDeleteTheScenario),
       );
       // Rethrow: the dialog closes itself when `onConfirm` RESOLVES, so
       // swallowing here would dismiss the confirmation on a delete that

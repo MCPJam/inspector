@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { canCheckoutPlan } from "@/lib/pricing-catalog";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useCallback, useRef, useState } from "react";
@@ -375,10 +376,10 @@ export function useOrganizationBilling(
       billingInterval: BillingInterval = "monthly",
       options: StartOrganizationPlanChangeOptions = {},
     ): Promise<OrganizationPlanChangeResult> => {
-      if (!organizationId) throw new Error("Organization is required");
+      if (!organizationId) throw new Error(ERROR_MESSAGES.organizationIsRequired);
       if (!canCheckoutPlan(planCatalog, tier, billingInterval))
         throw new Error(
-          "This plan or billing interval is not offered to this organization.",
+          ERROR_MESSAGES.thisPlanOrBillingIntervalIsNotOfferedToThisOrganization,
         );
       setIsStartingPlanChange(true);
       setPendingPlanChangeTarget(tier);
@@ -407,7 +408,7 @@ export function useOrganizationBilling(
 
   const openPortal = useCallback(
     async (returnUrl: string) => {
-      if (!organizationId) throw new Error("Organization is required");
+      if (!organizationId) throw new Error(ERROR_MESSAGES.organizationIsRequired);
       setIsOpeningPortal(true);
       setError(null);
       try {
@@ -430,7 +431,7 @@ export function useOrganizationBilling(
 
   const openIntervalChangePortal = useCallback(
     async (returnUrl: string, targetBillingInterval: BillingInterval) => {
-      if (!organizationId) throw new Error("Organization is required");
+      if (!organizationId) throw new Error(ERROR_MESSAGES.organizationIsRequired);
       setIsOpeningPortal(true);
       setError(null);
       try {
@@ -456,7 +457,7 @@ export function useOrganizationBilling(
 
   const openCancellationPortal = useCallback(
     async (returnUrl: string) => {
-      if (!organizationId) throw new Error("Organization is required");
+      if (!organizationId) throw new Error(ERROR_MESSAGES.organizationIsRequired);
       setIsOpeningPortal(true);
       setError(null);
       try {
@@ -480,7 +481,7 @@ export function useOrganizationBilling(
   );
 
   const cancelScheduledBillingChange = useCallback(async () => {
-    if (!organizationId) throw new Error("Organization is required");
+    if (!organizationId) throw new Error(ERROR_MESSAGES.organizationIsRequired);
     setIsCancelingScheduledBillingChange(true);
     setError(null);
     try {
@@ -501,7 +502,7 @@ export function useOrganizationBilling(
   }, [cancelScheduledBillingChangeAction, organizationId]);
 
   const selectFreeAfterTrial = useCallback(async () => {
-    if (!organizationId) throw new Error("Organization is required");
+    if (!organizationId) throw new Error(ERROR_MESSAGES.organizationIsRequired);
     setIsSelectingFreeAfterTrial(true);
     setError(null);
     try {
@@ -518,7 +519,7 @@ export function useOrganizationBilling(
 
   const finishSeatPayment = useCallback(
     async (seatPaymentIntentId?: string): Promise<SeatPaymentResult> => {
-      if (!organizationId) throw new Error("Organization is required");
+      if (!organizationId) throw new Error(ERROR_MESSAGES.organizationIsRequired);
       const activeSeatPaymentIntentId =
         seatPaymentIntentId ?? activeSeatPaymentIntent?._id;
       if (!activeSeatPaymentIntentId) {
@@ -540,7 +541,7 @@ export function useOrganizationBilling(
 
         if (startResult.status === "requires_action") {
           if (!startResult.clientSecret) {
-            throw new Error("Payment confirmation is unavailable");
+            throw new Error(ERROR_MESSAGES.paymentConfirmationIsUnavailable);
           }
 
           try {
@@ -580,7 +581,7 @@ export function useOrganizationBilling(
               return { status: "noop", reason: "seat_payment_canceled" };
             }
             if (completeResult.status !== "paid") {
-              throw new Error("Payment was not completed");
+              throw new Error(ERROR_MESSAGES.paymentWasNotCompleted);
             }
             return completeResult;
           } finally {
@@ -592,10 +593,10 @@ export function useOrganizationBilling(
         if (startResult.status === "failed") {
           if (startResult.reason === "missing_payment_method") {
             throw new Error(
-              "Stripe has no default payment method for this subscription. Add or select a card in Billing, then click Finish payment again.",
+              ERROR_MESSAGES.stripeHasNoDefaultPaymentMethodForThisSubscriptionAdd,
             );
           }
-          throw new Error("Payment failed. The member was not added.");
+          throw new Error(ERROR_MESSAGES.paymentFailedTheMemberWasNotAdded);
         }
 
         return startResult as SeatPaymentResult;
@@ -645,7 +646,7 @@ export function useOrganizationBilling(
       };
       if (!result?.restarted || !result.seatPaymentIntentId) {
         throw new Error(
-          "This seat payment can no longer be retried. Try adding the member again.",
+          ERROR_MESSAGES.thisSeatPaymentCanNoLongerBeRetriedTryAdding,
         );
       }
       if (seatPaymentCancelVersionRef.current !== cancelVersionAtStart) {
@@ -665,7 +666,7 @@ export function useOrganizationBilling(
 
   const cancelSeatPayment = useCallback(
     async (seatPaymentIntentId?: string): Promise<SeatPaymentCancelResult> => {
-      if (!organizationId) throw new Error("Organization is required");
+      if (!organizationId) throw new Error(ERROR_MESSAGES.organizationIsRequired);
       const activeSeatPaymentIntentId =
         seatPaymentIntentId ?? activeSeatPaymentIntent?._id;
       if (!activeSeatPaymentIntentId) {

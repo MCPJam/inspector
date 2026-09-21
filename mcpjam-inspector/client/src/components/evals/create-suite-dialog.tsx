@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
@@ -254,7 +255,7 @@ export function CreateSuiteDialog({
         );
         const fallbackServerAttachmentId =
           resolvedGroups.size === 1
-            ? ([...resolvedGroups][0] ?? undefined)
+            ? [...resolvedGroups][0] ?? undefined
             : undefined;
         payload = {
           name: name.trim(),
@@ -278,9 +279,10 @@ export function CreateSuiteDialog({
         };
       } catch (err) {
         toast.error(
-          err instanceof Error
-            ? err.message
-            : ERROR_MESSAGES.couldNotResolveWhereThisSuiteRuns,
+          getUserErrorMessage(
+            err,
+            ERROR_MESSAGES.couldNotResolveWhereThisSuiteRuns,
+          ),
         );
         setIsSaving(false);
         return;

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { type FormEvent, useCallback, useMemo, useState } from "react";
 import {
   OAuthFlowTab,
@@ -275,11 +276,11 @@ export function OAuthDebuggerE2EHarness() {
 
       if (!normalizedTokens) {
         throw new Error(
-          "OAuth debugger e2e flow did not receive an access token"
+          ERROR_MESSAGES.oauthDebuggerE2eFlowDidNotReceiveAnAccessToken
         );
       }
       if (!tokens.clientId) {
-        throw new Error("OAuth debugger e2e flow did not receive a client id");
+        throw new Error(ERROR_MESSAGES.oauthDebuggerE2eFlowDidNotReceiveAClientId);
       }
 
       await importHostedOAuthTokens({

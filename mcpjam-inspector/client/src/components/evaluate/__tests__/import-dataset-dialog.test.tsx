@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState } from "react";
 import { EvalGeneratedDrafts } from "../eval-generated-drafts";
 import {
@@ -314,7 +315,7 @@ describe("Markdown case import", () => {
     expect(alert).not.toHaveTextContent("Use BYOK");
   });
 
-  it("keeps non-limit errors verbatim", async () => {
+  it("uses catalog guidance for unknown import failures", async () => {
     vi.mocked(extractMarkdownCases).mockRejectedValueOnce(
       new Error("You cannot import cases into this suite."),
     );
@@ -323,7 +324,7 @@ describe("Markdown case import", () => {
     fireEvent.click(screen.getByRole("button", { name: "Extract cases" }));
 
     await expect(screen.findByRole("alert")).resolves.toHaveTextContent(
-      "You cannot import cases into this suite.",
+      ERROR_MESSAGES.couldNotReadOrExtractThisFile,
     );
   });
 });

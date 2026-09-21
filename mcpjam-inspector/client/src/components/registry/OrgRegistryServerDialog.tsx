@@ -195,7 +195,7 @@ export function OrgRegistryServerDialog({
       // saving so the stored snapshot cannot silently belong to the old URL.
       if (isEdit && submissionUrl !== seed?.url.trim()) {
         if (!projectId) {
-          throw new Error("Select a project before changing the server URL.");
+          throw new Error(ERROR_MESSAGES.selectAProjectBeforeChangingTheServerUrl);
         }
         setProbing(true);
         const facts = await deriveOrgRegistryServer({

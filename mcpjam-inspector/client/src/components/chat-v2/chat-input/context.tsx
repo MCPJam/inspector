@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 "use client";
 
 import { Button } from "@mcpjam/design-system/button";
@@ -43,7 +44,7 @@ const useContextValue = () => {
   const context = useContext(ContextContext);
 
   if (!context) {
-    throw new Error("Context components must be used within Context");
+    throw new Error(ERROR_MESSAGES.contextComponentsMustBeUsedWithinContext);
   }
 
   return context;

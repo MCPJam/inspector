@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -208,7 +209,7 @@ describe("ServerDetailModal hosted reconnect", () => {
     await user.click(screen.getByRole("button", { name: "Reveal tokens" }));
 
     expect(
-      await screen.findByText("No hosted OAuth credential found"),
+      await screen.findByText(ERROR_MESSAGES.failedToRevealHostedOauthTokens),
     ).toBeInTheDocument();
   });
 });

@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { isHostedMode } from "@/lib/apis/mode-client";
@@ -874,7 +875,8 @@ export function TasksTab({
           : serverResult.tasks
               .filter((t) => !dismissedIds.has(t.taskId))
               .map((t) =>
-                normalizeTask("legacy", t as unknown as Record<string, unknown>)
+                normalizeTask("legacy", t as unknown as Record<string, unknown>,
+                )
               );
       listedTasksRef.current = listed;
       // Learn each listed task's own floor, so the NEXT decision about whether
@@ -907,7 +909,7 @@ export function TasksTab({
 
       setTasks(allTasks);
     } catch (err) {
-      setError(err instanceof Error ? err.message : ERROR_MESSAGES.failedToFetchTasks);
+      setError(getUserErrorMessage(err , ERROR_MESSAGES.failedToFetchTasks));
     } finally {
       setFetchingTasks(false);
     }
@@ -1090,9 +1092,7 @@ export function TasksTab({
         await fetchTasks();
       } catch (err) {
         setError(
-          err instanceof Error
-            ? err.message
-            : ERROR_MESSAGES.failedToRespondToElicitation
+          getUserErrorMessage(err , ERROR_MESSAGES.failedToRespondToElicitation),
         );
       }
     },
@@ -1111,7 +1111,7 @@ export function TasksTab({
         setTaskResult(result);
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : ERROR_MESSAGES.failedToFetchTaskResult
+          getUserErrorMessage(err , ERROR_MESSAGES.failedToFetchTaskResult),
         );
       } finally {
         setLoading(false);
@@ -1139,7 +1139,7 @@ export function TasksTab({
       // Refresh task list to get updated status
       await fetchTasks();
     } catch (err) {
-      setError(err instanceof Error ? err.message : ERROR_MESSAGES.failedToCancelTask);
+      setError(getUserErrorMessage(err , ERROR_MESSAGES.failedToCancelTask));
     } finally {
       setCancelling(false);
     }
@@ -1158,7 +1158,7 @@ export function TasksTab({
         return true;
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : ERROR_MESSAGES.failedToSubmitTaskInput
+          getUserErrorMessage(err , ERROR_MESSAGES.failedToSubmitTaskInput),
         );
         return false;
       } finally {

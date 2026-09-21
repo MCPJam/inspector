@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { UserEvent } from "@testing-library/user-event";
@@ -222,7 +223,7 @@ describe("ScoreRunnerPage", () => {
     await submitDeliveryEmail(user);
 
     await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent("Handshake failed");
+      expect(screen.getByRole("alert")).toHaveTextContent(ERROR_MESSAGES.unexpected);
     });
     expect(screen.getByLabelText("MCP server URL")).toHaveValue(SERVER_URL);
     expect(screen.queryByLabelText("Scorecard email")).not.toBeInTheDocument();
@@ -369,7 +370,7 @@ describe("ScoreRunnerPage", () => {
     await submitDeliveryEmail(user);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Scan finished, but the shareable link could not be saved: Storage unavailable",
+      ERROR_MESSAGES.scanFinishedButTheShareableLinkCouldNotBeSaved,
     );
     await waitFor(() => expect(mockSubmitScoreRun).toHaveBeenCalledOnce());
   });

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 export const ELECTRON_HOSTED_AUTH_STATE_KEY =
   "__mcpjam_electron_hosted_auth";
 
@@ -109,5 +110,5 @@ export function resolveWorkosRedirectUri(options: {
     return envRedirect;
   }
 
-  throw new Error("WorkOS redirect URI requires an HTTP(S) browser origin.");
+  throw new Error(ERROR_MESSAGES.workosRedirectUriRequiresAnHttpSBrowserOrigin);
 }

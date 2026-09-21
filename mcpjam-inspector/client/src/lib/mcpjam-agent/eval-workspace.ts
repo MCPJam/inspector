@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import posthog from "posthog-js";
 import { saveMarkdownCases } from "@/lib/apis/markdown-case-import-api";
 import type {
@@ -155,7 +156,7 @@ export function getEvalDraft(scope: EvalAgentScope) {
   const bridge = drafts.get(draftKey(scope));
   if (!bridge)
     throw new Error(
-      "Return to the selected case editor before reading or changing its draft.",
+      ERROR_MESSAGES.returnToTheSelectedCaseEditorBeforeReadingOrChanging,
     );
   return bridge;
 }
@@ -179,7 +180,7 @@ export function getEvalSuite(scope: EvalAgentScope) {
   const bridge = suites.get(evalSuiteKey(scope));
   if (!bridge)
     throw new Error(
-      "Return to the selected eval suite to continue. No navigation was performed.",
+      ERROR_MESSAGES.returnToTheSelectedEvalSuiteToContinueNoNavigation,
     );
   return bridge;
 }
@@ -189,16 +190,16 @@ export function parseDraftPatch(
   const patch: Partial<EvalDraft> = {};
   if (args.title !== undefined) {
     if (typeof args.title !== "string" || !args.title.trim())
-      throw new Error("Case title must not be empty.");
+      throw new Error(ERROR_MESSAGES.caseTitleMustNotBeEmpty);
     patch.title = args.title.trim();
   }
   if (args.steps !== undefined) {
     patch.steps = stepsSchema.parse(args.steps);
     if (new Set(patch.steps.map((s) => s.id)).size !== patch.steps.length)
-      throw new Error("Step ids must be unique.");
+      throw new Error(ERROR_MESSAGES.stepIdsMustBeUnique);
   }
   if (Object.keys(patch).length === 0)
-    throw new Error("Provide title or steps to edit.");
+    throw new Error(ERROR_MESSAGES.provideTitleOrStepsToEdit);
   return patch;
 }
 export interface GeneratedDraft {
@@ -416,7 +417,7 @@ export function startEvalGeneration(
   const bridge = getEvalSuite(scope);
   if (useEvalGeneration.getState().suites[key]?.status === "running")
     throw new Error(
-      "Generation is already running. Read context for progress; do not start another job.",
+      ERROR_MESSAGES.generationIsAlreadyRunningReadContextForProgressDoNot,
     );
   updateGeneration(key, (s) => ({ ...s, status: "running", error: undefined }));
   if (posthog.isFeatureEnabled("eval-authoring-generation-v1")) {
@@ -450,7 +451,7 @@ export function startEvalGeneration(
       instructions,
       async (input) => {
         if (input.suiteId !== scope.suiteId)
-          throw new Error("Generated case is outside the scoped suite.");
+          throw new Error(ERROR_MESSAGES.generatedCaseIsOutsideTheScopedSuite);
         const id = `generated-${generateId()}`;
         updateGeneration(key, (s) => ({
           ...s,
@@ -501,7 +502,7 @@ export function editGeneratedDraft(
     current.authoringPrepared
   )
     throw new Error(
-      "Generated draft changed or is unavailable. Read context before retrying.",
+      ERROR_MESSAGES.generatedDraftChangedOrIsUnavailableReadContextBeforeRetrying,
     );
   const nextRevision = generateId();
   updateGeneration(key, (s) => ({
@@ -560,16 +561,16 @@ export async function saveGeneratedDraft(scope: EvalAgentScope, id: string) {
   }));
   try {
     if (current.input.suiteId !== scope.suiteId)
-      throw new Error("Draft is outside the selected suite.");
+      throw new Error(ERROR_MESSAGES.draftIsOutsideTheSelectedSuite);
     if (!current.input.title.trim())
-      throw new Error("Add a case title before saving.");
+      throw new Error(ERROR_MESSAGES.addACaseTitleBeforeSaving);
     if (
       !current.input.steps?.length ||
       current.input.steps.some(
         (step) => step.kind === "prompt" && !step.prompt.trim(),
       )
     )
-      throw new Error("Complete the case steps before saving.");
+      throw new Error(ERROR_MESSAGES.completeTheCaseStepsBeforeSaving);
     stepsSchema.parse(current.input.steps);
     if (current.authoring) {
       const blocked = importedDraftBlockedReason(current);
@@ -641,7 +642,7 @@ export async function saveGeneratedDraft(scope: EvalAgentScope, id: string) {
         throw new Error(result.failed[0].message);
       }
       if (result.committed?.length !== 1)
-        throw new Error("Save outcome is unknown. Retry to confirm.");
+        throw new Error(ERROR_MESSAGES.saveOutcomeIsUnknownRetryToConfirm);
     } else if (current.markdownImport) {
       const blocked = importedDraftBlockedReason(current);
       if (blocked) throw new Error(blocked);
@@ -843,9 +844,9 @@ export function acceptAuthoringAddition(
 export async function runScopedEvalSuite(scope: EvalAgentScope) {
   const key = evalSuiteKey(scope);
   const run = getEvalSuite(scope).run;
-  if (!run) throw new Error("Running evals is unavailable in this workspace.");
+  if (!run) throw new Error(ERROR_MESSAGES.runningEvalsIsUnavailableInThisWorkspace);
   if (startingRuns.has(key))
-    throw new Error("A suite run is already starting.");
+    throw new Error(ERROR_MESSAGES.aSuiteRunIsAlreadyStarting);
   startingRuns.add(key);
   try {
     return await run();

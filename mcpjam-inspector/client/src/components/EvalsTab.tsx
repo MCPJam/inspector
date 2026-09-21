@@ -498,7 +498,7 @@ function EvalsTabContent({
         });
 
         if (!createdSuite?._id) {
-          throw new Error("Suite was created without an id");
+          throw new Error(ERROR_MESSAGES.suiteWasCreatedWithoutAnId);
         }
 
         // `createTestSuite` cannot take environments, so a suite born in

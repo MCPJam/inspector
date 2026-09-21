@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { track } from "@/lib/analytics";
@@ -36,7 +37,7 @@ export interface SuiteInsightsCollapsibleProps {
 }
 
 const RUN_INSIGHTS_FAILED_FALLBACK =
-  "Could not load this summary. Hit Retry in the header.";
+  ERROR_MESSAGES.couldNotLoadThisSummaryHitRetryInTheHeader;
 
 /** Roughly two lines at the suite dashboard width — expand only when longer. */
 const SUMMARY_CLAMP_CHARS = 180;

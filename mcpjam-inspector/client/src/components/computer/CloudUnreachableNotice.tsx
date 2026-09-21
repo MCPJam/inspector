@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { AlertTriangle, Server } from "lucide-react";
 import type { CloudBlockTone } from "@/lib/cloud-server-readiness";
 import { cn } from "@/lib/utils";
@@ -8,14 +9,14 @@ import { cn } from "@/lib/utils";
  * leave one of them stale.
  */
 export const EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE =
-  "This suite pins a sandbox image, but this inspector can't run MCPJam cloud sandboxes.";
+  ERROR_MESSAGES.thisSuitePinsASandboxImageButThisInspectorCan;
 
 /**
  * Replay-specific variant: a replay provisions from the RUN's frozen snapshot
  * pin, which outlives clearing the live suite pin.
  */
 export const EVAL_REPLAY_SNAPSHOT_CLOUD_UNREACHABLE_MESSAGE =
-  "This run replays from its pinned sandbox image, but this inspector can't run MCPJam cloud sandboxes.";
+  ERROR_MESSAGES.thisRunReplaysFromItsPinnedSandboxImageButThis;
 
 /**
  * Preflight band for a cloud-only surface whose sandbox execution this

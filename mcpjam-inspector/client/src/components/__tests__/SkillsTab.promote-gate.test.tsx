@@ -1,3 +1,4 @@
+import { ERROR_MESSAGE_TEMPLATES } from "@/lib/error-messages";
 /**
  * Who is offered "Publish to project library", and what happens when it fails.
  *
@@ -132,9 +133,10 @@ describe("SkillsTab — publishing a personal skill to the library", () => {
 
     await waitFor(() => expect(mocks.toastError).toHaveBeenCalled());
     expect(mocks.toastError.mock.calls[0][0]).toContain("refunds");
-    expect(mocks.toastError.mock.calls[0][0]).toContain(
-      "Only project admins can publish a skill",
+    expect(mocks.toastError.mock.calls[0][0]).toBe(
+      ERROR_MESSAGE_TEMPLATES.couldnTPublishPleaseTryAgain("refunds"),
     );
+    expect(mocks.toastError.mock.calls[0][0]).not.toContain("Only project admins");
   });
 
   it("says nothing when the publish succeeds", async () => {

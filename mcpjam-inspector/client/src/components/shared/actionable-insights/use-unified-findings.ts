@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 /**
  * The findings controller: ONE subscription, ONE generation controller.
  *
@@ -215,7 +216,7 @@ export function useUnifiedFindings(args: {
     })
       .catch((error: unknown) => {
         if (stale()) return;
-        setBuildError(error instanceof Error ? error.message : String(error));
+        setBuildError(getUserErrorMessage(error));
         setAwaitingBuild(false);
         analysisInFlight.current = false;
       })

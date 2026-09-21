@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useCallback,
@@ -64,9 +65,10 @@ export function useScoreRunPersistence({
         }
       } catch (error) {
         setError(
-          error instanceof Error
-            ? `Scan finished, but the shareable link could not be saved: ${error.message}`
-            : ERROR_MESSAGES.scanFinishedButTheShareableLinkCouldNotBeSaved,
+          getUserErrorMessage(
+            error,
+            ERROR_MESSAGES.scanFinishedButTheShareableLinkCouldNotBeSaved,
+          ),
         );
       } finally {
         setPhase("done");

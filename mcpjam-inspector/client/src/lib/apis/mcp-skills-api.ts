@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { authFetch } from "@/lib/session-token";
 import { runByMode } from "@/lib/apis/mode-client";
 import { webPost } from "@/lib/apis/web/base";
@@ -278,7 +279,7 @@ export async function uploadSkillFolder(
         f.name === "SKILL.md" ||
         ((f as any).webkitRelativePath || "").endsWith("/SKILL.md"),
     );
-    if (!skillMdFile) throw new Error("No SKILL.md found in the folder");
+    if (!skillMdFile) throw new Error(ERROR_MESSAGES.noSkillMdFoundInTheFolder);
     // 1. Create the skill from SKILL.md. A 409 here is a genuine name
     // conflict: the supporting-file phase below ROLLS BACK the created skill
     // on any failure, so a partial upload never persists and there is no
@@ -464,7 +465,7 @@ export async function updateSkill(
   source?: SkillsSource,
 ): Promise<Skill> {
   if (!isCloud(source)) {
-    throw new Error("Editing is only supported for cloud skills.");
+    throw new Error(ERROR_MESSAGES.editingIsOnlySupportedForCloudSkills);
   }
   const body = await webPost<
     {

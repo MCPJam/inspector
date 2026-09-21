@@ -1,3 +1,5 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
+import { getUserErrorMessage } from "@/lib/user-error";
 import { useState } from "react";
 import { useAction } from "convex/react";
 import {
@@ -58,10 +60,10 @@ export function ExportTracesModal({
   runLabel?: string | null;
 }) {
   const exportSessionTraces = useAction(
-    "traceExport:exportSessionTraces" as any
+    "traceExport:exportSessionTraces" as any,
   ) as unknown as ExportSessionTraces;
   const exportProjectTracesPage = useAction(
-    "traceExport:exportProjectTracesPage" as any
+    "traceExport:exportProjectTracesPage" as any,
   ) as unknown as ExportProjectTracesPage;
 
   const hasRun = runChatSessionIds.length > 0;
@@ -104,7 +106,7 @@ export function ExportTracesModal({
         // Never hand the user a silently-partial trace file.
         if (!done) {
           throw new Error(
-            "Project is too large to export in one file. Export individual runs instead."
+            ERROR_MESSAGES.projectIsTooLargeToExportInOneFileExport,
           );
         }
       }
@@ -114,11 +116,11 @@ export function ExportTracesModal({
       downloadTextFile(
         `mcpjam-traces-${effectiveScope}-${stamp}.json`,
         body,
-        "application/json"
+        "application/json",
       );
       onOpenChange(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(getUserErrorMessage(e));
     } finally {
       setBusy(false);
     }

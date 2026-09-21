@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Whether the judge may DECIDE a run, and the evidence that says it may.
@@ -152,9 +153,10 @@ export function JudgeGatePanel({
       onAcknowledged?.();
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.couldNotAcknowledgeTheJudgeGate,
+        getUserErrorMessage(
+          error,
+          ERROR_MESSAGES.couldNotAcknowledgeTheJudgeGate,
+        ),
       );
     } finally {
       setIsAcknowledging(false);

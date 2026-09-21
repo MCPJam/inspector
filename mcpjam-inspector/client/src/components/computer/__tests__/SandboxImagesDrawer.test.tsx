@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { render, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -271,7 +272,7 @@ describe("SandboxImagesDrawer", () => {
     fireEvent.click(getByText("Change"));
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith(
-        expect.stringContaining("incompatible builder")
+        ERROR_MESSAGES.couldNotUseThisSandboxImage
       )
     );
   });

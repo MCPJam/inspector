@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * The suite header's target bar, in both write modes.
  *
@@ -194,10 +195,10 @@ describe("SuiteEnvironmentComposerBar — environment mode", () => {
 
     await waitFor(() => expect(toastError).toHaveBeenCalled());
     expect(setSuiteEnvironmentsMock).not.toHaveBeenCalled();
-    expect(toastError.mock.calls[0][0]).toMatch(/requires an admin/i);
+    expect(toastError.mock.calls[0][0]).toBe(ERROR_MESSAGES.failedToUpdateWhereThisRuns);
   });
 
-  it("surfaces a backend rejection verbatim and rolls the strip back", async () => {
+  it("shows catalog guidance for a rejected update and rolls the strip back", async () => {
     setSuiteEnvironmentsMock.mockRejectedValue(
       Object.assign(new Error("nope"), {
         data: {
@@ -212,7 +213,7 @@ describe("SuiteEnvironmentComposerBar — environment mode", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /^claude$/i }));
 
     await waitFor(() => expect(toastError).toHaveBeenCalled());
-    expect(toastError.mock.calls[0][0]).toMatch(/pinned by an enabled schedule/i);
+    expect(toastError.mock.calls[0][0]).toBe(ERROR_MESSAGES.failedToUpdateWhereThisRuns);
     await waitFor(() =>
       expect(screen.getByTestId("suite-env-clients-picker")).toHaveTextContent(
         /pick/i,

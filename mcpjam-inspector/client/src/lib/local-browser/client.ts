@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
 /**
  * The Playground rail's half of the local agent browser.
@@ -208,7 +209,7 @@ export async function fetchLocalBrowserStatus(): Promise<LocalBrowserStatus> {
   const response = await authFetch("/api/mcp/computers/local-browser/status", {
     method: "GET",
   });
-  if (!response.ok) throw new Error("The local browser is not available here.");
+  if (!response.ok) throw new Error(ERROR_MESSAGES.theLocalBrowserIsNotAvailableHere);
   return (await response.json()) as LocalBrowserStatus;
 }
 

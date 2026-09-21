@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppReady, useAppReadyMessage } from "@/hooks/use-app-ready";
@@ -155,7 +156,7 @@ export function useScoreRunnerController({
           setPhase("authorizing");
           return;
         }
-        setError(err instanceof Error ? err.message : String(err));
+        setError(getUserErrorMessage(err));
         setPhase("form");
       }
     },

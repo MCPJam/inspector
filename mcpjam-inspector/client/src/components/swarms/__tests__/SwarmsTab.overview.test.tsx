@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   fireEvent,
   render,
@@ -1283,7 +1284,7 @@ describe("Swarm run state and navigation", () => {
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        "Run already completed; only a running run can be canceled."
+        ERROR_MESSAGES.couldNotStopTheRun
       )
     );
     expect(toast.success).not.toHaveBeenCalled();
@@ -1387,7 +1388,7 @@ describe("Swarm run state and navigation", () => {
     fireEvent.click(await screen.findByTestId("swarm-run-detail-stop-confirm"));
 
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith("Not a member of this project.")
+      expect(toast.error).toHaveBeenCalledWith(ERROR_MESSAGES.couldNotStopTheRun)
     );
     // The goal that had already finished is not a goal that "could not be
     // stopped", but it must not swallow the one that really refused.

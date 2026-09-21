@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -92,7 +93,7 @@ describe("useRegistryServers pageload auth errors", () => {
     );
 
     await waitFor(() => {
-      expect(toastError).toHaveBeenCalledWith("catalog exploded");
+      expect(toastError).toHaveBeenCalledWith(ERROR_MESSAGES.unexpected);
     });
   });
 

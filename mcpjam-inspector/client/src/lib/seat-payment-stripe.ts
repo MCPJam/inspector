@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 type StripeConfirmCardPaymentResult = {
   error?: {
     message?: string;
@@ -36,7 +37,7 @@ let stripeJsPromise: Promise<void> | null = null;
 
 export function loadStripeJs(): Promise<void> {
   if (typeof window === "undefined") {
-    return Promise.reject(new Error("Stripe is only available in the browser"));
+    return Promise.reject(new Error(ERROR_MESSAGES.stripeIsOnlyAvailableInTheBrowser));
   }
   if (window.Stripe) {
     return Promise.resolve();
@@ -49,7 +50,7 @@ export function loadStripeJs(): Promise<void> {
     const rejectAndReset = (failedScript: HTMLScriptElement) => {
       failedScript.remove();
       stripeJsPromise = null;
-      reject(new Error("Failed to load Stripe"));
+      reject(new Error(ERROR_MESSAGES.failedToLoadStripe));
     };
     const existingScript = document.querySelector<HTMLScriptElement>(
       'script[src="https://js.stripe.com/v3/"]',
@@ -91,7 +92,7 @@ export async function confirmSeatPaymentWithStripe({
 
   const stripe = window.Stripe?.(publishableKey);
   if (!stripe) {
-    throw new Error("Failed to initialize Stripe");
+    throw new Error(ERROR_MESSAGES.failedToInitializeStripe);
   }
 
   const result = await stripe.confirmCardPayment(clientSecret);

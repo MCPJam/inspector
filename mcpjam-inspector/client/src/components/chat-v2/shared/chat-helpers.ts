@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { looksLikeErrorPage } from "@/shared/error-page";
 import { generateId, type UIMessage, type DynamicToolUIPart } from "ai";
 import type { MCPPromptResult } from "../chat-input/prompts/mcp-prompts-popover";
@@ -671,7 +672,7 @@ function summarizeOpaquePayload(raw: string): FormattedError | null {
     // puts a retry beside the reset the banner would otherwise offer alone.
     return {
       message:
-        "MCPJam was briefly unreachable. Nothing in this chat was lost — retry to send your message again.",
+        ERROR_MESSAGES.upstreamUnavailable,
       code: UPSTREAM_ERROR_PAGE_CODE,
       isRetryable: true,
       details: JSON.stringify({

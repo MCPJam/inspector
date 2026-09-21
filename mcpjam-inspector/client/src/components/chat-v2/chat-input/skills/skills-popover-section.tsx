@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   Tooltip,
@@ -149,17 +150,17 @@ export function SkillsPopoverSection({
             item,
             source: { kind: "local" } as SkillsSource,
             label: "Local" as const,
-          }))
+          })),
         );
       },
       (err) => {
         if (!active) return;
         console.error(
           "[SkillsPopoverSection] Failed to fetch local skills",
-          err
+          err,
         );
         setLocalRows([]);
-      }
+      },
     );
     if (skillsSource) {
       listSkills(skillsSource).then(
@@ -170,17 +171,17 @@ export function SkillsPopoverSection({
               item,
               source: skillsSource,
               label: "Library" as const,
-            }))
+            })),
           );
         },
         (err) => {
           if (!active) return;
           console.error(
             "[SkillsPopoverSection] Failed to fetch library skills",
-            err
+            err,
           );
           setLibraryRows([]);
-        }
+        },
       );
     }
     return () => {
@@ -192,7 +193,7 @@ export function SkillsPopoverSection({
   // Enter handler and the parent's arrow keys walk.
   const skills = useMemo(
     () => [...(localRows ?? []), ...(libraryRows ?? [])],
-    [localRows, libraryRows]
+    [localRows, libraryRows],
   );
   /** A half that was asked for and hasn't answered. */
   const stillFetching =
@@ -221,7 +222,7 @@ export function SkillsPopoverSection({
       server.serverId,
       server.label,
       server.connected,
-    ])
+    ]),
   );
 
   useEffect(() => {
@@ -245,7 +246,7 @@ export function SkillsPopoverSection({
           serverId: server.serverId,
           serverLabel: server.label,
           connected: server.connected,
-        }))
+        })),
       ).filter(({ server }) => server.connected);
       // Concurrent: one slow server must not delay every other server's rows.
       const perServer = await Promise.all(
@@ -269,7 +270,7 @@ export function SkillsPopoverSection({
             // picker, and a failed listing is not worth a UI error here.
             return [] as ServerSkillPickerItem[];
           }
-        })
+        }),
       );
       if (active) setServerSkills(perServer.flat());
     })();
@@ -298,7 +299,7 @@ export function SkillsPopoverSection({
         setServerSkillError(item.unloadable.message);
         console.warn(
           "[SkillsPopoverSection] Refusing unverifiable server skill",
-          item.unloadable.message
+          item.unloadable.message,
         );
         return;
       }
@@ -313,7 +314,7 @@ export function SkillsPopoverSection({
           setServerSkillError(result.refusal.message);
           console.error(
             "[SkillsPopoverSection] Server skill refused",
-            result.refusal
+            result.refusal,
           );
           return;
         }
@@ -339,13 +340,13 @@ export function SkillsPopoverSection({
         // failure THROWS. Without this catch the second is an unhandled
         // rejection and the row just stops spinning with no explanation.
         setServerSkillError(
-          error instanceof Error ? error.message : ERROR_MESSAGES.unknownError
+          getUserErrorMessage(error, ERROR_MESSAGES.unknownError),
         );
       } finally {
         setLoadingSkillName(null);
       }
     },
-    [onSkillSelected, projectId]
+    [onSkillSelected, projectId],
   );
 
   const handleSkillClick = useCallback(
@@ -374,7 +375,7 @@ export function SkillsPopoverSection({
         setLoadingSkillName(null);
       }
     },
-    [onSkillSelected]
+    [onSkillSelected],
   );
 
   /**
@@ -390,7 +391,7 @@ export function SkillsPopoverSection({
       ...skills.map((row) => `project:${rowKey(row)}`),
       ...serverSkills.map((item) => `server:${item.serverId}:${item.skillUri}`),
     ],
-    [skills, serverSkills]
+    [skills, serverSkills],
   );
 
   /**
@@ -416,7 +417,8 @@ export function SkillsPopoverSection({
     const wasAt = highlightedIndex - startIndex;
     if (wasAt < 0 || wasAt >= prev.length) return;
     const nowAt = rowKeys.indexOf(prev[wasAt]!);
-    if (nowAt !== -1 && nowAt !== wasAt) setHighlightedIndex(startIndex + nowAt);
+    if (nowAt !== -1 && nowAt !== wasAt)
+      setHighlightedIndex(startIndex + nowAt);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowKeys]);
 
@@ -486,7 +488,7 @@ export function SkillsPopoverSection({
                   type="button"
                   className={cn(
                     "flex items-center gap-2 rounded-sm px-2 max-w-[300px] py-1.5 text-xs select-none hover:bg-accent hover:text-accent-foreground",
-                    isHighlighted ? "bg-accent text-accent-foreground" : ""
+                    isHighlighted ? "bg-accent text-accent-foreground" : "",
                   )}
                   onClick={() => handleSkillClick(row)}
                   onMouseEnter={() => {
@@ -554,7 +556,7 @@ export function SkillsPopoverSection({
                       className={cn(
                         "flex items-center gap-2 rounded-sm px-2 max-w-[300px] py-1.5 text-xs select-none hover:bg-accent hover:text-accent-foreground",
                         isHighlighted ? "bg-accent text-accent-foreground" : "",
-                        item.unloadable ? "opacity-60 cursor-not-allowed" : ""
+                        item.unloadable ? "opacity-60 cursor-not-allowed" : "",
                       )}
                       onClick={() => handleServerSkillClick(item)}
                       onMouseEnter={() => {
@@ -609,4 +611,3 @@ export function SkillsPopoverSection({
     </div>
   );
 }
-

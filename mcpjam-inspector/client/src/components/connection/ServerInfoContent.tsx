@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -108,7 +109,7 @@ export function ServerInfoContent({
   // are compatible at runtime.
   if (
     serverDeclaresSkillsExtension(
-      serverCapabilities as Parameters<typeof serverDeclaresSkillsExtension>[0]
+      serverCapabilities as Parameters<typeof serverDeclaresSkillsExtension>[0],
     )
   ) {
     capabilities.push("Skills");
@@ -155,9 +156,10 @@ export function ServerInfoContent({
       if (hostedRevealRequestIdRef.current === requestId) {
         setHostedTokenResult(null);
         setHostedTokenError(
-          error instanceof Error
-            ? error.message
-            : ERROR_MESSAGES.failedToRevealHostedOauthTokens
+          getUserErrorMessage(
+            error,
+            ERROR_MESSAGES.failedToRevealHostedOauthTokens,
+          ),
         );
       }
     } finally {
@@ -171,7 +173,7 @@ export function ServerInfoContent({
     label: string,
     tokenValue: string | undefined,
     tokenKey: string,
-    options?: { maskedByDefault?: boolean }
+    options?: { maskedByDefault?: boolean },
   ) => {
     if (!tokenValue) return null;
     const isExpanded = expandedTokens.has(tokenKey);
@@ -298,13 +300,13 @@ export function ServerInfoContent({
                 "Access Token",
                 tokens.access_token,
                 "hostedAccessToken",
-                { maskedByDefault: true }
+                { maskedByDefault: true },
               )}
               {renderToken(
                 "Refresh Token",
                 tokens.refresh_token,
                 "hostedRefreshToken",
-                { maskedByDefault: true }
+                { maskedByDefault: true },
               )}
               {renderToken("ID Token", tokens.id_token, "hostedIdToken", {
                 maskedByDefault: true,
@@ -348,7 +350,7 @@ export function ServerInfoContent({
           {renderToken(
             "Refresh Token",
             oauthTokens.refresh_token,
-            "refreshToken"
+            "refreshToken",
           )}
           {renderToken("ID Token", (oauthTokens as any).id_token, "idToken")}
 

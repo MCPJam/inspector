@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * The page a connection handoff link opens.
  *
@@ -156,7 +157,7 @@ async function call<T>(
       payload?.details,
     );
   }
-  if (!payload) throw new Error("The server sent an unreadable response.");
+  if (!payload) throw new Error(ERROR_MESSAGES.theServerSentAnUnreadableResponse);
   return payload;
 }
 

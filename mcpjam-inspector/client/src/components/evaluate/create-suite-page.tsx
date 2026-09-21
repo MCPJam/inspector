@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Full-page create-suite flow at `/evals/create`.
@@ -338,7 +339,7 @@ export function CreateSuitePage({
         );
         const fallbackServerAttachmentId =
           resolvedGroups.size === 1
-            ? ([...resolvedGroups][0] ?? undefined)
+            ? [...resolvedGroups][0] ?? undefined
             : undefined;
         payload = {
           name: name.trim(),
@@ -357,9 +358,10 @@ export function CreateSuitePage({
         };
       } catch (err) {
         toast.error(
-          err instanceof Error
-            ? err.message
-            : ERROR_MESSAGES.couldNotResolveWhereThisSuiteRuns,
+          getUserErrorMessage(
+            err,
+            ERROR_MESSAGES.couldNotResolveWhereThisSuiteRuns,
+          ),
         );
         setIsSaving(false);
         return;

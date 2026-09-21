@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   requestPayloadEnvelopeFields,
@@ -133,7 +134,7 @@ export function SwarmJudgeSection({
           err instanceof Error ? err.message : "Failed to run the judge";
         setRequestError(message);
         if (!silent) {
-          toast.error(message);
+          toast.error(getUserErrorMessage(message));
         }
       } finally {
         if (!isStale()) setRequesting(false);
@@ -392,9 +393,7 @@ export function ShareUsageThreadDetail({
         if (!isActive) return;
         if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("Failed to load thread messages:", err);
-        setError(
-          err instanceof Error ? err.message : ERROR_MESSAGES.failedToLoadMessages,
-        );
+        setError(getUserErrorMessage(err, ERROR_MESSAGES.failedToLoadMessages));
       } finally {
         if (isActive) {
           setIsLoadingMessages(false);
@@ -690,7 +689,10 @@ export function ShareUsageThreadDetail({
         <div className="flex h-full flex-col">
           <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
           <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
-            <TranscriptEmptyState kind="unrecorded" execution={(turnTraces?.length ?? 0) > 0 ? "observed" : "unknown"} />
+            <TranscriptEmptyState
+              kind="unrecorded"
+              execution={(turnTraces?.length ?? 0) > 0 ? "observed" : "unknown"}
+            />
             {/* This branch has no header, so the disabled promote button and
                 its hover reason never render here — and an empty transcript is
                 USUALLY a run that died before it said anything, which is the
@@ -710,7 +712,10 @@ export function ShareUsageThreadDetail({
     }
     return (
       <div className="flex h-full items-center justify-center">
-        <TranscriptEmptyState kind="unrecorded" execution={(turnTraces?.length ?? 0) > 0 ? "observed" : "unknown"} />
+        <TranscriptEmptyState
+          kind="unrecorded"
+          execution={(turnTraces?.length ?? 0) > 0 ? "observed" : "unknown"}
+        />
       </div>
     );
   }
@@ -897,7 +902,10 @@ export function ShareUsageThreadDetail({
                 />
               </ErrorBoundary>
             ) : host.status === "loading" ? (
-              <div role="status" className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground">
+              <div
+                role="status"
+                className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground"
+              >
                 <Loader2 className="size-4 animate-spin" aria-hidden />
                 Loading host configuration…
               </div>

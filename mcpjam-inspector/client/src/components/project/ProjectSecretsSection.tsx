@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { ProjectSecretsBoundary } from "./ProjectSecretsBoundary";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
@@ -155,7 +156,7 @@ function ProjectSecretsContent({
     } catch (error) {
       if (!owned()) return;
       setDeleteError(
-        error instanceof Error ? error.message : ERROR_MESSAGES.failedToDeleteTheSecret,
+        getUserErrorMessage(error, ERROR_MESSAGES.failedToDeleteTheSecret),
       );
     } finally {
       if (owned()) setBusy(false);
@@ -559,9 +560,7 @@ function CreateSecretForm({
       // holds them and say so, rather than failing silently on a disabled
       // button the user cannot see the reason for.
       setAdvancedOpen(true);
-      setError(
-        ERROR_MESSAGES.addTheHostsAndHeaderThisSecretIsSentWithOrChoose,
-      );
+      setError(ERROR_MESSAGES.addTheHostsAndHeaderThisSecretIsSentWithOrChoose);
       setTimeout(() => document.getElementById("secret-hosts")?.focus(), 0);
       return;
     }

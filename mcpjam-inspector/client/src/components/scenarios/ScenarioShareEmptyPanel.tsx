@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * {@link ScenarioShareEmptyPanel} — the Insights empty state, which offers a
@@ -67,7 +68,7 @@ function useScenarioShareInvite(scenario: ScenarioSettings) {
       setInviteOpen(false);
       toast.success(`Invited ${normalizedEmail}`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : ERROR_MESSAGES.failedToInvite);
+      toast.error(getUserErrorMessage(error, ERROR_MESSAGES.failedToInvite));
     } finally {
       setIsInviting(false);
     }
@@ -265,9 +266,8 @@ export function ScenarioShareEmptyPanel({
           Insights start with the first session.
         </h2>
         <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-          Once someone runs this study, this page maps where they reached
-          their goal, where they stalled, and the themes that repeat across
-          sessions.
+          Once someone runs this study, this page maps where they reached their
+          goal, where they stalled, and the themes that repeat across sessions.
         </p>
 
         {canOpenPreview ? (

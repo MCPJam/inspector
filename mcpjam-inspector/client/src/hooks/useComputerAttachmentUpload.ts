@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback } from "react";
 import {
   useComputersDataPlaneConfig,
@@ -50,13 +51,13 @@ export function useComputerAttachmentUpload({
   const uploadAttachments = useCallback(
     async (files: File[]): Promise<ComputerAttachmentNoteEntry[]> => {
       if (!effectiveProjectId) {
-        throw new Error("Sign in and select a project to use the computer.");
+        throw new Error(ERROR_MESSAGES.signInAndSelectAProjectToUseTheComputer);
       }
       if (dataPlane === undefined) {
-        throw new Error("Computers are still loading — try again in a moment.");
+        throw new Error(ERROR_MESSAGES.computersAreStillLoadingTryAgainInAMoment);
       }
       if (!dataPlane.localConfigured && !remoteWsBase) {
-        throw new Error("Computers are not available on this server.");
+        throw new Error(ERROR_MESSAGES.computersAreNotAvailableOnThisServer);
       }
       return await uploadAttachmentsToComputer(
         { reserve, mintToken },

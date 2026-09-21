@@ -112,9 +112,9 @@ interface ScenarioDisplayError {
  * products for a reader who knows neither.
  */
 const INVALID_SCENARIO_LINK_MESSAGE =
-  "This link is invalid or expired. Ask whoever shared it for a new one if you still need access.";
+  ERROR_MESSAGES.thisLinkIsInvalidOrExpiredAskWhoeverSharedIt;
 const UNEXPECTED_SCENARIO_ERROR_MESSAGE =
-  "We couldn't open this link right now. Please try again or open MCPJam.";
+  ERROR_MESSAGES.weCouldnTOpenThisLinkRightNowPleaseTry;
 
 type ScenarioBootstrapAuthMode = "workos" | "guest";
 type ScenarioLandingState =

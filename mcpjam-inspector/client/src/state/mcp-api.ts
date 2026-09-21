@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import type {
   HttpServerConfig,
   MCPServerConfig,
@@ -262,7 +263,7 @@ export async function testConnection(
 
   if (!options?.projectId) {
     throw new Error(
-      "projectId is required for testConnection in local mode (server must be synced to Convex first)",
+      ERROR_MESSAGES.projectidIsRequiredForTestconnectionInLocalModeServerMust,
     );
   }
 
@@ -372,7 +373,7 @@ export async function reconnectServer(
 
   if (!options?.projectId) {
     throw new Error(
-      "projectId is required for reconnectServer in local mode (server must be synced to Convex first)",
+      ERROR_MESSAGES.projectidIsRequiredForReconnectserverInLocalModeServerMust,
     );
   }
 

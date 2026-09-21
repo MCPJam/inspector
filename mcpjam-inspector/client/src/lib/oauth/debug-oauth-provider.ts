@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   type OAuthClientInformation,
   type OAuthClientMetadata,
@@ -78,7 +79,7 @@ export class DebugMCPOAuthClientProvider implements OAuthClientProvider {
     const key = `debug-verifier-${this.serverUrl}`;
     const verifier = sessionStorage.getItem(key);
     if (!verifier) {
-      throw new Error("No code verifier saved for debug session");
+      throw new Error(ERROR_MESSAGES.noCodeVerifierSavedForDebugSession);
     }
     return verifier;
   }

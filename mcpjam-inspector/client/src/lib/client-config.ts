@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import type { ClientCapabilityOptions } from "@mcpjam/sdk/browser";
 import {
   getDefaultClientCapabilities,
@@ -43,9 +44,9 @@ export type HostSafeAreaInsets = {
 };
 
 export const CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE =
-  "Project connection defaults are still syncing. Try again in a moment.";
+  ERROR_MESSAGES.projectConnectionDefaultsAreStillSyncingTryAgainInA;
 
-export const PROJECT_NOT_PROVISIONED_ERROR_MESSAGE = "Finishing setup.";
+export const PROJECT_NOT_PROVISIONED_ERROR_MESSAGE = ERROR_MESSAGES.finishingSetup;
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
 

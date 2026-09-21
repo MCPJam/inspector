@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useState } from "react";
 import { authFetch } from "@/lib/session-token";
 
@@ -74,7 +75,7 @@ export function useHarnessCapabilities(harnessId: string | null): {
         // envelope (unlike the `{ items }` page the tool catalog uses).
         const body = (await res.json()) as HarnessCapabilities;
         if (typeof body?.harnessId !== "string") {
-          throw new Error("harness capabilities: unexpected shape");
+          throw new Error(ERROR_MESSAGES.harnessCapabilitiesUnexpectedShape);
         }
         CACHE.set(harnessId, body);
         if (!cancelled) setCapabilities(body);

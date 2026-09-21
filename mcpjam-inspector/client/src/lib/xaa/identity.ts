@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Atomic XAA test-identity resolution and save semantics.
  *
@@ -25,7 +26,7 @@ export const XAA_DEMO_IDENTITY: XaaIdentityPair = {
  * the debugger run gate and the Connect/save validation so both surfaces show
  * the same fix. */
 export const XAA_PARTIAL_OVERRIDE_ERROR =
-  "Complete or clear the server identity override";
+  ERROR_MESSAGES.completeOrClearTheServerIdentityOverride;
 
 export type XaaTestIdentitySource =
   | "person"

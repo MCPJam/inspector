@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   act,
   fireEvent,
@@ -713,7 +714,7 @@ describe("GithubChecksRoute connect flow", () => {
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        "Repository is not accessible to the MCPJam GitHub App.",
+        ERROR_MESSAGES.githubSaveFailed,
       ),
     );
     // Nothing was connected, so nothing is cleared: the administrator can fix
@@ -849,7 +850,7 @@ describe("GithubChecksRoute row outage policy", () => {
 
     await chooseOption(user, POLICY_LABEL, "Fail closed");
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("network"));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(ERROR_MESSAGES.githubSaveFailed));
   });
 
   it("disables the policy control while its write is in flight and drops a duplicate", async () => {
@@ -1004,7 +1005,7 @@ describe("GithubChecksRoute pull-request comments", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
-  it("shows the backend's own refusal when the write is rejected", async () => {
+  it("shows catalog guidance when the write is rejected", async () => {
     mockRepos.value = [ROW];
     mockSetRepoFeedbackComments.mockRejectedValueOnce(
       new Error("You are not an administrator of this organization."),
@@ -1015,12 +1016,12 @@ describe("GithubChecksRoute pull-request comments", () => {
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        "You are not an administrator of this organization.",
+        ERROR_MESSAGES.githubCommentsFailed,
       ),
     );
   });
 
-  it("says nothing changed when the refusal carried no message", async () => {
+  it("asks the user to check the current setting when the result is unknown", async () => {
     mockRepos.value = [ROW];
     // A `ConvexError`-less throw — a dropped connection, not a refusal the
     // backend worded. The generic "something went wrong" would leave an admin
@@ -1032,7 +1033,7 @@ describe("GithubChecksRoute pull-request comments", () => {
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        "We could not change pull-request comments for that repository. Nothing changed — try again.",
+        ERROR_MESSAGES.githubCommentsFailed,
       ),
     );
   });
@@ -1591,7 +1592,7 @@ describe("GithubChecksRoute installations", () => {
     expect(mockStartInstallation).not.toHaveBeenCalled();
   });
 
-  it("shows the backend's conflict wording verbatim, naming no other workspace", async () => {
+  it("uses a safe fallback for an unknown conflict without naming another workspace", async () => {
     const conflict = Object.assign(new Error("Server Error"), {
       data: "That GitHub installation is already connected to a workspace. This is not a problem with your repositories — ask whoever set it up to disconnect it first, or install the app on a different account.",
     });
@@ -1609,7 +1610,7 @@ describe("GithubChecksRoute installations", () => {
     const shown = String(
       (toast.error as ReturnType<typeof vi.fn>).mock.calls[0][0],
     );
-    expect(shown).toMatch(/already connected to a workspace/i);
+    expect(shown).toBe(ERROR_MESSAGES.githubSaveFailed);
     // Non-disclosure survives the trip through the UI.
     expect(shown).not.toMatch(/organization|workspace named|org-/i);
   });

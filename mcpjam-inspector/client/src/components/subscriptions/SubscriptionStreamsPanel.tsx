@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -130,7 +131,7 @@ export function SubscriptionStreamsPanel({
         const updated = await setDesiredSubscriptionInterests(serverId, next);
         dispatch({ type: "server-state", server: updated });
       } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(getUserErrorMessage(e));
       } finally {
         setBusy(false);
       }
@@ -165,7 +166,7 @@ export function SubscriptionStreamsPanel({
       const updated = await cancelSubscriptionStream(serverId);
       dispatch({ type: "server-state", server: updated });
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(getUserErrorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -175,7 +176,10 @@ export function SubscriptionStreamsPanel({
   const watched = new Set(desired.resourceUris ?? []);
 
   return (
-    <div className="flex flex-col gap-3 p-3 text-xs" data-testid="subscriptions-panel">
+    <div
+      className="flex flex-col gap-3 p-3 text-xs"
+      data-testid="subscriptions-panel"
+    >
       <div className="flex items-center gap-2">
         <span className="font-medium">Subscriptions</span>
         <Badge variant="secondary" data-testid="subscription-era">
@@ -292,9 +296,7 @@ export function SubscriptionStreamsPanel({
           {state.history.map((item) => (
             <li key={item.id} data-testid={`history-${item.kind}`}>
               <span className="font-mono">{item.kind}</span> — {item.detail}
-              {item.localSubscriptionId
-                ? ` [${item.localSubscriptionId}]`
-                : ""}
+              {item.localSubscriptionId ? ` [${item.localSubscriptionId}]` : ""}
             </li>
           ))}
         </ul>

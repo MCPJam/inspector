@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { JamIllustration } from "./JamIllustration";
 import { useCreditTopupPricing } from "@/hooks/useCreditTopupPricing";
 import { useEffect, useRef, useState } from "react";
@@ -145,7 +146,7 @@ export function CreditTopupDialog({
         err instanceof Error
           ? err.message
           : "Could not start checkout. Please try again.";
-      toast.error(message);
+      toast.error(getUserErrorMessage(message));
     }
   };
 

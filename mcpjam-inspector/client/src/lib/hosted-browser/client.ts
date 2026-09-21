@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * The hosted browser's data plane, as the rail pane uses it.
  *
@@ -392,7 +393,7 @@ export function openHostedBrowserFrameStream(args: {
   // — this is for the self-hosted case that is not.
   if (!isSecureBrowserOrigin(window.location)) {
     throw new Error(
-      "The hosted browser view needs https (or a loopback address).",
+      ERROR_MESSAGES.theHostedBrowserViewNeedsHttpsOrALoopbackAddress,
     );
   }
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";

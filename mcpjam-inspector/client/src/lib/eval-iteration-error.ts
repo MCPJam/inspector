@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { describeError, type NormalizedError } from "@mcpjam/sdk/browser";
 import type { EvalIteration } from "@/components/evals/types";
 
@@ -30,16 +31,15 @@ export function describeEvalIterationError(
     return {
       ...base,
       slug: "eval/timed_out",
-      title: "Run timed out",
+      title: ERROR_MESSAGES.runTimedOut,
       severity: "warning",
-      oneLine:
-        "The run stopped before it could finish. Retry the run; if it happens again, check the execution limits and server response times.",
+      oneLine: ERROR_MESSAGES.theRunStoppedBeforeItCouldFinishRetryTheRun,
       likelyCauses: [
-        "The worker stopped responding or the run exceeded its time limit.",
+        ERROR_MESSAGES.theWorkerStoppedRespondingOrTheRunExceededItsTime,
       ],
       nextSteps: [
-        "Retry the run.",
-        "Check the run's timing and connected servers if it times out again.",
+        ERROR_MESSAGES.retryTheRun,
+        ERROR_MESSAGES.checkTheRunSTimingAndConnectedServersIfIt,
       ],
       rawMessage,
     };
@@ -47,13 +47,12 @@ export function describeEvalIterationError(
     return {
       ...base,
       slug: "eval/setup_failed",
-      title: "Run setup failed",
+      title: ERROR_MESSAGES.runSetupFailed,
       severity: "error",
-      oneLine:
-        "The execution environment could not start. Check the host's servers and configuration, then retry.",
+      oneLine: ERROR_MESSAGES.theExecutionEnvironmentCouldNotStartCheckTheHostS,
       likelyCauses: [],
       nextSteps: [
-        "Check the host's server connections and environment configuration.",
+        ERROR_MESSAGES.checkTheHostSServerConnectionsAndEnvironmentConfiguration,
       ],
       rawMessage,
     };
@@ -61,11 +60,11 @@ export function describeEvalIterationError(
     return {
       ...base,
       slug: "eval/cancelled",
-      title: "Run cancelled",
+      title: ERROR_MESSAGES.runCancelled,
       severity: "info",
-      oneLine: "The run was cancelled before it finished.",
+      oneLine: ERROR_MESSAGES.theRunWasCancelledBeforeItFinished,
       likelyCauses: [],
-      nextSteps: ["Start another run when you are ready."],
+      nextSteps: [ERROR_MESSAGES.startAnotherRunWhenYouAreReady],
       rawMessage,
     };
   return { ...base, rawMessage };

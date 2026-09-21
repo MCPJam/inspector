@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
@@ -52,7 +53,7 @@ export function useModelMetadata() {
         setModels(data.data);
       } catch (err) {
         console.error("Failed to fetch model metadata:", err);
-        setError(err instanceof Error ? err.message : ERROR_MESSAGES.unknownError);
+        setError(getUserErrorMessage(err, ERROR_MESSAGES.unknownError));
         setModels([]);
       } finally {
         setIsLoading(false);

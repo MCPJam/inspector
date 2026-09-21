@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -258,7 +259,7 @@ describe("SuiteGithubChecksSection", () => {
     await chooseOption(user, "Outage policy", "Fail closed");
     await user.click(screen.getByRole("button", { name: /Connect/ }));
 
-    await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith(shown));
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith(ERROR_MESSAGES.githubSaveFailed));
     expect(mockToast.success).not.toHaveBeenCalled();
   });
 

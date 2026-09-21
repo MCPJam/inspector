@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Project-scoped Swarms surface (redesign): Persona → Journey → Run.
@@ -390,7 +391,7 @@ export function SwarmsTab({
         await updatePersona({ personaRefId, ...patch } as any);
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : ERROR_MESSAGES.failedToUpdatePersona,
+          getUserErrorMessage(error, ERROR_MESSAGES.failedToUpdatePersona),
         );
         throw error;
       }
@@ -412,7 +413,7 @@ export function SwarmsTab({
         setSelectedPersonaId(null);
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : ERROR_MESSAGES.failedToDeletePersona,
+          getUserErrorMessage(error, ERROR_MESSAGES.failedToDeletePersona),
         );
       }
     },
@@ -492,7 +493,7 @@ export function SwarmsTab({
       setSelectedPersonaId(row._id);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : ERROR_MESSAGES.failedToCreatePersona,
+        getUserErrorMessage(error, ERROR_MESSAGES.failedToCreatePersona),
       );
     } finally {
       setCreatingPersona(false);
@@ -2051,9 +2052,7 @@ function NewJourneyForm({
             } catch (err) {
               // Keep the form and its text: the goal is retried, not retyped.
               setError(
-                err instanceof Error
-                  ? err.message
-                  : ERROR_MESSAGES.couldNotCreateTheGoal,
+                getUserErrorMessage(err, ERROR_MESSAGES.couldNotCreateTheGoal),
               );
             } finally {
               setSaving(false);

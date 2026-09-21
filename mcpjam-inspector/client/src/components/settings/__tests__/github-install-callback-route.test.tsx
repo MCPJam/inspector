@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { StrictMode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -276,7 +277,7 @@ describe("the setup leg", () => {
     renderCallback("?installation_id=4242&state=s");
 
     expect(
-      await screen.findByText(/could not verify that installation/i),
+      await screen.findByText(ERROR_MESSAGES.weCouldNotFinishConnectingThatGithubAccountThisIs),
     ).toBeInTheDocument();
     expect(mockRedirectToGithub).not.toHaveBeenCalled();
   });
@@ -640,7 +641,7 @@ describe("the OAuth leg", () => {
     expect(note.textContent).toMatch(/owner of the acme GitHub account/i);
   });
 
-  it("shows a non-disclosing conflict exactly as the backend worded it", async () => {
+  it("shows safe connection guidance for an unknown conflict", async () => {
     mockCompleteUserAuthorization.mockRejectedValue(
       Object.assign(new Error("Server Error"), {
         data: "That GitHub installation is already connected to a workspace. This is not a problem with your repositories — ask whoever set it up to disconnect it first, or install the app on a different account.",
@@ -648,7 +649,7 @@ describe("the OAuth leg", () => {
     );
     renderCallback("?code=c&state=s");
 
-    const shown = await screen.findByText(/already connected to a workspace/i);
+    const shown = await screen.findByText(ERROR_MESSAGES.weCouldNotFinishConnectingThatGithubAccountThisIs);
     expect(shown).toBeInTheDocument();
     // It says a workspace, never which one, and never whether one exists.
     expect(shown.textContent).not.toMatch(/org-|organization named/i);

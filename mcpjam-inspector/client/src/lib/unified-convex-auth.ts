@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth as useWorkOSAuth } from "@workos-inc/authkit-react";
 import { isLoginRequiredError } from "@/lib/auth/login-required-error";
@@ -191,7 +192,7 @@ export function useUnifiedConvexAuth() {
 
         if (attempt === GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length) {
           reportCaught(
-            new Error("Guest session bootstrap exhausted without a token"),
+            new Error(ERROR_MESSAGES.guestSessionBootstrapExhaustedWithoutAToken),
             {
               source: "guest_session_bootstrap",
               level: "error",

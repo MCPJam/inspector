@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * useToolExecution Hook
  *
@@ -664,7 +665,7 @@ async function executeAppTool({
       Awaited<ReturnType<typeof entry.bridge.callTool>>
     >((resolve, reject) => {
       const onAbort = () =>
-        reject(new Error("App iframe was torn down mid-dispatch"));
+        reject(new Error(ERROR_MESSAGES.appIframeWasTornDownMidDispatch));
       if (controller.signal.aborted) {
         onAbort();
         return;

@@ -69,7 +69,7 @@ export function ProfileTab() {
       });
 
       if (!result.ok) {
-        throw new Error("Failed to upload file");
+        throw new Error(ERROR_MESSAGES.failedToUploadFile);
       }
 
       const { storageId } = await result.json();

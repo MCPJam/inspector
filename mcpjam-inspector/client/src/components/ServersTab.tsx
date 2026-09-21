@@ -1,3 +1,5 @@
+import { ERROR_MESSAGE_TEMPLATES } from "@/lib/error-messages";
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useCallback,
@@ -696,11 +698,11 @@ export function ServersTab({
       const target = projects[targetProjectId];
       const targetSharedId = target?.sharedProjectId;
       if (!remote) {
-        toast.error(`Couldn't find "${serverName}" to move.`);
+        toast.error(ERROR_MESSAGE_TEMPLATES.couldnTFindToMove(serverName));
         return;
       }
       if (!targetSharedId) {
-        toast.error(`"${target?.name ?? "That project"}" isn't synced yet.`);
+        toast.error(ERROR_MESSAGE_TEMPLATES.isnTSyncedYet(target?.name ?? "That project"));
         return;
       }
       setMovingServerName(serverName);
@@ -728,7 +730,8 @@ export function ServersTab({
         setMovingServerName(null);
       }
     },
-    [remoteServersByName, projects, moveServerToProject, onDisconnect, onRemove]
+    [remoteServersByName, projects, moveServerToProject, onDisconnect, onRemove,
+    ]
   );
 
   // Project server config (`projects.serverIds` + per-server overrides).
@@ -1206,7 +1209,7 @@ export function ServersTab({
       // would never show the entry as connected. Say why instead.
       if (!remote?._id) {
         toast.error(
-          `"${server.name}" hasn't finished syncing yet. Try again in a moment.`
+          ERROR_MESSAGE_TEMPLATES.hasnTFinishedSyncingYetTryAgainInAMoment(server.name)
         );
         return;
       }
@@ -1341,7 +1344,7 @@ export function ServersTab({
   const handleJsonImport = (servers: ServerFormData[]) => {
     if (isAppBootstrapping) {
       toast.error(
-        appReadyMessage ?? ERROR_MESSAGES.appIsStillLoadingTryAgainInAMoment
+        appReadyMessage ?? ERROR_MESSAGES.appIsStillLoadingTryAgainInAMoment,
       );
       return;
     }
@@ -1355,7 +1358,7 @@ export function ServersTab({
     (formData: ServerFormData) => {
       if (isAppBootstrapping) {
         toast.error(
-          appReadyMessage ?? ERROR_MESSAGES.appIsStillLoadingTryAgainInAMoment
+          appReadyMessage ?? ERROR_MESSAGES.appIsStillLoadingTryAgainInAMoment,
         );
         return;
       }
@@ -1375,7 +1378,7 @@ export function ServersTab({
     ) => {
       if (isAppBootstrapping) {
         toast.error(
-          appReadyMessage ?? ERROR_MESSAGES.appIsStillLoadingTryAgainInAMoment
+          appReadyMessage ?? ERROR_MESSAGES.appIsStillLoadingTryAgainInAMoment,
         );
         return;
       }
@@ -1429,9 +1432,10 @@ export function ServersTab({
         });
       } catch (err) {
         toast.error(
-          err instanceof Error
-            ? `Server added, but saving its protocol version failed: ${err.message}`
-            : ERROR_MESSAGES.serverAddedButSavingItsProtocolVersionFailed
+          getUserErrorMessage(
+            err ,
+            ERROR_MESSAGES.serverAddedButSavingItsProtocolVersionFailed,
+          ),
         );
       } finally {
         isApplyingAddProtocolPinRef.current = false;
@@ -1461,7 +1465,7 @@ export function ServersTab({
   const handleQuickConnect = async (server: EnrichedRegistryServer) => {
     if (isAppBootstrapping) {
       toast.error(
-        appReadyMessage ?? ERROR_MESSAGES.appIsStillLoadingTryAgainInAMoment
+        appReadyMessage ?? ERROR_MESSAGES.appIsStillLoadingTryAgainInAMoment,
       );
       return;
     }
@@ -1487,9 +1491,7 @@ export function ServersTab({
         extra: { registryServerId: server._id },
       });
       toast.error(
-        err instanceof Error
-          ? err.message
-          : `Failed to connect ${server.displayName ?? serverName}`
+        getUserErrorMessage(err )
       );
       clearPendingQuickConnect();
       setPendingQuickConnect(null);
@@ -1574,7 +1576,7 @@ export function ServersTab({
     if (serverCreationGate.isDenied) {
       toast.error(
         serverCreationGate.denialMessage ??
-          ERROR_MESSAGES.upgradeRequiredToAddMoreServers
+          ERROR_MESSAGES.upgradeRequiredToAddMoreServers,
       );
       return;
     }
@@ -1711,7 +1713,7 @@ export function ServersTab({
     if (serverCreationGate.isDenied) {
       toast.error(
         serverCreationGate.denialMessage ??
-          ERROR_MESSAGES.upgradeRequiredToAddMoreServers
+          ERROR_MESSAGES.upgradeRequiredToAddMoreServers,
       );
       return;
     }

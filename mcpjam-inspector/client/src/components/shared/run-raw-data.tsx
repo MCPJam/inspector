@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useRef, useState } from "react";
 import { Database, Download, Loader2, RefreshCw } from "lucide-react";
 import { useConvex } from "convex/react";
@@ -140,7 +141,7 @@ async function capturePaginatedQuery(
 
       const nextCursor = stringField(result, "continueCursor");
       if (!nextCursor || nextCursor === cursor) {
-        throw new Error("Pagination did not return a new continueCursor");
+        throw new Error(ERROR_MESSAGES.paginationDidNotReturnANewContinuecursor);
       }
       cursor = nextCursor;
     }

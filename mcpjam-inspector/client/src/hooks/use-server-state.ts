@@ -1,3 +1,5 @@
+import { ERROR_MESSAGE_TEMPLATES } from "@/lib/error-messages";
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
 import { useConvex } from "convex/react";
@@ -700,7 +702,7 @@ const PROJECT_SERVERS_SNAPSHOT_WAIT_MS = 10_000;
 const PROJECT_SERVER_ECHO_WAIT_MS = 25_000;
 const PROJECT_SERVERS_POLL_MS = 100;
 const SERVER_PROJECT_ORG_MISMATCH_ERROR_MESSAGE =
-  "Cannot save server: the selected project is not in the active organization. Refresh and try again.";
+  ERROR_MESSAGES.cannotSaveServerTheSelectedProjectIsNotInThe;
 
 function remoteServerBelongsToProject(
   server: RemoteServer,
@@ -1773,7 +1775,7 @@ export function useServerState({
       );
       if (hasClientSecretValue && clearClientSecret) {
         throw new Error(
-          "Cannot replace and clear the OAuth client secret in the same save."
+          ERROR_MESSAGES.cannotReplaceAndClearTheOauthClientSecretInThe,
         );
       }
       const hasSecretOperation = Boolean(
@@ -2958,7 +2960,7 @@ export function useServerState({
                 });
                 if (synced.reason === "workspace-name-taken") {
                   toast.error(
-                    `Signed in, but "${serverName}" could not be saved: that name already belongs to another project in this workspace.`
+                    ERROR_MESSAGE_TEMPLATES.signedInButCouldNotBeSavedThatNameAlready(serverName)
                   );
                 }
               })
@@ -3041,7 +3043,7 @@ export function useServerState({
                 error: connectionResult.error,
               });
               toast.error(
-                `OAuth succeeded but connection test failed: ${connectionResult.error}`
+                ERROR_MESSAGES.oauthSucceededButConnectionTestFailedPleaseTryAgain
               );
             }
           } catch (connectionError) {
@@ -3065,7 +3067,7 @@ export function useServerState({
               error: errorMessage,
             });
             toast.error(
-              `OAuth succeeded but connection test failed: ${errorMessage}`
+              ERROR_MESSAGES.oauthSucceededButConnectionTestFailedPleaseTryAgain
             );
           }
         } else {
@@ -3084,7 +3086,7 @@ export function useServerState({
               typeof (error as { message?: unknown }).message === "string"
             ? (error as { message: string }).message
             : "Unknown error";
-        toast.error(`Error completing OAuth flow: ${errorMessage}`);
+        toast.error(ERROR_MESSAGES.errorCompletingOauthFlowPleaseTryAgain);
         logger.error("OAuth callback failed", { error: errorMessage });
         const oauthTrace =
           typeof error === "object" && error !== null && "oauthTrace" in error
@@ -3251,7 +3253,7 @@ export function useServerState({
         : error;
       const savedHash = localStorage.getItem("mcp-oauth-return-hash") || "";
 
-      toast.error(`OAuth authorization failed: ${errorMessage}`);
+      toast.error(ERROR_MESSAGES.oauthAuthorizationFailedPleaseTryAgain);
       const failedServerName = failPendingOAuthConnection(errorMessage);
       markPendingChatScopeStepUpCancelled(
         failedServerName ?? undefined,
@@ -3678,7 +3680,7 @@ export function useServerState({
               name: formData.name,
               error: errorMessage,
             });
-            toast.error(errorMessage);
+            toast.error(getUserErrorMessage(errorMessage));
             return;
           }
           prepareHostedProjectOAuthRedirect({
@@ -3731,7 +3733,7 @@ export function useServerState({
                   oauthTrace: oauthResult.oauthTrace,
                 });
                 toast.error(
-                  `OAuth succeeded but connection failed: ${connectionResult.error}`
+                  ERROR_MESSAGES.oauthSucceededButConnectionFailedPleaseTryAgain
                 );
               }
             } else {
@@ -3754,7 +3756,7 @@ export function useServerState({
             error: oauthResult.error || "OAuth initialization failed",
             oauthTrace: oauthResult.oauthTrace,
           });
-          toast.error(`OAuth initialization failed: ${oauthResult.error}`);
+          toast.error(ERROR_MESSAGES.oauthInitializationFailedPleaseTryAgain);
           return;
         }
 
@@ -3811,9 +3813,7 @@ export function useServerState({
             error: result.error,
           });
           toast.error(
-            `Failed to connect to ${formData.name}${
-              result.error ? `: ${result.error}` : ""
-            }`,
+            ERROR_MESSAGE_TEMPLATES.failedToConnectToPleaseTryAgain(formData.name),
             // A pinned protocol version the server doesn't offer is the one
             // connect failure with an exact fix, and the toast is where the
             // user is actually looking when a connect fails — the server
@@ -3933,7 +3933,7 @@ export function useServerState({
         effectiveProjects[effectiveActiveProjectId]?.servers ?? {};
       if (isRename && activeProjectServers[serverName]) {
         toast.error(
-          `A server named "${serverName}" already exists. Choose a different name.`
+          ERROR_MESSAGE_TEMPLATES.aServerNamedAlreadyExistsChooseADifferentName(serverName)
         );
         return false;
       }
@@ -4074,7 +4074,7 @@ export function useServerState({
             // the sync path already warned with the project that holds it.
             if (synced.reason === "workspace-name-taken") {
               toast.error(
-                `A server named "${serverName}" already exists in this workspace. Choose a different name.`
+                ERROR_MESSAGE_TEMPLATES.aServerNamedAlreadyExistsInThisWorkspaceChooseA(serverName)
               );
               return false;
             }
@@ -4089,9 +4089,10 @@ export function useServerState({
             error: error instanceof Error ? error.message : "Unknown error",
           });
           toast.error(
-            error instanceof Error
-              ? error.message
-              : ERROR_MESSAGES.couldNotSaveTheServerPleaseTryAgain
+            getUserErrorMessage(
+              error ,
+              ERROR_MESSAGES.couldNotSaveTheServerPleaseTryAgain,
+            ),
           );
           return false;
         }
@@ -4373,7 +4374,7 @@ export function useServerState({
         toast.success(`Connected to ${serverName}!`);
         warnIfHostedCannotRefresh(tokens.authorizationServerUrl);
       } else {
-        toast.error(`Connection failed: ${result.error}`);
+        toast.error(ERROR_MESSAGES.connectionFailedPleaseTryAgain);
       }
     },
     [
@@ -4414,7 +4415,7 @@ export function useServerState({
         toast.success(`Tokens refreshed for ${serverName}!`);
         warnIfHostedCannotRefresh(tokens.authorizationServerUrl);
       } else {
-        toast.error(`Token refresh failed: ${result.error}`);
+        toast.error(ERROR_MESSAGES.tokenRefreshFailedPleaseTryAgain);
       }
     },
     [
@@ -4912,7 +4913,7 @@ export function useServerState({
       if (options?.forceOAuthFlow) {
         const serverUrl = (server.config as any)?.url?.toString?.();
         if (!serverUrl) {
-          const errorMessage = "No server URL found for OAuth flow";
+          const errorMessage = ERROR_MESSAGES.noServerUrlFoundForOauthFlow;
           dispatch({
             type: "CONNECT_FAILURE",
             name: serverName,
@@ -5808,7 +5809,7 @@ export function useServerState({
         effectiveProjects[effectiveActiveProjectId]?.servers ?? {};
       if (isRename && activeProjectServers[nextServerName]) {
         toast.error(
-          `A server named "${nextServerName}" already exists. Choose a different name.`
+          ERROR_MESSAGE_TEMPLATES.aServerNamedAlreadyExistsChooseADifferentName(nextServerName)
         );
         return { ok: false, serverName: originalServerName };
       }
@@ -5898,7 +5899,7 @@ export function useServerState({
             toast.error(
               synced.reason === "workspace-name-taken"
                 ? `A server named "${nextServerName}" already exists in this workspace. Choose a different name.`
-                : ERROR_MESSAGES.couldNotSaveTheServerConfigurationPleaseTryAgain
+                : ERROR_MESSAGES.couldNotSaveTheServerConfigurationPleaseTryAgain,
             );
             return { ok: false, serverName: originalServerName };
           }

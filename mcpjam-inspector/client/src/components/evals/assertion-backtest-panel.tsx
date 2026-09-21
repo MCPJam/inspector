@@ -88,7 +88,7 @@ export function AssertionBacktestPanel({
         !result.counts ||
         !Array.isArray(result.differences)
       )
-        throw new Error("The preview returned an unsupported response");
+        throw new Error(ERROR_MESSAGES.thePreviewReturnedAnUnsupportedResponse);
       if (controller.signal.aborted) return;
       if (!more) setCooldownUntil(Date.now() + 60_000);
       if (previous) {
@@ -96,7 +96,7 @@ export function AssertionBacktestPanel({
           previous.sourceHash !== result.sourceHash ||
           previous.draftHash !== result.draftHash
         )
-          throw new Error("Preview source changed; start a new preview");
+          throw new Error(ERROR_MESSAGES.previewSourceChangedStartANewPreview);
         const seen = new Set(
           previous.differences.map(
             (row) => `${row.iterationId}:${row.evaluatorId}`,
@@ -107,7 +107,7 @@ export function AssertionBacktestPanel({
             seen.has(`${row.iterationId}:${row.evaluatorId}`),
           )
         )
-          throw new Error("Preview returned duplicate evidence");
+          throw new Error(ERROR_MESSAGES.previewReturnedDuplicateEvidence);
         const counts = {
           iterations: previous.counts.iterations + result.counts.iterations,
           comparable: previous.counts.comparable + result.counts.comparable,

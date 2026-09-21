@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { runByMode } from "@/lib/apis/mode-client";
 import { localPost } from "@/lib/apis/local-post";
 
@@ -57,7 +58,7 @@ export async function renderWidget(
         ...(input.viewport ? { viewport: input.viewport } : {}),
       }),
     hosted: () => {
-      throw new Error("Live render is only available in the local inspector.");
+      throw new Error(ERROR_MESSAGES.liveRenderIsOnlyAvailableInTheLocalInspector);
     },
   });
 }

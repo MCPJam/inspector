@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useState, useEffect } from "react";
 import {
@@ -98,7 +99,7 @@ function isDirectoryFiltered(
   directory: Pick<
     ReturnType<typeof useServerDirectory>,
     "query" | "tier" | "connectableOnly" | "source"
-  >
+  >,
 ): boolean {
   return (
     directory.query.trim().length > 0 ||
@@ -119,7 +120,7 @@ const AGENT_SNAPSHOT_MAX_DIRECTORY = 15;
  */
 function matchesDirectoryServerName(
   item: DirectoryServer,
-  serverName: string
+  serverName: string,
 ): boolean {
   const wanted = serverName.trim().toLowerCase();
   return (
@@ -138,7 +139,7 @@ function readDirectoryTier(value: unknown): DirectoryTier | undefined {
   }
   throw createInspectorCommandClientError(
     "invalid_request",
-    `'tier' must be one of ${DIRECTORY_TIERS.join(", ")} when provided.`
+    `'tier' must be one of ${DIRECTORY_TIERS.join(", ")} when provided.`,
   );
 }
 
@@ -152,7 +153,7 @@ function readDirectorySource(value: unknown): DirectorySource | undefined {
   }
   throw createInspectorCommandClientError(
     "invalid_request",
-    `'source' must be one of ${DIRECTORY_SOURCES.join(", ")} when provided.`
+    `'source' must be one of ${DIRECTORY_SOURCES.join(", ")} when provided.`,
   );
 }
 
@@ -209,10 +210,10 @@ export function RegistryTab({
   // publisher, permissions) is fetched only while a card is open — the list
   // stays blob-free.
   const [detailServer, setDetailServer] = useState<DirectoryServer | null>(
-    null
+    null,
   );
   const detailServerDetail = useDirectoryServerDetail(
-    detailServer?._id ?? null
+    detailServer?._id ?? null,
   );
   const [orgShelfState, setOrgShelfState] = useState<{
     hasContent: boolean;
@@ -224,10 +225,10 @@ export function RegistryTab({
         previous?.hasContent === next.hasContent &&
         previous?.isLoading === next.isLoading
           ? previous
-          : next
+          : next,
       );
     },
-    []
+    [],
   );
 
   // Auto-redirect to App Builder when a pending server becomes connected.
@@ -240,7 +241,7 @@ export function RegistryTab({
       Object.entries(servers ?? {}).find(
         ([name, server]) =>
           server.connectionStatus === "connected" &&
-          name.startsWith(`${pending.displayName} (`)
+          name.startsWith(`${pending.displayName} (`),
       )?.[1];
     if (liveServer?.connectionStatus === "connected") {
       clearPendingQuickConnect();
@@ -335,20 +336,16 @@ export function RegistryTab({
                     options: error.options ?? server.remoteUrlOptions,
                     pattern: error.pattern ?? server.remoteUrlRegex,
                     error: error.message,
-                  }
+                  },
             );
             break;
           case "already_connected_to_different_endpoint":
             setEndpointPrompt(null);
-            toast.error(
-              error.connectedUrl
-                ? `${server.displayName} is already connected to ${error.connectedUrl}.`
-                : error.message
-            );
+            toast.error(ERROR_MESSAGES.serverAlreadyConnected);
             break;
           default:
             setEndpointPrompt(null);
-            toast.error(error.message);
+            toast.error(getUserErrorMessage(error));
             break;
         }
         return { ok: false as const, error };
@@ -360,7 +357,7 @@ export function RegistryTab({
         });
       }
     },
-    [directory]
+    [directory],
   );
 
   const handleDirectoryConnect = useCallback(
@@ -378,7 +375,7 @@ export function RegistryTab({
       }
       await runDirectoryConnect(server);
     },
-    [runDirectoryConnect]
+    [runDirectoryConnect],
   );
 
   /**
@@ -392,7 +389,7 @@ export function RegistryTab({
     (server: DirectoryServer): RegistryConnectionStatus | "error" => {
       if (connectingDirectoryIds.has(server._id)) return "connecting";
       const connection = directory.connections.find(
-        (c) => c.catalogServerId === server._id
+        (c) => c.catalogServerId === server._id,
       );
       const liveName = connection?.serverName ?? null;
       const live = liveName ? servers?.[liveName] : undefined;
@@ -423,7 +420,7 @@ export function RegistryTab({
       directory.connections,
       pendingQuickConnect,
       servers,
-    ]
+    ],
   );
 
   /**
@@ -447,7 +444,7 @@ export function RegistryTab({
         return null;
       }
       const item = directory.items.find((candidate) =>
-        matchesDirectoryServerName(candidate, rawName)
+        matchesDirectoryServerName(candidate, rawName),
       );
       if (!item) return null;
 
@@ -491,7 +488,7 @@ export function RegistryTab({
       void handleDirectoryConnect(item);
       return { status: "connecting", serverName };
     },
-    [directory.items, directoryStatusFor, handleDirectoryConnect]
+    [directory.items, directoryStatusFor, handleDirectoryConnect],
   );
 
   // Agent bridge: the registry tool group plus this screen's command
@@ -503,37 +500,40 @@ export function RegistryTab({
       connectRegistryServer: async (command) => {
         const { payload } = command as ConnectRegistryServerInspectorCommand;
         const directoryMatch = resolveDirectoryCommandTarget(
-          payload.serverName
+          payload.serverName,
         );
         if (directoryMatch) return directoryMatch;
 
-        if (typeof payload.serverName !== "string" || !payload.serverName.trim()) {
+        if (
+          typeof payload.serverName !== "string" ||
+          !payload.serverName.trim()
+        ) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            "Missing required 'serverName' string."
+            "Missing required 'serverName' string.",
           );
         }
         if (directory.items.length === 0) {
           throw createInspectorCommandClientError(
             "unsupported_in_mode",
-            "The connector directory is empty or unavailable right now — no servers to act on."
+            "The connector directory is empty or unavailable right now — no servers to act on.",
           );
         }
         throw createInspectorCommandClientError(
           "unknown_server",
-          `No registry server matches "${payload.serverName}". Use a name from the directory on this screen.`
+          `No registry server matches "${payload.serverName}". Use a name from the directory on this screen.`,
         );
       },
       disconnectRegistryServer: async () => {
         throw createInspectorCommandClientError(
           "unsupported_in_mode",
-          "Disconnect a project server with ui_disconnect_server. The curated registry catalog is gone."
+          "Disconnect a project server with ui_disconnect_server. The curated registry catalog is gone.",
         );
       },
       toggleRegistryStar: async () => {
         throw createInspectorCommandClientError(
           "unsupported_in_mode",
-          "Stars belonged to the retired curated registry catalog."
+          "Stars belonged to the retired curated registry catalog.",
         );
       },
       searchRegistryDirectory: async (command) => {
@@ -541,7 +541,7 @@ export function RegistryTab({
         if (payload.query !== undefined && typeof payload.query !== "string") {
           throw createInspectorCommandClientError(
             "invalid_request",
-            "'query' must be a string when provided."
+            "'query' must be a string when provided.",
           );
         }
         const tier = readDirectoryTier(payload.tier);
@@ -794,7 +794,7 @@ function OrgRegistrySectionContainer({
       await orgRegistry.add(submission);
       toast.success("Added to your organization's registry");
     },
-    [orgRegistry]
+    [orgRegistry],
   );
 
   const handleOrgConnect = useCallback(
@@ -809,10 +809,10 @@ function OrgRegistrySectionContainer({
             : error instanceof Error
             ? error.message
             : "Could not connect this server.";
-        toast.error(message);
+        toast.error(getUserErrorMessage(message));
       }
     },
-    [orgRegistry]
+    [orgRegistry],
   );
 
   const handleOrgDisconnect = useCallback(
@@ -821,13 +821,14 @@ function OrgRegistrySectionContainer({
         await orgRegistry.disconnect(server);
       } catch (error) {
         toast.error(
-          error instanceof Error
-            ? error.message
-            : ERROR_MESSAGES.couldNotDisconnectThisServer
+          getUserErrorMessage(
+            error,
+            ERROR_MESSAGES.couldNotDisconnectThisServer,
+          ),
         );
       }
     },
-    [orgRegistry]
+    [orgRegistry],
   );
 
   const handleOrgRemoveConfirmed = useCallback(async () => {
@@ -839,7 +840,7 @@ function OrgRegistrySectionContainer({
       setOrgRemoveTarget(null);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : ERROR_MESSAGES.couldNotRemoveThisEntry
+        getUserErrorMessage(error, ERROR_MESSAGES.couldNotRemoveThisEntry),
       );
     } finally {
       setOrgRemoving(false);

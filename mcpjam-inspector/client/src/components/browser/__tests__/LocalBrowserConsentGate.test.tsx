@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { LocalBrowserConsentGate } from "../LocalBrowserConsentGate";
@@ -68,7 +69,7 @@ describe("LocalBrowserConsentGate", () => {
     render(<LocalBrowserConsentGate onAllow={onAllow} />);
     fireEvent.click(screen.getByRole("button", { name: "Allow" }));
     expect(await screen.findByTestId("consent-error")).toHaveTextContent(
-      "Retry setup",
+      ERROR_MESSAGES.couldnTFinishBrowserSetupTryAgain,
     );
     expect(onAllow).toHaveBeenCalledOnce();
     expect(screen.getByRole("button", { name: "Allow" })).toBeEnabled();

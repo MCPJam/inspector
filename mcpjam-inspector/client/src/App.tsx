@@ -1,3 +1,5 @@
+import { ERROR_MESSAGE_TEMPLATES } from "@/lib/error-messages";
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { PricingFeatureSignInGate } from "./components/billing/PricingFeatureSignInGate";
 import { useCurrentPathname } from "./lib/app-navigation";
@@ -1137,7 +1139,7 @@ function useTemplateVerifyDeepLink({
     if (!templateEnabled) {
       handledRef.current = true;
       navigate(routePaths.hosts, { replace: true });
-      toast.error(`${template.label} is not available yet.`);
+      toast.error(ERROR_MESSAGE_TEMPLATES.isNotAvailableYet(template.label));
       return;
     }
 
@@ -1164,7 +1166,7 @@ function useTemplateVerifyDeepLink({
         // committed before it timed out. Retrying means opening the link again,
         // which remounts this hook and clears the latch.
         toast.error(
-          err instanceof Error ? err.message : ERROR_MESSAGES.couldnTOpenThatClient,
+          getUserErrorMessage(err, ERROR_MESSAGES.couldnTOpenThatClient),
         );
       }
     })();
@@ -1798,7 +1800,8 @@ function SwarmsRouteContent() {
   // longer a per-host scenario tab. Keeps the same billing gate as the scenario
   // product surface, and re-mounts per project so selection state can't leak
   // across a project switch.
-  const { convexProjectId, isAuthenticated, activeProject } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated, activeProject } =
+    useAppRouteContext();
   // WorkOS identity is the membership match key for the *invitee guest*
   // notice. Convex `isAuthenticated` is also true for anonymous sessions,
   // which never get a WorkOS `user.email` — but those actors still own a
@@ -2258,7 +2261,9 @@ export function OAuthFlowRoute() {
           void navigator.clipboard
             ?.writeText(details)
             .then(() => toast.success("Copied OAuth debugger error"))
-            .catch(() => toast.error(ERROR_MESSAGES.couldNotCopyOauthDebuggerError));
+            .catch(() =>
+              toast.error(ERROR_MESSAGES.couldNotCopyOauthDebuggerError),
+            );
         };
 
         return (
@@ -3074,7 +3079,8 @@ export default function App() {
     // Preserve the scenario destination until the account sign-in completes.
     const isScenarioReturnWaitingForWorkOs =
       !!readScenarioSignInReturnPath() && (!workOsUser || isWorkOsLoading);
-    if (isBillingReturnWaitingForWorkOs || isScenarioReturnWaitingForWorkOs) return;
+    if (isBillingReturnWaitingForWorkOs || isScenarioReturnWaitingForWorkOs)
+      return;
 
     // Select the return exactly once after AuthKit + Convex auth settle. A
     // project-scoped return stays on `/callback` until the database user and
@@ -3994,7 +4000,7 @@ export default function App() {
     if (!HOSTED_MODE || !isHostedTabBlocked(activeTab)) {
       return;
     }
-    toast.error(`${activeTab} is not available in hosted mode.`);
+    toast.error(ERROR_MESSAGE_TEMPLATES.isNotAvailableInHostedMode(activeTab));
     setActiveOrganizationId(undefined);
     if (window.location.pathname !== routePaths.servers) {
       navigateApp(routePaths.servers, { replace: true });
@@ -4478,7 +4484,9 @@ export default function App() {
     );
 
     if (!orgId) {
-      toast.error(ERROR_MESSAGES.createOrJoinAnOrganizationToContinueWithCheckout);
+      toast.error(
+        ERROR_MESSAGES.createOrJoinAnOrganizationToContinueWithCheckout,
+      );
       consumeCheckoutIntent();
       return;
     }
@@ -4525,11 +4533,11 @@ export default function App() {
       activeTab !== "scenarios"
     ) {
       toast.error(
-        `${formatBillingFeatureName(
+        ERROR_MESSAGE_TEMPLATES.isNotIncludedInThePlanUpgradeTheOrganizationTo(formatBillingFeatureName(
           activeTabBillingFeature,
-        )} is not included in the ${formatPlanName(
+        ), formatPlanName(
           shellBillingStatus?.plan,
-        )} plan. Upgrade the organization to continue.`,
+        )),
       );
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "clients" && !isAuthenticated && !isAuthLoading) {

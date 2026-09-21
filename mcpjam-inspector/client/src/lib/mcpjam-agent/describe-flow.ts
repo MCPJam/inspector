@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { DEFAULTS } from "@/components/evals/constants";
 import type { MetadataSnapshot } from "./eval-tool-metadata";
 import { isDescribeTarget } from "./describe-surface";
@@ -73,7 +74,7 @@ export function setDescribeNeedsResume(session: string, needsResume: boolean) {
 }
 function read(session: string) {
   const state = useDescribeFlow.getState().sessions[session];
-  if (!state) throw new Error("Describe what you want to test first.");
+  if (!state) throw new Error(ERROR_MESSAGES.describeWhatYouWantToTestFirst);
   return state;
 }
 function target(scope: EvalAgentScope) {
@@ -85,7 +86,7 @@ function target(scope: EvalAgentScope) {
   ]);
 }
 export function beginDescribe(session: string, text: string) {
-  if (!text.trim()) throw new Error("Describe what you want to test.");
+  if (!text.trim()) throw new Error(ERROR_MESSAGES.describeWhatYouWantToTest);
   const previous = useDescribeFlow.getState().sessions[session];
   const match = text.match(
     /\b([1-5]|one|two|three|four|five)\s+(?:[\w-]+\s+){0,2}(?:tests?|cases?)\b/i,
@@ -104,10 +105,10 @@ export function askDescribeQuestion(session: string, question: string) {
   const state = read(session);
   if (state.questionUsed)
     throw new Error(
-      "Only one follow-up is allowed. Prepare the proposal using the user's answer and tool metadata.",
+      ERROR_MESSAGES.onlyOneFollowUpIsAllowedPrepareTheProposalUsing,
     );
   if (state.phase !== "describing")
-    throw new Error("A question is unavailable in this phase.");
+    throw new Error(ERROR_MESSAGES.aQuestionIsUnavailableInThisPhase);
   put(session, {
     ...state,
     phase: "clarifying",
@@ -151,7 +152,7 @@ export function proposeDescribeCases(
   const state = read(session);
   if (state.phase !== "describing")
     throw new Error(
-      "Wait for the user's description or answer before proposing cases.",
+      ERROR_MESSAGES.waitForTheUserSDescriptionOrAnswerBeforeProposing,
     );
   const parsed = proposalSchema.parse(input);
   if (state.requestedCount && parsed.cases.length !== state.requestedCount)
@@ -161,10 +162,10 @@ export function proposeDescribeCases(
   const context = getEvalDraft(scope).read();
   if (!isEvalContextReady(scope))
     throw new Error(
-      "Tools are still unavailable. Retry the connection before preparing tests.",
+      ERROR_MESSAGES.toolsAreStillUnavailableRetryTheConnectionBeforePreparingTests,
     );
   if (context.revision !== parsed.revision)
-    throw new Error("Draft changed. Read context again.");
+    throw new Error(ERROR_MESSAGES.draftChangedReadContextAgain);
   parsed.cases = parsed.cases.map((draft) => ({
     ...draft,
     expectedOutput: draft.expectedOutput ?? parsed.summary,
@@ -192,35 +193,35 @@ export function createDescribeCases(
   proposalId: string,
 ) {
   if (!isDescribeTarget(scope))
-    throw new Error("Proposal target is unavailable. Return to Describe.");
+    throw new Error(ERROR_MESSAGES.proposalTargetIsUnavailableReturnToDescribe);
   const state = read(session);
   const proposal = state.proposal;
   if (!proposal || proposal.id !== proposalId)
-    throw new Error("Proposal changed. Review the current proposal.");
+    throw new Error(ERROR_MESSAGES.proposalChangedReviewTheCurrentProposal);
   if (proposal.target !== target(scope))
-    throw new Error("Proposal target changed. Return to Describe.");
+    throw new Error(ERROR_MESSAGES.proposalTargetChangedReturnToDescribe);
   if (state.phase === "reviewing") return;
   if (state.phase !== "proposed")
-    throw new Error("Review a proposal before creating cases.");
+    throw new Error(ERROR_MESSAGES.reviewAProposalBeforeCreatingCases);
   const bridge = getEvalDraft(scope);
   const context = bridge.read();
   if (context.metadata?.environmentKey !== proposal.metadataEnvironmentKey)
     throw new Error(
-      "Tools changed. Describe the test again to prepare an updated proposal.",
+      ERROR_MESSAGES.toolsChangedDescribeTheTestAgainToPrepareAnUpdated,
     );
   if (!isEvalContextReady(scope))
     throw new Error(
-      "Tools are unavailable. Retry the connection before creating tests.",
+      ERROR_MESSAGES.toolsAreUnavailableRetryTheConnectionBeforeCreatingTests,
     );
   if (
     toolContracts(proposal.cases, context.metadata) !== proposal.toolContracts
   )
     throw new Error(
-      "Tools changed. Describe the test again to prepare an updated proposal.",
+      ERROR_MESSAGES.toolsChangedDescribeTheTestAgainToPrepareAnUpdated,
     );
   if (context.revision !== proposal.revision)
     throw new Error(
-      "Draft changed. Describe the change again to prepare an updated proposal.",
+      ERROR_MESSAGES.draftChangedDescribeTheChangeAgainToPrepareAnUpdated,
     );
   let createdIds: string[] = [];
   if (proposal.cases.length === 1) {

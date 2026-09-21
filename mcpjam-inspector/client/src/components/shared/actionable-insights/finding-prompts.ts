@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Prompts a user copies out of a finding and pastes into a coding agent.
  *
@@ -170,7 +171,7 @@ export function buildServerFixPrompt(
 ): string {
   if (!isServerReady(finding) || !finding.target) {
     throw new Error(
-      "buildServerFixPrompt requires a finding promoted to mcp_server/ready with a resolved target",
+      ERROR_MESSAGES.buildserverfixpromptRequiresAFindingPromotedToMcpServerReadyWith,
     );
   }
   const target = finding.target;

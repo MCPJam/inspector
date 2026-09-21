@@ -200,7 +200,7 @@ export function ComparisonBrowser({
   const selectedView = selectedId ? views[selectedId] : undefined;
   const mintSelected = useCallback(
     ({ projectId: id }: { projectId: string }) => {
-      if (!selectedId) throw new Error("No browser selected.");
+      if (!selectedId) throw new Error(ERROR_MESSAGES.noBrowserSelected);
       return mintRef.current({ projectId: id, conversationId: selectedId });
     },
     [selectedId],

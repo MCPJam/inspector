@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * `/user-testing/new`, environment-first and TWO steps (BB-176).
  *
@@ -402,7 +403,7 @@ describe("UserTestingScenarioCreateFlow", () => {
     expect(toastSuccess).not.toHaveBeenCalled();
   });
 
-  it("surfaces the backend's message verbatim when publishing is refused", async () => {
+  it("shows catalog guidance when publishing is refused", async () => {
     // Publishing is project-admin gated: "you need admin" and "it broke" send
     // the user to different places.
     const onCreateScenario = vi
@@ -419,14 +420,14 @@ describe("UserTestingScenarioCreateFlow", () => {
 
     await waitFor(() => {
       expect(toastError).toHaveBeenCalledWith(
-        "Publishing an environment scenario requires project admin.",
+        ERROR_MESSAGES.failedToCreateTheStudy,
       );
     });
     // Recoverable — the form is usable again rather than stuck mid-save.
     expect(screen.getByTestId("user-testing-create-save")).not.toBeDisabled();
   });
 
-  it("reads the refusal off `data`, the only field a production deployment keeps", async () => {
+  it("uses safe guidance for an unrecognized production refusal", async () => {
     // THE PRODUCTION SHAPE, and the reason the case above passed while the
     // screen shipped broken. Convex redacts the `message` of every throw on a
     // production deployment — `ConvexError` included — to the request-id
@@ -455,7 +456,7 @@ describe("UserTestingScenarioCreateFlow", () => {
 
     await waitFor(() => {
       expect(toastError).toHaveBeenCalledWith(
-        "Publishing an environment scenario requires project admin (shared execution config).",
+        ERROR_MESSAGES.failedToCreateTheStudy,
       );
     });
     expect(toastError).not.toHaveBeenCalledWith(
@@ -1510,7 +1511,7 @@ describe("UserTestingScenarioCreateFlow — a name the project already uses", ()
     expect(screen.getByTestId("user-testing-create-name")).toHaveValue(refused);
   });
 
-  it("leaves any other failure in the toast, verbatim", async () => {
+  it("uses the operation fallback for other failures", async () => {
     // "You need admin" is a different problem than "that name is taken", and
     // it is not the name field's to explain.
     const onCreateScenario = vi
@@ -1522,7 +1523,7 @@ describe("UserTestingScenarioCreateFlow — a name the project already uses", ()
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith(
-        "Publishing requires project admin.",
+        ERROR_MESSAGES.failedToCreateTheStudy,
       ),
     );
     expect(

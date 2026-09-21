@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * The /conformance page's two ways to grade a server against a directory.
  *
@@ -160,7 +161,7 @@ export async function startHostedReadiness(
       // Never inferred: a guessed mode reports the package lane
       // `not-applicable`, which turns a missing input into a clean bill.
       throw new Error(
-        "An OpenAI readiness run needs a declared submission mode.",
+        ERROR_MESSAGES.anOpenaiReadinessRunNeedsADeclaredSubmissionMode,
       );
     }
     return client().startOpenAIReadinessRun({

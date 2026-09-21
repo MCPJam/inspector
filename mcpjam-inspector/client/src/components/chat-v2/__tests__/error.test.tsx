@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ErrorBox } from "../error";
@@ -70,7 +71,7 @@ describe("ErrorBox daily-limit handling", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the inline banner unchanged for non-rate-limit errors", () => {
+  it("uses safe catalog guidance for unknown chat failures", () => {
     render(
       <ErrorBox
         message="Something exploded"
@@ -79,7 +80,8 @@ describe("ErrorBox daily-limit handling", () => {
       />
     );
 
-    expect(screen.getByText(/Something exploded/i)).toBeInTheDocument();
+    expect(screen.getByText(ERROR_MESSAGES.chatFailed, { exact: false })).toBeInTheDocument();
+    expect(screen.queryByText(/Something exploded/i)).not.toBeInTheDocument();
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 

@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useState } from "react";
 import { useConvexAuth } from "convex/react";
@@ -219,8 +220,8 @@ function CreateApiKeyStep({
   const mintableOrganizations = projectOrganizationId
     ? sortedOrganizations.filter((org) => org._id === projectOrganizationId)
     : isProjectOrgUnresolved
-      ? []
-      : sortedOrganizations;
+    ? []
+    : sortedOrganizations;
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [mintError, setMintError] = useState<string | null>(null);
@@ -261,9 +262,10 @@ function CreateApiKeyStep({
         // Retrying is one click on the same button.
         setDialogOpen(false);
         setMintError(
-          error instanceof Error
-            ? error.message
-            : ERROR_MESSAGES.failedToCreateApiKeyPleaseTryAgain,
+          getUserErrorMessage(
+            error,
+            ERROR_MESSAGES.failedToCreateApiKeyPleaseTryAgain,
+          ),
         );
         throw error;
       }

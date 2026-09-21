@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * AI generation dialog for the Swarms surface.
  *
@@ -57,7 +58,7 @@ export const MAX_PERSONAS_PER_PROJECT = 200;
 const randomAvatarIndex = (count: number) => Math.floor(Math.random() * count);
 
 const EMPTY_SLATE_MESSAGE =
-  "Generation returned no goals. Try again, or make sure the environment's servers have been connected so their tools are inspected.";
+  ERROR_MESSAGES.generationReturnedNoGoalsTryAgainOrMakeSureThe;
 
 export interface GenerateSwarmDialogProps {
   mode: "persona" | "journeys";
@@ -313,7 +314,7 @@ export function GenerateSwarmDialog({
       // the generation quota was already spent, so the user needs the reason.
       if (created === 0 && result.journeys.length > 0) {
         throw (
-          firstError ?? new Error("No goals could be saved for this persona.")
+          firstError ?? new Error(ERROR_MESSAGES.noGoalsCouldBeSavedForThisPersona)
         );
       }
       track("swarm_generate_journeys_completed", {

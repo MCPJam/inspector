@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useMemo } from "react";
 import { useMutation } from "convex/react";
 
@@ -41,7 +42,7 @@ export function useEvalMutations({
     }
 
     const guestUnsupported = async () => {
-      throw new Error("Not available for guests yet. Sign in to use this.");
+      throw new Error(ERROR_MESSAGES.notAvailableForGuestsYetSignInToUseThis);
     };
 
     return {

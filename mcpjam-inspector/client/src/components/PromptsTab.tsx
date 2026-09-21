@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
@@ -41,10 +42,7 @@ import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
-import {
-  resetScopeStepUp,
-  runWithScopeStepUp,
-} from "@/lib/scope-step-up";
+import { resetScopeStepUp, runWithScopeStepUp } from "@/lib/scope-step-up";
 import {
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
@@ -339,13 +337,7 @@ export function PromptsTab({
         }
       }
     },
-    [
-      selectedPrompt,
-      serverName,
-      isServerConnected,
-      buildParameters,
-      server,
-    ],
+    [selectedPrompt, serverName, isServerConnected, buildParameters, server],
   );
 
   useEffect(() => {
@@ -372,11 +364,7 @@ export function PromptsTab({
         });
       })
       .catch((error) => {
-        setError(
-          `Authorization finished, but the prompt could not be replayed: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
+        setError(getUserErrorMessage(error));
       })
       .finally(() => {
         setLoading(false);
@@ -589,7 +577,9 @@ export function PromptsTab({
               title="Refresh prompts"
             >
               <RefreshCw
-                className={`h-3.5 w-3.5 ${fetchingPrompts ? "animate-spin" : ""}`}
+                className={`h-3.5 w-3.5 ${
+                  fetchingPrompts ? "animate-spin" : ""
+                }`}
               />
             </Button>
             <Button

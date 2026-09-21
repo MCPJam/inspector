@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useMemo, useState, type ReactNode } from "react";
 import {
@@ -160,9 +161,7 @@ export function ShareSection<TEnvelope>({
     } catch (error) {
       if (handleGuestSharingError(error)) return;
       toast.error(
-        error instanceof Error
-          ? error.message
-          : ERROR_MESSAGES.failedToUpdateAccessSettings,
+        getUserErrorMessage(error , ERROR_MESSAGES.failedToUpdateAccessSettings),
       );
     } finally {
       setIsModeBusy(false);
@@ -177,7 +176,7 @@ export function ShareSection<TEnvelope>({
       setEmail("");
       toast.success(`Invited ${normalizedEmail}`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : ERROR_MESSAGES.failedToInvite);
+      toast.error(getUserErrorMessage(error , ERROR_MESSAGES.failedToInvite));
     } finally {
       setIsInviting(false);
     }
@@ -190,7 +189,7 @@ export function ShareSection<TEnvelope>({
       toast.success(`Removed ${member.email}`);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : ERROR_MESSAGES.failedToRemoveMember,
+        getUserErrorMessage(error , ERROR_MESSAGES.failedToRemoveMember),
       );
     } finally {
       setIsMemberBusy(false);
@@ -217,7 +216,7 @@ export function ShareSection<TEnvelope>({
         return;
       }
       toast.error(
-        error instanceof Error ? error.message : ERROR_MESSAGES.failedToRotateLink,
+        getUserErrorMessage(error , ERROR_MESSAGES.failedToRotateLink),
       );
     } finally {
       setIsRotateBusy(false);
@@ -232,7 +231,7 @@ export function ShareSection<TEnvelope>({
       toast.success("All share access revoked");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : ERROR_MESSAGES.failedToRevokeAccess,
+        getUserErrorMessage(error , ERROR_MESSAGES.failedToRevokeAccess),
       );
     } finally {
       setIsMemberBusy(false);
@@ -271,9 +270,9 @@ export function ShareSection<TEnvelope>({
           >
             <span className="truncate text-sm text-muted-foreground">
               {disabledReason
-                ? (copy.withheldLabel ?? "Withheld — this can't be shared.")
-                : (displayLink ??
-                  (copy.emptyLinkLabel ?? "No share link yet."))}
+                ? copy.withheldLabel ?? "Withheld — this can't be shared."
+                : displayLink ??
+                  copy.emptyLinkLabel ?? "No share link yet."}
             </span>
           </output>
           <Button

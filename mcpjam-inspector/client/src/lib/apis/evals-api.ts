@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { API_ENDPOINTS } from "@/components/evals/constants";
 import type { TestStep } from "@/shared/steps";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
@@ -602,7 +603,7 @@ export async function streamEvalTestCase(
 
   const reader = response.body?.getReader();
   if (!reader) {
-    throw new Error("No response body for streaming");
+    throw new Error(ERROR_MESSAGES.noResponseBodyForStreaming);
   }
 
   const decoder = new TextDecoder();

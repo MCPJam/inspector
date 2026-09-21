@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useCallback,
   useEffect,
@@ -55,11 +56,11 @@ const VALIDATION_RETRY_ATTEMPTS = 3;
 const VALIDATION_RETRY_MS = 400;
 
 const TOKEN_MISSING_ERROR =
-  "Authorization completed, but MCPJam could not find the access token. Try again.";
+  ERROR_MESSAGES.authorizationCompletedButMcpjamCouldNotFindTheAccessToken;
 const VALIDATION_ERROR =
-  "Authorization completed, but MCPJam could not verify access. Try again.";
+  ERROR_MESSAGES.authorizationCompletedButMcpjamCouldNotVerifyAccessTryAgain;
 const RUNTIME_OAUTH_ERROR =
-  "Authorization expired or is missing. Authorize again to continue.";
+  ERROR_MESSAGES.authorizationExpiredOrIsMissingAuthorizeAgainToContinue;
 
 export interface HostedOAuthServerDescriptor {
   serverId: string;

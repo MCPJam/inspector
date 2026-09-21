@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useAction, useQuery } from "convex/react";
 import { useCallback, useMemo, useState } from "react";
 import { track } from "@/lib/analytics";
@@ -240,13 +241,13 @@ export function useCreditTopup() {
         const checkoutUrl = result?.checkoutUrl;
         if (typeof checkoutUrl !== "string" || checkoutUrl.length === 0) {
           errorKind = "missing_url";
-          throw new Error("Checkout URL missing from response");
+          throw new Error(ERROR_MESSAGES.checkoutUrlMissingFromResponse);
         }
         if (!isAllowedCheckoutUrl(checkoutUrl)) {
           // Defense-in-depth: don't navigate to URLs that aren't on the
           // allowed checkout host even if the server told us to.
           errorKind = "invalid_url";
-          throw new Error("Refusing to redirect to non-Stripe checkout URL");
+          throw new Error(ERROR_MESSAGES.refusingToRedirectToNonStripeCheckoutUrl);
         }
         window.location.assign(checkoutUrl);
       } catch (err) {

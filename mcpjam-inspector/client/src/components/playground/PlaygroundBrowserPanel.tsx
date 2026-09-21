@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect } from "react";
 import { Maximize2, Minimize2, PanelRightClose } from "lucide-react";
 import { cn } from "@mcpjam/design-system/cn";
@@ -73,7 +74,7 @@ export function PlaygroundBrowserPanel({
   const mintHostedBrowserToken = useCallback(
     ({ projectId: tokenProjectId }: { projectId: string }) => {
       if (!browserSessionId)
-        throw new Error("The conversation is still loading.");
+        throw new Error(ERROR_MESSAGES.theConversationIsStillLoading);
       return mintConversationBrowserToken({
         projectId: tokenProjectId,
         conversationId: browserSessionId,

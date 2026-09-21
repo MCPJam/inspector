@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useCallback,
   useEffect,
@@ -63,36 +64,36 @@ function formatExpiry(epochMs: number): string {
 
 function errorCopy(
   errorCode: string | undefined,
-  invitedEmail?: string
+  invitedEmail?: string,
 ): string {
   switch (errorCode) {
     case "slack_config":
-      return "Slack Connect isn't available right now — our team has been notified.";
+      return ERROR_MESSAGES.slackConnectIsnTAvailableRightNowOurTeamHas;
     case "slack_connect_limit":
-      return "This Slack workspace has reached its Slack Connect connection limit.";
+      return ERROR_MESSAGES.thisSlackWorkspaceHasReachedItsSlackConnectConnectionLimit;
     case "invite_email_rejected":
       return invitedEmail
         ? `Slack rejected the invite email (${invitedEmail}).`
-        : "Slack rejected the invite email.";
+        : ERROR_MESSAGES.slackRejectedTheInviteEmail;
     case "channel_name_conflict":
-      return "Could not create a unique shared channel name. Contact support.";
+      return ERROR_MESSAGES.couldNotCreateAUniqueSharedChannelNameContactSupport;
     case "retry_limit":
-      return "Too many setup attempts. Contact support to finish this channel.";
+      return ERROR_MESSAGES.tooManySetupAttemptsContactSupportToFinishThisChannel;
     case "provision_in_flight":
-      return "Channel setup is already in progress. Try again in a few minutes.";
+      return ERROR_MESSAGES.channelSetupIsAlreadyInProgressTryAgainInA;
     case "not_configured":
-      return "Slack Connect is not configured on this deployment.";
+      return ERROR_MESSAGES.slackConnectIsNotConfiguredOnThisDeployment;
     case "invite_declined":
-      return "The Slack Connect invite was declined. Free Slack workspaces cannot accept Connect invites — contact support if that isn't the case.";
+      return ERROR_MESSAGES.theSlackConnectInviteWasDeclinedFreeSlackWorkspacesCannot;
     case "invite_expired":
-      return "The Slack Connect invite expired. Request a new one.";
+      return ERROR_MESSAGES.theSlackConnectInviteExpiredRequestANewOne;
     default:
-      return "Could not set up the shared Slack channel. Try again.";
+      return ERROR_MESSAGES.couldNotSetUpTheSharedSlackChannelTryAgain;
   }
 }
 
 function cardState(
-  channel: SharedSlackChannelView | null
+  channel: SharedSlackChannelView | null,
 ): SharedSlackChannelStatus | "none" {
   return channel?.status ?? "none";
 }
@@ -117,7 +118,7 @@ function SharedSlackSkeleton() {
 
 function CardShell({
   children,
-  title = "Shared Slack channel",
+  title = ERROR_MESSAGES.sharedSlackChannel,
 }: {
   children: ReactNode;
   title?: string;
@@ -148,11 +149,11 @@ export function SharedSlackChannelCard({
   const enabled = useSharedSlackChannelEnabled();
   const dto = useQuery(
     "orgSharedSlackChannels:getForOrganization" as any,
-    enabled && organizationId ? ({ organizationId } as any) : "skip"
+    enabled && organizationId ? ({ organizationId } as any) : "skip",
   ) as SharedSlackChannelDto | undefined;
   const provision = useAction("orgSharedSlackChannelsNode:provision" as any);
   const refreshStatus = useAction(
-    "orgSharedSlackChannelsNode:refreshStatus" as any
+    "orgSharedSlackChannelsNode:refreshStatus" as any,
   );
 
   const [busy, setBusy] = useState(false);
@@ -191,7 +192,7 @@ export function SharedSlackChannelCard({
         kind === "retry"
           ? "home_shared_slack_retry_clicked"
           : "home_shared_slack_provision_clicked",
-        { location: "home", state }
+        { location: "home", state },
       );
       setBusy(true);
       try {
@@ -202,10 +203,10 @@ export function SharedSlackChannelCard({
           toast.success(
             dto?.channel?.invitedEmail
               ? `Invite sent to ${dto.channel.invitedEmail}`
-              : "Slack Connect invite sent"
+              : ERROR_MESSAGES.slackConnectInviteSent,
           );
         } else if (result?.status === "active") {
-          toast.success("Your shared Slack channel is ready");
+          toast.success(ERROR_MESSAGES.yourSharedSlackChannelIsReady);
         }
       } catch (err) {
         toast.error(convexErrMessage(err, errorCopy(convexErrCode(err))));
@@ -213,7 +214,7 @@ export function SharedSlackChannelCard({
         setBusy(false);
       }
     },
-    [organizationId, dto, provision]
+    [organizationId, dto, provision],
   );
 
   if (!enabled || !organizationId) return null;
@@ -323,7 +324,7 @@ export function SharedSlackChannelCard({
           <p className="min-w-0 flex-1 truncate text-[13px] text-foreground">
             {channel.channelName
               ? `#${channel.channelName}`
-              : "Your shared Slack channel"}
+              : ERROR_MESSAGES.yourSharedSlackChannel}
           </p>
           {channel.openUrl ? (
             <a
@@ -358,7 +359,7 @@ export function SharedSlackChannelCard({
           <p className="text-[13px] text-foreground">
             {errorCopy(
               channel.errorCode ?? channel.status,
-              channel.invitedEmail
+              channel.invitedEmail,
             )}
           </p>
         </div>

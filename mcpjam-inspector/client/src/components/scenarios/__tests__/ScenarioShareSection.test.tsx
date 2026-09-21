@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -355,6 +356,6 @@ describe("ScenarioShareSection", () => {
     expect(scenarioMutations.rotateScenarioLink).toHaveBeenCalledWith({
       scenarioId: "cb-1",
     });
-    expect(toast.error).toHaveBeenCalledWith("rotate failed");
+    expect(toast.error).toHaveBeenCalledWith(ERROR_MESSAGES.failedToRotateLink);
   });
 });

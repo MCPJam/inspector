@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 export type ConvexBlobLoadErrorKind = "transient" | "generic";
 
 export function formatConvexBlobLoadError(rawMessage: string): {
@@ -19,18 +20,18 @@ export function formatConvexBlobLoadError(rawMessage: string): {
   if (isTransient) {
     return {
       kind: "transient",
-      title: "Connection interrupted",
+      title: ERROR_MESSAGES.connectionInterrupted,
       description:
-        "We lost contact with the server while loading this trace. Check your connection and try again.",
+        ERROR_MESSAGES.weLostContactWithTheServerWhileLoadingThisTrace,
       alertVariant: "default",
     };
   }
 
   return {
     kind: "generic",
-    title: "Couldn't load trace",
+    title: ERROR_MESSAGES.couldnTLoadTrace,
     description:
-      "Something went wrong while loading the recorded trace. Try again, or refresh the page if the problem continues.",
+      ERROR_MESSAGES.somethingWentWrongWhileLoadingTheRecordedTraceTryAgain,
     alertVariant: "destructive",
   };
 }

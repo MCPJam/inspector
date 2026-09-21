@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@/lib/user-error";
 import { useEffect, useId, useState } from "react";
 import { Loader2, Save } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -73,7 +74,7 @@ export function SkillEditDialog({
       onSaved?.(updated);
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(getUserErrorMessage(err));
     } finally {
       setIsSaving(false);
     }

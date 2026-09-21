@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { isDescribeTarget } from "./describe-surface";
 import { stopAgentChat } from "./agent-chat-instances";
 import { dismissAskUserQuestions } from "@/lib/webmcp/ask-user-store";
@@ -46,7 +47,7 @@ export function readEvalScope(sessionId: string): EvalAgentScope | undefined {
   const scope = useEvalAgentScopes.getState().scopes[sessionId];
   if (!scope && sessionId.startsWith("eval-"))
     throw new Error(
-      "Eval context is unavailable. Reopen Ask MCPJam from the case or suite.",
+      ERROR_MESSAGES.evalContextIsUnavailableReopenAskMcpjamFromTheCase,
     );
   return scope;
 }
@@ -66,10 +67,10 @@ export function assertEvalToolAllowed(
   const pinned = evalTurnScope(sessionId);
   if (current?.id !== pinned?.id)
     throw new Error(
-      "Eval context changed during this turn. Submit a new request for the current case.",
+      ERROR_MESSAGES.evalContextChangedDuringThisTurnSubmitANewRequest,
     );
   if (pinned && !isDescribeTarget(pinned))
-    throw new Error("Return to Describe to continue creating tests.");
+    throw new Error(ERROR_MESSAGES.returnToDescribeToContinueCreatingTests);
   if (pinned && !EVAL_AGENT_TOOL_NAMES.has(toolName))
     throw new Error(
       `Tool ${toolName} is unavailable in eval scope. This conversation only supports eval work.`,

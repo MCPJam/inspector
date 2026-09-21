@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   getModelById,
   type ModelDefinition,
@@ -561,7 +562,7 @@ export function mergeAdvancedConfigWithOverride(params: {
     } else {
       const parsedTemperature = Number(trimmedTemperature);
       if (!Number.isFinite(parsedTemperature)) {
-        throw new Error("Temperature override must be a valid number");
+        throw new Error(ERROR_MESSAGES.temperatureOverrideMustBeAValidNumber);
       }
       next.temperature = parsedTemperature;
     }
@@ -577,7 +578,7 @@ export function mergeAdvancedConfigWithOverride(params: {
     try {
       parsedFlags = JSON.parse(trimmedFlags);
     } catch {
-      throw new Error("Provider flags override must be valid JSON");
+      throw new Error(ERROR_MESSAGES.providerFlagsOverrideMustBeValidJson);
     }
 
     if (
@@ -585,7 +586,7 @@ export function mergeAdvancedConfigWithOverride(params: {
       typeof parsedFlags !== "object" ||
       Array.isArray(parsedFlags)
     ) {
-      throw new Error("Provider flags override must be a JSON object");
+      throw new Error(ERROR_MESSAGES.providerFlagsOverrideMustBeAJsonObject);
     }
 
     Object.assign(next, parsedFlags);

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { flushSync } from "react-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -1838,7 +1839,7 @@ describe("useServerState OAuth callback failures", () => {
 
     expect(toastError).toHaveBeenCalledWith(
       errorToastMessage(
-        "OAuth authorization failed: access_denied: User denied access"
+        ERROR_MESSAGES.oauthAuthorizationFailedPleaseTryAgain
       ),
       { duration: 8000 }
     );
@@ -1869,7 +1870,7 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      errorToastMessage("Error completing OAuth flow: Token exchange failed"),
+      errorToastMessage(ERROR_MESSAGES.errorCompletingOauthFlowPleaseTryAgain),
       { duration: 8000 }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
