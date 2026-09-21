@@ -226,7 +226,18 @@ describe("modern-era (2026-07-28) wire evidence", () => {
     // The spec cancellation signal on modern is the aborted per-request
     // stream itself — there must be no explicit notifications/cancelled
     // POST alongside it.
+    //
+    // The settle window is load-bearing: the protocol layer's legacy
+    // cancellation branch POSTs the notification fire-and-forget, so asserting
+    // the instant `callPromise` rejects passes even when the client DID send
+    // one. Give that POST time to land before reading `exchanges`.
+    await new Promise((resolve) => setTimeout(resolve, 500));
     expect(byMethod("notifications/cancelled")).toHaveLength(0);
+
+    // Positive counterpart: the aborted `tools/call` exchange must have
+    // actually terminated. A client that only rejects locally leaves the
+    // held-open stream running, and the exchange never completes.
+    expect(byMethod("tools/call")).toHaveLength(1);
   });
 });
 
@@ -510,4 +521,137 @@ describe("SEP-2243 mirroring disabled (mirrorToolParamHeaders: false)", () => {
     ).toHaveLength(0);
     expect(headers["mcp-name"]).toBe("tool-1");
   });
+});
+
+/**
+ * The per-era cancellation-suppression flags — the host-config knob
+ * (`mcpProfile.toolCallCancellation.{legacy,modern}: false`) modeling a host
+ * that ends the turn locally and tells the server nothing.
+ *
+ * Driven through `getToolsForAiSdk`, because that is the seam a chat turn's
+ * stop button actually travels: the AI SDK hands the turn's `abortSignal` to
+ * the tool's `execute`, and the manager decides there whether it reaches the
+ * wire.
+ *
+ * One resolved flag reaches this layer — which era it came from was decided
+ * upstream from the version pin (see host-connection.test.ts). Here the only
+ * question is whether the flag is obeyed on each era's wire.
+ */
+describe("cancellation suppression", () => {
+  let served: ServedMultiPageFixture | undefined;
+  let manager: MCPClientManager | undefined;
+
+  afterEach(async () => {
+    await manager?.disconnectAllServers().catch(() => {});
+    await served?.close();
+    served = undefined;
+    manager = undefined;
+  });
+
+  async function abortSlowToolThroughAiSdk(
+    connectOverrides: Record<string, unknown> = {},
+    protocolVersion: "2026-07-28" | "2025-11-25" | undefined = "2026-07-28"
+  ) {
+    served = await serveMultiPageFixtureOnPort({ listSlowTool: true });
+    manager = new MCPClientManager();
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      ...(protocolVersion ? { mcpProtocolVersion: protocolVersion } : {}),
+      timeout: 10_000,
+      ...connectOverrides,
+    });
+
+    const tools = await manager.getToolsForAiSdk("fixture");
+    const slowTool = tools["slow-tool"];
+    expect(slowTool?.execute).toBeTypeOf("function");
+
+    const controller = new AbortController();
+    const callPromise = slowTool!.execute!(
+      { delayMs: 60_000 },
+      { toolCallId: "call-1", messages: [], abortSignal: controller.signal }
+    );
+    await served.waitForToolCall("slow-tool");
+    controller.abort();
+
+    // Either way the caller is released promptly — a host that cancels nothing
+    // still ends its own turn. What differs is whether the server hears it.
+    const outcome = await Promise.resolve(callPromise).then(
+      () => "resolved" as const,
+      (error: unknown) => error
+    );
+    expect(outcome).not.toBe("resolved");
+
+    // Let any cancellation the client chose to send actually land.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    return served.exchanges.map((e) => getWireField(e.request.json, "method"));
+  }
+
+  it("2026: the modern flag leaves the server running the tool", async () => {
+    const methods = await abortSlowToolThroughAiSdk({
+      toolCallCancellation: { modern: false },
+    });
+
+    // Nothing was said. Not the 2026 signal (the held-open `tools/call`
+    // exchange never completes, so it never appears here) and not the 2025 one
+    // either — withholding the signal withholds both, which is the point:
+    // the simulated host is silent, not non-conforming.
+    expect(methods).not.toContain("notifications/cancelled");
+    expect(methods).not.toContain("tools/call");
+  }, 30_000);
+
+  it("2026: still cancels with no flag set (control)", async () => {
+    const methods = await abortSlowToolThroughAiSdk();
+
+    // Same abort, same seam, opposite outcome: the stream is aborted, so the
+    // exchange terminates and lands in the log. Without this control the test
+    // above would pass on a client that had simply stopped calling tools.
+    expect(methods).toContain("tools/call");
+    expect(methods).not.toContain("notifications/cancelled");
+  }, 30_000);
+
+  it("2025: the flag withholds notifications/cancelled", async () => {
+    const methods = await abortSlowToolThroughAiSdk(
+      { toolCallCancellation: { legacy: false } },
+      "2025-11-25"
+    );
+
+    // On this era the signal would have gone out as an explicit notification,
+    // so its absence IS the suppression.
+    expect(methods).not.toContain("notifications/cancelled");
+  }, 30_000);
+
+  it("2025: sends notifications/cancelled with no flag set (control)", async () => {
+    const methods = await abortSlowToolThroughAiSdk({}, "2025-11-25");
+
+    expect(methods).toContain("notifications/cancelled");
+  }, 30_000);
+
+  it("applies only the negotiated era's leaf, never the other one", async () => {
+    // The crossover. A host measured broken on 2025 must still cancel normally
+    // on a 2026 connection, and vice versa.
+    const modernConn = await abortSlowToolThroughAiSdk({
+      toolCallCancellation: { legacy: false },
+    });
+    expect(modernConn).toContain("tools/call");
+
+    const legacyConn = await abortSlowToolThroughAiSdk(
+      { toolCallCancellation: { modern: false } },
+      "2025-11-25"
+    );
+    expect(legacyConn).toContain("notifications/cancelled");
+  }, 60_000);
+
+  it("resolves the leaf on an UNPINNED connection from what it negotiated", async () => {
+    // The bug this design replaces: with no pin there is no era at config
+    // time, so the old code guessed "modern" and the 2025 leaf could never
+    // apply. Here the connection negotiates against the fixture and whichever
+    // era it lands on must be the leaf that governs.
+    const methods = await abortSlowToolThroughAiSdk(
+      { toolCallCancellation: { legacy: false, modern: false } },
+      undefined
+    );
+
+    expect(methods).not.toContain("notifications/cancelled");
+    expect(methods).not.toContain("tools/call");
+  }, 30_000);
 });

@@ -3,9 +3,14 @@ import { Plus, Loader2, Server } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { useHostList, useHostMutations, type HostListItem } from "@/hooks/useClients";
+import {
+  useHostList,
+  useHostMutations,
+  type HostListItem,
+} from "@/hooks/useClients";
 import { HostCard } from "./HostCard";
 import { CreateHostDialog } from "./CreateHostDialog";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 interface HostIndexPageProps {
   projectId: string;
@@ -18,6 +23,9 @@ export function HostIndexPage({
   isAuthenticated,
   onSelectHost,
 }: HostIndexPageProps) {
+  // Private scenario-backing clients are filtered out inside `useHostList`:
+  // they are retired with the scenario that minted them, so listing them here
+  // would offer Edit/Duplicate/Delete on a different lifecycle.
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const { deleteHost, duplicateHost } = useHostMutations();
   const [showCreate, setShowCreate] = useState(false);
@@ -28,7 +36,7 @@ export function HostIndexPage({
     setDeletingId(host.hostId);
     try {
       await deleteHost({ hostId: host.hostId });
-      toast.success(`Client "${host.name}" deleted`);
+      toast.success(`Client "${clientDisplayName(host)}" deleted`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to delete client";
       if (msg.includes("consumer")) {

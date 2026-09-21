@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -42,7 +42,7 @@ vi.mock("@/lib/host-compat/use-host-catalog", async () => {
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (
-    selector: (state: typeof mockPreferencesState) => unknown
+    selector: (state: typeof mockPreferencesState) => unknown,
   ) => selector(mockPreferencesState),
 }));
 
@@ -105,6 +105,59 @@ describe("HostConfigCompareView public mode", () => {
     document.documentElement.classList.remove("dark");
   });
 
+  it("shows Claude Code and Codex in public and signed-in Compare", async () => {
+    // `useFeatureFlagEnabled` is mocked false above — the anonymous-visitor
+    // case, and the one that used to drop these two from caniuse entirely.
+    // They sit past the 6-chip inline limit, so assert them where they live:
+    // the More menu. Public caniuse is reference data and lists every catalog
+    // host. The signed-in matrix is also reference data, even though its New
+    // Client picker remains gated separately.
+    const { unmount } = render(
+      <MemoryRouter>
+        <HostConfigCompareView
+          projectId={null}
+          isAuthenticated={false}
+          presetOnly
+        />
+      </MemoryRouter>,
+    );
+    // Both are ranked, so they render as inline chips rather than in the More
+    // menu. Asserted by test id: a bare `getByText("Claude Code")` would be
+    // satisfied by the chip and would keep passing even if the gate started
+    // hiding them, which is the whole thing this test exists to catch.
+    expect(
+      screen.getByTestId("host-compare-chip-preset:claude-code"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("host-compare-chip-preset:codex"),
+    ).toBeInTheDocument();
+    // The menu still has to open and list the unranked presets, so the
+    // signed-in absences below read as the gate rather than a dead menu.
+    fireEvent.click(screen.getByTestId("host-compare-overflow-trigger"));
+    expect(await screen.findByText("Notion")).toBeInTheDocument();
+    unmount();
+
+    // Signed in with a project, so the matrix actually renders hosts. With
+    // `projectId={null}` it short-circuits to the sign-in placeholder and the
+    // absence below would hold no matter what the gate did.
+    render(
+      <MemoryRouter>
+        <HostConfigCompareView projectId="abc123" isAuthenticated />
+      </MemoryRouter>,
+    );
+    // Presets render here at all...
+    expect(
+      screen.getByTestId("host-compare-chip-preset:claude"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("host-compare-overflow-trigger"));
+    // ...and the overflow menu includes the requested read-only presets while
+    // unrelated gated hosts retain their existing rollout behavior.
+    expect(await screen.findByText("Notion")).toBeInTheDocument();
+    expect(screen.getByText("Claude Code")).toBeInTheDocument();
+    expect(screen.getByText("Codex")).toBeInTheDocument();
+    expect(screen.queryByText("Cursor CLI")).not.toBeInTheDocument();
+  });
+
   it("renders preset compare content without requiring sign-in or a project", async () => {
     render(
       <MemoryRouter>
@@ -113,26 +166,26 @@ describe("HostConfigCompareView public mode", () => {
           isAuthenticated={false}
           presetOnly
         />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     expect(screen.queryByText(/Sign in to compare/i)).not.toBeInTheDocument();
     expect(
-      screen.getByLabelText("Search client config fields")
+      screen.getByLabelText("Search client config fields"),
     ).toBeInTheDocument();
     expect(screen.getByText("Can I use…")).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
         name: "Show all clients and capabilities",
-      })
+      }),
     ).toBeDisabled();
     expect(
-      screen.getByTestId("host-compare-chip-preset:claude")
+      screen.getByTestId("host-compare-chip-preset:claude"),
     ).toBeInTheDocument();
 
     await waitFor(() => {
       expect(
-        screen.queryByText(/Select at least one client/i)
+        screen.queryByText(/Select at least one client/i),
       ).not.toBeInTheDocument();
     });
   });
@@ -147,11 +200,11 @@ describe("HostConfigCompareView public mode", () => {
           isAuthenticated={false}
           presetOnly
         />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Switch to dark mode" })
+      screen.getByRole("button", { name: "Switch to dark mode" }),
     );
 
     expect(mockPreferencesState.setThemeMode).toHaveBeenCalledWith("dark");
@@ -166,20 +219,26 @@ describe("HostConfigCompareView public mode", () => {
           isAuthenticated={false}
           presetOnly
         />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     const topChipIds = Array.from(
-      document.querySelectorAll('[data-testid^="host-compare-chip-"]')
+      document.querySelectorAll('[data-testid^="host-compare-chip-"]'),
     ).map((node) => node.getAttribute("data-testid"));
 
+    // Ranked order, grouped by vendor, with VS Code and Slackbot pinned
+    // rightmost. The inline chip limit is sized to this list — if it drops
+    // below the list length the tail stops rendering rather than overflowing.
     expect(topChipIds).toEqual([
       "host-compare-chip-preset:claude",
+      "host-compare-chip-preset:claude-desktop",
+      "host-compare-chip-preset:claude-code",
       "host-compare-chip-preset:chatgpt",
+      "host-compare-chip-preset:codex",
       "host-compare-chip-preset:copilot",
       "host-compare-chip-preset:cursor",
-      "host-compare-chip-preset:slack",
       "host-compare-chip-preset:vscode",
+      "host-compare-chip-preset:slack",
     ]);
   });
 
@@ -195,15 +254,15 @@ describe("HostConfigCompareView public mode", () => {
           isAuthenticated={false}
           presetOnly
         />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     expect(screen.getByLabelText("Search client config fields")).toHaveValue(
-      "Elicitation"
+      "Elicitation",
     );
     await waitFor(() => {
       expect(
-        screen.queryByText(/Select at least one client/i)
+        screen.queryByText(/Select at least one client/i),
       ).not.toBeInTheDocument();
     });
   });
@@ -223,17 +282,17 @@ describe("HostConfigCompareView public mode", () => {
           presetOnly
         />
         <LocationProbe />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     await user.type(
       screen.getByLabelText("Search client config fields"),
-      "Elicitation"
+      "Elicitation",
     );
 
     await waitFor(() => {
       expect(screen.getByTestId("location")).toHaveTextContent(
-        "/embed/host-compare?hosts=preset%3Aclaude%2Cpreset%3Avscode&capability=elicitation"
+        "/embed/host-compare?hosts=preset%3Aclaude%2Cpreset%3Avscode&capability=elicitation",
       );
     });
   });
@@ -248,15 +307,17 @@ describe("HostConfigCompareView public mode", () => {
           isAuthenticated={false}
           presetOnly
         />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
-    const filterButton = screen.getByLabelText("Filter fields by support level");
+    const filterButton = screen.getByLabelText(
+      "Filter fields by support level",
+    );
     expect(filterButton).toBeDisabled();
 
     await user.type(
       screen.getByLabelText("Search client config fields"),
-      "Elicitation"
+      "Elicitation",
     );
 
     expect(filterButton).not.toBeDisabled();
@@ -276,7 +337,7 @@ describe("HostConfigCompareView public mode", () => {
           isAuthenticated={false}
           presetOnly
         />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     const search = screen.getByLabelText("Search client config fields");
@@ -285,20 +346,20 @@ describe("HostConfigCompareView public mode", () => {
     });
     expect(search).toHaveValue("Elicitation");
     expect(canIUseButton).not.toBeDisabled();
-    expect(screen.getByTestId("host-compare-chip-preset:chatgpt")).toHaveAttribute(
-      "data-selected",
-      "false"
-    );
+    expect(
+      screen.getByTestId("host-compare-chip-preset:chatgpt"),
+    ).toHaveAttribute("data-selected", "false");
 
     await user.click(canIUseButton);
 
     expect(search).toHaveValue("");
     expect(canIUseButton).toBeDisabled();
-    expect(screen.getByLabelText("Filter fields by support level")).toBeDisabled();
-    expect(screen.getByTestId("host-compare-chip-preset:chatgpt")).toHaveAttribute(
-      "data-selected",
-      "false"
-    );
+    expect(
+      screen.getByLabelText("Filter fields by support level"),
+    ).toBeDisabled();
+    expect(
+      screen.getByTestId("host-compare-chip-preset:chatgpt"),
+    ).toHaveAttribute("data-selected", "false");
   });
 
   it("hides agent tuning and request timeout rows in public caniuse mode", async () => {
@@ -309,12 +370,12 @@ describe("HostConfigCompareView public mode", () => {
           isAuthenticated={false}
           presetOnly
         />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     await waitFor(() => {
       expect(
-        screen.queryByText(/Select at least one client/i)
+        screen.queryByText(/Select at least one client/i),
       ).not.toBeInTheDocument();
     });
 
@@ -327,7 +388,7 @@ describe("HostConfigCompareView public mode", () => {
   it("lets public users report an inconsistency", async () => {
     const user = userEvent.setup();
     vi.mocked(global.fetch).mockResolvedValue(
-      new Response(JSON.stringify({ success: true }), { status: 200 })
+      new Response(JSON.stringify({ success: true }), { status: 200 }),
     );
 
     render(
@@ -337,15 +398,15 @@ describe("HostConfigCompareView public mode", () => {
           isAuthenticated={false}
           presetOnly
         />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Report inconsistency" })
+      screen.getByRole("button", { name: "Report inconsistency" }),
     );
     await user.type(
       screen.getByLabelText("What looks inconsistent?"),
-      "Claude supports this, but the table says it doesn't."
+      "Claude supports this, but the table says it doesn't.",
     );
     await user.click(screen.getByRole("button", { name: "Send report" }));
 
@@ -356,17 +417,17 @@ describe("HostConfigCompareView public mode", () => {
         body: JSON.stringify({
           message: "Claude supports this, but the table says it doesn't.",
         }),
-      })
+      }),
     );
     expect(
-      await screen.findByText("We've notified the MCPJam team.")
+      await screen.findByText("We've notified the MCPJam team."),
     ).toBeInTheDocument();
   });
 
   it("opens notify in a centered dialog and subscribes an email", async () => {
     const user = userEvent.setup();
     vi.mocked(global.fetch).mockResolvedValue(
-      new Response(JSON.stringify({ success: true }), { status: 200 })
+      new Response(JSON.stringify({ success: true }), { status: 200 }),
     );
 
     render(
@@ -376,11 +437,11 @@ describe("HostConfigCompareView public mode", () => {
           isAuthenticated={false}
           presetOnly
         />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Notify me of client changes" })
+      screen.getByRole("button", { name: "Notify me of client changes" }),
     );
 
     const dialog = screen.getByRole("dialog");
@@ -394,10 +455,10 @@ describe("HostConfigCompareView public mode", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ email: "founders@mcpjam.com" }),
-      })
+      }),
     );
     expect(
-      await screen.findByText("We'll email you when hosts change.")
+      await screen.findByText("We'll email you when hosts change."),
     ).toBeInTheDocument();
   });
 
@@ -405,11 +466,11 @@ describe("HostConfigCompareView public mode", () => {
     render(
       <MemoryRouter>
         <HostConfigCompareView projectId={null} isAuthenticated={false} />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     expect(
-      screen.getByText(/Sign in to compare your clients/i)
+      screen.getByText(/Sign in to compare your clients/i),
     ).toBeInTheDocument();
   });
 
@@ -424,17 +485,36 @@ describe("HostConfigCompareView public mode", () => {
     render(
       <MemoryRouter>
         <HostConfigCompareView projectId="abc123" isAuthenticated />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     expect(
-      screen.queryByTestId("host-compare-chip-preset:claude")
+      screen.queryByTestId("host-compare-chip-preset:claude"),
     ).not.toBeInTheDocument();
     expect(
       screen.getByText(
-        "No hosts yet. Create one from the Host tab to populate the comparison."
-      )
+        "No hosts yet. Create one from the Host tab to populate the comparison.",
+      ),
     ).toBeInTheDocument();
+  });
+
+  it("shows only caniuse rows plus protocol version in the full app", async () => {
+    render(
+      <MemoryRouter>
+        <HostConfigCompareView projectId="abc123" isAuthenticated />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Protocol version")).toBeInTheDocument();
+    expect(screen.getByText("Roots")).toBeInTheDocument();
+    expect(screen.queryByText("Model")).not.toBeInTheDocument();
+    expect(screen.queryByText("Temperature")).not.toBeInTheDocument();
+    expect(screen.queryByText("System prompt")).not.toBeInTheDocument();
+    expect(screen.queryByText("Render tool images")).not.toBeInTheDocument();
+    expect(screen.queryByText("Request timeout")).not.toBeInTheDocument();
+    expect(screen.queryByText("Default headers")).not.toBeInTheDocument();
+    expect(screen.queryByText("CSP mode")).not.toBeInTheDocument();
+    expect(screen.queryByText("Permissions mode")).not.toBeInTheDocument();
   });
 
   it("prevents list mode and descriptions from being active together", async () => {
@@ -447,7 +527,7 @@ describe("HostConfigCompareView public mode", () => {
           isAuthenticated={false}
           presetOnly
         />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     await user.click(screen.getByLabelText("Show field descriptions"));
@@ -465,12 +545,12 @@ describe("HostConfigCompareView public mode", () => {
     render(
       <MemoryRouter>
         <HostConfigCompareView projectId="abc123" isAuthenticated />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     expect(screen.getByTestId("compare-view-list")).toHaveAttribute(
       "aria-pressed",
-      "true"
+      "true",
     );
   });
 });

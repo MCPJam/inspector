@@ -1,4 +1,6 @@
+import type { LaunchEngagement } from "../../shared/launch-engagement.js";
 import type { ErrorOrigin } from "@mcpjam/sdk";
+import type { RouteFailureHop } from "./route-error-report.js";
 
 export type Environment =
   | "prod"
@@ -31,6 +33,26 @@ interface CommonLogContext {
   durationMs?: number;
 
   authType: AuthType;
+  /**
+   * Whether the caller presented a bearer credential AT ALL, set by
+   * `bearerAuthMiddleware` on every route it fronts. This is not "was the
+   * caller authorized" — an invalid key, an unknown user and an orphaned key
+   * are all `true`. It answers the one question a 401 count cannot: did
+   * somebody's credential fail, or did nobody send one?
+   *
+   * The distinction is the difference between a customer outage and
+   * background noise. A contracted pentest sweep (or any scanner) walks the
+   * public API with no `Authorization` header and produces hundreds of
+   * perfectly correct 401s; a real auth incident produces 401s from callers
+   * who DID present something. Without this field both fingerprint as
+   * "route 401" and the 4xx storm monitor cannot tell them apart — which is
+   * exactly what happened on 2026-08-18, where a scan tripped the WARN and
+   * triage had no query that could name the caller.
+   *
+   * Absent on routes that do not run `bearerAuthMiddleware`; monitors must
+   * treat null as "unknown", never as "no credential".
+   */
+  credentialPresented?: boolean | null;
   userId?: string | null;
   userExternalId?: string | null;
   guestExternalId?: string | null;
@@ -44,7 +66,7 @@ interface CommonLogContext {
   accessLevel?: AccessLevel | null;
   serverId?: string | null;
   sessionId?: string | null;
-  chatboxId?: string | null;
+  scenarioId?: string | null;
   surface?: Surface | null;
   serverTransport?: ServerTransport | null;
   statusCode?: number | null;
@@ -54,6 +76,19 @@ export interface RequestLogContext extends CommonLogContext {
   requestId: string;
   route: string;
   method: string;
+  /**
+   * The caller's `user-agent`, sanitized and capped.
+   *
+   * A LOG FIELD, never an identity. It is caller-supplied text: this server
+   * already removed UA-derived attribution once because a client can write
+   * whatever it likes there, and re-introducing it here is only safe while
+   * nothing branches on it.
+   *
+   * Omitted rather than defaulted when the header is absent — a row with no
+   * user-agent is a caller that sent none, which is not the same claim as
+   * "unknown client" and should not be counted as one.
+   */
+  userAgent?: string;
 }
 
 export interface SystemLogContext extends CommonLogContext {
@@ -88,8 +123,16 @@ type RouteOperationFailedFields = {
    * `reportRouteFailure` tags Sentry with (as `route:${source}`).
    */
   source: string;
-  /** Whose hop failed, as declared at the call site. */
-  hop: "user_server_hop" | "mcpjam_internal";
+  /**
+   * Whose hop failed, as declared at the call site.
+   *
+   * Imported from `route-error-report.ts` rather than re-listed. A hand-copied
+   * union here is a literal list `tsc` only checks at the ONE call site that
+   * builds this payload — every other consumer (an APL query, a monitor
+   * predicate) silently disagrees with the source of truth, and a new hop
+   * looks like a compile error in the reporter rather than in this file.
+   */
+  hop: RouteFailureHop;
   /** Effective origin from the capture decision — see the doc block above. */
   origin: ErrorOrigin;
   /** Catalog slug behind `origin`, e.g. `transport/econnrefused`. */
@@ -149,6 +192,24 @@ export type RequestEventMap = {
     origin?: ErrorOrigin;
     /** Catalog slug behind `origin`, e.g. `transport/econnrefused`. */
     slug?: string;
+    /**
+     * Which hop failed, as declared at the catch site — orthogonal to
+     * `origin`, which says who must act.
+     *
+     * `origin` alone cannot carry this. `ambiguous` is the catalog refusing to
+     * guess from the wire shape, and it is the right refusal: the same
+     * `transport/fetch_failed` is produced by a user's dead server and by
+     * MCPJam's own OAuth-metadata proxy. Only the catch site knows which
+     * boundary it wrapped, and until now it told nobody but Sentry —
+     * `route-error-report.ts` maps `user_server_hop` to `undefined`, so the
+     * one declaration that means "not ours" was recorded nowhere.
+     *
+     * ABSENT MEANS UNKNOWN, NEVER "the user's". A monitor that treats a
+     * missing `hop` as an exclusion re-creates the blindness this field
+     * exists to remove; consumers must test `origin == "mcpjam"` first and
+     * only then let a hop exclude a row.
+     */
+    hop?: RouteFailureHop;
   };
   "http.stream.opened": { statusCode: number };
   /**
@@ -209,16 +270,72 @@ export type RequestEventMap = {
     rpcMethod?: string;
     path: string;
   };
+  /**
+   * An environment's MATERIALIZED secrets were resolved for a turn that has no
+   * project-provisioned sandbox to receive them, so they were not delivered.
+   *
+   * Deliberate — a materialized value only ever lands in a box the project
+   * provisioned — but silent until this event: the operational question is "is
+   * anyone selecting materialized secrets on a path that cannot use them?", and
+   * it needs an answer that is queryable rather than grep-able.
+   *
+   * COUNT ONLY, never a name and never a value. This row is one scrubber miss
+   * away from being the leak the feature exists to prevent, and the count is
+   * the whole of what the question needs.
+   */
+  "chat.secrets.undelivered": {
+    secretCount: number;
+    isScenarioSession: boolean;
+  };
   "chat.session.persist.failed": {
-    failureKind: "timeout" | "http_error" | "exception" | "version_conflict";
+    failureKind:
+      | "timeout"
+      | "http_error"
+      // A 2xx whose body could not be read, or carried no version. Distinct
+      // from http_error: the request succeeded, the contract did not.
+      | "protocol_error"
+      | "exception"
+      | "version_conflict";
     statusCode?: number;
-    sourceType?: "chatbox" | "direct" | "eval" | "swarm";
+    /**
+     * Sanitized, length-capped excerpt of the ingest's response body (see
+     * `sanitizeDiagnosticText`: secrets, emails and bearer tokens are redacted
+     * and it is truncated). Carried mainly for 4xx, where the body text names
+     * the misconfiguration and is the difference between a diagnosable failure
+     * and a bare status code.
+     */
+    responsePreview?: string;
+    sourceType?: "scenario" | "direct" | "eval" | "swarm";
     // Product-surface discriminator carried alongside sourceType so PostHog
     // can pivot persist failures by surface without rejoining to chatSessions.
     // CAUTION: this `origin` is a DIFFERENT axis from the ErrorOrigin field
     // of the same name on `http.request.failed` / `route.operation.failed` —
     // never join the two in an APL query.
-    origin?: "playground" | "mcpjam_agent" | "chatbox" | "eval" | "swarm";
+    origin?:
+      | "playground"
+      | "mcpjam_agent"
+      | "scenario"
+      | "eval"
+      | "swarm"
+      | "api";
+  };
+  /**
+   * The backend accepted the request but declined the write, judging the
+   * transcript a replay. Previously invisible — the turn was dropped and
+   * nothing recorded it — which is how hosted turns went missing for months.
+   * Its own event so the silent-drop class is measurable rather than inferred.
+   */
+  "chat.session.persist.skipped": {
+    sourceType?: "scenario" | "direct" | "eval" | "swarm";
+    origin?:
+      | "playground"
+      | "mcpjam_agent"
+      | "scenario"
+      | "eval"
+      | "swarm"
+      | "api";
+    /** False means the payload had no idempotency key to dedupe on. */
+    hasTurnId: boolean;
   };
   "widget.resource.served": {
     widgetType: "mcp_apps" | "chatgpt_apps";
@@ -286,6 +403,36 @@ export type SystemEventMap = {
   "process.unhandled_rejection": { errorCode: string };
   "process.uncaught_exception": { errorCode: string };
   /**
+   * Heap and retained-buffer gauge, one line per sample that says something
+   * (see utils/process-vitals.ts). Emitted on startup, on a heap step, and on a
+   * slow heartbeat — never once per interval unconditionally, so a quiet
+   * session costs almost nothing.
+   *
+   * Exists because INSPECTOR-ELECTRON-W3 crashed after 21 minutes with ZERO
+   * breadcrumbs for the whole session: nothing recorded whether the heap ramped
+   * or spiked, and the difference is the entire diagnosis. Every field is a
+   * number or a three-valued reason, so cardinality is fixed.
+   */
+  "process.vitals": {
+    reason: "startup" | "heap_step" | "heartbeat";
+    uptimeSeconds: number;
+    heapUsedBytes: number;
+    heapTotalBytes: number;
+    heapLimitBytes: number;
+    oldSpaceUsedBytes: number;
+    oldSpaceSizeBytes: number;
+    externalBytes: number;
+    rssBytes: number;
+    peakHeapUsedBytes: number;
+    rpcLogBufferBytes: number;
+    rpcLogBufferEvents: number;
+    rpcLogBufferServers: number;
+    rpcLogTruncatedFrames: number;
+    peakRpcLogBufferBytes: number;
+    tokenizerPeakChars: number;
+    tokenizerOversizeSkips: number;
+  };
+  /**
    * Aggregated socket-level failure counters, one line per flush interval
    * (see utils/socket-diagnostics.ts). These are connections that died before
    * Node parsed a request line, so they produce NO `http.request.*` event —
@@ -306,6 +453,7 @@ export type SystemEventMap = {
   // Aggregated PostHog relay proxy counters, one line per flush interval
   // (see routes/relay.ts). Low-cardinality by construction; never emitted
   // per-request.
+  "launch.engagement": LaunchEngagement;
   "relay.stats": {
     requests: number;
     res2xx: number;
@@ -346,10 +494,37 @@ const ALLOWED_ENVIRONMENTS: Environment[] = [
   "test",
 ];
 
+/**
+ * Spellings of an environment that mean one of {@link ALLOWED_ENVIRONMENTS}.
+ *
+ * The Railway production environment sets `ENVIRONMENT=production`, which is
+ * not `prod` and so was rejected by the allowlist below — the value was
+ * discarded and the answer came from the `NODE_ENV` fallback instead, which
+ * happens to be `prod` and hid the mismatch. Two things made that worth fixing
+ * rather than leaving: the fallback's warning says "ENVIRONMENT not set", so
+ * everyone reading logs was told the variable was missing when it was merely
+ * misspelled; and it left `ENV NODE_ENV=production` in the Dockerfile
+ * load-bearing for which platform MCP worker we dial, where dropping that line
+ * would silently resolve `dev` and point production's first-party servers at
+ * `http://localhost:8787`.
+ */
+const ENVIRONMENT_ALIASES: Record<string, Environment> = {
+  production: "prod",
+  development: "dev",
+};
+
 export function resolveEnvironment(): Environment {
-  const fromEnv = process.env.ENVIRONMENT;
+  // TRIMMED ONCE, then used for both lookups. Trimming only the alias branch
+  // left `ENVIRONMENT=" prod "` falling through to the `dev` default while
+  // `" production "` resolved — the same silent misclassification this alias
+  // exists to remove, reintroduced one branch over.
+  const fromEnv = process.env.ENVIRONMENT?.trim();
   if (fromEnv && ALLOWED_ENVIRONMENTS.includes(fromEnv as Environment)) {
     return fromEnv as Environment;
+  }
+  const aliased = fromEnv ? ENVIRONMENT_ALIASES[fromEnv] : undefined;
+  if (aliased) {
+    return aliased;
   }
   if (process.env.NODE_ENV === "test") return "test";
   if (process.env.NODE_ENV === "production") {
@@ -384,7 +559,9 @@ function blankToNull(value: string | undefined): string | null {
 }
 
 export function resolveAppVersion(): string | null {
-  return blankToNull(BAKED_VERSION) ?? blankToNull(process.env.npm_package_version);
+  return (
+    blankToNull(BAKED_VERSION) ?? blankToNull(process.env.npm_package_version)
+  );
 }
 
 /**

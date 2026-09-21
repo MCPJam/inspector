@@ -1,0 +1,393 @@
+{
+  "__readme": "Shared fixtures for the per-trial FRICTION SIGNALS contract (version 1). Loaded by sdk/tests/friction-signals.test.ts. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator. Signals are OBSERVATIONS, never verdicts, and these rows pin the validator that says so. No customer tool names, no identifier VALUES — key paths and counts only. Synthetic tools are search_issues, get_issue, list_pages.",
+  "__tuning": [
+    "The identifier rules — IDENTIFIER_KEY_RE, ID_LIKE_LITERAL_RE and MIN_IDENTIFIER_LENGTH — are the tunable surface of this contract, and the PR1a labelling round moves them and nothing else.",
+    "Every tuning change gets a row here with a `__why` naming the labelled trials that forced it, so a later reader can tell a rule that was measured from one that was guessed.",
+    "v1 initial: no tuning change yet. ID_LIKE_LITERAL_RE is the backend authoring-lint regex widened by ULID and bare hex (>= 8 chars); MIN_IDENTIFIER_LENGTH is 3 because a two-character candidate matches inside most timestamps and offsets, which suppresses the signal it belongs to."
+  ],
+  "accept": [
+    {
+      "__label": "measured, one identifier signal and its repeat",
+      "__why": "The motivating shape: a search returned ids, two later calls carried none of them, and the same search ran again.",
+      "version": 1,
+      "state": "measured",
+      "callCount": 4,
+      "resultAvailableCount": 4,
+      "timedCallCount": 0,
+      "identifierSignals": { "state": "measured" },
+      "signals": [
+        {
+          "kind": "identifierSurfacedUnused",
+          "informationCallIndex": 0,
+          "observedAtCallIndex": 3,
+          "toolName": "search_issues",
+          "toolCallId": "call_0",
+          "identifierKeyPaths": ["results[].id"],
+          "identifierCount": 2,
+          "laterCallCount": 3
+        },
+        {
+          "kind": "searchRepeatedAfterIdentifier",
+          "informationCallIndex": 0,
+          "observedAtCallIndex": 3,
+          "toolName": "search_issues",
+          "toolCallId": "call_0",
+          "repeatCallIndexes": [1, 3],
+          "identifierKeyPaths": ["results[].id"],
+          "identifierCount": 2
+        }
+      ]
+    },
+    {
+      "__label": "measured, adjacency only, identifier signals not measured",
+      "__why": "Capture off on a harness run: retries are still observable, identifier claims are not. The document says which half it measured.",
+      "version": 1,
+      "state": "measured",
+      "callCount": 3,
+      "resultAvailableCount": 0,
+      "timedCallCount": 0,
+      "identifierSignals": {
+        "state": "notMeasured",
+        "reason": "resultsUnavailable"
+      },
+      "signals": [
+        {
+          "kind": "identicalRetry",
+          "callIndex": 1,
+          "priorCallIndex": 0,
+          "toolName": "search_issues",
+          "afterError": false
+        },
+        {
+          "kind": "paginationContinuation",
+          "callIndex": 2,
+          "priorCallIndex": 1,
+          "toolName": "search_issues",
+          "paginationKeys": ["cursor"]
+        }
+      ]
+    },
+    {
+      "__label": "measured, no signals at all",
+      "__why": "The common, unremarkable trial. An empty `signals` on a MEASURED document is a real observation: nothing fired.",
+      "version": 1,
+      "state": "measured",
+      "callCount": 2,
+      "resultAvailableCount": 2,
+      "timedCallCount": 2,
+      "identifierSignals": { "state": "measured" },
+      "signals": []
+    },
+    {
+      "__label": "notMeasured, no tool calls",
+      "__why": "A trial that called nothing has no patterns to observe — and no signals, which the refinement enforces.",
+      "version": 1,
+      "state": "notMeasured",
+      "notMeasuredReason": "noToolCalls",
+      "callCount": 0,
+      "resultAvailableCount": 0,
+      "timedCallCount": 0,
+      "identifierSignals": { "state": "notMeasured", "reason": "noToolCalls" },
+      "signals": []
+    },
+    {
+      "__label": "notMeasured, evidence hole the producer knew about",
+      "__why": "Harness capture on with an incomplete read. Counts stay honest — five calls we could not measure is not zero calls.",
+      "version": 1,
+      "state": "notMeasured",
+      "notMeasuredReason": "evidenceIncomplete",
+      "callCount": 5,
+      "resultAvailableCount": 0,
+      "timedCallCount": 0,
+      "identifierSignals": {
+        "state": "notMeasured",
+        "reason": "evidenceIncomplete"
+      },
+      "signals": []
+    },
+    {
+      "__label": "measured, changed retry after an error",
+      "__why": "Recovery: the benign reading of a retry, and the reason `afterError` is on the row rather than inferred by a reader.",
+      "version": 1,
+      "state": "measured",
+      "callCount": 2,
+      "resultAvailableCount": 2,
+      "timedCallCount": 2,
+      "identifierSignals": { "state": "measured" },
+      "signals": [
+        {
+          "kind": "changedRetry",
+          "callIndex": 1,
+          "priorCallIndex": 0,
+          "toolName": "get_issue",
+          "afterError": true
+        }
+      ]
+    }
+  ],
+  "reject": [
+    {
+      "__label": "notMeasured carrying signals",
+      "__why": "A document that says it could not measure must not also report what it found.",
+      "version": 1,
+      "state": "notMeasured",
+      "notMeasuredReason": "orderingUnknown",
+      "callCount": 2,
+      "resultAvailableCount": 2,
+      "timedCallCount": 0,
+      "identifierSignals": {
+        "state": "notMeasured",
+        "reason": "orderingUnknown"
+      },
+      "signals": [
+        {
+          "kind": "identicalRetry",
+          "callIndex": 1,
+          "priorCallIndex": 0,
+          "toolName": "search_issues",
+          "afterError": false
+        }
+      ]
+    },
+    {
+      "__label": "notMeasured with no reason",
+      "__why": "'Not measured' with no reason is indistinguishable from 'nothing found', which is the one confusion this contract exists to prevent.",
+      "version": 1,
+      "state": "notMeasured",
+      "callCount": 0,
+      "resultAvailableCount": 0,
+      "timedCallCount": 0,
+      "identifierSignals": { "state": "notMeasured", "reason": "noToolCalls" },
+      "signals": []
+    },
+    {
+      "__label": "measured document carrying a notMeasured reason",
+      "__why": "Both at once says two contradictory things about the same trial.",
+      "version": 1,
+      "state": "measured",
+      "notMeasuredReason": "truncated",
+      "callCount": 1,
+      "resultAvailableCount": 1,
+      "timedCallCount": 0,
+      "identifierSignals": { "state": "measured" },
+      "signals": []
+    },
+    {
+      "__label": "identifier signal present while identifier signals are notMeasured",
+      "__why": "The half that was not measured cannot also have found something.",
+      "version": 1,
+      "state": "measured",
+      "callCount": 4,
+      "resultAvailableCount": 1,
+      "timedCallCount": 0,
+      "identifierSignals": {
+        "state": "notMeasured",
+        "reason": "resultsUnavailable"
+      },
+      "signals": [
+        {
+          "kind": "identifierSurfacedUnused",
+          "informationCallIndex": 0,
+          "observedAtCallIndex": 3,
+          "toolName": "search_issues",
+          "identifierKeyPaths": ["results[].id"],
+          "identifierCount": 1,
+          "laterCallCount": 3
+        }
+      ]
+    },
+    {
+      "__label": "resultAvailableCount above callCount",
+      "__why": "More results than calls means the join is wrong, and every count on the row is then suspect.",
+      "version": 1,
+      "state": "measured",
+      "callCount": 1,
+      "resultAvailableCount": 2,
+      "timedCallCount": 0,
+      "identifierSignals": { "state": "measured" },
+      "signals": []
+    },
+    {
+      "__label": "call index at or above callCount",
+      "__why": "An index that addresses nothing in `actualToolCalls` sends a reader — and the judge's window — off the end of the array.",
+      "version": 1,
+      "state": "measured",
+      "callCount": 2,
+      "resultAvailableCount": 2,
+      "timedCallCount": 0,
+      "identifierSignals": { "state": "measured" },
+      "signals": [
+        {
+          "kind": "identicalRetry",
+          "callIndex": 2,
+          "priorCallIndex": 1,
+          "toolName": "search_issues",
+          "afterError": false
+        }
+      ]
+    },
+    {
+      "__label": "priorCallIndex after callIndex",
+      "__why": "A retry that precedes what it repeats is not a retry.",
+      "version": 1,
+      "state": "measured",
+      "callCount": 3,
+      "resultAvailableCount": 3,
+      "timedCallCount": 0,
+      "identifierSignals": { "state": "measured" },
+      "signals": [
+        {
+          "kind": "changedRetry",
+          "callIndex": 1,
+          "priorCallIndex": 2,
+          "toolName": "search_issues",
+          "afterError": false
+        }
+      ]
+    },
+    {
+      "__label": "observedAtCallIndex at the information call",
+      "__why": "The pattern cannot become observable before the call that produced it happened.",
+      "version": 1,
+      "state": "measured",
+      "callCount": 3,
+      "resultAvailableCount": 3,
+      "timedCallCount": 0,
+      "identifierSignals": { "state": "measured" },
+      "signals": [
+        {
+          "kind": "identifierSurfacedUnused",
+          "informationCallIndex": 1,
+          "observedAtCallIndex": 1,
+          "toolName": "search_issues",
+          "identifierKeyPaths": ["results[].id"],
+          "identifierCount": 1,
+          "laterCallCount": 2
+        }
+      ]
+    },
+    {
+      "__label": "signals out of observation order",
+      "__why": "The order is the reading order of the trial. Shuffled, two producers over the same trial write two documents.",
+      "version": 1,
+      "state": "measured",
+      "callCount": 4,
+      "resultAvailableCount": 4,
+      "timedCallCount": 0,
+      "identifierSignals": { "state": "measured" },
+      "signals": [
+        {
+          "kind": "identicalRetry",
+          "callIndex": 3,
+          "priorCallIndex": 2,
+          "toolName": "get_issue",
+          "afterError": false
+        },
+        {
+          "kind": "identicalRetry",
+          "callIndex": 1,
+          "priorCallIndex": 0,
+          "toolName": "search_issues",
+          "afterError": false
+        }
+      ]
+    },
+    {
+      "__label": "unknown signal kind",
+      "__why": "The kind vocabulary is closed; an unknown member is a producer this reader cannot interpret, not a signal to pass through.",
+      "version": 1,
+      "state": "measured",
+      "callCount": 2,
+      "resultAvailableCount": 2,
+      "timedCallCount": 0,
+      "identifierSignals": { "state": "measured" },
+      "signals": [
+        {
+          "kind": "toolCallLooped",
+          "callIndex": 1,
+          "priorCallIndex": 0,
+          "toolName": "search_issues",
+          "afterError": false
+        }
+      ]
+    },
+    {
+      "__label": "an unknown field rides along",
+      "__why": "`.strict()` everywhere: a passenger field is an unversioned contract change nobody agreed to.",
+      "version": 1,
+      "state": "measured",
+      "callCount": 1,
+      "resultAvailableCount": 1,
+      "timedCallCount": 0,
+      "identifierSignals": { "state": "measured" },
+      "signals": [],
+      "wastedCallCount": 3
+    },
+    {
+      "__label": "wrong version",
+      "__why": "A document produced under different rules is not comparable with this one, whatever its shape.",
+      "version": 2,
+      "state": "measured",
+      "callCount": 1,
+      "resultAvailableCount": 1,
+      "timedCallCount": 0,
+      "identifierSignals": { "state": "measured" },
+      "signals": []
+    }
+  ],
+  "roundTrip": [
+    {
+      "__label": "every vocabulary member in one document",
+      "__why": "Pins that all five kinds are reachable and survive a JSON round trip byte for byte.",
+      "version": 1,
+      "state": "measured",
+      "callCount": 9,
+      "resultAvailableCount": 9,
+      "timedCallCount": 9,
+      "identifierSignals": { "state": "measured" },
+      "signals": [
+        {
+          "kind": "identifierSurfacedUnused",
+          "informationCallIndex": 0,
+          "observedAtCallIndex": 4,
+          "toolName": "search_issues",
+          "toolCallId": "call_0",
+          "identifierKeyPaths": ["items[].uuid", "results[].id"],
+          "identifierCount": 4,
+          "laterCallCount": 4
+        },
+        {
+          "kind": "searchRepeatedAfterIdentifier",
+          "informationCallIndex": 0,
+          "observedAtCallIndex": 4,
+          "toolName": "search_issues",
+          "toolCallId": "call_0",
+          "repeatCallIndexes": [2, 4],
+          "identifierKeyPaths": ["results[].id"],
+          "identifierCount": 4
+        },
+        {
+          "kind": "identicalRetry",
+          "callIndex": 5,
+          "priorCallIndex": 4,
+          "toolName": "search_issues",
+          "afterError": true
+        },
+        {
+          "kind": "changedRetry",
+          "callIndex": 6,
+          "priorCallIndex": 5,
+          "toolName": "search_issues",
+          "afterError": false
+        },
+        {
+          "kind": "paginationContinuation",
+          "callIndex": 8,
+          "priorCallIndex": 7,
+          "toolName": "list_pages",
+          "paginationKeys": ["cursor", "limit"]
+        }
+      ]
+    }
+  ]
+}

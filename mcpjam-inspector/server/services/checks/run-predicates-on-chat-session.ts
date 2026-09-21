@@ -43,6 +43,7 @@ import type {
   PredicateResult,
   TranscriptToolCall,
 } from "@/shared/eval-matching";
+import { extractToolCallsFromConversation } from "@/shared/eval-tool-call-projection";
 
 // Re-declared narrowly here (not imported from generated Convex types) for the
 // same reason as the action-name strings: the backend codegen isn't available
@@ -94,80 +95,26 @@ export interface ChatSessionEnvelope {
 /**
  * Walk messages and pull out tool calls in the order they appear.
  *
- * NOTE: This mirrors `extractToolCallsFromConversation` in
- * `server/services/evals-runner.ts:387` (the canonical implementation,
- * which is a module-local function rather than an export). When the
- * eval-rework persistence work centralizes per-turn extraction, this can
- * be replaced with the shared helper; until then, duplicating the small
- * walker keeps the orchestrator self-contained and avoids cross-cutting
- * `evals-runner.ts` (out of scope for Layer B).
+ * The walker itself is now `shared/eval-tool-call-projection.ts`, shared with
+ * the eval runner. It used to be a copy of that logic with a NOTE calling
+ * itself a mirror and a line-number back-reference that had since moved —
+ * which is how a deliberate duplicate stops being one.
  *
- * Difference from the eval version: we never have an AI SDK `steps` array
- * here — the envelope is a persisted transcript, not a live run — so the
- * `steps` branch is omitted.
+ * Two shape differences are preserved here rather than in the shared module,
+ * because they belong to THIS caller: there is never an AI SDK `steps` array
+ * (the envelope is a persisted transcript, not a live run), and
+ * `TranscriptToolCall` carries no `toolCallId`, so the id is dropped on the way
+ * out. It still does its job inside the projection, where it distinguishes one
+ * call seen twice from two calls that look alike.
  */
 export function extractToolCallsFromEnvelopeMessages(
   messages: ChatSessionEnvelope["messages"],
 ): TranscriptToolCall[] {
-  const toolsCalled: TranscriptToolCall[] = [];
-
-  for (const msg of messages) {
-    if (!msg || msg.role !== "assistant") continue;
-
-    const content = (msg as { content?: unknown }).content;
-    if (Array.isArray(content)) {
-      for (const item of content) {
-        if (
-          item &&
-          typeof item === "object" &&
-          (item as { type?: unknown }).type === "tool-call"
-        ) {
-          const rec = item as Record<string, unknown>;
-          const name = (rec.toolName ?? rec.name) as string | undefined;
-          if (!name) continue;
-          const argumentsValue =
-            (rec.input as Record<string, unknown> | undefined) ??
-            (rec.parameters as Record<string, unknown> | undefined) ??
-            (rec.args as Record<string, unknown> | undefined) ??
-            {};
-          const argsKey = JSON.stringify(argumentsValue);
-          const alreadyAdded = toolsCalled.some(
-            (toolCall) =>
-              toolCall.toolName === name &&
-              JSON.stringify(toolCall.arguments) === argsKey,
-          );
-          if (!alreadyAdded) {
-            toolsCalled.push({ toolName: name, arguments: argumentsValue });
-          }
-        }
-      }
-    }
-
-    const inlineToolCalls = (msg as { toolCalls?: unknown }).toolCalls;
-    if (Array.isArray(inlineToolCalls)) {
-      for (const call of inlineToolCalls) {
-        if (!call || typeof call !== "object") continue;
-        const rec = call as Record<string, unknown>;
-        const name = (rec.toolName ?? rec.name) as string | undefined;
-        if (!name) continue;
-        const argumentsValue =
-          (rec.args as Record<string, unknown> | undefined) ??
-          (rec.input as Record<string, unknown> | undefined) ??
-          {};
-        const argsKey = JSON.stringify(argumentsValue);
-        const alreadyAdded = toolsCalled.some(
-          (toolCall) =>
-            toolCall.toolName === name &&
-            JSON.stringify(toolCall.arguments) === argsKey,
-        );
-        if (!alreadyAdded) {
-          toolsCalled.push({ toolName: name, arguments: argumentsValue });
-        }
-      }
-    }
-  }
-
-  return toolsCalled;
+  return extractToolCallsFromConversation({ messages }).map((toolCall) => ({
+    toolName: toolCall.toolName,
+    ...(toolCall.toolCallId ? { toolCallId: toolCall.toolCallId } : {}),
+    arguments: (toolCall.arguments ?? {}) as Record<string, unknown>,
+  }));
 }
 
 /**
@@ -222,10 +169,12 @@ export async function runPredicatesOnChatSession(
     //    envelope field today; eval derives it the same way per turn.
     const toolCalls = extractToolCallsFromEnvelopeMessages(envelope.messages);
 
-    // 4. Build the SDK iteration transcript. Usage isn't on the envelope
-    //    for on-demand runs (no live token accounting), so leave undefined;
-    //    `tokenUsageBelow` predicates against this transcript will short-
-    //    circuit deterministically via the SDK's undefined-usage branch.
+    // 4. Build the SDK iteration transcript. Token usage IS materialized on
+    //    the session row (`chatSessions.cumulativeInputTokens/OutputTokens`)
+    //    but this loader doesn't return it yet, so leave undefined; token
+    //    predicates against this transcript fail closed via the SDK's
+    //    undefined-usage branch. The swarm path already threads it through
+    //    the claim response — mirror that here when this path gets a caller.
     const transcript = buildIterationTranscript({
       trace: {
         messages: envelope.messages,

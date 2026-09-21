@@ -34,7 +34,7 @@ export type {
   EffectiveCompatRuntime,
   // environment data types
   ThemeMode,
-  ChatboxHostStyle,
+  ScenarioHostStyle,
   DeviceCapabilities,
   DeviceType,
   SafeAreaInsets,
@@ -56,6 +56,7 @@ export type {
   WidgetLifecycleEvent,
   WidgetMount,
   CspViolation,
+  CspApplicationIntent,
   UiLogEvent,
   // chrome injection
   WidgetModalProps,

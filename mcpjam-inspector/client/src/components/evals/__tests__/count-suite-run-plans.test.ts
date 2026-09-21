@@ -78,6 +78,13 @@ const shapes: Array<{
     suite: {},
   },
   {
+    name: "client × model cells already attached as environment ids",
+    expected: 4,
+    suite: {
+      environmentIds: ["env-h1", "env-h1-gemini", "env-h2", "env-h2-gemini"],
+    },
+  },
+  {
     name: "empty environmentIds array falls back to the host axis",
     expected: 2,
     suite: {

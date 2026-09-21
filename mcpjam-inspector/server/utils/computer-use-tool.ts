@@ -46,6 +46,7 @@ export const COMPUTER_USE_TOOL_VERSIONS: Record<
   ComputerUseToolVersion
 > = {
   // computer_20251124 (Opus 4.5+ generation / newest)
+  "claude-opus-5": "20251124",
   "claude-opus-4-8": "20251124",
   "claude-opus-4-7": "20251124",
   "claude-opus-4-6": "20251124",

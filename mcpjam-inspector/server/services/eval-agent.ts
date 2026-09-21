@@ -1,5 +1,17 @@
-import { normalizePromptTurns, type PromptTurn } from "@/shared/steps";
+import {
+  readOnlyGenerationSnapshot,
+  filterReadOnlyGeneratedCases,
+} from "./eval-generation-coverage";
+import {
+  deriveExpectedToolCalls,
+  deriveQuery,
+  normalizePromptTurns,
+  normalizeSteps,
+  type PromptTurn,
+} from "@/shared/steps";
+import type { TestStep } from "@/shared/steps";
 import type { ServerToolSnapshot } from "../utils/export-helpers.js";
+import { upstreamRefusalFromResponse } from "./upstream-refusal.js";
 
 /**
  * Inspector-side adapter for backend eval test-case generation.
@@ -43,9 +55,13 @@ export interface CaseMixInput {
  * `/eval-generation/generate` body. Absent → today's default generation.
  */
 export interface GenerationOptions {
+  testSet?: "quick" | "comprehensive";
+  toolCoverage?: "read-only" | "read-write";
   caseMix?: CaseMixInput;
   /** Condition cases on a generated persona slate for realistic phrasing. */
   varyUserStyles?: boolean;
+  /** User-authored direction for a follow-up generation pass. */
+  refinement?: string;
 }
 
 export interface GeneratedTestCase {
@@ -60,9 +76,25 @@ export interface GeneratedTestCase {
   expectedOutput: string;
   isNegativeTest?: boolean;
   promptTurns?: PromptTurn[];
+  /**
+   * The authored steps, when the backend produced the Wave-0 shape. The persist
+   * loop prefers these over `query` / `expectedToolCalls` / `promptTurns`,
+   * which stay populated as the legacy display projection.
+   */
+  steps?: TestStep[];
 }
 
+/**
+ * LEGACY generated case — no `shapeVersion`.
+ *
+ * TEMPORARY (W0.3d removes it). This branch and `adaptBackendCase` exist only
+ * for the window between this deploy and the backend's generation converging on
+ * the Wave-0 shape (W0.3c). It lands FIRST on purpose: a consumer that already
+ * accepts both shapes means the backend's change is not a breaking one, and
+ * either side can be rolled back independently while both are deployed.
+ */
 interface BackendGeneratedTestCase {
+  shapeVersion?: undefined;
   title: string;
   query: string;
   runs: number;
@@ -81,6 +113,65 @@ interface BackendGeneratedTestCase {
     }>;
     expectedOutput?: string;
   }>;
+}
+
+/**
+ * The Wave-0 generated case: `steps[]` replaces `query` + `expectedToolCalls` +
+ * `promptTurns`, and `repetitions` replaces `runs`. `scenario`, `isNegativeTest`
+ * and `expectedOutput` stay — they are case semantics, not legacy shape.
+ */
+interface BackendWave0TestCase {
+  shapeVersion: "wave0";
+  title: string;
+  steps: unknown;
+  repetitions?: number;
+  scenario?: string;
+  expectedOutput?: string;
+  isNegativeTest?: boolean;
+}
+
+type BackendCase = BackendGeneratedTestCase | BackendWave0TestCase;
+
+/**
+ * Adapt whichever shape the backend sent.
+ *
+ * Discriminated on `shapeVersion` rather than on the presence of `steps`:
+ * "which contract is this" must be a statement the producer makes, not a guess
+ * this side infers from a field that a future shape could also carry.
+ */
+function adaptCase(tc: BackendCase): GeneratedTestCase {
+  return tc.shapeVersion === "wave0"
+    ? adaptWave0Case(tc)
+    : adaptBackendCase(tc);
+}
+
+function adaptWave0Case(tc: BackendWave0TestCase): GeneratedTestCase {
+  const steps = normalizeSteps(tc.steps);
+  // `steps` IS the Wave-0 case. Null, an empty array, or entries that all fail
+  // normalization leave nothing to run, and the legacy fields cannot stand in —
+  // they are derived FROM the steps here. Persisting the result would author a
+  // case that can never execute, so fail where the shape is still visible.
+  if (steps.length === 0) {
+    throw new Error(
+      `Generated case ${JSON.stringify(tc.title)} declares shapeVersion ` +
+        `"wave0" but has no usable steps.`,
+    );
+  }
+  return {
+    title: tc.title,
+    steps,
+    // `query` and `expectedToolCalls` are DERIVED here, not authored. They are
+    // the legacy display projection the case row still stores, and deriving
+    // them from the steps keeps a Wave-0 case indistinguishable from a legacy
+    // one everywhere those columns are read. `steps` remains the source of
+    // truth for what actually runs.
+    query: deriveQuery(steps),
+    expectedToolCalls: deriveExpectedToolCalls(steps),
+    runs: typeof tc.repetitions === "number" ? tc.repetitions : 1,
+    scenario: tc.scenario ?? "",
+    expectedOutput: tc.expectedOutput ?? "",
+    isNegativeTest: tc.isNegativeTest === true,
+  };
 }
 
 function adaptBackendCase(tc: BackendGeneratedTestCase): GeneratedTestCase {
@@ -121,8 +212,12 @@ export async function generateTestCases(
   convexAuthToken: string,
   serverAttachment?: ServerAttachmentInput,
   projectId?: string,
-  generationOptions?: GenerationOptions
+  generationOptions?: GenerationOptions,
 ): Promise<GeneratedTestCase[]> {
+  const snapshot =
+    generationOptions?.toolCoverage === "read-only"
+      ? readOnlyGenerationSnapshot(toolSnapshot)
+      : toolSnapshot;
   const response = await fetch(`${convexHttpUrl}/eval-generation/generate`, {
     method: "POST",
     headers: {
@@ -131,24 +226,39 @@ export async function generateTestCases(
     },
     body: JSON.stringify({
       mode: "normal",
-      toolSnapshot,
+      ...(generationOptions?.testSet
+        ? { testSet: generationOptions.testSet }
+        : {}),
+      ...(generationOptions?.toolCoverage
+        ? { toolCoverage: generationOptions.toolCoverage }
+        : {}),
+      toolSnapshot: snapshot,
       ...(projectId ? { projectId } : {}),
       ...(serverAttachment ? { serverAttachment } : {}),
       ...(generationOptions?.caseMix
         ? { caseMix: generationOptions.caseMix }
         : {}),
       ...(generationOptions?.varyUserStyles ? { varyUserStyles: true } : {}),
+      ...(generationOptions?.refinement
+        ? { refinement: generationOptions.refinement }
+        : {}),
     }),
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to generate test cases: ${errorText}`);
+    // The backend's refusals (its daily platform budget, the caller's own
+    // allowance, a model their plan excludes) keep their status, their `code`
+    // and their `Retry-After` all the way to the caller. Flattening them into
+    // a message here is what turned every one of them into a 500.
+    throw await upstreamRefusalFromResponse(
+      response,
+      "Failed to generate test cases",
+    );
   }
 
   const data = (await response.json()) as {
     ok?: boolean;
-    tests?: BackendGeneratedTestCase[];
+    tests?: BackendCase[];
     error?: string;
   };
 
@@ -156,9 +266,12 @@ export async function generateTestCases(
     throw new Error(
       `Invalid response from backend eval generation: ${
         data.error ?? "unknown error"
-      }`
+      }`,
     );
   }
 
-  return data.tests.map(adaptBackendCase);
+  const tests = data.tests.map(adaptCase);
+  return generationOptions?.toolCoverage === "read-only"
+    ? filterReadOnlyGeneratedCases(tests, snapshot)
+    : tests;
 }

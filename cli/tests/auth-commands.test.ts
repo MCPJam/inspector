@@ -30,7 +30,7 @@ async function captureProcessOutput<T>(fn: () => Promise<T>): Promise<{
     }
     return (originalStdoutWrite as (...args: unknown[]) => boolean)(
       chunk,
-      ...rest,
+      ...rest
     );
   }) as typeof process.stdout.write;
   process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
@@ -40,7 +40,7 @@ async function captureProcessOutput<T>(fn: () => Promise<T>): Promise<{
     }
     return (originalStderrWrite as (...args: unknown[]) => boolean)(
       chunk,
-      ...rest,
+      ...rest
     );
   }) as typeof process.stderr.write;
 
@@ -56,25 +56,34 @@ async function captureProcessOutput<T>(fn: () => Promise<T>): Promise<{
 async function startMeFixture(options: {
   status?: number;
   body?: unknown;
+  delayMs?: number;
 }): Promise<{ baseUrl: string; close: () => Promise<void> }> {
   const server: Server = createServer((req, res) => {
     if (req.url?.endsWith("/me")) {
-      res.statusCode = options.status ?? 200;
-      res.setHeader("content-type", "application/json");
-      res.end(
-        JSON.stringify(
-          options.body ?? {
-            id: "user-1",
-            email: "dev@example.com",
-            name: "Dev",
-            imageUrl: null,
-            profilePictureUrl: null,
-            plan: "pro",
-            createdAt: null,
-            updatedAt: null,
-          },
-        ),
-      );
+      const reply = () => {
+        if (res.destroyed) return;
+        res.statusCode = options.status ?? 200;
+        res.setHeader("content-type", "application/json");
+        res.end(
+          JSON.stringify(
+            options.body ?? {
+              id: "user-1",
+              email: "dev@example.com",
+              name: "Dev",
+              imageUrl: null,
+              profilePictureUrl: null,
+              plan: "pro",
+              createdAt: null,
+              updatedAt: null,
+            }
+          )
+        );
+      };
+      if (options.delayMs) {
+        setTimeout(reply, options.delayMs);
+        return;
+      }
+      reply();
       return;
     }
     res.statusCode = 404;
@@ -82,7 +91,7 @@ async function startMeFixture(options: {
   });
 
   await new Promise<void>((resolve) =>
-    server.listen(0, "127.0.0.1", () => resolve()),
+    server.listen(0, "127.0.0.1", () => resolve())
   );
   const address = server.address();
   if (!address || typeof address === "string") {
@@ -93,7 +102,7 @@ async function startMeFixture(options: {
     baseUrl: `http://127.0.0.1:${address.port}/api/v1`,
     close: () =>
       new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
+        server.close((error) => (error ? reject(error) : resolve()))
       ),
   };
 }
@@ -106,6 +115,7 @@ test("whoami reports the account behind an sk_ API key", async () => {
         [
           "node",
           "mcpjam",
+          "cloud",
           "whoami",
           "--api-key",
           "sk_test",
@@ -114,8 +124,8 @@ test("whoami reports the account behind an sk_ API key", async () => {
           "--format",
           "json",
         ],
-        { telemetry: telemetryDisabled },
-      ),
+        { telemetry: telemetryDisabled }
+      )
     );
 
     assert.equal(run.result.exitCode, 0);
@@ -139,6 +149,7 @@ test("whoami surfaces UNAUTHORIZED with login guidance", async () => {
         [
           "node",
           "mcpjam",
+          "cloud",
           "whoami",
           "--api-key",
           "sk_bad",
@@ -147,14 +158,14 @@ test("whoami surfaces UNAUTHORIZED with login guidance", async () => {
           "--format",
           "json",
         ],
-        { telemetry: telemetryDisabled },
-      ),
+        { telemetry: telemetryDisabled }
+      )
     );
 
     assert.equal(run.result.exitCode, 1);
     const payload = JSON.parse(run.stderr);
     assert.equal(payload.error.code, "UNAUTHORIZED");
-    assert.match(payload.error.message, /mcpjam login/);
+    assert.match(payload.error.message, /mcpjam cloud login/);
   } finally {
     await fixture.close();
   }
@@ -162,10 +173,9 @@ test("whoami surfaces UNAUTHORIZED with login guidance", async () => {
 
 test("login hard-errors on an invalid --api-url before any network call", async () => {
   const run = await captureProcessOutput(() =>
-    main(
-      ["node", "mcpjam", "login", "--api-url", "not-a-url"],
-      { telemetry: telemetryDisabled },
-    ),
+    main(["node", "mcpjam", "cloud", "login", "--api-url", "not-a-url"], {
+      telemetry: telemetryDisabled,
+    })
   );
 
   assert.equal(run.result.exitCode, 2);
@@ -174,12 +184,43 @@ test("login hard-errors on an invalid --api-url before any network call", async 
   assert.match(payload.error.message, /--api-url/);
 });
 
+test("whoami honors the global timeout option", async () => {
+  const fixture = await startMeFixture({ delayMs: 100 });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          "node",
+          "mcpjam",
+          "cloud",
+          "whoami",
+          "--api-key",
+          "sk_test",
+          "--api-url",
+          fixture.baseUrl,
+          "--timeout",
+          "20",
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 1);
+    const payload = JSON.parse(run.stderr);
+    assert.equal(payload.error.code, "TIMEOUT");
+    assert.match(payload.error.message, /20ms/);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("whoami hard-errors on an explicit legacy key", async () => {
   const run = await captureProcessOutput(() =>
-    main(
-      ["node", "mcpjam", "whoami", "--api-key", "mcpjam_legacy"],
-      { telemetry: telemetryDisabled },
-    ),
+    main(["node", "mcpjam", "cloud", "whoami", "--api-key", "mcpjam_legacy"], {
+      telemetry: telemetryDisabled,
+    })
   );
 
   assert.equal(run.result.exitCode, 2);
@@ -197,9 +238,9 @@ test("logout without a stored login reports not_logged_in", async () => {
 
   try {
     const run = await captureProcessOutput(() =>
-      main(["node", "mcpjam", "logout", "--format", "json"], {
+      main(["node", "mcpjam", "cloud", "logout", "--format", "json"], {
         telemetry: telemetryDisabled,
-      }),
+      })
     );
 
     assert.equal(run.result.exitCode, 0);
@@ -209,5 +250,40 @@ test("logout without a stored login reports not_logged_in", async () => {
   } finally {
     if (originalAuthFile === undefined) delete process.env.MCPJAM_AUTH_FILE;
     else process.env.MCPJAM_AUTH_FILE = originalAuthFile;
+  }
+});
+
+test("logout warns on human stderr when MCPJAM_API_KEY remains active", async () => {
+  const { mkdtemp } = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-auth-"));
+  const originalAuthFile = process.env.MCPJAM_AUTH_FILE;
+  const originalApiKey = process.env.MCPJAM_API_KEY;
+  process.env.MCPJAM_AUTH_FILE = path.join(directory, "auth.json");
+  process.env.MCPJAM_API_KEY = "sk_still_active";
+
+  try {
+    const human = await captureProcessOutput(() =>
+      main(["node", "mcpjam", "cloud", "logout", "--format", "human"], {
+        telemetry: telemetryDisabled,
+      })
+    );
+    assert.equal(human.result.exitCode, 0);
+    assert.match(human.stderr, /MCPJAM_API_KEY is still set/);
+
+    const json = await captureProcessOutput(() =>
+      main(["node", "mcpjam", "cloud", "logout", "--format", "json"], {
+        telemetry: telemetryDisabled,
+      })
+    );
+    assert.equal(json.result.exitCode, 0);
+    assert.doesNotMatch(json.stderr, /MCPJAM_API_KEY is still set/);
+    assert.equal(JSON.parse(json.stdout).status, "not_logged_in");
+  } finally {
+    if (originalAuthFile === undefined) delete process.env.MCPJAM_AUTH_FILE;
+    else process.env.MCPJAM_AUTH_FILE = originalAuthFile;
+    if (originalApiKey === undefined) delete process.env.MCPJAM_API_KEY;
+    else process.env.MCPJAM_API_KEY = originalApiKey;
   }
 });

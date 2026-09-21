@@ -53,12 +53,12 @@ export function EnvironmentToolsPane({
     () =>
       environments?.find((env) => env.environmentId === environmentId)
         ?.revision ?? null,
-    [environments, environmentId]
+    [environments, environmentId],
   );
   const { servers, isLoading, error, refresh } = useEnvironmentTools(
     projectId,
     environmentId,
-    revision
+    revision,
   );
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -67,9 +67,9 @@ export function EnvironmentToolsPane({
   const flat = useMemo(
     () =>
       (servers ?? []).flatMap((server) =>
-        server.tools.map((tool) => ({ server, tool }))
+        server.tools.map((tool) => ({ server, tool })),
       ),
-    [servers]
+    [servers],
   );
   const collidingNames = useMemo(() => {
     const seen = new Map<string, number>();
@@ -79,7 +79,7 @@ export function EnvironmentToolsPane({
     return new Set(
       Array.from(seen.entries())
         .filter(([, count]) => count > 1)
-        .map(([name]) => name)
+        .map(([name]) => name),
     );
   }, [flat]);
   const filtered = useMemo(() => {
@@ -88,12 +88,12 @@ export function EnvironmentToolsPane({
     return flat.filter((entry) =>
       `${entry.tool.name} ${entry.tool.description ?? ""}`
         .toLowerCase()
-        .includes(query)
+        .includes(query),
     );
   }, [flat, searchQuery]);
   const failedServers = useMemo(
     () => (servers ?? []).filter((server) => server.error),
-    [servers]
+    [servers],
   );
 
   return (
@@ -114,7 +114,9 @@ export function EnvironmentToolsPane({
           className="rounded p-1 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
           aria-label="Refresh environment tools"
         >
-          <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
+          <RefreshCw
+            className={cn("h-3.5 w-3.5", isLoading && "animate-spin")}
+          />
         </button>
       </div>
 
@@ -175,15 +177,13 @@ export function EnvironmentToolsPane({
                     <div key={key}>
                       <button
                         type="button"
-                        onClick={() =>
-                          setExpandedKey(isExpanded ? null : key)
-                        }
+                        onClick={() => setExpandedKey(isExpanded ? null : key)}
                         aria-expanded={isExpanded}
                         className={cn(
                           "w-full text-left px-3 py-2 rounded-md border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-1",
                           isExpanded
                             ? "cursor-pointer bg-primary/10"
-                            : "cursor-pointer hover:bg-muted/50"
+                            : "cursor-pointer hover:bg-muted/50",
                         )}
                       >
                         <div className="flex items-center gap-1.5 min-w-0">
@@ -203,7 +203,7 @@ export function EnvironmentToolsPane({
                           <ChevronDown
                             className={cn(
                               "h-3 w-3 shrink-0 text-muted-foreground transition-transform",
-                              isExpanded && "rotate-180"
+                              isExpanded && "rotate-180",
                             )}
                             aria-hidden
                           />
@@ -256,9 +256,7 @@ function ServerErrorRow({ server }: { server: EnvironmentServerTools }) {
           data-testid={`environment-tools-error-${server.serverId}`}
         >
           <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden />
-          <span className="truncate">
-            {server.name}: couldn't list tools
-          </span>
+          <span className="truncate">{server.name}: couldn't list tools</span>
         </div>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="max-w-72 break-words">

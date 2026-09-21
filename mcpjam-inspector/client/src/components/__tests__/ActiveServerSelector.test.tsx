@@ -77,6 +77,15 @@ describe("ActiveServerSelector", () => {
       ...overrides,
     }) as ServerWithName;
 
+  // The tab's decoration — fill climb and foot rule — rides on aria-hidden
+  // spans, so tests reach for them by role in the paint rather than by index.
+  const layers = (tab: Element | null | undefined) =>
+    [
+      ...(tab?.querySelectorAll(":scope > span[aria-hidden]") ?? []),
+    ] as HTMLElement[];
+  const fillLayer = (tab: Element | null | undefined) =>
+    layers(tab).find((l) => l.className.includes("bg-background"));
+
   const defaultProps: ActiveServerSelectorProps = {
     serverConfigs: {},
     selectedServer: "",
@@ -335,7 +344,7 @@ describe("ActiveServerSelector", () => {
       expect(onServerChange).toHaveBeenCalledWith("server-1");
     });
 
-    it("applies selected styles to selected server", () => {
+    it("gives the panel fill to the selected tab and to nothing else", () => {
       const serverConfigs = {
         "server-1": createServer({ name: "server-1" }),
         "server-2": createServer({ name: "server-2" }),
@@ -349,8 +358,105 @@ describe("ActiveServerSelector", () => {
         />,
       );
 
-      const selectedButton = screen.getByText("server-1").closest("button");
-      expect(selectedButton?.className).toContain("bg-muted");
+      // Every sheet is the same size and rests on --chrome-control. The panel
+      // fill belongs to the active one alone, and it arrives on a layer of its
+      // own so it can climb the sheet.
+      const selected = screen.getByText("server-1").closest("button");
+      expect(fillLayer(selected)?.className).toContain("bg-background");
+
+      const idle = screen.getByText("server-2").closest("button");
+      expect(idle?.className).toContain("bg-chrome-control");
+      expect(fillLayer(idle)).toBeUndefined();
+
+      // Size is shared, so it lives on the base and neither branch may
+      // redeclare it — that is what keeps the row from stepping.
+      for (const tab of [selected, idle]) {
+        expect(tab?.className).toContain("h-[calc(100%-6px)]");
+        expect(tab?.className).not.toContain("h-full");
+      }
+
+      const addServer = screen.getByText("Add Server").closest("button");
+      expect(fillLayer(addServer)).toBeUndefined();
+      expect(addServer?.className).toContain("hover:bg-chrome-hover");
+      // Same text weight as the tabs beside it. Muted read as disabled on the
+      // linen ground; the dashed border is what says "not a server".
+      expect(addServer?.className).toContain("text-foreground");
+      expect(addServer?.className).not.toContain("text-muted-foreground");
+    });
+
+    it("climbs the panel fill up the active sheet and rules its foot", () => {
+      // Two marks, each doing a job the other can't. The rule: the tab is
+      // --background and so is the panel directly beneath it, and `items-end`
+      // hangs every sheet on that seam, so without a foot the active one
+      // bleeds into the pane instead of ending. The climb: the fill is the
+      // colour the tab settles at, so the sweep IS the state arriving rather
+      // than a flourish over it.
+      const serverConfigs = {
+        "server-1": createServer({ name: "server-1" }),
+        "server-2": createServer({ name: "server-2" }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="server-1"
+        />,
+      );
+
+      const selected = screen.getByText("server-1").closest("button");
+      expect(selected).toHaveAttribute("aria-current", "true");
+
+      const fill = fillLayer(selected);
+      expect(fill?.className).toContain("animate-server-tab-fill-rise");
+      // Behind the label, not over it — the button carries `isolate` so the
+      // negative z-index stays inside the tab.
+      expect(fill?.className).toContain("-z-10");
+      expect(selected?.className).toContain("isolate");
+
+      // The rule is the sheet's own bottom edge, not a bar laid over it, so
+      // it can't add to the box height. The idle sheets leave that side open —
+      // their fill already ends them against the linen.
+      expect(selected?.className).toContain("border-b-2");
+      // No colour of its own: it inherits the sheet's hairline, so the outline
+      // stays one colour all the way round and only the weight marks the foot.
+      expect(selected?.className).toContain("border-chrome-control-border");
+      const perSide = (selected?.className ?? "")
+        .split(" ")
+        .filter((c) => c.startsWith("border-b-"));
+      expect(perSide).toEqual(["border-b-2"]);
+
+      const idle = screen.getByText("server-2").closest("button");
+      expect(idle).not.toHaveAttribute("aria-current");
+      expect(idle?.className).toContain("border-b-0");
+      expect(layers(idle)).toHaveLength(0);
+    });
+
+    it("keeps a focus indicator on the selected tab, not just the idle ones", () => {
+      // The strip sets `outline-none` on every tab, so without an explicit
+      // ring the selected tab takes keyboard focus with nothing to show for
+      // it — it already carries `bg-background` at rest, so the idle tabs'
+      // `focus-visible:bg-chrome-hover` has nothing to change.
+      const serverConfigs = {
+        "server-1": createServer({ name: "server-1" }),
+        "server-2": createServer({ name: "server-2" }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="server-1"
+        />,
+      );
+
+      for (const name of ["server-1", "server-2"]) {
+        const tab = screen.getByText(name).closest("button");
+        expect(tab?.className).toContain("focus-visible:ring-2");
+        // Inset: the strip scrolls horizontally and would clip an outset ring
+        // on the first and last tab.
+        expect(tab?.className).toContain("focus-visible:ring-inset");
+      }
     });
   });
 
@@ -395,6 +501,40 @@ describe("ActiveServerSelector", () => {
       fireEvent.click(screen.getByText("server-1"));
 
       expect(onMultiServerToggle).toHaveBeenCalledWith("server-1");
+    });
+
+    it("marks every selected sheet, and says so without aria-current", () => {
+      // aria-current names THE current item in a set. Multi-select has no
+      // such thing, so the tabs switch to aria-pressed rather than each
+      // claiming to be the one. The tick beside the label can't carry it —
+      // it is a styled div, invisible to a screen reader.
+      const serverConfigs = {
+        "server-1": createServer({ name: "server-1" }),
+        "server-2": createServer({ name: "server-2" }),
+        "server-3": createServer({ name: "server-3" }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          isMultiSelectEnabled
+          selectedMultipleServers={["server-1", "server-3"]}
+        />,
+      );
+
+      for (const name of ["server-1", "server-3"]) {
+        const tab = screen.getByText(name).closest("button");
+        expect(tab).toHaveAttribute("aria-pressed", "true");
+        expect(tab).not.toHaveAttribute("aria-current");
+        expect(fillLayer(tab)?.className).toContain("bg-background");
+        expect(tab?.className).toContain("border-b-2");
+      }
+
+      const unpicked = screen.getByText("server-2").closest("button");
+      expect(unpicked).toHaveAttribute("aria-pressed", "false");
+      expect(fillLayer(unpicked)).toBeUndefined();
+      expect(unpicked?.className).toContain("border-b-0");
     });
 
     it("shows check mark for selected servers in multi-select mode", () => {
@@ -444,10 +584,12 @@ describe("ActiveServerSelector", () => {
       );
 
       const indicator = screen.getByTitle("Connected").closest(".rounded-full");
-      expect(indicator?.className).toContain("bg-green");
+      expect(indicator?.className).toContain("bg-success");
+      // Settled, so it holds still.
+      expect(indicator?.className).not.toContain("animate-pulse");
     });
 
-    it("shows yellow indicator for connecting servers", () => {
+    it("shows the info indicator for connecting servers", () => {
       const serverConfigs = {
         "server-1": createServer({
           name: "server-1",
@@ -463,13 +605,17 @@ describe("ActiveServerSelector", () => {
         />,
       );
 
+      // "Finishing setup...", not "Connecting...": the wording is the shared
+      // helper's now, so the strip and the server card say the same thing.
       const indicator = screen
-        .getByTitle("Connecting...")
+        .getByTitle("Finishing setup...")
         .closest(".rounded-full");
-      expect(indicator?.className).toContain("bg-yellow");
+      expect(indicator?.className).toContain("bg-info");
+      // The pulse the strip had before the shared helper landed.
+      expect(indicator?.className).toContain("animate-pulse");
     });
 
-    it("shows red indicator for failed servers", () => {
+    it("shows the destructive indicator for failed servers", () => {
       const serverConfigs = {
         "server-1": createServer({
           name: "server-1",
@@ -486,7 +632,61 @@ describe("ActiveServerSelector", () => {
       );
 
       const indicator = screen.getByTitle("Failed").closest(".rounded-full");
-      expect(indicator?.className).toContain("bg-red");
+      expect(indicator?.className).toContain("bg-destructive");
+    });
+
+    it("makes no claim about a status it cannot read", () => {
+      // Runtime values arrive as plain strings widened with `as
+      // ConnectionStatus`, so a value outside the union does reach here.
+      // `getConnectionStatusMeta` falls back to `disconnected`, which SAYS the
+      // server is not connected — a claim we have no basis for. Transparent
+      // holds the row's alignment and says nothing, matching the picker.
+      const serverConfigs = {
+        "server-1": createServer({
+          name: "server-1",
+          connectionStatus: "reticulating" as never,
+        }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="server-1"
+        />,
+      );
+
+      const indicator = screen
+        .getByTitle("Connection state unavailable")
+        .closest(".rounded-full");
+      expect(indicator?.className).toContain("bg-transparent");
+      expect(screen.queryByTitle("Disconnected")).toBeNull();
+    });
+
+    it("names a server that is mid-authorization instead of calling it unknown", () => {
+      // The strip's own status vocabulary had NO `oauth-flow` branch, so this
+      // server fell through to the grey dot titled "Unknown" while the card
+      // beside it read "Authorizing in browser...". One helper, one answer.
+      const serverConfigs = {
+        "server-1": createServer({
+          name: "server-1",
+          connectionStatus: "oauth-flow",
+        }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="server-1"
+        />,
+      );
+
+      const indicator = screen
+        .getByTitle("Authorizing in browser...")
+        .closest(".rounded-full");
+      expect(indicator?.className).toContain("bg-pending");
+      expect(indicator?.className).toContain("animate-pulse");
     });
   });
 

@@ -11,7 +11,10 @@ import type { HostVerdictMap } from "./cross-host/cross-host-matrix";
 import { useRunGroupQuality } from "./use-run-group-quality";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 import type { CaseRowSort } from "./cross-host/case-row-metrics";
-import type { CellData } from "./cross-host/use-cross-host-data";
+import type {
+  CellData,
+  CrossHostEnvironment,
+} from "./cross-host/use-cross-host-data";
 
 interface GroupCrossHostDashboardProps {
   suite: EvalSuite;
@@ -26,6 +29,8 @@ interface GroupCrossHostDashboardProps {
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   /** `namedHostId` → display name for hosts with no suite attachment. */
   hostNamesById?: Map<string, string | null>;
+  /** Suite environments — required so group view keeps host×model columns. */
+  environments?: readonly CrossHostEnvironment[];
 }
 
 export function GroupCrossHostDashboard({
@@ -40,6 +45,7 @@ export function GroupCrossHostDashboard({
   onCellOpen,
   onDeleteTestCasesBatch,
   hostNamesById,
+  environments,
 }: GroupCrossHostDashboardProps) {
   const { result } = useRunGroupQuality({
     suiteId: suite._id,
@@ -76,6 +82,7 @@ export function GroupCrossHostDashboard({
       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
       hostVerdicts={hostVerdicts}
       hostNamesById={hostNamesById}
+      environments={environments}
     />
   );
 }

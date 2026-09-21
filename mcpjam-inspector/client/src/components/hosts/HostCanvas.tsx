@@ -14,7 +14,8 @@ import {
 import { Plus, Server } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import { Badge } from "@mcpjam/design-system/badge";
-import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
+import { getScenarioHostLogo } from "@/lib/scenario-client-style";
+import { DEFAULT_HOST_STYLE } from "@/lib/client-styles";
 import { cn } from "@/lib/utils";
 import type {
   HostBuilderAddServerNodeData,
@@ -46,8 +47,8 @@ const HostNodeRenderer = memo(
   (props: NodeProps<Node<HostBuilderNodeData, "hostNode">>) => {
     const { data, selected } = props;
     const isHostCard = data.kind === "host";
-    const hostStyle = data.hostStyle ?? "claude";
-    const hostLogoSrc = isHostCard ? getChatboxHostLogo(hostStyle) : null;
+    const hostStyle = data.hostStyle ?? DEFAULT_HOST_STYLE.id;
+    const hostLogoSrc = isHostCard ? getScenarioHostLogo(hostStyle) : null;
 
     return (
       <div

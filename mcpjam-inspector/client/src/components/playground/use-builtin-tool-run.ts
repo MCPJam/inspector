@@ -20,16 +20,13 @@ import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 export function useBuiltinToolRun(builtinTools: HarnessBuiltinToolInfo[]) {
   const requestRun = useAgentToolPromptBridge((s) => s.requestRun);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const selected =
-    builtinTools.find((t) => t.key === selectedKey) ?? null;
+  const selected = builtinTools.find((t) => t.key === selectedKey) ?? null;
   const [fields, setFields] = useState<FormField[]>([]);
 
   // Regenerate the form when the selected built-in changes.
   useEffect(() => {
     const tool = builtinTools.find((t) => t.key === selectedKey);
-    setFields(
-      tool ? generateFormFieldsFromSchema(tool.inputSchema ?? {}) : [],
-    );
+    setFields(tool ? generateFormFieldsFromSchema(tool.inputSchema ?? {}) : []);
     // builtinTools is reference-stable per harness (cached upstream); regen is
     // intentionally keyed on the selection only.
     // eslint-disable-next-line react-hooks/exhaustive-deps

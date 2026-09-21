@@ -6,7 +6,7 @@ import { normalizeReturnTargetPath, routePaths } from "./app-navigation";
  * The docs deep-link signed-out readers straight to the API keys page;
  * persisting the path across the AuthKit redirect lands them back on key
  * management instead of the app root after they sign in. Same pattern as
- * the chatbox/billing/CLI return paths consumed by the `/callback` handler
+ * the scenario/billing/CLI return paths consumed by the `/callback` handler
  * in `App.tsx`.
  */
 

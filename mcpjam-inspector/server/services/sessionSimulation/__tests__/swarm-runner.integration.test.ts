@@ -6,7 +6,7 @@
  *
  * Proves the two swarm invariants end-to-end: (1) transcripts persist with
  * swarm attribution (`sourceType/origin: "swarm"`, `journeyRunId`, `hostId`,
- * persona tags, no chatboxId/synthesisRunId), and (2) the terminal attempt is
+ * persona tags, no scenarioId/synthesisRunId), and (2) the terminal attempt is
  * reported AFTER the transcript is persisted (persist-before-terminal), with
  * the same deterministic chatSessionId used to claim it.
  */
@@ -102,6 +102,7 @@ vi.mock("../../swarm-agent.js", async () => {
   );
   return {
     ...actual,
+    reportTargetGrounding: vi.fn(async () => ({})),
     reportAttempt: (...args: unknown[]) => {
       callOrder.push(`attempt:${(args[2] as any).status}`);
       return reportAttemptMock(...args);
@@ -116,6 +117,14 @@ vi.mock("../../swarm-agent.js", async () => {
 import { startJourneyRun } from "../swarm-runner.js";
 
 const TURN_TRACE = {
+  requestPayloads: [
+    {
+      turnId: "trace-turn",
+      promptIndex: 0,
+      stepIndex: 0,
+      payload: { system: "swarm system", tools: {}, messages: [] },
+    },
+  ],
   turnId: "turn-1",
   promptIndex: 0,
   startedAt: 0,
@@ -198,7 +207,9 @@ beforeEach(() => {
     };
   });
   releaseSandboxMock.mockReset().mockResolvedValue(undefined);
-  persistChatSessionToConvexMock.mockReset().mockResolvedValue(undefined);
+  persistChatSessionToConvexMock
+    .mockReset()
+    .mockResolvedValue({ outcome: "saved", version: 1 });
   resolveSyntheticModelSourceMock.mockReset().mockResolvedValue({
     source: "mcpjam",
   });
@@ -227,6 +238,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.clearAllMocks();
 });
@@ -248,8 +260,8 @@ describe("swarm runner — real core integration", () => {
       personaLabel: "Persona One",
       synthetic: true,
     });
-    // Swarm carries no chatbox surface identifiers.
-    expect(persistArgs.chatboxId).toBeUndefined();
+    // Swarm carries no scenario surface identifiers.
+    expect(persistArgs.scenarioId).toBeUndefined();
     expect(persistArgs.synthesisRunId).toBeUndefined();
 
     // The hosted turn body forwarded journeyRunId (backend spend attribution).
@@ -340,4 +352,27 @@ describe("swarm runner — real core integration", () => {
       harnessSessionId: "hs-1",
     });
   });
+});
+
+it("waits for a transient persona refusal and completes the same session", async () => {
+  vi.useFakeTimers();
+  swarmPersonaNextTurnMock
+    .mockReset()
+    .mockRejectedValueOnce(
+      new Error(
+        'swarm-agent https://example.test/turn failed (429): {"code":"user_rate_limit","refusalReason":"holds_committed","retryAfter":15000,"error":"MCPJam model limit reached for the moment."}',
+      ),
+    )
+    .mockResolvedValueOnce({ message: "hello", endSession: false })
+    .mockResolvedValue({ message: "", endSession: true });
+  const run = startJourneyRun(baseOpts());
+  await vi.advanceTimersByTimeAsync(0);
+  expect(swarmPersonaNextTurnMock).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(15000);
+  await run;
+  expect(
+    reportAttemptMock.mock.calls.some((c) => c[2].status === "succeeded"),
+  ).toBe(true);
+  expect(swarmPersonaNextTurnMock).toHaveBeenCalledTimes(3);
+  expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
 });

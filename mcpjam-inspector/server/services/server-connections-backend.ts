@@ -35,7 +35,18 @@ export class ServerConnectionBackendError extends Error {
   constructor(
     message: string,
     readonly status: number,
-    readonly code?: string
+    readonly code?: string,
+    /**
+     * Whatever else the backend put on the failure envelope, minus `ok`,
+     * `error` and `code`.
+     *
+     * A refusal sometimes carries the one fact that makes it actionable — a
+     * refused claim carries `ownerHint`, the masked email of the account the
+     * link belongs to. Dropping it here would leave the page able to say only
+     * "wrong account" when the backend knew, and was willing to say, which
+     * one.
+     */
+    readonly details?: Record<string, unknown>
   ) {
     super(message);
     this.name = "ServerConnectionBackendError";
@@ -98,17 +109,24 @@ async function callBackend<T>(
     const payload = (await response.json().catch((error: unknown) => {
       if (isAbortError(error)) throw error;
       return null;
-    })) as {
-      ok?: boolean;
-      error?: string;
-      code?: string;
-    } | null;
+    })) as
+      | ({
+          ok?: boolean;
+          error?: string;
+          code?: string;
+        } & Record<string, unknown>)
+      | null;
 
     if (!response.ok || payload?.ok !== true) {
+      // Everything that is not the envelope itself is detail the caller may
+      // need. Destructured rather than picked by name so a new field the
+      // backend adds reaches the route without a second edit here.
+      const { ok: _ok, error: _error, code: _code, ...details } = payload ?? {};
       throw new ServerConnectionBackendError(
         payload?.error ?? `Backend call failed (${response.status})`,
         response.status,
-        payload?.code
+        payload?.code,
+        Object.keys(details).length > 0 ? details : undefined
       );
     }
 
@@ -192,6 +210,12 @@ export interface ValidationContext {
   serverUrl: string | null;
   accessToken: string | null;
   authMethod: string | null;
+  /**
+   * The credential is absent because its authorization server could not be
+   * reached, not because none is stored. Defaults to false against a backend
+   * that predates the field, which is the old behaviour.
+   */
+  credentialRetryable: boolean;
 }
 
 /**
@@ -215,6 +239,7 @@ export async function fetchValidationContext(
     serverUrl: result.serverUrl ?? null,
     accessToken: result.accessToken ?? null,
     authMethod: result.authMethod ?? null,
+    credentialRetryable: result.credentialRetryable === true,
   };
 }
 

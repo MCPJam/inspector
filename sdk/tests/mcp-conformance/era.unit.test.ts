@@ -120,6 +120,9 @@ describe("CHECK_ERAS map", () => {
       "logging-set-level",
       "completion-complete",
       "protocol-invalid-method-error",
+      // Every revision publishes its own JSON Schema, so the requirement reads
+      // the same on either wire and only the document changes.
+      "wire-schema-valid",
     ];
     // Modern-only ids are USUALLY prefixed `modern-`; the SEP-2243 declaration
     // check is not, because it belongs to the tools family and reads as one of

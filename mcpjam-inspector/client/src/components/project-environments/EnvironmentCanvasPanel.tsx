@@ -2,7 +2,8 @@ import { useCallback, useMemo, type ReactNode } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { useHost } from "@/hooks/useClients";
+import { useHost, useHostList } from "@/hooks/useClients";
+import { clientDisplayName } from "@/lib/client-display-name";
 import { useProjectServers, type RemoteServer } from "@/hooks/useProjects";
 import {
   useEnvironmentPreview,
@@ -10,17 +11,20 @@ import {
 } from "@/hooks/use-environment-preview";
 import { RedesignedHostCanvas } from "@/components/hosts/redesigned/canvas/RedesignedHostCanvas";
 import { buildRedesignedHostCanvas } from "@/components/hosts/redesigned/canvas/canvasBuilder";
-import type { HostRedesignContext } from "@/components/hosts/redesigned/types";
+import { BROWSER_NODE_ID, type HostRedesignContext } from "@/components/hosts/redesigned/types";
 import {
   emptyHostConfigInputV2,
   hostConfigDtoToInput,
   type HostConfigDtoV2,
 } from "@/lib/client-config-v2";
+import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
+import { useBrowserProfileName } from "@/hooks/useBrowserProfileName";
+import { useBrowserEnabled } from "@/hooks/useComputersEnabled";
 import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 
 /**
  * Read-only embedding of the Connect "Host" graph for an environment's
- * RESOLVED bundle. Mirrors `ChatboxHostCanvasPanel` — pure data →
+ * RESOLVED bundle. Mirrors `ScenarioHostCanvasPanel` — pure data →
  * `buildRedesignedHostCanvas` → `<RedesignedHostCanvas readOnly>` — with one
  * difference that drives the whole file: the server set is not the host's own
  * picks, it is whatever the backend resolver says this environment currently
@@ -43,7 +47,7 @@ export function buildEnvironmentCanvasContext(args: {
 }): HostRedesignContext {
   const { hostName, hostConfig, previewServers, projectServers } = args;
 
-  // `hostConfigDtoToInput` requires a non-null DTO; the chatbox precedent
+  // `hostConfigDtoToInput` requires a non-null DTO; the scenario precedent
   // guards the same way so a dangling host still renders host-less chrome.
   const base = hostConfig
     ? hostConfigDtoToInput(hostConfig)
@@ -98,6 +102,7 @@ export function EnvironmentCanvasPanel({
   isAuthenticated,
 }: EnvironmentCanvasPanelProps) {
   const navigate = useAppNavigate();
+  const browsersEnabled = useBrowserEnabled();
   // Archived environments are keyed off the ROW, never off a parsed error: the
   // preview endpoint 409s on them (`ENV_ARCHIVED`), so passing `null` keeps the
   // doomed fetch — including the hook's focus-return refetch — from ever firing.
@@ -107,26 +112,37 @@ export function EnvironmentCanvasPanel({
     revision
   );
   const { host, isLoading: hostLoading } = useHost({ isAuthenticated, hostId });
+  const browserProfileName = useBrowserProfileName(projectId, host?.config?.browserProfileId);
+  const { hosts } = useHostList({
+    isAuthenticated,
+    projectId,
+    includePrivateBacking: true,
+  });
   const { servers } = useProjectServers({ projectId, isAuthenticated });
 
   const viewModel = useMemo(() => {
     if (!preview || !host) return null;
+    const listedHost = hosts.find((item) => item.hostId === hostId);
     return buildRedesignedHostCanvas(
-      buildEnvironmentCanvasContext({
-        hostName: host.name ?? preview.host.hostName ?? "",
+      { ...buildEnvironmentCanvasContext({
+        hostName:
+          (listedHost ? clientDisplayName(listedHost) : null) ??
+          host.name ??
+          preview.host.hostName ??
+          "",
         hostConfig: host.config ?? null,
         previewServers: preview.servers,
         projectServers: servers,
-      }),
+      }), browsersEnabled, browserProfileName },
       []
     );
-  }, [preview, host, servers]);
+  }, [preview, host, hosts, hostId, servers, browsersEnabled, browserProfileName]);
 
   // Stable across renders: the canvas memoizes its matrix context on
   // `onRequestEdit`, so a fresh closure would re-render the matrix subtree
   // through that context on every parent render.
-  const handleRequestEdit = useCallback(() => {
-    navigate(buildHostsPath(hostId));
+  const handleRequestEdit = useCallback((nodeId?: string) => {
+    navigate(nodeId === BROWSER_NODE_ID ? buildHostFocusTabPath(hostId, "browser") : buildHostsPath(hostId));
   }, [navigate, hostId]);
 
   if (isArchived) {

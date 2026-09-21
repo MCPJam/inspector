@@ -21,7 +21,7 @@ import type {
 
 function hostedFrame(
   eventId: string | undefined,
-  jsonRpcId: number
+  jsonRpcId: number,
 ): HostedRpcLogEvent {
   return {
     ...(eventId ? { eventId } : {}),
@@ -35,7 +35,7 @@ function hostedFrame(
 
 function hostedExchange(
   eventId: string | undefined,
-  ray: string
+  ray: string,
 ): HostedHttpLogEvent {
   return {
     ...(eventId ? { eventId } : {}),

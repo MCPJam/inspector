@@ -180,3 +180,84 @@ describe("environment selector resolution", () => {
     expect((error as PlatformApiError).message).toContain("ambiguous");
   });
 });
+
+// The id fast-path exists so list-hidden ad-hoc cells can be named at all. It
+// must stay an optimization: names never take it, and taking it can never end
+// worse than not having taken it.
+describe("id fast-path", () => {
+  const ADHOC_ID = "mh7wcbj5k2p9x4v6r8t1n3q5s7d9f0g2";
+
+  it("uses the detail route for an id-shaped selector", async () => {
+    const { client, fetchMock } = makeClient([
+      { ...environment(ADHOC_ID, "", false), name: null },
+    ]);
+
+    const result = await getEnvironmentOperation.execute(
+      { environment: ADHOC_ID },
+      { client }
+    );
+
+    // A list-hidden row resolves at all — the list route never returns it.
+    expect(result.id).toBe(ADHOC_ID);
+    expect(
+      fetchMock.mock.calls.some(([target]) =>
+        String(target).includes(`/environments/${ADHOC_ID}`)
+      )
+    ).toBe(true);
+  });
+
+  it.each(["staging-environment", "Claude_Code_Prod", "production-eval-env"])(
+    "never sends the name %s to the detail route",
+    async (name) => {
+      const { client, fetchMock } = makeClient([
+        environment("env-live", name, false),
+      ]);
+
+      const result = await getEnvironmentOperation.execute(
+        { environment: name },
+        { client }
+      );
+
+      // Names reach `v.id()` as garbage and fail validation BEFORE the
+      // handler, which the route reports as a 500 — so they must never be
+      // spelled as ids in the first place.
+      expect(result.id).toBe("env-live");
+      expect(
+        fetchMock.mock.calls.every(
+          ([target]) => !String(target).includes(`/environments/${name}`)
+        )
+      ).toBe(true);
+    }
+  );
+
+  it("falls back to the list when the detail route fails outright", async () => {
+    const { client, fetchMock } = makeClient([
+      environment(ADHOC_ID, "Staging", false),
+    ]);
+    const listRoutes = fetchMock.getMockImplementation()!;
+    // Only the FAST PATH fails; the operation's own later read is fine. That
+    // is the shape of the bug this guards: a detail-route failure during
+    // resolution used to propagate instead of deferring to the list.
+    let detailCalls = 0;
+    fetchMock.mockImplementation(
+      async (target: unknown, init?: RequestInit) => {
+        const path = new URL(String(target)).pathname;
+        if (/\/environments\/[^/]+$/.test(path) && detailCalls++ === 0) {
+          return Response.json(
+            { code: "INTERNAL_ERROR", message: "boom" },
+            { status: 500 }
+          );
+        }
+        return listRoutes(target, init);
+      }
+    );
+
+    const result = await getEnvironmentOperation.execute(
+      { environment: ADHOC_ID },
+      { client }
+    );
+
+    // A 500 on the optimization must not surface when the list can answer.
+    expect(result.id).toBe(ADHOC_ID);
+  });
+});

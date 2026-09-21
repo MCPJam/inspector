@@ -10,7 +10,7 @@ import { deriveScoreServerName } from "../score-server-name";
 describe("deriveScoreServerName", () => {
   it("is stable for the same URL", async () => {
     expect(await deriveScoreServerName("https://mcp.example.com/mcp")).toBe(
-      await deriveScoreServerName("https://mcp.example.com/mcp")
+      await deriveScoreServerName("https://mcp.example.com/mcp"),
     );
   });
 
@@ -18,34 +18,34 @@ describe("deriveScoreServerName", () => {
     // These say nothing about WHICH server this is.
     // The readable part drops the suffix; the digest still distinguishes them.
     expect(await deriveScoreServerName("https://mcp.example.com/mcp")).toMatch(
-      /^mcp-example-com-[a-z0-9]+$/
+      /^mcp-example-com-[a-z0-9]+$/,
     );
     expect(await deriveScoreServerName("https://mcp.example.com/sse")).toMatch(
-      /^mcp-example-com-/
+      /^mcp-example-com-/,
     );
     expect(await deriveScoreServerName("https://mcp.example.com/mcp/")).toBe(
-      await deriveScoreServerName("https://mcp.example.com/mcp")
+      await deriveScoreServerName("https://mcp.example.com/mcp"),
     );
   });
 
   it("keeps a path that actually distinguishes two servers on one host", async () => {
     expect(
-      await deriveScoreServerName("https://example.com/team-a/mcp")
+      await deriveScoreServerName("https://example.com/team-a/mcp"),
     ).toMatch(/^example-com-team-a-mcp-/);
     expect(
-      await deriveScoreServerName("https://example.com/team-a/mcp")
+      await deriveScoreServerName("https://example.com/team-a/mcp"),
     ).not.toBe(await deriveScoreServerName("https://example.com/team-b/mcp"));
   });
 
   it("drops a leading www so the label reads like the product", async () => {
     expect(await deriveScoreServerName("https://www.example.com/mcp")).toMatch(
-      /^example-com-/
+      /^example-com-/,
     );
   });
 
   it("produces a safe slug from hostile input", async () => {
     const name = await deriveScoreServerName(
-      "https://ex ample.com/a b/../c?x=1#y"
+      "https://ex ample.com/a b/../c?x=1#y",
     );
     // Matches the product's own `slugifyName` shape.
     expect(name).toMatch(/^[a-z0-9-]+$/);
@@ -76,14 +76,14 @@ describe("deriveScoreServerName", () => {
     ];
     for (const [left, right] of collidingPairs) {
       expect(await deriveScoreServerName(left)).not.toBe(
-        await deriveScoreServerName(right)
+        await deriveScoreServerName(right),
       );
     }
   });
 
   it("bounds the length so a pathological URL cannot become the label", async () => {
     const name = await deriveScoreServerName(
-      `https://example.com/${"segment/".repeat(50)}mcp`
+      `https://example.com/${"segment/".repeat(50)}mcp`,
     );
     expect(name.length).toBeLessThanOrEqual(64);
   });

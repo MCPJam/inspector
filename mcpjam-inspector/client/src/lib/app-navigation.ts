@@ -4,8 +4,19 @@
  * Central wrapper around React Router's navigate/location primitives.
  *
  * URLs are path-based (`/servers`, `/organizations/:orgId/billing`, etc.)
- * matching `react-router` semantics. Chatbox session hashes
- * (`#chatbox-slug`) are NOT app navigation and are preserved verbatim.
+ * matching `react-router` semantics. Scenario session hashes
+ * (`#scenario-slug`) are NOT app navigation and are preserved verbatim.
+ *
+ * ## Logical paths in, scoped paths out
+ *
+ * `routePaths` and every `build*Path` helper stay LOGICAL — project-relative,
+ * with no `/p/<projectId>` in them. One conversion happens at the navigation
+ * boundary (`useAppNavigate`, `navigateApp`): a `scope: "project"` target
+ * navigated from inside a project keeps that project in the URL. That is the
+ * whole trick — callers never think about the prefix, and the prefix never
+ * gets lost, because there is exactly one place that adds it and one place
+ * (`stripProjectFromPath`) that takes it off before a path is matched against
+ * the logical route table.
  */
 import { useCallback, useContext, useLayoutEffect, useState } from "react";
 import { UNSAFE_LocationContext, UNSAFE_NavigationContext } from "react-router";
@@ -13,6 +24,14 @@ import { getAppRouter } from "../router-ref";
 import type { EvalRoute } from "./eval-route-types";
 import type { EvalRoutePrefix } from "./eval-route-url";
 import { normalizeHostedHashTab } from "./hosted-tab-policy";
+import { isProjectScopedRoutePath } from "./app-routes";
+import {
+  buildProjectPath,
+  isAppRelativeTarget,
+  isProjectIdShape,
+  parseProjectPath,
+  stripProjectFromPath,
+} from "./project-route";
 import { listAppSurfaceNavSegments } from "@/shared/app-surfaces";
 import type { InsightsView } from "@/hooks/useInsightsFlowController";
 
@@ -30,10 +49,18 @@ import type { InsightsView } from "@/hooks/useInsightsFlowController";
  */
 export const ORGANIZATION_ROUTE_SECTIONS = [
   "overview",
+  "members",
+  "sharing",
+  "audit-log",
+  "data-management",
+  "api-keys",
+  "plans",
+  "integrations",
   "billing",
   "models",
   "slack",
   "discord",
+  "observability",
 ] as const;
 
 export type OrganizationRouteSection =
@@ -45,12 +72,22 @@ export type OrganizationRouteSection =
  * section fail quietly rather than 404, and why the coverage test exists.
  */
 export function parseOrganizationSection(
-  segment: string | undefined
+  segment: string | undefined,
 ): OrganizationRouteSection {
+  if (
+    segment === "members" ||
+    segment === "sharing" ||
+    segment === "audit-log" ||
+    segment === "data-management" ||
+    segment === "integrations"
+  )
+    return segment;
+  if (segment === "api-keys" || segment === "plans") return segment;
   if (segment === "billing") return "billing";
   if (segment === "models") return "models";
   if (segment === "slack") return "slack";
   if (segment === "discord") return "discord";
+  if (segment === "observability") return "observability";
   return "overview";
 }
 
@@ -65,8 +102,12 @@ export const routePaths = {
   embedHostCompare: "/embed/host-compare",
   /** Chrome-less conformance-score runner for score.mcpjam.com. */
   embedScore: "/embed/score",
+  /** Chrome-less Connector Bench runner. `/<runId>` resumes an in-flight run. */
+  embedBench: "/embed/bench",
   /** Result of one score run, addressable only by its secret link token. */
   scoreResults: "/results",
+  /** One benchmark scorecard, addressable only by its secret link. */
+  benchResults: "/bench/results",
   capabilities: "/capabilities",
   computer: "/computer",
   registry: "/registry",
@@ -78,30 +119,72 @@ export const routePaths = {
   skills: "/skills",
   learning: "/learning",
   conformance: "/conformance",
+  /** Immutable detail URL for one project-owned conformance run. */
+  conformanceRuns: "/conformance/runs",
+  /** Revocable read-only share of a conformance run. The token IS the credential. */
+  conformanceShared: "/conformance/shared",
   compatibility: "/compatibility",
   oauthFlow: "/oauth-flow",
   xaaFlow: "/xaa-flow",
   tracing: "/tracing",
+  webmcp: "/webmcp",
   /** Legacy path. Still routed (it redirects), but never build links with it. */
-  chatboxes: "/chatboxes",
+  scenarios: "/scenarios",
   userTesting: "/user-testing",
   swarms: "/swarms",
   environments: "/environments",
   sessions: "/sessions",
   playground: "/playground",
-  support: "/support",
+  support: "/settings/support",
   settings: "/settings",
   profile: "/profile",
   projectSettings: "/project-settings",
+  /**
+   * WorkOS Initiate Login URL. AuthKit redirects IdP-initiated logins (the
+   * Okta app tile) here instead of issuing a code; the route starts a normal
+   * sign-in so the code exchange on `/callback` has a matching PKCE verifier.
+   */
+  login: "/login",
   callback: "/callback",
   billing: "/billing",
   evals: "/evals",
-  /** Runs mode of Evaluate. Legacy `/ci-evals` URLs redirect here. */
+  /** Legacy Runs mode, available behind evaluate-enabled. */
   evalsRuns: "/evals/runs",
+  /** Redeem-based read-only share of an eval run. */
+  evalsShared: "/evals/shared",
+  /** Public Evaluate; legacy Evaluate lives at /evals. */
+  evaluate: "/evaluate",
   organizations: "/organizations",
 } as const;
 
 export type RoutePath = (typeof routePaths)[keyof typeof routePaths] | string;
+
+/**
+ * Build the exact path for one saved MCP server on Connect.
+ *
+ * The app's own counterpart to the SDK permalink builder: agents mint
+ * `/servers/:serverId?project=` through `@mcpjam/sdk/platform`, and the screen
+ * itself round-trips selection through this so a copied URL from the address
+ * bar is the same URL an agent would hand out.
+ */
+export function buildProjectServerPath(serverId?: string | null): string {
+  if (!serverId) return routePaths.servers;
+  return `${routePaths.servers}/${encodeURIComponent(serverId)}`;
+}
+
+/** Build the exact path for one installed Agent Plugin, expanded on Connect. */
+export function buildProjectPluginPath(pluginId?: string | null): string {
+  if (!pluginId) return routePaths.servers;
+  return `${routePaths.servers}/plugins/${encodeURIComponent(pluginId)}`;
+}
+
+/** Build the exact path for one project environment's detail. */
+export function buildProjectEnvironmentPath(
+  environmentId?: string | null,
+): string {
+  if (!environmentId) return routePaths.environments;
+  return `${routePaths.environments}/${encodeURIComponent(environmentId)}`;
+}
 
 /** Build a path that deep-links to a specific host's canvas, or to the hosts hub. */
 export function buildHostsPath(hostId?: string | null): string {
@@ -111,7 +194,7 @@ export function buildHostsPath(hostId?: string | null): string {
 
 /** Build a path that deep-links into Compare with a pre-selected set of hosts. */
 export function buildHostComparePath(
-  hostIds?: ReadonlyArray<string> | null
+  hostIds?: ReadonlyArray<string> | null,
 ): string {
   if (!hostIds || hostIds.length === 0) return routePaths.hostCompare;
   const param = hostIds.map((id) => id.trim()).filter((id) => id.length > 0);
@@ -124,21 +207,57 @@ export function buildHostComparePath(
 export const userTestingCreatePath = `${routePaths.userTesting}/new`;
 
 /**
- * Detail sub-tabs on `/user-testing/:scenarioId`. Insights is the landing tab.
- * Edit is a sibling route (`/edit`), not a tab.
+ * Detail sub-tabs on `/user-testing/:scenarioId`. Edit is a sibling route
+ * (`/edit`), not a tab.
+ *
+ * Which tab a BARE path lands on is not a constant — see
+ * {@link defaultUserTestingDetailTab}. Both the parser's fallback and the
+ * builder's omission rule below take it as an argument, and they have to be
+ * given the same one, or a link either carries a redundant `?tab=` or silently
+ * drops the one it meant.
  */
-export type UserTestingDetailTab = "sessions" | "insights";
+export type UserTestingDetailTab = "sessions" | "insights" | "findings";
 
 const USER_TESTING_DETAIL_TABS: ReadonlySet<string> = new Set([
   "sessions",
   "insights",
+  "findings",
 ]);
 
 /**
+ * Which tab a bare `/user-testing/:scenarioId` opens on, for a study holding
+ * `sessionCount` tester sessions.
+ *
+ * Findings took the landing spot from Insights (BB-146), and keeps it for
+ * every study that has anything to find. A study with NO sessions is the one
+ * case where it is the wrong door: Findings is a summary of what testers did,
+ * so with nobody through the link it renders as an empty frame that reads like
+ * a broken page rather than a new one. Insights opens on the study's own empty
+ * state, which says what is missing and how to get it.
+ *
+ * ABSENT IS NOT ZERO. `sessionCount` is optional on the list row — a
+ * deployment that does not report the counter says `undefined`, which means
+ * "we don't know", and a study we cannot count is far more likely to have
+ * sessions than not. Only a counted zero moves the door; everything else lands
+ * on Findings exactly as before.
+ *
+ * The answer changes when the first session lands, so a reader sitting on a
+ * bare URL watching an empty study is moved from Insights to Findings at that
+ * moment. That is deliberate: they expressed no preference (a chosen tab is
+ * named in the URL and wins over this), and the tab they arrive on is the one
+ * that just got the data they were waiting for.
+ */
+export function defaultUserTestingDetailTab(
+  sessionCount: number | undefined,
+): UserTestingDetailTab {
+  return sessionCount === 0 ? "insights" : "findings";
+}
+
+/**
  * Build a path to one User Testing scenario. `scenarioId` is the scenario's
- * CHATBOX id — the identity host-backed and environment-backed scenarios
+ * SCENARIO id — the identity host-backed and environment-backed scenarios
  * share. A HOST id is still accepted by the surface (links minted under the
- * older scheme redirect onto the chatbox id), but new links should never be
+ * older scheme redirect onto the scenario id), but new links should never be
  * built with one. `session` opens straight into one tester session, which is
  * what a copied session link carries; `sel` and `view` carry an Insights
  * selection and which diagram it was made on, so a link to "this cluster, in
@@ -149,15 +268,31 @@ export function buildUserTestingScenarioPath(
   scenarioId: string,
   opts: {
     tab?: UserTestingDetailTab;
+    /**
+     * The landing tab this link's reader will fall back to, from
+     * {@link defaultUserTestingDetailTab}. Callers that know the study's
+     * session count pass it so `tab` can be omitted when it matches; callers
+     * that don't (a plain link to a scenario, which names no tab anyway) leave
+     * it and get the historical default.
+     */
+    defaultTab?: UserTestingDetailTab;
     session?: string;
     sel?: string;
     /** Typed like `tab`, so an unknown view cannot be minted into a link. */
     view?: InsightsView;
-  } = {}
+  } = {},
 ): string {
   const base = `${routePaths.userTesting}/${encodeURIComponent(scenarioId)}`;
   const search = new URLSearchParams();
-  if (opts.tab && opts.tab !== "insights") search.set("tab", opts.tab);
+  // Omit the landing tab, name every other one. This must track the parser's
+  // fallback — given the SAME `defaultTab`: naming the default would put a
+  // redundant `?tab=` on every link, and omitting a non-default would drop the
+  // reader back onto the landing tab. On an empty study that second failure is
+  // the one that bites: the default is Insights there, so a Findings link that
+  // omitted its tab would bounce the reader straight back to Insights and the
+  // tab would look unclickable.
+  const defaultTab = opts.defaultTab ?? "findings";
+  if (opts.tab && opts.tab !== defaultTab) search.set("tab", opts.tab);
   if (opts.session) search.set("session", opts.session);
   if (opts.sel) search.set("sel", opts.sel);
   // `flow` is the default; only the non-default view needs saying.
@@ -181,13 +316,24 @@ export function isLegacyUserTestingEditTab(search: string): boolean {
 }
 
 /**
- * Parse the sub-tab query on a scenario path. Missing / unknown → insights.
- * A `session` deep-link without an explicit tab still opens Sessions.
+ * Parse the sub-tab query on a scenario path. Missing / unknown → `defaultTab`
+ * (from {@link defaultUserTestingDetailTab}; findings for callers that cannot
+ * count the study's sessions). A `session` deep-link without an explicit tab
+ * still opens Sessions — that outranks the landing tab, because the link names
+ * a session and Sessions is the only tab that can show one.
+ *
  * Legacy edit/share/preview queries are NOT returned here — use
  * {@link isLegacyUserTestingEditTab} and redirect to `/edit`.
+ *
+ * `?tab=insights` stays an explicit, honoured value: links handed out while
+ * Insights was the landing tab must still land on Insights rather than being
+ * silently rehomed by the change of default. The same rule is what makes
+ * `?tab=findings` work on an empty study, where findings is no longer the
+ * fallback: an explicitly named tab always wins over the default.
  */
 export function parseUserTestingDetailTab(
-  search: string
+  search: string,
+  defaultTab: UserTestingDetailTab = "findings",
 ): UserTestingDetailTab {
   const params = new URLSearchParams(search);
   const tab = params.get("tab");
@@ -196,14 +342,15 @@ export function parseUserTestingDetailTab(
     return tab as UserTestingDetailTab;
   }
   if (params.get("session")) return "sessions";
-  return "insights";
+  return defaultTab;
 }
 
 /** The Swarms create route. Static, so it outranks `:swarmId`. */
 export const swarmsCreatePath = `${routePaths.swarms}/new`;
 
-/** Detail tabs on `/swarms/:swarmId`. Insights is the default landing tab. */
-export type SwarmDetailTab = "insights" | "sessions";
+/** Detail tabs on `/swarms/:swarmId`. Findings is the default landing tab
+ * for a finished wave; a still-running wave with no `?tab=` opens `run`. */
+export type SwarmDetailTab = "run" | "findings" | "insights" | "sessions";
 
 /**
  * Build a path to one Swarm Run (wave) detail. `swarmId` is the durable
@@ -215,35 +362,46 @@ export function buildSwarmPath(
     tab?: SwarmDetailTab;
     session?: string;
     sel?: string;
-  } = {}
+    /**
+     * Rubric criterion the viewer FOLLOWED here (`criterionId`). Carried so the
+     * run page can name the finding behind a session it was deep-linked to —
+     * landing on a transcript with no statement of what was found is what made
+     * a followed finding unreadable. An id, not a sentence: the label is
+     * resolved from the wave's own findings, so it cannot go stale in a URL.
+     */
+    finding?: string;
+  } = {},
 ): string {
   const base = `${routePaths.swarms}/${encodeURIComponent(swarmId)}`;
   const search = new URLSearchParams();
-  if (opts.tab && opts.tab !== "insights") search.set("tab", opts.tab);
+  if (opts.tab) search.set("tab", opts.tab);
   if (opts.session) search.set("session", opts.session);
   if (opts.sel) search.set("sel", opts.sel);
+  if (opts.finding) search.set("finding", opts.finding);
   const query = search.toString();
   return query ? `${base}?${query}` : base;
 }
 
 /**
  * Parse the detail-tab query on a Swarm Run path. Missing / unknown →
- * insights. Legacy `overview` / `personas` → insights (personas live there).
+ * findings. Legacy `overview` / `personas` → insights (personas lived there).
  * A `session` deep-link without an explicit tab still opens Sessions.
  */
 export function parseSwarmDetailTab(search: string): SwarmDetailTab {
   const params = new URLSearchParams(search);
   const value = params.get("tab");
+  if (value === "run") return "run";
   if (value === "sessions") return "sessions";
   if (value === "insights" || value === "personas" || value === "overview") {
     return "insights";
   }
+  if (value === "findings") return "findings";
   if (params.get("session")) return "sessions";
-  return "insights";
+  return "findings";
 }
 
 /**
- * Build a Swarms deep-link to one synthetic session. Unlike the chatbox
+ * Build a Swarms deep-link to one synthetic session. Unlike the scenario
  * Sessions tab (host-anchored), the Swarms surface is Persona → Journey → Run →
  * Session, so a link that only carried `host`/`session` couldn't restore the
  * persona + run selection the recipient needs to reach the session. This
@@ -289,11 +447,49 @@ export function parseSwarmSessionParams(search: string): {
   };
 }
 
+/**
+ * Build a deep-link to the cross-surface Sessions page, optionally focused on
+ * one session.
+ *
+ * Unlike {@link buildSwarmSessionPath} this carries no selection chain: the
+ * Sessions detail pane loads by `threadId` alone (`ShareUsageThreadDetail`
+ * subscribes per-thread), so a link never has to describe how to page a list
+ * to the row. That is what lets the backend mint `/sessions?session=…` as the
+ * universal permalink fallback for a session whose surface-native target does
+ * not exist (an eval Quick Run, a session whose parent run was deleted).
+ *
+ * `project` is threaded explicitly rather than inherited from the recipient's
+ * picker, and it goes in the PATH: a link minted for one project must open
+ * that project for whoever follows it, including on a refresh, which a
+ * consumed-and-stripped query parameter could not survive.
+ */
+export function buildSessionsPath(
+  opts: { session?: string; project?: string } = {},
+): string {
+  const search = new URLSearchParams();
+  if (opts.session) search.set("session", opts.session);
+  const query = search.toString();
+  const logical = query
+    ? `${routePaths.sessions}?${query}`
+    : routePaths.sessions;
+  return opts.project ? buildProjectPath(opts.project, logical) : logical;
+}
+
 /** Build a path for a specific organization route. */
 export function buildOrganizationPath(
   orgId: string,
-  section?: OrganizationRouteSection
+  section?: OrganizationRouteSection,
 ): string {
+  if (
+    section === "members" ||
+    section === "sharing" ||
+    section === "audit-log" ||
+    section === "data-management" ||
+    section === "integrations"
+  )
+    return `/organizations/${orgId}/${section}`;
+  if (section === "api-keys" || section === "plans")
+    return `/organizations/${orgId}/${section}`;
   if (section === "billing") return `/organizations/${orgId}/billing`;
   if (section === "models") return `/organizations/${orgId}/models`;
   // The Slack section's sub-tabs live in `?tab=`, not in the path: they are
@@ -304,43 +500,64 @@ export function buildOrganizationPath(
   // Discord has no sub-tabs at all (see DiscordAgentSettingsSection), so it
   // needs even less than Slack does — one segment, no `?tab=`.
   if (section === "discord") return `/organizations/${orgId}/discord`;
+  // Trace destinations. One segment like Discord: the create/edit form is a
+  // dialog rather than a view, so there is nothing for a `?tab=` to select.
+  if (section === "observability")
+    return `/organizations/${orgId}/observability`;
   return `/organizations/${orgId}`;
 }
 
 /**
- * Build an eval route path in Suites mode from a typed EvalRoute.
+ * Build a Suites route; test cases always open Ding Dong.
  */
 export function buildEvalsPath(route: EvalRoute): string {
-  return buildEvalRoutePath(routePaths.evals, route);
+  return buildEvalRoutePath(
+    route.type === "test-edit" || route.type === "test-detail"
+      ? routePaths.evaluate : routePaths.evals, route,
+  );
 }
 
-/** Build the same typed EvalRoute in Runs mode (`/evals/runs/...`). */
+/** Build a Runs route; test cases always open Ding Dong. */
 export function buildEvalsRunsPath(route: EvalRoute): string {
-  return buildEvalRoutePath(routePaths.evalsRuns, route);
+  return buildEvalRoutePath(
+    route.type === "test-edit" || route.type === "test-detail"
+      ? routePaths.evaluate : routePaths.evalsRuns, route,
+  );
 }
 
-/**
- * Legacy `/ci-evals/*` → `/evals/runs/*`, for the router's redirect loader.
- *
- * A raw-string prefix rewrite rather than a rebuild from route params: the
- * sub-tree is matched with a splat, and the string form preserves commit SHAs
- * and suite ids exactly as they were encoded. Query and hash come along —
- * commit links carry `?suite=&iteration=`, run links carry
- * `?iteration=&case=&compareTo=`, and anything can carry `?project=`.
- *
- * These URLs shipped in CI logs, bookmarks, and the SDK quickstart's
- * post-sign-in return path, so they redirect rather than 404 into the
- * catch-all (which renders Servers — a silently wrong landing page).
- */
-export function legacyCiEvalsPathToRunsPath(
+/** Public eval links; retired commit-detail targets open the run table. */
+export function buildEvaluatePath(route: EvalRoute): string {
+  return buildEvalRoutePath(routePaths.evaluate, route);
+}
+
+/** Retired Evaluate URLs preserve artifact context; commits open the plain run table. */
+export function legacyEvalPathToEvaluatePath(
   pathname: string,
   search = "",
-  hash = ""
+  hash = "",
 ): string {
-  return `${pathname.replace(
-    /^\/ci-evals/,
-    routePaths.evalsRuns
-  )}${search}${hash}`;
+  if (/^\/(?:evals\/runs|ci-evals)\/commit\/[^/]+\/*$/i.test(pathname)) {
+    const params = new URLSearchParams(search);
+    const project = params.get("project");
+    const query = new URLSearchParams();
+    if (project) query.set("project", project);
+    return `${routePaths.evaluate}${query.size ? `?${query}` : ""}`;
+  }
+  const rewritten = pathname.replace(
+    /^\/(?:evals(?:\/runs)?|ci-evals)(?=\/|$)/i,
+    routePaths.evaluate,
+  );
+  return `${rewritten}${search}${hash}`;
+}
+
+/** Old case bookmarks open Ding Dong without dropping subtab or project context. */
+export function legacyEvalCasePathToEvaluatePath(pathname: string, search = "", hash = ""): string {
+  const rewritten = pathname.replace(
+    /^\/evals(?:\/runs)?\/suite\/([^/]+)\/test\/([^/]+)(\/edit)?\/*$/i,
+    (_, suiteId, testId, edit) =>
+      `${routePaths.evaluate}/suite/${suiteId}/test/${testId}${edit ? "/edit" : ""}`,
+  );
+  return `${rewritten}${search}${hash}`;
 }
 
 function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
@@ -349,6 +566,12 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       return prefix;
     case "create":
       return `${prefix}/create`;
+    case "eval-server":
+      // The first-run preview is Evaluate (New) only. /evals has no home
+      // for it, so degrade to that prefix's list the same way commit-detail
+      // degrades on /evaluate.
+      if (prefix !== routePaths.evaluate) return prefix;
+      return `${prefix}/eval-server/${encodeURIComponent(route.serverId)}`;
     case "suite-overview": {
       const params = new URLSearchParams();
       if (route.view && route.view !== "runs") params.set("view", route.view);
@@ -366,30 +589,33 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       if (route.compareToRunId) params.set("compareTo", route.compareToRunId);
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
-        route.suiteId
-      )}/runs/${encodeURIComponent(route.runId)}${query ? `?${query}` : ""}`;
+        route.suiteId,
+      )}/runs/${encodeURIComponent(route.runId)}${route.comparison ? "/compare" : ""}${query ? `?${query}` : ""}`;
     }
     case "test-detail": {
       const params = new URLSearchParams();
       if (route.iteration) params.set("iteration", route.iteration);
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
-        route.suiteId
+        route.suiteId,
       )}/test/${encodeURIComponent(route.testId)}${query ? `?${query}` : ""}`;
     }
     case "test-edit": {
       const params = new URLSearchParams();
       if (route.openCompare) params.set("compare", "1");
+      if (route.checks) params.set("checks", "1");
       if (route.iteration) params.set("iteration", route.iteration);
+      if (route.fromEvalServer)
+        params.set("fromEvalServer", route.fromEvalServer);
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
-        route.suiteId
+        route.suiteId,
       )}/test/${encodeURIComponent(route.testId)}/edit${
         query ? `?${query}` : ""
       }`;
     }
     case "suite-edit":
-      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/edit`;
+      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/edit${route.fromCaseChecks ? `?fromCaseChecks=${encodeURIComponent(route.fromCaseChecks)}` : ""}`;
     case "commit-detail": {
       // Commits are a Runs-mode lens: Suites mode has no cross-suite SHA view,
       // so a commit route built there degrades to that mode's list.
@@ -407,6 +633,54 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
 
 export interface AppNavigateOptions {
   replace?: boolean;
+  /**
+   * Navigate to the LOGICAL path, refusing to inherit the current project.
+   *
+   * Rare and deliberate: the only caller is the screen shown when a project
+   * URL cannot be resolved, whose way out must not be "the project you just
+   * failed to open". Everything else wants the inheritance.
+   */
+  unscoped?: boolean;
+}
+
+/**
+ * The pathname the app is actually on, preferring the router's own location.
+ *
+ * `window.location` lags a router navigation that is still committing, and the
+ * scope decision below has to be made against where the user IS, not where the
+ * browser has finished painting.
+ */
+function currentAppPathname(): string {
+  const routerPathname = getAppRouter()?.state?.location?.pathname;
+  if (routerPathname) return routerPathname;
+  return getWindowFallbackPathname();
+}
+
+/**
+ * Carry the current project into a project-owned target.
+ *
+ * The one conversion from logical to concrete. It is deliberately derived
+ * from the CURRENT URL rather than from an ambient "active project" variable:
+ * two tabs can be on two different projects, and a module-level default would
+ * be a second source of truth for the very thing the URL now owns.
+ *
+ * Left alone: already-scoped paths (idempotent), global and public targets
+ * (Settings must never gain a project), bare `?query`/`#hash` navigations,
+ * anything off-origin, and any path no route claims.
+ */
+export function scopeNavigationTarget(
+  to: string,
+  fromPathname?: string,
+): string {
+  if (typeof to !== "string" || !to) return to;
+  if (to.startsWith("?") || to.startsWith("#")) return to;
+  if (!isAppRelativeTarget(to)) return to;
+  if (parseProjectPath(to)) return to;
+  const current = parseProjectPath(fromPathname ?? currentAppPathname());
+  if (!current) return to;
+  const logical = to.split(/[?#]/)[0];
+  if (!isProjectScopedRoutePath(logical)) return to;
+  return buildProjectPath(current.projectId, to);
 }
 
 /**
@@ -417,15 +691,22 @@ export interface AppNavigateOptions {
  * (e.g. very early bootstrap).
  */
 export function navigateApp(to: string, options?: AppNavigateOptions): void {
+  const target = options?.unscoped ? to : scopeNavigationTarget(to);
   const router = getAppRouter();
   if (router) {
-    void router.navigate(to, { replace: options?.replace });
+    void router.navigate(target, { replace: options?.replace });
     return;
   }
+  if (
+    !window.dispatchEvent(
+      new Event("settings-before-navigation", { cancelable: true }),
+    )
+  )
+    return;
   if (options?.replace) {
-    window.history.replaceState({}, "", to);
+    window.history.replaceState({}, "", target);
   } else {
-    window.history.pushState({}, "", to);
+    window.history.pushState({}, "", target);
   }
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
@@ -440,20 +721,25 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
  */
 export function useAppNavigate() {
   const navigationContext = useContext(UNSAFE_NavigationContext);
+  const locationContext = useContext(UNSAFE_LocationContext);
   const navigator = navigationContext?.navigator;
+  const pathname = locationContext?.location.pathname;
   return useCallback(
     (to: string, options?: AppNavigateOptions) => {
+      const target = options?.unscoped
+        ? to
+        : scopeNavigationTarget(to, pathname);
       if (navigator) {
         if (options?.replace) {
-          navigator.replace(to);
+          navigator.replace(target);
         } else {
-          navigator.push(to);
+          navigator.push(target);
         }
         return;
       }
-      navigateApp(to, options);
+      navigateApp(target, options);
     },
-    [navigator]
+    [navigator, pathname],
   );
 }
 
@@ -467,7 +753,7 @@ export function useAppNavigate() {
 export function useActiveTab(): string {
   const locationContext = useContext(UNSAFE_LocationContext);
   const [fallbackPathname, setFallbackPathname] = useState(
-    getWindowFallbackPathname
+    getWindowFallbackPathname,
   );
 
   useLayoutEffect(() => {
@@ -486,6 +772,76 @@ export function useActiveTab(): string {
 }
 
 /**
+ * The live pathname, router-first with a `window` fallback and a `popstate`
+ * listener for the no-router render path.
+ *
+ * Same shape as `useActiveTab` and for the same reason: components in this app
+ * are mounted without a `<Router>` in unit tests, where `useLocation()` throws.
+ * Subscribing to the location context is what makes the project route
+ * coordinator reconcile CONTINUOUSLY — Back/Forward and an in-app A → B
+ * navigation change the pathname without remounting anything, and a
+ * once-per-mount reader would miss both.
+ */
+export function useCurrentPathname(): string {
+  const locationContext = useContext(UNSAFE_LocationContext);
+  const [fallbackPathname, setFallbackPathname] = useState(
+    getWindowFallbackPathname,
+  );
+
+  useLayoutEffect(() => {
+    if (locationContext || typeof window === "undefined") return;
+    const sync = () => setFallbackPathname(getWindowFallbackPathname());
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, [locationContext]);
+
+  return locationContext?.location.pathname ?? fallbackPathname;
+}
+
+export interface AppLocationParts {
+  pathname: string;
+  search: string;
+  hash: string;
+}
+
+/**
+ * The full current location (path, search, hash), router-first.
+ *
+ * The legacy normalizer needs all three: it rewrites the path, drops exactly
+ * one query field, and must hand back the hash byte-for-byte.
+ */
+export function useCurrentLocationParts(): AppLocationParts {
+  const locationContext = useContext(UNSAFE_LocationContext);
+  const [fallback, setFallback] = useState(getWindowFallbackLocationParts);
+
+  useLayoutEffect(() => {
+    if (locationContext || typeof window === "undefined") return;
+    const sync = () => setFallback(getWindowFallbackLocationParts());
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, [locationContext]);
+
+  const location = locationContext?.location;
+  if (!location) return fallback;
+  return {
+    pathname: location.pathname || "/",
+    search: location.search || "",
+    hash: location.hash || "",
+  };
+}
+
+function getWindowFallbackLocationParts(): AppLocationParts {
+  if (typeof window === "undefined") {
+    return { pathname: "/", search: "", hash: "" };
+  }
+  return {
+    pathname: window.location.pathname || "/",
+    search: window.location.search || "",
+    hash: window.location.hash || "",
+  };
+}
+
+/**
  * Every tab segment that resolves to a real screen — DERIVED from the
  * surface manifests (`shared/app-surfaces.ts`), which are also what the
  * agent's atlas and the route-coverage tests read.
@@ -496,9 +852,10 @@ export function useActiveTab(): string {
  * unreachable by `ui_navigate` while `pathnameToActiveTab` quietly resolves
  * it to Servers. Now the manifest is the single place to add.
  *
- * The hosted policy lists (`hosted-tab-policy.ts`) stay as a FILTER over
- * these segments — availability is a separate question from existence — and
- * a test asserts every policy entry still names a real segment.
+ * The hosted policy (`hosted-tab-policy.ts`) stays as a FILTER over these
+ * segments — availability is a separate question from existence — and it is
+ * derived from the same manifests, so it cannot name a segment that no
+ * longer exists.
  */
 const KNOWN_APP_TAB_SEGMENTS = new Set<string>(listAppSurfaceNavSegments());
 
@@ -534,14 +891,42 @@ export function isDebugOAuthCallbackPath(pathname: string): boolean {
   );
 }
 
-export function pathnameToActiveTab(pathname: string): string {
+/**
+ * One conformance run's immutable detail URL.
+ *
+ * The project rides in the PATH now. It used to be `?project=<id>`, which the
+ * app accepted, consumed, and stripped — leaving a URL that no longer said
+ * which project it belonged to, so a refresh or a re-share went back to
+ * whatever project the reader was parked on.
+ */
+export function buildConformanceRunPath(
+  runId: string,
+  projectId?: string | null,
+): string {
+  const base = `${routePaths.conformanceRuns}/${encodeURIComponent(runId)}`;
+  return projectId ? buildProjectPath(projectId, base) : base;
+}
+
+export function buildConformanceSharePath(token: string): string {
+  return `${routePaths.conformanceShared}/${encodeURIComponent(token)}`;
+}
+
+export function buildEvalSharePath(token: string): string {
+  return `${routePaths.evalsShared}/${encodeURIComponent(token)}`;
+}
+
+export function pathnameToActiveTab(rawPathname: string): string {
+  // Every first-segment parser in the app funnels through here, so this is
+  // where the project prefix comes off: `/p/<id>/servers` is the Servers tab,
+  // not a tab called "p".
+  const pathname = stripProjectFromPath(rawPathname);
   if (isSpecialEntryPathname(pathname)) return "servers";
   if (pathname.startsWith(`${routePaths.capabilities}/`)) {
     return "host-compare";
   }
   const firstSegment = pathname.replace(/^\/+/, "").split("/")[0] || "home";
   const normalized = normalizeHostedHashTab(firstSegment);
-  // Unknown first segments include chatbox slugs; App handles those surfaces
+  // Unknown first segments include scenario slugs; App handles those surfaces
   // before route rendering, so the shell falls back to the safe servers body.
   return KNOWN_APP_TAB_SEGMENTS.has(normalized) ? normalized : "servers";
 }
@@ -614,8 +999,24 @@ function decodePathSegment(segment: string): string {
 
 export function navigationTargetToPath(
   rawTarget: string,
-  fallback: string = routePaths.servers
+  fallback: string = routePaths.servers,
 ): string {
+  // A scoped target normalizes on its LOGICAL half and is re-scoped to the
+  // same project. Without this, `/p/A/evals/suite/X` would reduce to the
+  // fallback (`/servers`) — which is exactly how a sign-in round trip used to
+  // lose the page the user asked for.
+  const scoped = parseProjectPath(rawTarget);
+  if (scoped) {
+    const { suffix, path } = (() => {
+      const stripped = stripProjectFromPath(rawTarget);
+      const cut = stripped.search(/[?#]/);
+      return cut === -1
+        ? { path: stripped, suffix: "" }
+        : { path: stripped.slice(0, cut), suffix: stripped.slice(cut) };
+    })();
+    const logical = navigationTargetToPath(`${path}${suffix}`, fallback);
+    return buildProjectPath(scoped.projectId, logical);
+  }
   const stripped = rawTarget.replace(/^#/, "").replace(/^\/+/, "");
   const questionIndex = stripped.indexOf("?");
   const pathPart =
@@ -625,11 +1026,11 @@ export function navigationTargetToPath(
   const normalizedTab = normalizeHostedHashTab(segments[0] || "servers");
   if (!KNOWN_APP_TAB_SEGMENTS.has(normalizedTab)) return fallback;
   // The tab id and the public path segment agree everywhere except User
-  // Testing, whose tab id stayed `chatboxes`. Emit the canonical path so
+  // Testing, whose tab id stayed `scenarios`. Emit the canonical path so
   // agent navigation and legacy bookmarks land directly instead of bouncing
-  // through the `/chatboxes` redirect.
+  // through the `/scenarios` redirect.
   const pathSegment =
-    normalizedTab === "chatboxes" ? "user-testing" : normalizedTab;
+    normalizedTab === "scenarios" ? "user-testing" : normalizedTab;
   return `/${[pathSegment, ...segments.slice(1)].join("/")}${queryPart}`;
 }
 
@@ -655,12 +1056,22 @@ export function normalizeInitialLegacyHashBookmark(): void {
   window.history.replaceState({}, "", path);
 }
 
+/**
+ * A stored "come back here" path → a path this app will actually navigate to.
+ *
+ * Two jobs: refuse anything that could leave this origin (an absolute URL, a
+ * protocol-relative one, a backslash the browser folds into a slash), and
+ * keep a valid `/p/<projectId>/...` intact instead of reducing it to
+ * `/servers`. The second one is postcondition 7 of the canonical-URL work: the
+ * complete URL, project and all, survives a sign-in round trip.
+ */
 export function normalizeReturnTargetPath(
   target?: string | null,
-  fallback: string = routePaths.servers
+  fallback: string = routePaths.servers,
 ): string {
   const trimmed = target?.trim() ?? "";
   if (!trimmed) return fallback;
+  if (!isAppRelativeTarget(trimmed)) return fallback;
   return navigationTargetToPath(trimmed, fallback);
 }
 
@@ -668,40 +1079,67 @@ export function captureCurrentReturnPath(): string | null {
   if (typeof window === "undefined") return null;
   const pathname = window.location.pathname || routePaths.root;
   const search = window.location.search || "";
+  // The hash is part of the destination on eval and scenario deep links
+  // (`#case`, `#scenario-slug`); dropping it returns the user to the page but
+  // not to the thing on it.
+  const hash = window.location.hash || "";
   if (pathname === routePaths.root || pathname === "") return null;
-  return `${pathname}${search}`;
+  return `${pathname}${search}${hash}`;
 }
 
 /**
- * Where a manual project switch should land, if anywhere.
+ * Where selecting another project in the picker lands.
  *
- * As with `shouldSnapToServersOnActiveProjectChange`, callers must resolve
- * `activeTab` from the live pathname rather than a routing hook: a switch that
- * resolves after the caller has already navigated would otherwise be judged
- * against the page the user left.
+ * Deterministic and URL-first: the picker NAVIGATES, and the project route
+ * coordinator performs the state switch because the URL changed. The previous
+ * shape — switch hidden state, then repair the URL from an effect — is what
+ * made project switching racy: two effects (a snap-to-Servers and a
+ * deep-link resolver) both wrote the URL from a project change they had each
+ * observed at a different moment.
+ *
+ * Servers rather than "stay where you are": the current path can name a
+ * resource that only exists in the project being left (`/evals/suite/<id>`),
+ * and carrying that id across projects renders someone else's empty state.
  */
-export function getProjectSwitchNavigationTarget({
-  activeTab,
-  activeOrganizationId,
-  nextProjectOrganizationId,
-}: {
-  activeTab: string;
-  activeOrganizationId?: string;
-  nextProjectOrganizationId?: string;
-}): string | null {
-  if (activeTab !== "organizations") {
-    return null;
-  }
+export function buildProjectSwitchTarget(projectId: string): string {
+  return buildProjectPath(projectId, routePaths.servers);
+}
 
-  if (
-    !activeOrganizationId ||
-    !nextProjectOrganizationId ||
-    nextProjectOrganizationId !== activeOrganizationId
-  ) {
-    return routePaths.servers;
-  }
+/** The per-project settings gear in the picker — one gesture, one URL. */
+export function buildProjectSettingsTarget(projectId: string): string {
+  return buildProjectPath(projectId, routePaths.projectSettings);
+}
 
-  return null;
+/**
+ * Where picking another organization in the switcher lands.
+ *
+ * Same contract as `buildProjectSwitchTarget`: the switcher NAVIGATES and the
+ * route coordinator performs the state switch, because the URL named a project
+ * that lives in the other organization. The previous shape — set the active
+ * organization, then navigate to the logical `/servers` — could not work: the
+ * logical path is already `/servers`, so the navigation no-opped, the URL kept
+ * `/p/<project-in-the-old-org>`, and the coordinator dutifully switched the
+ * organization back to the one the URL still named.
+ *
+ * The organization's most recently updated project is the destination, matching
+ * the ordering the project list itself uses. With no project to aim at — a
+ * brand-new organization, or a membership list that has not loaded yet — the
+ * organization overview is the landing spot, and `ensureDefaultProject`
+ * provisions one from there.
+ */
+export function buildOrganizationSwitchTarget(
+  organizationId: string,
+  projects:
+    | ReadonlyArray<{ _id: string; organizationId?: string; updatedAt: number }>
+    | undefined,
+): string {
+  const mostRecent = (projects ?? [])
+    .filter((project) => project.organizationId === organizationId)
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  if (mostRecent && isProjectIdShape(mostRecent._id)) {
+    return buildProjectSwitchTarget(mostRecent._id);
+  }
+  return buildOrganizationPath(organizationId);
 }
 
 export function getInvalidOrganizationRouteNavigationTarget({
@@ -724,52 +1162,4 @@ export function getInvalidOrganizationRouteNavigationTarget({
   }
 
   return null;
-}
-
-/**
- * Decide whether an active-project change should snap the user to Servers.
- *
- * Staying on a project-scoped page (App Builder/Chat) after the active project
- * changes would leave the user pointed at a project that no longer exists, so
- * we snap to Servers. But not every project change is a manual switch: opening
- * another org's settings (e.g. via the switcher's per-row gear) flips the
- * active org, which auto-resolves a new active project as a *side effect* while
- * the user deliberately navigates to the org page. Organization routes are
- * org-scoped, not project-scoped, so snapping there would bounce the user right
- * back off the settings they just opened.
- *
- * Project settings is exempt for the same reason: it renders whichever project
- * is active, so it is still correct after the switch, and the switcher's
- * per-row gear reaches it by switching project and navigating as one gesture.
- *
- * Callers must resolve `activeTab` from the live pathname, not from a routing
- * hook — the router commits navigations in a transition, so a hook-derived tab
- * can still name the page the user is leaving when this runs.
- *
- * The initial hydration (no previous id) and the local-default `"none"`
- * placeholder are never treated as real switches.
- */
-export function shouldSnapToServersOnActiveProjectChange({
-  previousActiveProjectId,
-  nextActiveProjectId,
-  activeTab,
-}: {
-  previousActiveProjectId: string | null;
-  nextActiveProjectId: string;
-  activeTab: string;
-}): boolean {
-  if (
-    previousActiveProjectId == null ||
-    previousActiveProjectId === nextActiveProjectId ||
-    previousActiveProjectId === "none" ||
-    nextActiveProjectId === "none"
-  ) {
-    return false;
-  }
-
-  if (activeTab === "organizations" || activeTab === "project-settings") {
-    return false;
-  }
-
-  return true;
 }

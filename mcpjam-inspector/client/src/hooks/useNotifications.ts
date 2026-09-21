@@ -3,10 +3,20 @@ import { useQuery, useMutation } from "convex/react";
 export type NotificationType =
   | "project_added"
   | "project_removed"
+  | "workspace_added"
+  | "workspace_removed"
   | "organization_added"
   | "organization_removed"
+  // Owner-targeted, unlike the rest: someone they invited has signed up and
+  // the automatic seat charge needs them. Here the actor is the SUBJECT — the
+  // person waiting on the seat — not whoever performed an action.
+  | "organization_seat_payment_required"
   | "scheduled_eval_failed"
-  | "scheduled_eval_paused";
+  | "scheduled_eval_paused"
+  // Org-wide, and addressed to the people who can act: the organization
+  // crossed one of its spend-budget alert thresholds, or reached the cap.
+  // `entityName` is the organization, and `entityId` its id.
+  | "organization_spend_threshold";
 
 export interface Notification {
   _id: string;

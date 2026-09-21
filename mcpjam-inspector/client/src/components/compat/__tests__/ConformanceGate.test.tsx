@@ -103,6 +103,52 @@ describe("ConformanceGate", () => {
     ).toBeInTheDocument();
   });
 
+  it("stays green on a failing PENDING check, but says it failed", async () => {
+    // Green is the correct VERDICT — a check the profile does not score cannot
+    // fail the run, which is the retroactive-failure hole the frozen profile
+    // exists to close. But the green branch short-circuits on `passed` and used
+    // to render "N checks passed" while silently discarding the failure it had
+    // already collected.
+    mockRunProtocol.mockResolvedValue({
+      success: true,
+      result: protocolResult({
+        passed: true,
+        checks: [
+          {
+            id: "wire-schema-valid",
+            status: "failed",
+            title: "Wire schema valid",
+          } as MCPConformanceResult["checks"][number],
+        ],
+        profile: {
+          profileId: "mcp-protocol",
+          profileVersion: "2026-08-21.1",
+          manifestDigest: "0".repeat(64),
+          checkerVersion: "0.0.0-test",
+          pendingCheckIds: ["wire-schema-valid"],
+        },
+      } as Partial<MCPConformanceResult>),
+    });
+    renderGate(httpServer());
+    fireEvent.click(screen.getByRole("button", { name: /Run checks/ }));
+    await waitFor(() =>
+      expect(screen.getByText(/Spec checks passed/)).toBeInTheDocument(),
+    );
+    // The verdict is green AND the finding is visible.
+    expect(screen.queryByText(/Fix these checks first/)).toBeNull();
+    expect(
+      screen.getByText(/unscored check failed \(not counted\)/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Wire schema valid/)).toBeInTheDocument();
+    // The count must not claim the failure as a pass. With one check, one of
+    // them pending-failed, "1 check passed · 1 unscored check failed" would be
+    // the same check counted twice.
+    expect(screen.getAllByText(/0 checks passed/).length).toBeGreaterThan(0);
+    // The load-bearing half: the failed pending check must not ALSO be counted
+    // as a pass. "1 check passed · 1 unscored check failed" is one check twice.
+    expect(screen.queryByText(/1 check passed/)).toBeNull();
+  });
+
   it("resets when the active server switches — no stale results bleed across", async () => {
     const { rerender } = renderGate(httpServer({ name: "server-a" }));
     fireEvent.click(screen.getByRole("button", { name: /Run checks/ }));

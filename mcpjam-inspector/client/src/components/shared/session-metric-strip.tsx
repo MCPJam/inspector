@@ -51,6 +51,7 @@ function formatPercent(rate: number): string {
 export function SessionMetricsStripView({
   metrics,
   testIdPrefix,
+  embedded = false,
 }: {
   metrics: SessionMetricsAggregate | undefined;
   /**
@@ -58,6 +59,8 @@ export function SessionMetricsStripView({
    * same suite without colliding.
    */
   testIdPrefix: string;
+  /** When true, omit the outer card shell (parent provides chrome). */
+  embedded?: boolean;
 }) {
   const pointLabels = useMemo(
     () => (metrics?.trend ?? []).map((p) => formatDay(p.dayStartMs)),
@@ -102,8 +105,8 @@ export function SessionMetricsStripView({
   return (
     <div
       className={cn(
-        evalSurfaceCardClass,
-        "grid grid-cols-2 overflow-hidden sm:grid-cols-4"
+        !embedded && evalSurfaceCardClass,
+        "grid grid-cols-2 overflow-hidden sm:grid-cols-4",
       )}
       data-testid={`${testIdPrefix}-sessions-metric-strip`}
     >

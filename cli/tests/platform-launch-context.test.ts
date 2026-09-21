@@ -1,0 +1,156 @@
+/**
+ * What the CLI declares itself as on an eval-run launch.
+ *
+ * The platform stamps `source` itself, and everything the CLI sends over the
+ * public API is `api` — so a developer's `mcpjam cloud eval run` and the same
+ * command inside a GitHub Actions job were one indistinguishable badge in the
+ * Runs table. These headers are the difference, DECLARED: a display label
+ * beside the stamp, never an authorization input, and never something a flag
+ * can forge.
+ *
+ * The launcher always says `cli`, CI or not. It used to say `github_action`
+ * inside a workflow, which borrowed a badge that means something else: in the
+ * runs table `GitHub` is the GitHub App, a check run we built and ran
+ * ourselves. Someone's own workflow calling `mcpjam cloud eval run` is not
+ * that. Where it ran is carried by the `ci` header instead.
+ */
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { RUN_LAUNCH_HEADERS } from "@mcpjam/sdk/platform";
+import { CliError } from "../src/lib/output.js";
+import {
+  buildPlatformClient,
+  resolvePlatformExtraHeaders,
+} from "../src/lib/platform-client.js";
+
+const GITHUB_ENV = {
+  GITHUB_ACTIONS: "true",
+  GITHUB_REPOSITORY: "acme/widgets",
+  GITHUB_SHA: "a1b2c3d4",
+  GITHUB_REF_NAME: "main",
+  GITHUB_RUN_ID: "42",
+  GITHUB_RUN_ATTEMPT: "1",
+  GITHUB_JOB: "evals",
+  GITHUB_WORKFLOW: "CI",
+} as const;
+
+/** Capture the headers of the one request a launch makes. */
+function captureHeaders(sink: Array<Record<string, string>>): typeof fetch {
+  return (async (_input: unknown, init?: RequestInit) => {
+    sink.push({ ...((init?.headers ?? {}) as Record<string, string>) });
+    return new Response(JSON.stringify({ runId: "run_1" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+}
+
+async function launchWith(
+  env: Record<string, string>,
+): Promise<Record<string, string>> {
+  const sink: Array<Record<string, string>> = [];
+  const { client } = buildPlatformClient(
+    { apiKey: "sk_test", apiUrl: "https://api.test/api/v1" },
+    { env, fetchFn: captureHeaders(sink) },
+  );
+  await client.createEvalRun({ projectId: "p1", body: { suiteId: "s1" } });
+  return sink[0]!;
+}
+
+test("declares `cli` outside CI", async () => {
+  const headers = await launchWith({});
+  const launcher = JSON.parse(headers[RUN_LAUNCH_HEADERS.launcher]!);
+  assert.equal(launcher.kind, "cli");
+  assert.equal(launcher.client, "mcpjam-cli");
+  assert.ok(
+    typeof launcher.version === "string" && launcher.version.length > 0,
+    "the CLI's own version identifies which release produced the run",
+  );
+  // Nothing to say about a job that does not exist.
+  assert.equal(headers[RUN_LAUNCH_HEADERS.ci], undefined);
+});
+
+test("stays `cli` inside GitHub Actions, and says so in the CI header", async () => {
+  const headers = await launchWith({ ...GITHUB_ENV });
+  // Still the CLI. `GitHub` in the runs table means the GitHub App, which this
+  // is not; the `ci` envelope below is where the workflow is recorded.
+  assert.equal(JSON.parse(headers[RUN_LAUNCH_HEADERS.launcher]!).kind, "cli");
+  const ci = JSON.parse(headers[RUN_LAUNCH_HEADERS.ci]!);
+  assert.equal(ci.provider, "github_actions");
+  assert.equal(ci.commitSha, "a1b2c3d4");
+  assert.equal(ci.branch, "main");
+  // `runId` and `job` are GitHub's spellings; the platform maps them onto the
+  // run row's `pipelineId`/`jobId` at its own boundary, in one place.
+  assert.equal(ci.runId, "42.1");
+  assert.equal(ci.job, "evals");
+});
+
+test("uses the PR event's fork repository for its branch link", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "mcpjam-github-event-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const eventPath = join(directory, "event.json");
+  writeFileSync(
+    eventPath,
+    JSON.stringify({
+      number: 4764,
+      pull_request: {
+        number: 4764,
+        html_url: "https://github.com/acme/widgets/pull/4764",
+        head: {
+          ref: "feat/from-fork",
+          repo: {
+            full_name: "contributor/widgets",
+            html_url: "https://github.com/contributor/widgets",
+          },
+        },
+      },
+    }),
+  );
+
+  const headers = await launchWith({
+    ...GITHUB_ENV,
+    GITHUB_EVENT_PATH: eventPath,
+    GITHUB_REF: "refs/pull/4764/merge",
+    GITHUB_REF_NAME: "4764/merge",
+  });
+  const ci = JSON.parse(headers[RUN_LAUNCH_HEADERS.ci]!);
+  assert.equal(ci.branch, "feat/from-fork");
+  assert.equal(
+    ci.branchUrl,
+    "https://github.com/contributor/widgets/tree/feat%2Ffrom-fork",
+  );
+  assert.equal(ci.prUrl, "https://github.com/acme/widgets/pull/4764");
+});
+
+test("declares nothing on a call that starts no run", async () => {
+  const sink: Array<Record<string, string>> = [];
+  const { client } = buildPlatformClient(
+    { apiKey: "sk_test", apiUrl: "https://api.test/api/v1" },
+    { env: { ...GITHUB_ENV }, fetchFn: captureHeaders(sink) },
+  );
+  await client.getMe();
+  assert.equal(sink[0]![RUN_LAUNCH_HEADERS.launcher], undefined);
+  assert.equal(sink[0]![RUN_LAUNCH_HEADERS.ci], undefined);
+});
+
+test("`--api-header` cannot forge either declaration", () => {
+  // A badge settable from a flag is a badge worth nothing. This is the same
+  // rule that keeps `--api-header` away from `authorization`.
+  for (const name of [RUN_LAUNCH_HEADERS.launcher, RUN_LAUNCH_HEADERS.ci]) {
+    assert.throws(
+      () =>
+        resolvePlatformExtraHeaders(
+          { apiHeader: [`${name}: {"kind":"github_action"}`] },
+          {},
+        ),
+      (error: unknown) =>
+        error instanceof CliError &&
+        String(error.message).includes(name) &&
+        /cannot set/.test(String(error.message)),
+      `accepted a forged ${name}`,
+    );
+  }
+});

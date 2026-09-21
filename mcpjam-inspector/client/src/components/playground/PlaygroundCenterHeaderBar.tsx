@@ -86,10 +86,7 @@ export function PlaygroundCenterHeaderBar({
       </div>
 
       {showTraceTabs ? (
-        <div
-          className="px-3 py-1.5"
-          data-testid="playground-trace-view-tabs"
-        >
+        <div className="px-3 py-1.5" data-testid="playground-trace-view-tabs">
           <TraceViewModeTabs
             layout="fullWidth"
             mode={mode}

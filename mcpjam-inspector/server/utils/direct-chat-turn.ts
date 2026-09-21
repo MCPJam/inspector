@@ -1,3 +1,5 @@
+import { buildResolvedModelRequestPayload } from "./model-request-payload";
+import { withPageToolAttributionMetadata } from "./page-tool-call-attribution";
 import {
   streamText,
   stepCountIs,
@@ -20,6 +22,8 @@ import {
   wrapToolSetForEvalTrace,
 } from "../services/evals/eval-trace-capture";
 import {
+  capRequestPayloadsForPersist,
+  cloneTraceValue,
   generateLiveTraceTurnId,
   getPromptIndex,
   getPromptMessageStartIndex,
@@ -42,7 +46,13 @@ import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
-import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
+import {
+  mergeMcpToolOriginMetadata,
+  mergeMcpToolConnectionMetadata,
+  toolConnectionAttribution,
+  mergePageToolBindingMetadata,
+} from "@/shared/mcp-tool-origin-metadata";
+import { pageToolBindingOf } from "./built-in-tools/page-tools";
 import type { PersistedTurnTrace } from "./chat-ingestion";
 import { logger } from "./logger";
 import {
@@ -295,6 +305,17 @@ export interface RunDirectChatTurnOptions {
    */
   prepareAdvertisedTools?: PrepareAdvertisedTools;
   abortSignal?: AbortSignal;
+  /**
+   * Per-turn retry budget handed to the AI SDK for its own transient-failure
+   * retries (`ResolvedExecutionBudgets.turnRetries`). Absent ⇒ the SDK's
+   * default, which the eval default deliberately matches, so a caller that
+   * does not thread budgets is byte-identical to before.
+   *
+   * This is the SDK's retry of ONE model call, not the runner's retry of a
+   * turn: it never re-runs tools and never outlives the turn deadline, since
+   * every attempt shares the same composed `abortSignal`.
+   */
+  maxRetries?: number;
   /** Optional bag of trace-event callbacks. Chat passes these; eval/headless omits. */
   traceEvents?: DirectChatTurnTraceEvents;
   /**
@@ -388,6 +409,12 @@ export interface RunDirectChatTurnHandle {
   cleanup: () => void;
   /** True once the abort signal has fired (mirrors chat's local flag). */
   isAborted: () => boolean;
+  /**
+   * The stream's own fatal error, once `onError` has seen one — `undefined` on
+   * an abort. Headless consumers throw it instead of the SDK's
+   * `NoOutputGeneratedError`, which names neither provider nor status.
+   */
+  lastStreamError: () => unknown;
 }
 
 export function stampMcpToolOriginProviderOptions(
@@ -416,9 +443,21 @@ export function stampMcpToolOriginProviderOptions(
         const toolName = record.toolName;
         if (typeof toolName !== "string") return part;
         const serverId = readToolServerId(tools, toolName);
-        const providerOptions = mergeMcpToolOriginMetadata(
-          record.providerOptions,
-          serverId
+        // The page tool's binding too, on tool CALLS only. `merge…Binding`
+        // leaves a part that already carries one alone — that is the binding
+        // an earlier request's approval was granted against, and the very
+        // thing the tool's `execute` compares itself to on resume.
+        const providerOptions = mergePageToolBindingMetadata(
+          withPageToolAttributionMetadata(
+            mergeMcpToolConnectionMetadata(
+              mergeMcpToolOriginMetadata(record.providerOptions, serverId),
+              toolConnectionAttribution(tools[toolName], record.input, record.toolCallId),
+            ),
+            tools[toolName],
+          ),
+          record.type === "tool-call"
+            ? pageToolBindingOf(tools[toolName])
+            : undefined
         );
         if (!providerOptions) return part;
         messageChanged = true;
@@ -446,9 +485,15 @@ export function withMcpToolOriginChunkMetadata<
   }
   if (typeof chunk.toolName !== "string") return chunk;
   const serverId = readToolServerId(tools, chunk.toolName);
-  const providerMetadata = mergeMcpToolOriginMetadata(
-    chunk.providerMetadata,
-    serverId
+  const providerMetadata = mergePageToolBindingMetadata(
+    withPageToolAttributionMetadata(
+      mergeMcpToolConnectionMetadata(
+        mergeMcpToolOriginMetadata(chunk.providerMetadata, serverId),
+        toolConnectionAttribution(tools[chunk.toolName], (chunk as { input?: unknown }).input, (chunk as { toolCallId?: unknown }).toolCallId),
+      ),
+      tools[chunk.toolName],
+    ),
+    pageToolBindingOf(tools[chunk.toolName])
   );
   return providerMetadata ? { ...chunk, providerMetadata } : chunk;
 }
@@ -526,6 +571,7 @@ export function runDirectChatTurn(
     discoveryState,
     prepareAdvertisedTools,
     abortSignal,
+    maxRetries,
     traceEvents,
     onLiveTextDelta,
     onStepFinish,
@@ -572,6 +618,10 @@ export function runDirectChatTurn(
   const stepFirstChunkAt = new Map<number, number>();
   let turnFinished = false;
   let aborted = abortSignal?.aborted === true;
+  // The stream's own fatal error. `consumeStream` reports nothing and the
+  // awaited accessors reject with the SDK's `NoOutputGeneratedError`, so
+  // `onError` is the only place the provider's sentence exists.
+  let streamError: unknown;
   let listenerAttached = false;
   const markAborted = () => {
     aborted = true;
@@ -620,42 +670,6 @@ export function runDirectChatTurn(
     }
     return out;
   };
-
-  // Mirror the step-0 advertised set into the request-payload trace so it can't
-  // claim tools the model won't see on the first step (parity with the hosted
-  // processOneStep request_payload). Only narrows when the hook is set; chat
-  // (no hook) passes the full map unchanged. This trace is turn-level, so it
-  // reflects step 0; later steps' per-step narrowing isn't re-traced here.
-  let requestPayloadTools: ToolSet = tools;
-  if (prepareAdvertisedTools) {
-    const defaultToolNames =
-      progressivePlan?.enabled && discoveryState
-        ? withInjectedTools(
-            resolveActiveToolNames(progressivePlan, discoveryState),
-          )
-        : Object.keys(tools);
-    const advertised = new Set(
-      applyPrepareAdvertisedTools({
-        defaultToolNames,
-        stepIndex: 0,
-        prepareAdvertisedTools,
-        onWarn: (message, meta) =>
-          logger.warn(`[direct-chat-turn] ${message}`, meta),
-      }),
-    );
-    requestPayloadTools = Object.fromEntries(
-      Object.entries(tools).filter(([name]) => advertised.has(name)),
-    ) as ToolSet;
-  }
-
-  traceEvents?.onRequestPayload?.({
-    turnId: traceTurn.turnId,
-    promptIndex: traceTurn.promptIndex,
-    stepIndex: 0,
-    systemPrompt,
-    messages: messageHistory,
-    tools: requestPayloadTools,
-  });
 
   // Progressive mode: gate execution to the active subset. `activeTools`
   // (set in `prepareStep` below) narrows what the model sees, but a
@@ -721,11 +735,12 @@ export function runDirectChatTurn(
       () => shouldPauseAfterStep?.() === true,
     ],
     ...(abortSignal ? { abortSignal } : {}),
+    ...(maxRetries !== undefined ? { maxRetries } : {}),
     ...(toolChoice ? { toolChoice } : {}),
     ...(experimentalTelemetry
       ? { experimental_telemetry: experimentalTelemetry }
       : {}),
-    prepareStep: ({ stepNumber }) => {
+    prepareStep: ({ stepNumber, messages: stepMessages }) => {
       currentStepIndex = stepNumber;
       registerAiSdkPrepareStep(traceContext, stepNumber, {
         modelId,
@@ -757,6 +772,25 @@ export function runDirectChatTurn(
         // a hidden tool call can't take effect (read by `executableTools`).
         advertisedToolNames = new Set(activeToolNames);
       }
+      const request = {
+        turnId: traceTurn.turnId,
+        promptIndex: traceTurn.promptIndex,
+        stepIndex: stepNumber,
+        systemPrompt,
+        messages: stepMessages ?? traceHistory,
+        tools: activeToolNames
+          ? Object.fromEntries(
+              activeToolNames.map((name) => [name, tools[name]]),
+            ) as ToolSet
+          : tools,
+      };
+      traceContext.recordedRequestPayloads.push({
+        turnId: request.turnId,
+        promptIndex: request.promptIndex,
+        stepIndex: stepNumber,
+        payload: cloneTraceValue(buildResolvedModelRequestPayload(request)),
+      });
+      traceEvents?.onRequestPayload?.(request);
       const stepOptions: {
         activeTools?: string[];
         toolChoice?: ToolChoice<Record<string, AiTool>>;
@@ -943,6 +977,7 @@ export function runDirectChatTurn(
         turnFinished = true;
         return;
       }
+      streamError = error;
 
       const failAt = Date.now();
       finalizeAiSdkTraceOnFailure(traceContext, failAt, {
@@ -1044,6 +1079,9 @@ export function runDirectChatTurn(
             startedAt: traceTurn.turnStartedAt,
             endedAt: Date.now(),
             spans: [...traceTurn.turnSpans],
+            requestPayloads: capRequestPayloadsForPersist(
+              traceContext.recordedRequestPayloads,
+            ),
             usage: traceTurn.turnUsage,
             finishReason: event.finishReason,
             modelId,
@@ -1066,6 +1104,7 @@ export function runDirectChatTurn(
     modelId,
     cleanup,
     isAborted: () => aborted || abortSignal?.aborted === true,
+    lastStreamError: () => streamError,
   };
 }
 
@@ -1114,6 +1153,9 @@ export async function consumeDirectChatTurnHeadless(
       startedAt: handle.traceTurn.turnStartedAt,
       endedAt: Date.now(),
       spans: [...handle.traceContext.recordedSpans],
+      requestPayloads: capRequestPayloadsForPersist(
+        handle.traceContext.recordedRequestPayloads,
+      ),
       usage: handle.traceTurn.turnUsage,
       finishReason: finishReason ?? undefined,
       modelId: handle.modelId,
@@ -1127,6 +1169,13 @@ export async function consumeDirectChatTurnHeadless(
       turnTrace,
       aborted: handle.isAborted(),
     };
+  } catch (error) {
+    // Every accessor above rejects with `NoOutputGeneratedError` once the
+    // stream errored, so prefer the error that actually stopped the turn —
+    // it is all a caller's failure classification has to read.
+    const streamError = handle.lastStreamError();
+    if (streamError !== undefined) throw streamError;
+    throw error;
   } finally {
     handle.cleanup();
   }

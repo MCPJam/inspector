@@ -54,6 +54,11 @@ function catalogDtoToModelDefinition(dto: OpenRouterModel): ModelDefinition {
     hosted: true,
     guestAllowed: dto.guestAllowed,
     contextLength: dto.context_length ?? undefined,
+    // Carried so the chat path can ask the catalog whether a model takes
+    // `temperature` instead of inferring it from the id alone.
+    ...(dto.supported_parameters?.length
+      ? { supportedParameters: dto.supported_parameters }
+      : {}),
   };
 }
 

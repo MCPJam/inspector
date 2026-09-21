@@ -188,6 +188,7 @@ test("formatServerDoctorHuman renders a concise summary and artifact path", () =
     resources: [],
     resourceTemplates: [],
     prompts: [],
+    skills: [],
     checks: {
       probe: {
         status: "error",
@@ -220,6 +221,10 @@ test("formatServerDoctorHuman renders a concise summary and artifact path", () =
       prompts: {
         status: "skipped",
         detail: "Prompts were not collected.",
+      },
+      skills: {
+        status: "skipped",
+        detail: "Skills were not collected.",
       },
     },
     error: {

@@ -130,8 +130,7 @@ export function ExportTracesModal({
         <DialogHeader>
           <DialogTitle>Export traces</DialogTitle>
           <DialogDescription>
-            Download as OTLP JSON (OpenInference + MCP Apps conventions) for
-            Arize Phoenix, Datadog, or any OTLP-compatible backend.
+            Download as OTLP JSON (OpenInference + MCP Apps conventions).
           </DialogDescription>
         </DialogHeader>
 

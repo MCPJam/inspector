@@ -36,6 +36,7 @@ function capabilities(
     pluginSkills: [],
     standaloneSkills: [],
     serverSkills: [],
+    localSkills: [],
     pluginVersions: [],
     problems: [],
     ...over,

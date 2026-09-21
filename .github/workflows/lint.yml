@@ -1,10 +1,20 @@
 name: Build and Test
 
 on:
+  # Run on every PR regardless of its base branch. See the note in test.yml:
+  # `branches` filters on the PR's BASE, so a stacked PR — based on the branch
+  # below it until that one merges — never matched `main` and was never built
+  # or linted.
   pull_request:
-    branches: [main]
   push:
     branches: [main]
+
+# A newer push to the same branch makes in-flight runs obsolete — cancel them
+# so superseded runs don't keep burning a runner. Matters more now that this
+# workflow runs on every PR rather than only main-based ones.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 env:
   NODE_VERSION: "24.14.0"
@@ -27,11 +37,32 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
+      - name: Verify Docker workspace dependency manifests
+        run: node --test .github/scripts/docker-workspaces.test.mjs
+
+      # Same node_modules cache as test.yml's jobs — the rationale lives on the
+      # `test` job there. Different key prefix: this job runs on a bare
+      # ubuntu-latest rather than the Playwright container, and the tree carries
+      # prebuilt native artifacts that should not be shared across the two.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-bare-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
-      - name: Verify docs tokens are in sync with design system
-        run: npm run docs:check-tokens
+      - name: Verify DESIGN.md and mirrored token surfaces are in sync
+        run: npm run design:check
+
+      - name: Lint DESIGN.md against the pinned spec
+        run: npm run design:lint
 
       - name: Typecheck releasable packages
         run: npm run typecheck

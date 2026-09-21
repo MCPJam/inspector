@@ -1,30 +1,37 @@
+import { resolveThemeMode } from "@/lib/theme-mode";
 import { createStore } from "zustand/vanilla";
 
 import {
-  normalizeChatboxHostStyleId,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-client-style";
+  normalizeScenarioHostStyleId,
+  type ScenarioHostStyle,
+} from "@/lib/scenario-client-style";
 import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
-import type { ThemeMode, ThemePreset } from "@/types/preferences/theme";
+import type {
+  ThemeMode,
+  ThemePreference,
+  ThemePreset,
+} from "@/types/preferences/theme";
 
 export type PreferencesState = {
   themeMode: ThemeMode;
+  themePreference: ThemePreference;
+  setThemePreference: (preference: ThemePreference) => void;
   themePreset: ThemePreset;
-  hostStyle: ChatboxHostStyle;
+  hostStyle: ScenarioHostStyle;
   /**
    * Direct-Chat scoped MCP Apps `hostCapabilities` override. Undefined means
    * "use the active host style's preset" (advertised in ui/initialize).
    *
    * Direct Chat is the working bench where users iterate on capability
    * mocks while testing widgets; this field is the "save the bench" target
-   * so a tweaked configuration survives reloads. Chatbox / eval-suite /
+   * so a tweaked configuration survives reloads. Scenario / eval-suite /
    * project-default flows persist their own overrides through the v2
    * HostConfig row instead.
    */
   hostCapabilitiesOverride: Record<string, unknown> | undefined;
   /**
    * Snapshot of the active host config's `chatUiOverride` (logo, palette,
-   * indicator, fonts). Wired into `ChatboxChatUiOverrideProvider` so
+   * indicator, fonts). Wired into `ScenarioChatUiOverrideProvider` so
    * playground / chat surfaces render with the host's customizations on
    * top of its host style preset. Undefined means "no override; preset
    * wins" — same semantics as `HostConfigInputV2.chatUiOverride`.
@@ -32,15 +39,16 @@ export type PreferencesState = {
   chatUiOverride: ChatUiOverride | undefined;
   /**
    * When true (default), entering the Servers tab, a host page, or the
-   * Playground triggers a one-shot batch connect of all project servers.
-   * The toggle in the Servers tab header writes here. Disabling it leaves
-   * every server untouched until the user manually flips its per-card
-   * connect switch.
+   * Playground triggers a one-shot batch connect of every server in the
+   * project catalog. Personal and per-device: the Auto-connect switch in
+   * the Servers tab header writes here, and nothing project-side reads it.
+   * Disabling it leaves every server untouched until the user manually
+   * flips its per-card connect switch.
    */
   autoConnectServersEnabled: boolean;
   setThemeMode: (mode: ThemeMode) => void;
   setThemePreset: (preset: ThemePreset) => void;
-  setHostStyle: (hostStyle: ChatboxHostStyle) => void;
+  setHostStyle: (hostStyle: ScenarioHostStyle) => void;
   setHostCapabilitiesOverride: (
     next: Record<string, unknown> | undefined,
   ) => void;
@@ -56,12 +64,12 @@ export const HOST_CAPABILITIES_OVERRIDE_KEY =
 export const CHAT_UI_OVERRIDE_KEY = "mcpjam-ui-playground-chat-ui-override";
 export const AUTO_CONNECT_SERVERS_KEY = "mcpjam-auto-connect-servers";
 
-function getStoredHostStyle(): ChatboxHostStyle {
+function getStoredHostStyle(): ScenarioHostStyle {
   if (typeof window === "undefined") return DEFAULT_HOST_STYLE.id;
 
   try {
     const stored = localStorage.getItem(HOST_STYLE_KEY);
-    const normalized = normalizeChatboxHostStyleId(stored);
+    const normalized = normalizeScenarioHostStyleId(stored);
     if (normalized) {
       return normalized;
     }
@@ -107,17 +115,13 @@ function getStoredChatUiOverride(): ChatUiOverride | undefined {
 }
 
 function getStoredHostCapabilitiesOverride():
-  | Record<string, unknown>
-  | undefined {
+  Record<string, unknown> | undefined {
   if (typeof window === "undefined") return undefined;
   let raw: string | null;
   try {
     raw = localStorage.getItem(HOST_CAPABILITIES_OVERRIDE_KEY);
   } catch (error) {
-    console.warn(
-      "Failed to read persisted host capabilities override:",
-      error,
-    );
+    console.warn("Failed to read persisted host capabilities override:", error);
     return undefined;
   }
   if (!raw) return undefined;
@@ -126,11 +130,7 @@ function getStoredHostCapabilitiesOverride():
   // the chat tab. A failed parse silently falls back to the preset.
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      !Array.isArray(parsed)
-    ) {
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>;
     }
     return undefined;
@@ -146,6 +146,7 @@ function getStoredHostCapabilitiesOverride():
 export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
   createStore<PreferencesState>()((set) => ({
     themeMode: init?.themeMode ?? "light",
+    themePreference: init?.themePreference ?? init?.themeMode ?? "light",
     themePreset: init?.themePreset ?? "default",
     hostStyle: init?.hostStyle ?? getStoredHostStyle(),
     hostCapabilitiesOverride:
@@ -164,7 +165,18 @@ export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
       } catch (error) {
         console.warn("Failed to persist theme mode:", error);
       }
-      set({ themeMode: mode });
+      set({ themeMode: mode, themePreference: mode });
+    },
+    setThemePreference: (preference) => {
+      try {
+        localStorage.setItem(THEME_MODE_KEY, preference);
+      } catch (error) {
+        console.warn("Failed to persist theme preference:", error);
+      }
+      set({
+        themePreference: preference,
+        themeMode: resolveThemeMode(preference),
+      });
     },
     setThemePreset: (preset) => {
       try {
@@ -198,10 +210,7 @@ export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
           );
         }
       } catch (error) {
-        console.warn(
-          "Failed to persist host capabilities override:",
-          error,
-        );
+        console.warn("Failed to persist host capabilities override:", error);
       }
       set({ hostCapabilitiesOverride: next });
     },

@@ -35,13 +35,21 @@ vi.mock("@/hooks/useSandboxImages", () => ({
   useSandboxImages: () => undefined,
 }));
 
-// The environment pin is flag-gated; these cases exercise the enabled path.
+// The pin is NOT flag-gated: a suite fanning out over >=2 cells has to say
+// which one a scheduled run uses, whatever minted them. Kept mocked FALSE so
+// these cases prove the pin survives the named-environments flag being off.
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
-  useProjectEnvironmentsEnabled: () => true,
+  useProjectEnvironmentsEnabled: () => false,
 }));
 
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
+}));
+
+// `useEnvironmentLabelContext` always calls `useAvailableModels`, which
+// requires AppStateProvider. These cases only assert the pin select.
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({ availableModels: [] }),
 }));
 
 import { ScheduleEditor } from "../schedule-editor";

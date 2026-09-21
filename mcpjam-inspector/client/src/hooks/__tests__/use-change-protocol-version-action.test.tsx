@@ -87,7 +87,7 @@ describe("useChangeProtocolVersionAction", () => {
   });
 
   it("falls back to the clients list rather than guessing a client", () => {
-    // Chatbox and environment surfaces have no host id. `/hosts/undefined`
+    // Scenario and environment surfaces have no host id. `/hosts/undefined`
     // would be rejected by the route, so the link degrades instead.
     const { result } = renderHook(() =>
       useChangeProtocolVersionAction({

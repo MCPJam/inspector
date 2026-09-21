@@ -42,12 +42,12 @@ The canonical failure: a storefront widget's **cart button sends a `ui/message`
 
 There isn't one "widget loop" — there are three, and they differ in *who drives*:
 
-1. **Live human chat (Playground *and* ordinary chatbox)** — `useChatSession` owns the
+1. **Live human chat (Playground *and* ordinary scenario)** — `useChatSession` owns the
    browser `useChat` loop. Widget app-tool results feed back via `addToolOutput`;
    `sendAutomaticallyWhen` auto-continues after tool results/approvals; widget
    `ui/message` flows through the `Thread` renderer callbacks into `sendMessage`.
    (`use-chat-session.ts:1671`, `:1830`; `PlaygroundMain.tsx:2402`.)
-2. **Swarm / synthetic chatbox (session simulation) — agentic computer-use loop.**
+2. **Swarm / synthetic scenario (session simulation) — agentic computer-use loop.**
    Explicitly constructs `BrowserSessionContext` with `enableComputerUse: true`, injects
    `computer` / `finish_widget`, and loops persona turns until `maxTurns`/`endSession`.
    The *model* drives the widget by screenshots. (`sessionSimulation/runner.ts:551`, `:571`.)

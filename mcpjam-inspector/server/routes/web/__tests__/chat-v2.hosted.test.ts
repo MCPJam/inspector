@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
 const {
+  checkHarnessRuntimeAvailableMock,
   prepareChatV2Mock,
+  listCloudRuntimeSkillsMock,
   handleMCPJamFreeChatModelMock,
   fetchHostRuntimeConfigMock,
-  fetchChatboxRuntimeConfigMock,
+  fetchScenarioRuntimeConfigMock,
   persistChatSessionToConvexMock,
   disconnectAllServersMock,
   managerListToolsMock,
@@ -13,16 +15,20 @@ const {
   emitConstructorRpcLogMock,
   validateAppToolEntriesMock,
   AppToolValidationErrorMock,
+  validatePageToolEntriesMock,
+  PageToolValidationErrorMock,
   validateUiToolEntriesMock,
   UiToolValidationErrorMock,
   validateWidgetModelContextEntriesMock,
   buildWidgetModelContextSystemPromptMock,
   WidgetModelContextValidationErrorMock,
 } = vi.hoisted(() => ({
+  checkHarnessRuntimeAvailableMock: vi.fn(() => ({ ok: true })),
   prepareChatV2Mock: vi.fn(),
+  listCloudRuntimeSkillsMock: vi.fn(),
   handleMCPJamFreeChatModelMock: vi.fn(),
   fetchHostRuntimeConfigMock: vi.fn(),
-  fetchChatboxRuntimeConfigMock: vi.fn(),
+  fetchScenarioRuntimeConfigMock: vi.fn(),
   persistChatSessionToConvexMock: vi.fn(),
   disconnectAllServersMock: vi.fn(),
   managerListToolsMock: vi.fn(),
@@ -33,6 +39,13 @@ const {
     constructor(message: string) {
       super(message);
       this.name = "AppToolValidationError";
+    }
+  },
+  validatePageToolEntriesMock: vi.fn(() => []),
+  PageToolValidationErrorMock: class PageToolValidationError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "PageToolValidationError";
     }
   },
   validateUiToolEntriesMock: vi.fn(() => []),
@@ -99,6 +112,8 @@ vi.mock("../../../utils/chat-v2-orchestration.js", () => ({
   prepareChatV2: prepareChatV2Mock,
   validateAppToolEntries: validateAppToolEntriesMock,
   AppToolValidationError: AppToolValidationErrorMock,
+  validatePageToolEntries: validatePageToolEntriesMock,
+  PageToolValidationError: PageToolValidationErrorMock,
   validateUiToolEntries: validateUiToolEntriesMock,
   UiToolValidationError: UiToolValidationErrorMock,
   validateWidgetModelContextEntries: validateWidgetModelContextEntriesMock,
@@ -129,15 +144,30 @@ vi.mock("../../../utils/host-runtime-config.js", () => ({
   fetchHostRuntimeConfig: fetchHostRuntimeConfigMock,
 }));
 
-vi.mock("../../../utils/chatbox-runtime-config.js", async () => {
+// Only the PREFLIGHT is stubbed, and only so a harness-typed host can reach the
+// dispatch in a unit test (the real gate needs a computers data plane). Every
+// other export stays real — `harnessModelEligibleForRuntime` in particular,
+// which is the shared eligibility answer the dispatch reads.
+vi.mock("../../../utils/harness/harness-availability.js", async () => {
   const actual = await vi.importActual<
-    typeof import("../../../utils/chatbox-runtime-config.js")
-  >("../../../utils/chatbox-runtime-config.js");
-  // Keep `readChatboxEnvironment` REAL (the route parses the environment
-  // payload through it on every chatbox turn); mock only the network fetch.
+    typeof import("../../../utils/harness/harness-availability.js")
+  >("../../../utils/harness/harness-availability.js");
   return {
     ...actual,
-    fetchChatboxRuntimeConfig: fetchChatboxRuntimeConfigMock,
+    checkHarnessRuntimeAvailable: (...args: unknown[]) =>
+      checkHarnessRuntimeAvailableMock(...(args as [])),
+  };
+});
+
+vi.mock("../../../utils/scenario-runtime-config.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/scenario-runtime-config.js")
+  >("../../../utils/scenario-runtime-config.js");
+  // Keep `readScenarioEnvironment` REAL (the route parses the environment
+  // payload through it on every scenario turn); mock only the network fetch.
+  return {
+    ...actual,
+    fetchScenarioRuntimeConfig: fetchScenarioRuntimeConfigMock,
   };
 });
 
@@ -155,6 +185,17 @@ vi.mock("@/shared/types", async () => {
   };
 });
 
+vi.mock("../../../utils/computers/cloud-skill-tools.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/computers/cloud-skill-tools.js")
+  >("../../../utils/computers/cloud-skill-tools.js");
+  return {
+    ...actual,
+    listCloudRuntimeSkills: (...args: unknown[]) =>
+      listCloudRuntimeSkillsMock(...args),
+  };
+});
+
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 
@@ -162,10 +203,21 @@ describe("web routes — chat-v2 hosted mode", () => {
   const originalFetch = global.fetch;
   const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
 
+  it("rejects local Browser selection before constructing hosted tools", async () => {
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", {
+      projectId: "project-1", selectedServerIds: [], messages: [{ role: "user", content: "hi" }],
+      model: { id: "openai/gpt-5-mini", provider: "openai" }, browserEngine: "local",
+    }, token);
+    expect(response.status).toBe(409);
+    expect(prepareChatV2Mock).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
 
+    checkHarnessRuntimeAvailableMock.mockReturnValue({ ok: true });
     prepareChatV2Mock.mockResolvedValue({
       allTools: {},
       enhancedSystemPrompt: "system",
@@ -180,10 +232,11 @@ describe("web routes — chat-v2 hosted mode", () => {
       ok: true,
       config: { selectedServerIds: ["server-1"] },
     });
-    // Default: chatbox runtime-config resolves (empty = host has no
-    // overrides). Chatbox turns now FAIL CLOSED on a failed fetch, so the
+    listCloudRuntimeSkillsMock.mockReset().mockResolvedValue([]);
+    // Default: scenario runtime-config resolves (empty = host has no
+    // overrides). Scenario turns now FAIL CLOSED on a failed fetch, so the
     // happy-path tests must resolve it rather than lean on the old fallback.
-    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
       ok: true,
       config: {},
     });
@@ -255,7 +308,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     }
   });
 
-  it("persists chatbox preview chats with internal surface", async () => {
+  it("persists scenario preview chats with internal surface", async () => {
     const { app, token } = createWebTestApp();
 
     const response = await postJson(
@@ -264,7 +317,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         accessVersion: 1,
         surface: "preview",
         chatSessionId: "chat-session-1",
@@ -289,20 +342,62 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect.objectContaining({
         chatSessionId: "chat-session-1",
         projectId: "project-1",
-        sourceType: "chatbox",
-        chatboxId: "cbx_1",
+        sourceType: "scenario",
+        scenarioId: "cbx_1",
         surface: "preview",
         modelId: "openai/gpt-5-mini",
         modelSource: "mcpjam",
       })
     );
     // Non-direct flows must NOT send hostConfig — backend skips with
-    // missing_field, which is the desired behavior for chatbox/serverShare.
+    // missing_field, which is the desired behavior for scenario/serverShare.
     const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
     expect(persistArgs.hostConfig).toBeUndefined();
   });
 
-  it("ignores a client uiTools snapshot on direct AND chatbox turns (agent-route-only, never rejected)", async () => {
+  it("validates a pageTools snapshot and forwards it, so a hosted turn can offer a page's own tools", async () => {
+    // The Playground's "Page tools" opt-in was local-only while this route
+    // ignored the field: the model would have been offered tools whose calls
+    // nothing forwarded. `uiTools` below is still ignored — that one is
+    // agent-route-only — and the two live side by side on purpose.
+    const { app, token } = createWebTestApp();
+    const pageTools = [
+      {
+        alias: "page_1a2b3c4d",
+        rawName: "bookSlot",
+        toolKey: "bookSlot",
+        origin: "https://example.test",
+        description: "Book a slot",
+        inputSchema: { type: "object", properties: {} },
+      },
+    ];
+    validatePageToolEntriesMock.mockReturnValueOnce(pageTools as never);
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatSessionId: "chat-session-1",
+        messages: [{ role: "user", content: "hi" }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+        pageTools,
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(validatePageToolEntriesMock).toHaveBeenCalledWith(pageTools);
+    const prepareArgs = prepareChatV2Mock.mock.calls.at(-1)![0];
+    expect(prepareArgs.pageTools).toEqual(pageTools);
+  });
+
+  it("ignores a client uiTools snapshot on direct AND scenario turns (agent-route-only, never rejected)", async () => {
     const { app, token } = createWebTestApp();
     // Non-empty/stale snapshot a cached pre-cutover client may still send.
     const uiTools = [
@@ -328,14 +423,14 @@ describe("web routes — chat-v2 hosted mode", () => {
     let prepareArgs = prepareChatV2Mock.mock.calls.at(-1)![0];
     expect(prepareArgs.uiTools).toBeUndefined();
 
-    // Chatbox-bound turn: same silent-ignore treatment.
-    const chatbox = await postJson(
+    // Scenario-bound turn: same silent-ignore treatment.
+    const scenario = await postJson(
       app,
       "/api/web/chat-v2",
-      { ...baseBody, chatboxId: "cbx_1", accessVersion: 1, surface: "preview" },
+      { ...baseBody, scenarioId: "cbx_1", accessVersion: 1, surface: "preview" },
       token
     );
-    expect(chatbox.status).toBe(200);
+    expect(scenario.status).toBe(200);
     expect(validateUiToolEntriesMock).not.toHaveBeenCalled();
     prepareArgs = prepareChatV2Mock.mock.calls.at(-1)![0];
     expect(prepareArgs.uiTools).toBeUndefined();
@@ -464,9 +559,9 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
-  it("FAILS CLOSED when the chatbox runtime-config fetch fails — never runs the engine", async () => {
+  it("FAILS CLOSED when the scenario runtime-config fetch fails — never runs the engine", async () => {
     const { app, token } = createWebTestApp();
-    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
       ok: false,
       status: 502,
       error: "backend unreachable",
@@ -478,7 +573,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         accessVersion: 1,
         chatSessionId: "chat-cb-fail",
         messages: [{ role: "user", content: "preview request" }],
@@ -489,7 +584,7 @@ describe("web routes — chat-v2 hosted mode", () => {
 
     // The fetched config is the only source of harness/computer and of the
     // host-wins protections; falling back to body values would silently
-    // downgrade a harness chatbox and reopen the tampered-body window.
+    // downgrade a harness scenario and reopen the tampered-body window.
     // Pin the full status/code/message mapping so it can't regress silently:
     // upstream 5xx maps to 502 with the INTERNAL_ERROR envelope + the
     // upstream error surfaced in the message.
@@ -499,17 +594,17 @@ describe("web routes — chat-v2 hosted mode", () => {
       message?: string;
     };
     expect(body.code).toBe("INTERNAL_ERROR");
-    expect(body.message).toContain("Couldn't load this chatbox's settings");
+    expect(body.message).toContain("Couldn't load this scenario's settings");
     expect(body.message).toContain("backend unreachable");
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
-  it("tags a 403 chatbox runtime-config refusal as CHATBOX_ACCESS_DENIED", async () => {
+  it("tags a 403 scenario runtime-config refusal as SCENARIO_ACCESS_DENIED", async () => {
     const { app, token } = createWebTestApp();
-    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
       ok: false,
       status: 403,
-      error: "Chatbox not found or access denied",
+      error: "Scenario not found or access denied",
     });
 
     const response = await postJson(
@@ -518,7 +613,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         accessVersion: 1,
         chatSessionId: "chat-cb-denied",
         messages: [{ role: "user", content: "preview request" }],
@@ -535,8 +630,8 @@ describe("web routes — chat-v2 hosted mode", () => {
       code?: string;
       message?: string;
     };
-    expect(body.code).toBe("CHATBOX_ACCESS_DENIED");
-    expect(body.message).toContain("Couldn't load this chatbox's settings");
+    expect(body.code).toBe("SCENARIO_ACCESS_DENIED");
+    expect(body.message).toContain("Couldn't load this scenario's settings");
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
@@ -549,7 +644,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         accessVersion: 7,
         chatSessionId: "chat-cb-version",
         messages: [{ role: "user", content: "hi" }],
@@ -558,18 +653,18 @@ describe("web routes — chat-v2 hosted mode", () => {
       token
     );
 
-    expect(fetchChatboxRuntimeConfigMock).toHaveBeenCalledWith(
-      expect.objectContaining({ chatboxId: "cbx_1", accessVersion: 7 })
+    expect(fetchScenarioRuntimeConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({ scenarioId: "cbx_1", accessVersion: 7 })
     );
   });
 
-  it("surfaces a stale-version refusal as 409 CHATBOX_ACCESS_STALE", async () => {
+  it("surfaces a stale-version refusal as 409 SCENARIO_ACCESS_STALE", async () => {
     const { app, token } = createWebTestApp();
-    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
       ok: false,
       status: 409,
-      code: "CHATBOX_ACCESS_STALE",
-      error: "Chatbox access version is stale; re-redeem.",
+      code: "SCENARIO_ACCESS_STALE",
+      error: "Scenario access version is stale; re-redeem.",
     });
 
     const response = await postJson(
@@ -578,7 +673,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         accessVersion: 1,
         chatSessionId: "chat-cb-stale",
         messages: [{ role: "user", content: "hi" }],
@@ -591,11 +686,11 @@ describe("web routes — chat-v2 hosted mode", () => {
     // replays the turn without the tester seeing anything.
     expect(response.status).toBe(409);
     const body = (await response.json()) as { code?: string };
-    expect(body.code).toBe("CHATBOX_ACCESS_STALE");
+    expect(body.code).toBe("SCENARIO_ACCESS_STALE");
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
-  it("a chatbox session ignores a stray hostId (chatbox path wins)", async () => {
+  it("a scenario session ignores a stray hostId (scenario path wins)", async () => {
     const { app, token } = createWebTestApp();
 
     await postJson(
@@ -604,7 +699,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         accessVersion: 1,
         hostId: "host-1",
         chatSessionId: "chat-cb-1",
@@ -617,7 +712,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(fetchHostRuntimeConfigMock).not.toHaveBeenCalled();
   });
 
-  it("passes shared chatbox link context into the hosted model handler", async () => {
+  it("passes shared scenario link context into the hosted model handler", async () => {
     const { app, token } = createWebTestApp();
 
     const response = await postJson(
@@ -626,7 +721,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxId: "cbx_shared",
+        scenarioId: "cbx_shared",
         accessVersion: 2,
         surface: "share_link",
         chatSessionId: "chat-session-shared",
@@ -643,7 +738,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(response.status).toBe(200);
     expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        chatboxId: "cbx_shared",
+        scenarioId: "cbx_shared",
         accessVersion: 2,
         projectId: "project-1",
       })
@@ -672,7 +767,7 @@ describe("web routes — chat-v2 hosted mode", () => {
 
     expect(response.status).toBe(200);
     expect(global.fetch).toHaveBeenCalledTimes(1);
-    // Membership chat (no share/chatbox token) sends no accessScope — the
+    // Membership chat (no share/scenario token) sends no accessScope — the
     // backend authorizes via project ownership for both guest and authed
     // users uniformly. accessScope is only set when a token is in play.
     expect(global.fetch).toHaveBeenCalledWith(
@@ -686,6 +781,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         // mcpjam-backend/convex/http.ts.
         body: JSON.stringify({
           projectId: "project-1",
+          includeConnections: true,
           serverIds: ["server-1", "server-2"],
           localRuntime: true,
         }),
@@ -815,6 +911,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         directVisibility: "project",
         resumeConfig: expect.objectContaining({
           selectedServers: ["Asana"],
+          executionTarget: { kind: "adhoc" },
         }),
         hostConfig: expect.objectContaining({
           // Phase 3: hostStyle defaults to 'claude' when omitted —
@@ -1204,5 +1301,387 @@ describe("web routes — chat-v2 hosted mode", () => {
         ],
       })
     );
+  });
+
+  /**
+   * The project pool on a target that resolves NO environment (host / adhoc).
+   *
+   * This is the arm the convergence rewired: it used to reach the orchestrator as
+   * a `cloudSkills` option that chose one exclusive branch of a chain, and it now
+   * arrives as a live capability set alongside every other origin. The three
+   * cases below are the three the route can actually be in, and they differ in
+   * ways that matter: an EMPTY catalog is authoritative, a FAILED one is not.
+   */
+  describe("hosted chat-v2 — the project skill catalog", () => {
+    const bodyWithSkills = {
+      projectId: "project-1",
+      selectedServerIds: ["server-1"],
+      chatSessionId: "chat-session-1",
+      messages: [{ role: "user", content: "hi" }],
+      model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
+    };
+
+    it("delivers a non-empty catalog as a live resolved source", async () => {
+      listCloudRuntimeSkillsMock.mockResolvedValue([
+        {
+          skillId: "sk_1",
+          ref: "release-notes",
+          name: "release-notes",
+          description: "Write release notes",
+          aggregateHash: "agg_1",
+          channels: [],
+          content: async () => "# release-notes",
+          files: [],
+        },
+      ]);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        bodyWithSkills,
+        token
+      );
+      expect(response.status).toBe(200);
+
+      const args = prepareChatV2Mock.mock.calls.at(-1)![0];
+      expect(args.skillsSource.kind).toBe("resolved");
+      // Live, so a connected server's SEP-2640 skills compose on top rather than
+      // being displaced by the project's.
+      expect(args.skillsSource.composeLiveServerSkills).toBe(true);
+      expect(
+        args.skillsSource.capabilities.standaloneSkills.map(
+          (skill: { ref: string }) => skill.ref
+        )
+      ).toEqual(["release-notes"]);
+    });
+
+    it("keeps an empty catalog authoritative rather than falling back", async () => {
+      listCloudRuntimeSkillsMock.mockResolvedValue([]);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        bodyWithSkills,
+        token
+      );
+      expect(response.status).toBe(200);
+
+      // "This project has no skills" is an answer, not a gap: the source is still
+      // resolved and still live, it is simply empty.
+      const args = prepareChatV2Mock.mock.calls.at(-1)![0];
+      expect(args.skillsSource.kind).toBe("resolved");
+      expect(args.skillsSource.capabilities.standaloneSkills).toEqual([]);
+      expect(args.skillsSource.composeLiveServerSkills).toBe(true);
+    });
+
+    it("loses the turn's project skills, and nothing else, when the catalog fails", async () => {
+      listCloudRuntimeSkillsMock.mockRejectedValue(new Error("convex down"));
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        bodyWithSkills,
+        token
+      );
+      // Losing the skills must not lose the turn.
+      expect(response.status).toBe(200);
+
+      // No source at all is the LIVE shape: the orchestrator still composes the
+      // connected servers' skills, which never failed. Collapsing to
+      // `{ kind: "none" }` here would take those down with the project's.
+      const args = prepareChatV2Mock.mock.calls.at(-1)![0];
+      expect(args.skillsSource).toBeUndefined();
+    });
+  });
+
+  /**
+   * The Cursor CLI host seeds `modelId: "cursor/auto"` — a neutral sentinel.
+   * The adapter passes NO model (`toNativeModel: () => undefined`) and Cursor
+   * Auto picks one on the customer's own account, so the sentinel is the only
+   * honest thing a Cursor turn can record.
+   *
+   * It could not survive the round trip. The Playground picker cannot hold the
+   * sentinel (it is not in `availableModels`), so the browser sent whatever
+   * model was last selected, and the non-scenario host-model override refused
+   * to correct it — leaving the session row naming a model the turn never
+   * touched, or nothing at all.
+   */
+  describe("an external-account harness host records ITS OWN model", () => {
+    const cursorHost = {
+      ok: true,
+      config: {
+        selectedServerIds: ["server-1"],
+        modelId: "cursor/auto",
+        harness: "cursor",
+      },
+    };
+
+    it("persists the host's cursor/auto sentinel, not the browser's leftover pick", async () => {
+      fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-cursor",
+          chatSessionId: "chat-cursor-1",
+          messages: [{ role: "user", content: "preview request" }],
+          // What the picker actually holds on a Cursor host: an unrelated
+          // model, because the sentinel is not a selectable entry.
+          model: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            name: "Haiku",
+          },
+        },
+        token
+      );
+
+      expect(response.status).toBe(200);
+      expect(persistChatSessionToConvexMock).toHaveBeenCalledTimes(1);
+      const persisted = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+      // The sentinel — never blank, and never the Haiku id that nothing ran.
+      expect(persisted.modelId).toBe("cursor/auto");
+      // And not billed to MCPJam: the turn ran on the customer's Cursor account.
+      expect(persisted.modelSource).toBe("external-account");
+      expect(persisted.hostConfig?.modelId).toBe("cursor/auto");
+    });
+
+    it("routes the turn to the harness instead of demanding an org `cursor` provider key", async () => {
+      fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-cursor",
+          chatSessionId: "chat-cursor-2",
+          messages: [{ role: "user", content: "preview request" }],
+          model: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            name: "Haiku",
+          },
+        },
+        token
+      );
+
+      // `cursor/auto` is not an MCPJam-hosted model, so without the
+      // external-account exemption this turn takes the org-BYOK branch and
+      // asks Convex for a `cursor` provider key — which answers
+      // `provider_not_configured: cursor`.
+      expect(response.status).toBe(200);
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(1);
+      const engineArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      expect(engineArgs.harness).toBe("cursor");
+      expect(engineArgs.modelId).toBe("cursor/auto");
+    });
+
+    it("leaves a NON-harness host's model to the body, as before", async () => {
+      // The exemption is scoped to external-account harnesses. A Playground
+      // preview of an ordinary host must keep letting the owner's in-session
+      // model choice win — that is the whole point of `override-wins`.
+      fetchHostRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: {
+          selectedServerIds: ["server-1"],
+          modelId: "openai/gpt-5-mini",
+        },
+      });
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-plain",
+          chatSessionId: "chat-plain-1",
+          messages: [{ role: "user", content: "preview request" }],
+          model: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            name: "Haiku",
+          },
+        },
+        token
+      );
+
+      expect(response.status).toBe(200);
+      const persisted = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+      expect(persisted.modelId).toBe("anthropic/claude-haiku-4.5");
+    });
+
+    // Every shape a browser can actually put in `model.id`. `model` arrives
+    // through an unvalidated body cast (`hostedChatSchema` does not describe
+    // it), so `ModelDefinition.id` being REQUIRED in TypeScript says nothing
+    // about what was posted — and the harness rail is the one live path with no
+    // downstream model-id check (it skips both `deriveOrgProviderKey` and the
+    // harness model gates), so an unusable id used to run a whole turn and
+    // write `String(undefined)` / `""` into the session row.
+    //
+    // The assertion that matters is not the 400 but WHEN: before the engine and
+    // before any persist, so a rejected turn leaves no trace of a session that
+    // ran on nothing.
+    it.each([
+      ["missing", { provider: "anthropic", name: "Haiku" }],
+      ["null", { id: null, provider: "anthropic", name: "Haiku" }],
+      ["empty", { id: "", provider: "anthropic", name: "Haiku" }],
+      ["whitespace-only", { id: "   ", provider: "anthropic", name: "Haiku" }],
+    ])(
+      "refuses a body whose model id is %s, before running or persisting anything",
+      async (label, model) => {
+        fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+        const { app, token } = createWebTestApp();
+
+        const response = await postJson(
+          app,
+          "/api/web/chat-v2",
+          {
+            projectId: "project-1",
+            selectedServerIds: ["server-1"],
+            hostId: "host-cursor",
+            chatSessionId: `chat-cursor-invalid-${label}`,
+            messages: [{ role: "user", content: "preview request" }],
+            model,
+          },
+          token
+        );
+
+        expect(response.status).toBe(400);
+        expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+        expect(persistChatSessionToConvexMock).not.toHaveBeenCalled();
+      }
+    );
+
+    /**
+     * The mis-configured host — an external-account harness whose model is an
+     * ordinary id. It is refused, and refused EARLY: before the host model is
+     * resolved (a Convex org-model-config call carrying a 15 s timeout) and
+     * before the shared pre-flight it would fail anyway.
+     *
+     * The refusal itself is asserted against the real gate in
+     * `harness/__tests__/harness-availability.test.ts`; the pre-flight is
+     * stubbed `{ ok: true }` here, which is what makes these two tests sharp —
+     * a 503 can only be the route's own early check, and a call to the stub is
+     * proof the early check did NOT fire.
+     */
+    const misconfiguredCursorHost = {
+      ok: true,
+      config: {
+        selectedServerIds: ["server-1"],
+        modelId: "anthropic/claude-sonnet-4.5",
+        harness: "cursor",
+      },
+    };
+
+    it("refuses a mis-configured host before resolving its model", async () => {
+      fetchHostRuntimeConfigMock.mockResolvedValue(misconfiguredCursorHost);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-cursor-misconfigured",
+          chatSessionId: "chat-cursor-4",
+          messages: [{ role: "user", content: "preview request" }],
+          model: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            name: "Haiku",
+          },
+        },
+        token
+      );
+
+      expect(response.status).toBe(503);
+      const body = (await response.json()) as { error?: { message?: string } };
+      expect(JSON.stringify(body)).toContain("chooses its own model");
+      // The id its owner has to fix, named in the refusal.
+      expect(JSON.stringify(body)).toContain("anthropic/claude-sonnet-4.5");
+      // EARLY: the pre-flight sits after the model resolution, so reaching it
+      // would mean the 15 s org-config call had already been paid for.
+      expect(checkHarnessRuntimeAvailableMock).not.toHaveBeenCalled();
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+      expect(persistChatSessionToConvexMock).not.toHaveBeenCalled();
+    });
+
+    it("a body-supplied sentinel cannot stand in for the host's own model", async () => {
+      // The bypass this closes: POST `cursor/auto` at a host that pins an
+      // ordinary id. Every check on this rail has to read the HOST's id —
+      // nothing consumes the turn's model on an external-account harness, so a
+      // rule held to the body's model is a rule a caller can satisfy.
+      fetchHostRuntimeConfigMock.mockResolvedValue(misconfiguredCursorHost);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-cursor-misconfigured",
+          chatSessionId: "chat-cursor-5",
+          messages: [{ role: "user", content: "preview request" }],
+          model: { id: "cursor/auto", provider: "cursor", name: "Cursor Auto" },
+        },
+        token
+      );
+
+      expect(response.status).toBe(503);
+      expect(JSON.stringify(await response.json())).toContain(
+        "anthropic/claude-sonnet-4.5"
+      );
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+      expect(persistChatSessionToConvexMock).not.toHaveBeenCalled();
+    });
+
+    it("hands the pre-flight the sentinel host's id under `hostModelId`", async () => {
+      // The correctly configured host runs, and the gate is told which id is
+      // the HOST's — the input the external-account rule reads, and the one a
+      // request body must never be able to supply.
+      fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-cursor",
+          chatSessionId: "chat-cursor-6",
+          messages: [{ role: "user", content: "preview request" }],
+          model: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            name: "Haiku",
+          },
+        },
+        token
+      );
+
+      expect(response.status).toBe(200);
+      expect(checkHarnessRuntimeAvailableMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          // Promoted: the host's model, not the body's.
+          model: expect.objectContaining({ id: "cursor/auto" }),
+          hostModelId: "cursor/auto",
+        })
+      );
+    });
   });
 });

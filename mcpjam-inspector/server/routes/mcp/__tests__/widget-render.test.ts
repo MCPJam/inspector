@@ -307,18 +307,57 @@ describe("POST /api/mcp/widget-render", () => {
       expect(mcpClientManager.executeTool).not.toHaveBeenCalled();
     });
 
-    it("stops draining if the server loops the same cursor", async () => {
-      // A server that returns the same cursor forever must not hang the gate.
-      mcpClientManager.listTools.mockResolvedValue({
-        tools: [{ name: "x", _meta: {} }],
-        nextCursor: "same",
-      });
+    it("follows an empty-string nextCursor and sends it back verbatim", async () => {
+      // MCP 2026-07-28 `server/utilities/pagination`: "an empty string is a
+      // valid cursor and thus MUST NOT be treated as the end of results".
+      // Reading `""` as the end hid every tool from page two onward.
+      const cursors: Array<string | undefined> = [];
+      mcpClientManager.listTools.mockImplementation(
+        async (_serverId: string, params?: { cursor?: string }) => {
+          cursors.push(params?.cursor);
+          if (params?.cursor === undefined) {
+            return {
+              tools: [{ name: "other_tool", _meta: {} }],
+              nextCursor: "",
+            };
+          }
+          return {
+            tools: [{ name: TOOL_NAME, _meta: MCP_APP_META }],
+            nextCursor: undefined,
+          };
+        },
+      );
       const res = await postRender(app, {
         serverId: SERVER_ID,
         toolName: TOOL_NAME,
       });
-      expect((await res.json()).status).toBe("no_ui_resource");
-      expect(mcpClientManager.listTools).toHaveBeenCalledTimes(2);
+      expect((await res.json()).status).toBe("rendered");
+      expect(cursors).toEqual([undefined, ""]);
+      expect(mcpClientManager.listTools).toHaveBeenLastCalledWith(SERVER_ID, {
+        cursor: "",
+      });
+    });
+
+    // A repeated cursor is FOLLOWED, not read as an ending: MCP 2026-07-28
+    // `server/utilities/pagination` forbids reading anything off a cursor's
+    // value beyond whether one was provided, and a server may legally reissue
+    // one constant token — `""` included. MAX_TOOL_LIST_PAGES is what bounds
+    // the gate.
+    it("keeps draining a constant cursor and stops at the page cap", async () => {
+      for (const constant of ["", "same"]) {
+        mcpClientManager.listTools.mockClear();
+        mcpClientManager.listTools.mockResolvedValue({
+          tools: [{ name: "x", _meta: {} }],
+          nextCursor: constant,
+        });
+        const res = await postRender(app, {
+          serverId: SERVER_ID,
+          toolName: TOOL_NAME,
+        });
+        expect((await res.json()).status).toBe("no_ui_resource");
+        // Not stopped at page two; bounded by our own cap instead.
+        expect(mcpClientManager.listTools.mock.calls.length).toBeGreaterThan(2);
+      }
     });
   });
 

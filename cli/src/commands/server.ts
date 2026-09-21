@@ -139,6 +139,9 @@ export function registerServerCommands(program: Command): void {
         result = await probeMcpServer({
           url: probeUrl,
           protocolVersion,
+          // Local tool, local servers: probing http://127.0.0.1:3000/mcp is
+          // the ordinary case, not the exception.
+          allowPrivateNetwork: true,
           headers: parseHeadersOption(options.header),
           accessToken,
           clientCapabilities:
@@ -542,7 +545,7 @@ export function registerServerCommands(program: Command): void {
         )
         .option(
           "--reporter <reporter>",
-          "Structured reporter output: json-summary or junit-xml",
+          "Structured reporter output: json-summary, junit-xml, or html",
         )
         .option("--out <path>", "Write the raw diff JSON artifact to a file"),
     ),

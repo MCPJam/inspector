@@ -1,6 +1,8 @@
 import { useAction, useConvexAuth } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { SWARM_ACTIONS, type SwarmSessionPromoteDetail } from "@/lib/swarm-api";
+import { getPromoteBlockedMessage } from "@/lib/promote-blocked-copy";
+import { reportCaught } from "@/lib/error-reporting";
 import {
   ConvertSessionDialogCore,
   type PromoteSessionDetailState,
@@ -57,7 +59,7 @@ function buildTitle(
  * `defaultHostId` pre-seeds the new-suite client attachment with the host the
  * session actually executes against, so a promoted case replays against the
  * same client emulation. It prefers the backend's `suggestedHostAttachment`
- * over the raw `hostId`: on environment-backed chatboxes the session row
+ * over the raw `hostId`: on environment-backed scenarios the session row
  * records the PUBLISH-TIME host (display-only), while the environment — which
  * live-follows and may have been re-pointed since — owns the real one. Falling
  * back to `hostId` keeps this working against a backend that predates the
@@ -112,14 +114,30 @@ export function ConvertPromotableSessionDialog({
           error: null,
           usedServerIds: response.usedServerIds ?? [],
           selectedServers: response.selectedServers ?? [],
+          // Forwarded verbatim. The adapter never decides this from
+          // `sourceType`: a synthetic scenario session IS a scenario session
+          // and would be asked, wrongly, by any client-side rule.
+          requiresContentTransferAcknowledgement:
+            response.requiresContentTransferAcknowledgement === true,
         });
       } catch (error) {
         if (cancelled) {
           return;
         }
-        const message =
-          error instanceof Error ? error.message : "Failed to load session";
-        setDetail({ ...IDLE_DETAIL, error: message });
+        // Report BEFORE classifying. `getPromoteBlockedMessage` deliberately
+        // refuses to read `Error.message`, so from here on the only copy of an
+        // unexpected fault — its Request ID, its stack — is this `error`
+        // binding. Dropping it means a broken deploy produces no Sentry issue
+        // and no console line, just users saying "it says failed to load".
+        reportCaught(error, { source: "promote-session-detail" });
+        // NEVER `error.message` here: a refusal thrown inside the Convex
+        // action arrives wrapped in the raw server envelope, and this string
+        // is rendered straight into the dialog's alert — which is how a stack
+        // trace ended up in front of users (BB-247).
+        setDetail({
+          ...IDLE_DETAIL,
+          error: getPromoteBlockedMessage(error, "Failed to load session"),
+        });
       }
     })();
 

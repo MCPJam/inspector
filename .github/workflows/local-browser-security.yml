@@ -1,0 +1,68 @@
+name: Local Browser Security
+on:
+  pull_request:
+    paths:
+      - "mcpjam-inspector/server/services/browserd/**"
+      - "mcpjam-inspector/server/services/webmcp-inspector/**"
+      - "mcpjam-inspector/server/routes/**"
+      - "mcpjam-inspector/server/utils/**"
+      - "mcpjam-inspector/src/**"
+      - "mcpjam-inspector/client/**"
+      - "mcpjam-inspector/shared/**"
+      - "mcpjam-inspector/scripts/*security-smoke*"
+      - "package-lock.json"
+      - ".github/workflows/local-browser-security.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: local-browser-security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  real-engines:
+    name: Security / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.14.0"
+          cache: npm
+      - run: npm ci --legacy-peer-deps
+      - run: npm run sdk:build -w @mcpjam/inspector
+      - name: Install shipping Playwright browser
+        working-directory: mcpjam-inspector
+        run: npx playwright install --with-deps chromium
+      - name: Exercise Node and Electron security boundaries
+        if: runner.os != 'Linux'
+        run: node mcpjam-inspector/scripts/run-local-browser-security-smoke.mjs
+      # ubuntu-24.04 ships `kernel.apparmor_restrict_unprivileged_userns=1`,
+      # which denies the unprivileged user namespace Chromium's sandbox is
+      # built on — so Chromium aborts at startup with "No usable sandbox!".
+      #
+      # The launcher REFUSES `--no-sandbox` (and root) whenever a local
+      # security policy is attached, which is one of the properties this job
+      # exists to prove. So the runner gets a working sandbox; the launch is
+      # never weakened to fit the runner. Relaxing the knob is a statement
+      # about THIS ephemeral runner, not about what the product allows.
+      - name: Allow the unprivileged user namespace Chromium's sandbox needs
+        if: runner.os == 'Linux'
+        # Absent knob => nothing to relax, so say so and move on rather than
+        # going red on an image that never had the restriction. Present but
+        # unsettable IS worth failing on: the smoke would then launch under a
+        # sandbox we did not verify we could get.
+        run: |
+          key=kernel.apparmor_restrict_unprivileged_userns
+          if sysctl -n "$key" >/dev/null 2>&1; then
+            sudo sysctl -w "$key"=0
+          else
+            echo "$key is not present on this image; nothing to relax."
+          fi
+      - name: Exercise Linux with a real display and sandbox
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node mcpjam-inspector/scripts/run-local-browser-security-smoke.mjs

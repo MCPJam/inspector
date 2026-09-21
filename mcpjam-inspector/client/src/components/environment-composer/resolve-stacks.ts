@@ -13,10 +13,16 @@
  * directly testable; callers use {@link useComposerResolver}.
  */
 import {
+  expandModelChoices,
   isComposeMode,
+  modelChoiceCount,
+  modelSelectionForHost,
+  sameOptionalModel,
   stackFieldsEqual,
+  targetProductCapReason,
   type EnvironmentComposerState,
   type EnvironmentStack,
+  type ModelSelection,
 } from "@/components/environment-composer/environment-stack";
 import { isNamedEnvironment } from "@/lib/environment-label";
 import type {
@@ -30,12 +36,16 @@ export type AdhocStackInput = {
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   computerEnvironmentId?: string;
+  /** Explicit model override. Omit to inherit the client's model. */
+  modelId?: string;
 };
 
 export type EnsureAdhocEnvironmentsFn = (args: {
   projectId: string;
   stacks: AdhocStackInput[];
-}) => Promise<Array<{ environment: ProjectEnvironmentView; created?: boolean }>>;
+}) => Promise<
+  Array<{ environment: ProjectEnvironmentView; created?: boolean }>
+>;
 
 export type ComposerResolveErrorCode =
   | "NO_TARGETS"
@@ -64,7 +74,8 @@ export class ComposerResolveError extends Error {
  * to pick a saved environment instead).
  */
 export function isAdhocUnavailable(err: unknown): boolean {
-  if (err instanceof ComposerResolveError) return err.code === "ADHOC_UNAVAILABLE";
+  if (err instanceof ComposerResolveError)
+    return err.code === "ADHOC_UNAVAILABLE";
   return /could not find public function/i.test(backendMessage(err) ?? "");
 }
 
@@ -102,7 +113,7 @@ export type ResolveComposerResult = {
 function sharedFields(
   stack: EnvironmentStack,
   skillsEnabled: boolean,
-  computersEnabled: boolean
+  computersEnabled: boolean,
 ) {
   return {
     serverAttachmentId: stack.serverAttachmentId ?? null,
@@ -136,20 +147,23 @@ function matchingNamedEnvironment(
    * user: on User Testing, silently swapping to another matching row opens or
    * publishes a DIFFERENT environment's scenario, with its own name and access.
    */
-  preferIds: readonly string[] = []
+  preferIds: readonly string[] = [],
+  /** Inherit cell = undefined. A named row with an override must not match. */
+  modelId?: string,
 ): ProjectEnvironmentView | undefined {
   const matches = (env: ProjectEnvironmentView) =>
     !env.archivedAt &&
     env.hostId === hostId &&
     isNamedEnvironment(env) &&
     (env.pluginVersionIds?.length ?? 0) === 0 &&
+    sameOptionalModel(env.modelId, modelId) &&
     stackFieldsEqual(
       {
         serverAttachmentId: env.serverAttachmentId ?? null,
         skillSelection: env.skillSelection ?? null,
         computerEnvironmentId: env.computerEnvironmentId ?? null,
       },
-      fields
+      fields,
     );
 
   for (const id of preferIds) {
@@ -169,6 +183,11 @@ export async function resolveComposerEnvironments(args: {
   computersEnabled: boolean;
   /** Fan-out cap this surface enforces. */
   max: number;
+  /**
+   * Backend `modelMatrix` capability. Undefined / false means this client
+   * must not send `modelId` — an older validator would reject the arg.
+   */
+  modelMatrixEnabled?: boolean;
 }): Promise<ResolveComposerResult> {
   const {
     projectId,
@@ -178,6 +197,7 @@ export async function resolveComposerEnvironments(args: {
     skillsEnabled,
     computersEnabled,
     max,
+    modelMatrixEnabled = false,
   } = args;
 
   const live = liveEnvironments.filter((e) => !e.archivedAt);
@@ -187,7 +207,7 @@ export async function resolveComposerEnvironments(args: {
     if (state.environmentIds.length === 0) {
       throw new ComposerResolveError(
         "NO_TARGETS",
-        "Pick an environment or a client to choose where this runs."
+        "Pick an environment or a client to choose where this runs.",
       );
     }
     const environments: ProjectEnvironmentView[] = [];
@@ -198,7 +218,7 @@ export async function resolveComposerEnvironments(args: {
         // a target that can never launch, so make the user detach it instead.
         throw new ComposerResolveError(
           "UNRESOLVED_ENVIRONMENT",
-          "One of the selected environments is no longer available. Remove it and pick another."
+          "One of the selected environments is no longer available. Remove it and pick another.",
         );
       }
       environments.push(env);
@@ -212,51 +232,104 @@ export async function resolveComposerEnvironments(args: {
   }
 
   const hostIds = [...new Set(state.stack.hostIds.filter(Boolean))];
-  if (hostIds.length === 0) {
+  const selectionsByHost = hostIds.map((hostId) => ({
+    hostId,
+    selection: normalizeModelSelection(
+      modelSelectionForHost(state.stack, hostId),
+    ),
+  }));
+  if (
+    hostIds.length === 0 ||
+    selectionsByHost.some(
+      ({ selection }) => expandModelChoices(selection).length === 0,
+    )
+  ) {
     throw new ComposerResolveError(
       "NO_TARGETS",
-      "Pick at least one client to choose where this runs."
+      selectionsByHost.some(
+        ({ selection }) => expandModelChoices(selection).length === 0,
+      )
+        ? "Pick at least one model choice — Client defaults or a catalog model."
+        : "Pick at least one client to choose where this runs.",
     );
   }
-  if (hostIds.length > max) {
+  if (
+    selectionsByHost.some(
+      ({ selection }) => selection.explicitModelIds.length > 0,
+    ) &&
+    modelMatrixEnabled !== true
+  ) {
+    throw new ComposerResolveError(
+      "BACKEND_REJECTED",
+      "This workspace's backend doesn't support model fan-out yet. Leave Client defaults selected, or upgrade the backend.",
+    );
+  }
+  const product = selectionsByHost.reduce(
+    (total, { selection }) => total + modelChoiceCount(selection),
+    0,
+  );
+  if (product > max) {
     throw new ComposerResolveError(
       "TOO_MANY_TARGETS",
-      `At most ${max} environment${max === 1 ? "" : "s"} at a time.`
+      state.stack.modelSelectionsByHost
+        ? `${product} targets; limit ${max}`
+        : targetProductCapReason(
+            hostIds.length,
+            modelChoiceCount(selectionsByHost[0]!.selection),
+            max,
+          ),
     );
   }
 
   const fields = sharedFields(state.stack, skillsEnabled, computersEnabled);
 
-  // Reuse named rows first; only the rest need minting.
-  const reusedByHost = new Map<string, ProjectEnvironmentView>();
-  const toMint: string[] = [];
-  for (const hostId of hostIds) {
-    const named = matchingNamedEnvironment(
-      hostId,
-      fields,
-      live,
-      state.environmentIds
-    );
-    if (named) reusedByHost.set(hostId, named);
-    else toMint.push(hostId);
+  type Cell = { hostId: string; modelId: string | undefined; key: string };
+  const cells: Cell[] = [];
+  for (const { hostId, selection } of selectionsByHost) {
+    for (const choice of expandModelChoices(selection)) {
+      cells.push({
+        hostId,
+        modelId: choice.modelId,
+        key: cellKey(hostId, choice.modelId),
+      });
+    }
   }
 
-  const mintedByHost = new Map<
+  // Reuse named rows first; only the rest need minting.
+  const reusedByCell = new Map<string, ProjectEnvironmentView>();
+  const toMint: Cell[] = [];
+  for (const cell of cells) {
+    const named = matchingNamedEnvironment(
+      cell.hostId,
+      fields,
+      live,
+      state.environmentIds,
+      cell.modelId,
+    );
+    if (named) reusedByCell.set(cell.key, named);
+    else toMint.push(cell);
+  }
+
+  const mintedByCell = new Map<
     string,
     { environment: ProjectEnvironmentView; created?: boolean }
   >();
   if (toMint.length > 0) {
     // `computerEnvironmentId` is omitted rather than sent as null — the mutation
     // types it `string?` and Convex rejects an explicit null at the validator.
-    const stacks: AdhocStackInput[] = toMint.map((hostId) => ({
-      hostId,
+    // Same for inherit-cell `modelId`.
+    const stacks: AdhocStackInput[] = toMint.map((cell) => ({
+      hostId: cell.hostId,
       ...(fields.serverAttachmentId
         ? { serverAttachmentId: fields.serverAttachmentId }
         : {}),
-      ...(fields.skillSelection ? { skillSelection: fields.skillSelection } : {}),
+      ...(fields.skillSelection
+        ? { skillSelection: fields.skillSelection }
+        : {}),
       ...(fields.computerEnvironmentId
         ? { computerEnvironmentId: fields.computerEnvironmentId }
         : {}),
+      ...(cell.modelId ? { modelId: cell.modelId } : {}),
     }));
 
     let results: Awaited<ReturnType<EnsureAdhocEnvironmentsFn>>;
@@ -266,51 +339,63 @@ export async function resolveComposerEnvironments(args: {
       if (isAdhocUnavailable(err)) {
         throw new ComposerResolveError(
           "ADHOC_UNAVAILABLE",
-          "This workspace's backend doesn't support quick setups yet. Pick a saved environment instead."
+          "This workspace's backend doesn't support quick setups yet. Pick a saved environment instead.",
         );
       }
       throw new ComposerResolveError(
         "BACKEND_REJECTED",
-        backendMessage(err) ?? "Could not resolve this setup into environments."
+        backendMessage(err) ??
+          "Could not resolve this setup into environments.",
       );
     }
 
     if (results.length !== toMint.length) {
       throw new ComposerResolveError(
         "BACKEND_REJECTED",
-        "Could not resolve this setup into environments."
+        "Could not resolve this setup into environments.",
       );
     }
-    toMint.forEach((hostId, i) => mintedByHost.set(hostId, results[i]));
+    toMint.forEach((cell, i) => mintedByCell.set(cell.key, results[i]));
   }
 
-  // Reassemble in the user's client order — the batch only covered the mints.
+  // Reassemble in host-major × model-choice order — the batch only covered mints.
   const environmentIds: string[] = [];
   const environments: ProjectEnvironmentView[] = [];
   const createdIds: string[] = [];
   const reusedIds: string[] = [];
-  for (const hostId of hostIds) {
-    const reused = reusedByHost.get(hostId);
+  for (const cell of cells) {
+    const reused = reusedByCell.get(cell.key);
     if (reused) {
       pushUnique(reused, environmentIds, environments, reusedIds);
       continue;
     }
-    const minted = mintedByHost.get(hostId);
+    const minted = mintedByCell.get(cell.key);
     if (!minted) {
       throw new ComposerResolveError(
         "BACKEND_REJECTED",
-        "Could not resolve this setup into environments."
+        "Could not resolve this setup into environments.",
       );
     }
     pushUnique(
       minted.environment,
       environmentIds,
       environments,
-      minted.created === true ? createdIds : reusedIds
+      minted.created === true ? createdIds : reusedIds,
     );
   }
 
   return { environmentIds, environments, createdIds, reusedIds };
+}
+
+function normalizeModelSelection(selection: ModelSelection): ModelSelection {
+  return {
+    includeClientDefaults: selection.includeClientDefaults,
+    explicitModelIds: [...new Set(selection.explicitModelIds.filter(Boolean))],
+  };
+}
+
+function cellKey(hostId: string, modelId: string | undefined): string {
+  return `${hostId}::${modelId ?? ""}`;
 }
 
 /**
@@ -323,7 +408,7 @@ function pushUnique(
   env: ProjectEnvironmentView,
   environmentIds: string[],
   environments: ProjectEnvironmentView[],
-  bucket: string[]
+  bucket: string[],
 ) {
   if (environmentIds.includes(env.environmentId)) return;
   environmentIds.push(env.environmentId);

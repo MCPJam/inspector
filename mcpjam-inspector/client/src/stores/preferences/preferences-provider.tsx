@@ -1,4 +1,6 @@
-import { createContext, useContext, useRef } from "react";
+import { getInitialThemePreference, updateThemeMode } from "@/lib/theme-utils";
+import { resolveThemeMode } from "@/lib/theme-mode";
+import { createContext, useContext, useEffect, useRef } from "react";
 
 import { useStore, type StoreApi } from "zustand";
 
@@ -22,9 +24,35 @@ export const PreferencesStoreProvider = ({
 
   storeRef.current ??= createPreferencesStore({
     themeMode,
+    themePreference:
+      getInitialThemePreference() === "system" ? "system" : themeMode,
     themePreset,
     hostStyle,
   });
+
+  useEffect(() => {
+    const store = storeRef.current!;
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const apply = () => {
+      const preference = store.getState().themePreference;
+      const mode = resolveThemeMode(preference);
+      if (store.getState().themeMode !== mode)
+        store.setState({ themeMode: mode });
+      updateThemeMode(mode);
+    };
+    apply();
+    const unsubscribe = store.subscribe((state, previous) => {
+      if (state.themePreference !== previous.themePreference) apply();
+    });
+    const onSystemChange = () => {
+      if (store.getState().themePreference === "system") apply();
+    };
+    media?.addEventListener("change", onSystemChange);
+    return () => {
+      unsubscribe();
+      media?.removeEventListener("change", onSystemChange);
+    };
+  }, []);
 
   return (
     <PreferencesStoreContext.Provider value={storeRef.current}>
@@ -38,5 +66,31 @@ export const usePreferencesStore = <T,>(
 ): T => {
   const store = useContext(PreferencesStoreContext);
   if (!store) throw new Error("Missing PreferencesStoreProvider");
+  return useStore(store, selector);
+};
+
+/**
+ * Defaults-backed store for presentational leaves that only *read* a
+ * preference — a server card's client-support pill asking which theme it is
+ * in, say. Those components are rendered bare in plenty of unit tests, and
+ * making one throw for want of an app-level provider turns a cosmetic read
+ * into a hard failure for every such test.
+ *
+ * Created once, module-level, so the hook is unconditional (no conditional
+ * `useStore`) and every provider-less consumer shares one instance. It holds
+ * the same values `createPreferencesStore()` starts with — `themeMode` is
+ * "light" — and nothing writes to it, so a read here means "no provider in
+ * this tree, assume the defaults."
+ *
+ * Anything that *depends* on the real preference (persisting a change, gating
+ * behavior) must use `usePreferencesStore` and get the loud error instead.
+ */
+let defaultsStore: StoreApi<PreferencesState> | null = null;
+
+export const usePreferencesStoreWithDefaults = <T,>(
+  selector: (state: PreferencesState) => T,
+): T => {
+  defaultsStore ??= createPreferencesStore();
+  const store = useContext(PreferencesStoreContext) ?? defaultsStore;
   return useStore(store, selector);
 };

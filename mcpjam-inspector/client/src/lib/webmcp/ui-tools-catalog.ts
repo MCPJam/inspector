@@ -1,6 +1,7 @@
 /**
- * The v1 `ui_*` catalog: hand-curated tools the in-app agent resolves in the
- * browser. Mostly tools that DRIVE the MCPJam inspector; `ui_ask_user` is the
+ * The v1 `ui_*` catalog: hand-curated tools resolved in the browser — by the
+ * in-app "Ask MCPJam" agent and, for the eligible ones, by whatever
+ * browser-native WebMCP agent the user is running. Mostly tools that DRIVE the MCPJam inspector; `ui_ask_user` is the
  * exception that collects input from it instead, which is why the namespace
  * means "the browser fulfills this" rather than "this moves the UI" (see
  * `shared/client-fulfilled-tools.ts`). Thin wrappers over the command bus —
@@ -22,6 +23,12 @@
  * `shared/client-fulfilled-tools.ts`) and must satisfy the server-side
  * `validateUiToolEntries` boundary.
  *
+ * PUBLICATION — every definition here states, in `nativePublication`,
+ * whether a browser-native WebMCP agent gets it. The ordinary inspector
+ * actions do; `ui_ask_user` does not, because the card it paints and the turn
+ * it parks only exist inside an Ask MCPJam conversation. Same for the
+ * eval-authoring group. See `../native-tool-publisher.ts`.
+ *
  * REGISTRATION POLICY — this catalog is global, deliberately NOT contextual.
  * Chrome's WebMCP guidance suggests registering tools only when useful in
  * the current page state, but that targets content sites where an absent
@@ -40,6 +47,7 @@
  * the same turn can use it).
  */
 
+import { buildEvalAuthoringTools } from "./groups/eval-authoring";
 import type { UiToolDefinition } from "./ui-tools-registry";
 import { buildCoreUiTools } from "./groups/core";
 import { buildServersUiTools } from "./groups/servers";
@@ -47,6 +55,7 @@ import { buildPlaygroundUiTools } from "./groups/playground";
 
 export function buildUiToolsCatalog(): UiToolDefinition[] {
   return [
+    ...buildEvalAuthoringTools(),
     ...buildCoreUiTools(),
     ...buildServersUiTools(),
     ...buildPlaygroundUiTools(),

@@ -19,12 +19,20 @@ FROM base AS deps
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 COPY package.json package-lock.json ./
+COPY evaluators/package.json ./evaluators/package.json
 COPY sdk/package.json ./sdk/package.json
 COPY cli/package.json ./cli/package.json
 COPY design-system/package.json ./design-system/package.json
 COPY chat-ui/package.json ./chat-ui/package.json
 COPY widget-react/package.json ./widget-react/package.json
 COPY mcpjam-inspector/package.json ./mcpjam-inspector/package.json
+
+COPY soundcheck/package.json ./soundcheck/package.json
+COPY mcp/package.json ./mcp/package.json
+COPY slack-app/package.json ./slack-app/package.json
+COPY surface-core/package.json ./surface-core/package.json
+COPY discord-app/package.json ./discord-app/package.json
+COPY vitest/package.json ./vitest/package.json
 
 RUN npm ci --legacy-peer-deps
 
@@ -38,9 +46,12 @@ ARG VITE_MCPJAM_HOSTED_MODE
 ARG VITE_MCPJAM_NONPROD_LOCKDOWN
 ARG VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS
 ARG VITE_WORKOS_API_HOSTNAME
+ARG VITE_STRIPE_PUBLISHABLE_KEY
 ARG VITE_CONVEX_URL
 ARG VITE_WORKOS_CLIENT_ID
 ARG VITE_MCPJAM_SANDBOX_ORIGIN
+ARG VITE_MCPJAM_VIEW_MOUNT
+ARG VITE_MCPJAM_VIEW_SUBDOMAINS
 # Not a VITE_ var — it is never bundled. `sentryVitePlugin` in
 # client/vite.config.ts reads it at BUILD time to upload source maps for the
 # release, and without it every hosted prod stack trace stays minified
@@ -58,6 +69,9 @@ ARG VITE_MCPJAM_SANDBOX_ORIGIN
 # neither of which Railway publishes. Mark the variable Sealed in Railway so it
 # is not readable back out of the dashboard or API.
 ARG SENTRY_AUTH_TOKEN
+
+COPY evaluators ./evaluators
+RUN npm run build -w @mcpjam/evaluators
 
 COPY sdk/tsconfig.json sdk/tsup.config.ts sdk/package.json ./sdk/
 COPY cli/package.json ./cli/package.json
@@ -82,10 +96,15 @@ COPY mcpjam-inspector/scripts ./mcpjam-inspector/scripts
 # here by hand. `bundle:plugin-shim` emits the in-VM plugin shim as a TS const
 # that `services/plugins/computer-stdio.ts` imports at top level: without it the
 # server bundle does not resolve and the image fails to build.
+# `bundle:codex-appserver-bridge` is the same story for the Codex app-server
+# transport: its bridge and the MCP server Codex spawns are uploaded into a
+# sandbox and executed there, so nothing in the import graph reaches them and
+# `codex-appserver-bootstrap.ts` imports the generated const at top level.
 RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
     npm run bundle:mcp-apps -w @mcpjam/inspector && \
     npm run bundle:sandbox-proxies -w @mcpjam/inspector && \
-    npm run bundle:plugin-shim -w @mcpjam/inspector
+    npm run bundle:plugin-shim -w @mcpjam/inspector && \
+    npm run bundle:codex-appserver-bridge -w @mcpjam/inspector
 
 # `bundle:browser-harness` esbuilds `server/utils/browser-harness/host-page.ts`,
 # which imports `@/components/chat-v2/thread/mcp-apps/host-app-bridge` from the
@@ -102,15 +121,23 @@ COPY mcpjam-inspector/client ./mcpjam-inspector/client
 COPY mcpjam-inspector/.env.production ./mcpjam-inspector/
 RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
     npm run build:server -w @mcpjam/inspector
-RUN if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
+# MCPJAM_BUILD_SURFACE is the Sentry `dist` this bundle reports and uploads
+# under. Hardcoded rather than an ARG: the web image is the only thing this
+# Dockerfile builds. Without it this bundle's events resolve against the npm or
+# desktop artifacts, which share the same bare `release`. See
+# SENTRY_BUILD_SURFACES in shared/sentry-config.ts.
+RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABLE_KEY; fi; \
+    if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
     if [ -n "$VITE_MCPJAM_NONPROD_LOCKDOWN" ]; then export VITE_MCPJAM_NONPROD_LOCKDOWN; fi; \
     if [ -n "$VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS" ]; then export VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS; fi; \
     if [ -n "$VITE_WORKOS_API_HOSTNAME" ]; then export VITE_WORKOS_API_HOSTNAME; fi; \
     if [ -n "$VITE_CONVEX_URL" ]; then export VITE_CONVEX_URL; fi; \
     if [ -n "$VITE_WORKOS_CLIENT_ID" ]; then export VITE_WORKOS_CLIENT_ID; fi; \
     if [ -n "$VITE_MCPJAM_SANDBOX_ORIGIN" ]; then export VITE_MCPJAM_SANDBOX_ORIGIN; fi; \
+    if [ -n "$VITE_MCPJAM_VIEW_MOUNT" ]; then export VITE_MCPJAM_VIEW_MOUNT; fi; \
+    if [ -n "$VITE_MCPJAM_VIEW_SUBDOMAINS" ]; then export VITE_MCPJAM_VIEW_SUBDOMAINS; fi; \
     if [ -n "$SENTRY_AUTH_TOKEN" ]; then export SENTRY_AUTH_TOKEN; fi; \
-    npm run build:client -w @mcpjam/inspector
+    MCPJAM_BUILD_SURFACE=web npm run build:client -w @mcpjam/inspector
 
 ################################################################################
 # Runtime image.
@@ -127,6 +154,7 @@ USER node
 WORKDIR /usr/src/app/mcpjam-inspector
 
 COPY package.json /usr/src/app/package.json
+COPY evaluators/package.json /usr/src/app/evaluators/package.json
 COPY sdk/package.json /usr/src/app/sdk/package.json
 COPY cli/package.json /usr/src/app/cli/package.json
 COPY mcpjam-inspector/package.json ./package.json
@@ -136,10 +164,6 @@ COPY --from=deps /usr/src/app/node_modules /usr/src/app/node_modules
 # while @convex-dev/workos transitively pins @workos-inc/node@^7) land under
 # mcpjam-inspector/node_modules and must be carried into the runtime image.
 COPY --from=deps /usr/src/app/mcpjam-inspector/node_modules ./node_modules
-COPY --from=build /usr/src/app/mcpjam-inspector/bin ./bin
-COPY --from=build /usr/src/app/mcpjam-inspector/dist ./dist
-COPY --from=build /usr/src/app/mcpjam-inspector/.env.production ./.env.production
-COPY --from=build /usr/src/app/sdk/dist /usr/src/app/sdk/dist
 
 # Bake in Chromium + its system libraries — the same command CI runs
 # (test.yml) — so widget probes render at runtime instead of recording
@@ -155,6 +179,14 @@ USER root
 RUN npx playwright install --with-deps chromium \
     && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH"
 USER node
+
+# Keep frequently changing application artifacts after the browser layer so
+# source changes can reuse the expensive Chromium and system-library install.
+COPY --from=build /usr/src/app/mcpjam-inspector/bin ./bin
+COPY --from=build /usr/src/app/mcpjam-inspector/dist ./dist
+COPY --from=build /usr/src/app/mcpjam-inspector/.env.production ./.env.production
+COPY --from=build /usr/src/app/evaluators/dist /usr/src/app/evaluators/dist
+COPY --from=build /usr/src/app/sdk/dist /usr/src/app/sdk/dist
 
 EXPOSE 6274
 

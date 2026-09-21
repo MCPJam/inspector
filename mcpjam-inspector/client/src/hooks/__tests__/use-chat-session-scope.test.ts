@@ -142,6 +142,17 @@ describe("scope step-up resume auto-send fence", () => {
     ).toBe(true);
   });
 
+  it("automatically continues after a stale page-tool result, but not while its replacement awaits approval", () => {
+    const completed = completedToolMessage("page_deadbeef");
+    completed.parts[0].output = { isError: true, content: [{ type: "text", text: "Tools refreshed automatically; issue a new call." }] };
+    expect(shouldAutoSendCompletedClientToolCalls({ messages: [completed] })).toBe(true);
+    const pending = completedToolMessage("page_cafebabe");
+    pending.parts[0].state = "approval-requested";
+    pending.parts[0].approval = { id: "fresh-approval" };
+    delete pending.parts[0].output;
+    expect(shouldAutoSendCompletedClientToolCalls({ messages: [pending] })).toBe(false);
+  });
+
   it("suppresses even browser-tool auto-send while a one-shot resume is active", () => {
     expect(
       shouldAutoSendCompletedClientToolCalls(
@@ -161,7 +172,7 @@ describe("areHostedSessionScopesEqual — target switch forks the session", () =
     projectId: input.projectId,
     targetKey: hostedTargetKey(input),
   });
-  const base = { projectId: "p1", chatboxId: undefined, hostId: "host-a" };
+  const base = { projectId: "p1", scenarioId: undefined, hostId: "host-a" };
 
   it("treats a different previewed hostId as a different scope (⇒ reset)", () => {
     expect(
@@ -178,7 +189,7 @@ describe("areHostedSessionScopesEqual — target switch forks the session", () =
     );
   });
 
-  it("a different project forks; a different chatbox forks", () => {
+  it("a different project forks; a different scenario forks", () => {
     expect(
       areHostedSessionScopesEqual(
         scope(base),
@@ -188,7 +199,7 @@ describe("areHostedSessionScopesEqual — target switch forks the session", () =
     expect(
       areHostedSessionScopesEqual(
         scope({ projectId: "p1" }),
-        scope({ projectId: "p1", chatboxId: "cbx" })
+        scope({ projectId: "p1", scenarioId: "cbx" })
       )
     ).toBe(false);
   });
@@ -217,7 +228,7 @@ describe("hostedTargetKey", () => {
         executionTarget: { kind: "environment", environmentId: "x" },
       })
     ).toBe("environment:x");
-    expect(hostedTargetKey({ chatboxId: "x" })).toBe("chatbox:x");
+    expect(hostedTargetKey({ scenarioId: "x" })).toBe("scenario:x");
     expect(hostedTargetKey({ projectId: "x" })).toBe("adhoc:x");
   });
 

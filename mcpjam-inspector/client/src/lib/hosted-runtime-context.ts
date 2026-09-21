@@ -34,8 +34,8 @@ export type HostedRuntimeContext = {
   oauthTokens?: Record<string, string>;
   /**
    * Saved host being previewed (Playground / host-bound direct chat). Absent
-   * for non-host direct chat and for published-chatbox sessions (which carry
-   * `chatboxId` instead). Forwarded as `hostId` on direct-session request
+   * for non-host direct chat and for published-scenario sessions (which carry
+   * `scenarioId` instead). Forwarded as `hostId` on direct-session request
    * bodies so the server re-resolves the host's authoritative runtime config
    * (incl. harness/computer); also part of the session scope so switching the
    * previewed host forks the chat session.
@@ -56,14 +56,14 @@ export type HostedRuntimeContext = {
   presentationHostId?: string | null;
   /**
    * Project Environments (Phase 2). What this session executes against, as ONE
-   * serializable pointer. Mutually exclusive with `hostId` and `chatboxId`:
+   * serializable pointer. Mutually exclusive with `hostId` and `scenarioId`:
    * `normalizeExecutionTarget` REJECTS a body carrying both rather than picking
    * a winner, so a surface that sets an environment target must stop sending
    * `hostId` (the environment's host is still fine to use for *presentation* —
    * model chip, harness built-ins — it just must not be a second statement
    * about what to run).
    *
-   * Absent ⇒ unchanged legacy behavior (`hostId` / `chatboxId` / ad-hoc).
+   * Absent ⇒ unchanged legacy behavior (`hostId` / `scenarioId` / ad-hoc).
    */
   executionTarget?: HostedExecutionTarget;
   /**
@@ -78,16 +78,16 @@ export type HostedRuntimeContext = {
    */
   environmentOverrides?: EnvironmentOverrides;
   /**
-   * Resolved chatbox identity (post-redeem). Threaded into every
-   * chatbox-aware request body and cache key.
+   * Resolved scenario identity (post-redeem). Threaded into every
+   * scenario-aware request body and cache key.
    */
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
-  chatboxSurface?: "preview" | "share_link";
+  scenarioSurface?: "preview" | "share_link";
   /**
-   * Silent re-redeem trigger. Called when a chatbox-aware Convex mutation
-   * reports `chatbox_access_stale` — the owner re-runs
-   * /web/chatbox/redeem and updates `accessVersion` in place so dependent
+   * Silent re-redeem trigger. Called when a scenario-aware Convex mutation
+   * reports `scenario_access_stale` — the owner re-runs
+   * /web/scenario/redeem and updates `accessVersion` in place so dependent
    * flows can retry without a page reload.
    */
   requestRefreshAccessVersion?: () => void;
@@ -109,14 +109,14 @@ export type HostedRuntimeContext = {
   refreshAccessSession?: () => Promise<HostedAccessRecoveryResult>;
   /**
    * Terminal access loss: recovery ran and the visitor still cannot reach
-   * this chatbox. The page owner tears the runtime down to the denied
+   * this scenario. The page owner tears the runtime down to the denied
    * landing (which carries the Sign in / Open in App affordances) instead of
    * leaving a generic error banner over a chat that can no longer send.
    */
   onAccessRevoked?: (error: HostedAccessErrorDetail) => void;
   /**
-   * True for published-chatbox runtime sessions (bootstrapped via
-   * /api/web/chatboxes/redeem). Their server set is Convex-resolved by
+   * True for published-scenario runtime sessions (bootstrapped via
+   * /api/web/scenarios/redeem). Their server set is Convex-resolved by
    * id, so the turn must flow through /api/web/chat-v2 (with authFetch)
    * on every platform — the local /api/mcp engine has no way to connect
    * attachment servers and would silently run the chat without tools.
@@ -130,7 +130,7 @@ export type HostedRuntimeContext = {
    * before a hosted harness send so the proxy/authorize-batch never receive a
    * display name. Provided by Playground-class surfaces from
    * `useServerActions().ensureHostedServerIdsForNames`; absent for surfaces
-   * whose servers are already Convex-resolved (e.g. chatbox), which keep the
+   * whose servers are already Convex-resolved (e.g. scenario), which keep the
    * existing pre-resolved `selectedServerIds` path. Throws on an unresolvable
    * name so the caller fails the send closed.
    */

@@ -147,6 +147,59 @@ describe("describeHostedOAuthFailure structured backend shapes", () => {
       "Hosted OAuth refresh token is invalid. Please reconnect.",
     ]);
   });
+
+  it("shows the spec note instead of the generic message when one is sent", () => {
+    // The authorization server declined a dead refresh token under
+    // invalid_request. The reconnect is unchanged; the note is the part the
+    // user can act on, and it replaces a generic line that only repeats the
+    // title.
+    const specNote =
+      "Your server answered invalid_request. RFC 6749 expects invalid_grant when a refresh token is unknown or expired.";
+    const copy = describeHostedOAuthFailure(
+      Object.assign(
+        new Error("Hosted OAuth refresh token is invalid. Please reconnect."),
+        {
+          code: "UNAUTHORIZED",
+          details: {
+            oauthRequired: true,
+            refreshTokenInvalid: true,
+            serverId: "srv_1",
+            serverName: "Linear",
+            specNote,
+          },
+        }
+      ),
+      "Linear"
+    );
+
+    expect(copy?.kind).toBe("declined");
+    expect(copy?.action).toBe("reconnect");
+    expect(copy?.detail).toEqual([specNote]);
+  });
+
+  it("falls back to the generic message when no spec note is sent", () => {
+    // A conforming invalid_grant decline carries no note; nothing changes.
+    const copy = describeHostedOAuthFailure(
+      Object.assign(
+        new Error("Hosted OAuth refresh token is invalid. Please reconnect."),
+        {
+          code: "UNAUTHORIZED",
+          details: {
+            oauthRequired: true,
+            refreshTokenInvalid: true,
+            serverId: "srv_1",
+            serverName: "Linear",
+            specNote: null,
+          },
+        }
+      ),
+      "Linear"
+    );
+
+    expect(copy?.detail).toEqual([
+      "Hosted OAuth refresh token is invalid. Please reconnect.",
+    ]);
+  });
 });
 
 describe("describeHostedOAuthFailure invalid_client messages", () => {

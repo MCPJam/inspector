@@ -9,7 +9,7 @@
  * test wants. Both bugs this file exists to pin were exactly that shape —
  * a `tools/list` the modern decoder refused (so DISCOVERY died before any
  * Tasks check ran) and an undeclared-capability probe that threw locally (so
- * the `-32003` requirement was never put to the server).
+ * the `-32021` requirement was never put to the server).
  *
  * So the assertions here are deliberately about the WIRE: the fixture's
  * `received` log is the witness that each probe actually left the process,
@@ -24,6 +24,7 @@ import type {
   MCPTasksCheckResult,
   MCPTasksConformanceResult,
 } from "../../src/tasks-conformance/index.js";
+import { MCP_TASKS_CHECK_IDS } from "../../src/tasks-conformance/index.js";
 import {
   EXTENSION_PROTOCOL_VERSION,
   TASK_TOOL_NAME,
@@ -128,10 +129,16 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       probedTool: TASK_TOOL_NAME,
     });
     expect(result.discovery.createdTaskId).toBeTruthy();
-    expect(result.checks).toHaveLength(8);
+    expect(result.checks).toHaveLength(MCP_TASKS_CHECK_IDS.length);
+    // One skip is expected and correct: this fixture's task completes without
+    // ever asking for input, so the `input_required` round trip is not
+    // applicable to it (a task that never asks is the normal case, not a
+    // defect). Everything else ran.
     expect(
-      result.checks.filter((entry) => entry.status === "skipped")
-    ).toHaveLength(0);
+      result.checks
+        .filter((entry) => entry.status === "skipped")
+        .map((entry) => [entry.id, entry.skipReason])
+    ).toEqual([["tasks-input-required-update-completes", "not-applicable"]]);
   });
 
   it("passes the undeclared-capability checks against a conformant fixture, having actually sent the probes", async () => {
@@ -193,8 +200,30 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       "tasks-ttl-shape": "passed",
       "tasks-inline-result": "passed",
       "tasks-mcp-name-routing": "passed",
+      // The scenario depth added by the conformance-gap program. All of them
+      // are outside the `mcp-tasks` profile's scored set, so they report these
+      // verdicts without moving the number.
+      "tasks-invalid-task-id-rejected": "passed",
+      "tasks-status-payload-shape": "passed",
+      "tasks-cancel-ack-shape": "passed",
+      "tasks-ttl-integer-shape": "passed",
+      "tasks-undeclared-capability-names-requirements": "passed",
+      "tasks-input-required-update-completes": "skipped",
     });
+    // Green DESPITE the skip, because the skipped check is `not-applicable`
+    // (this task never asks for input) rather than `could-not-run`.
     expect(result.passed).toBe(true);
+    expect(result.profile).toMatchObject({
+      profileId: "mcp-tasks",
+      pendingCheckIds: [
+        "tasks-cancel-ack-shape",
+        "tasks-input-required-update-completes",
+        "tasks-invalid-task-id-rejected",
+        "tasks-status-payload-shape",
+        "tasks-ttl-integer-shape",
+        "tasks-undeclared-capability-names-requirements",
+      ],
+    });
   });
 
   it("fails the undeclared-capability check when the fixture answers undeclared task requests, naming every offending method", async () => {
@@ -284,15 +313,22 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.passed).toBe(false);
     expect(result.checks.some((entry) => entry.status === "failed")).toBe(false);
 
-    // Only the two wire-level checks genuinely ran; nothing else may read as
-    // a pass, and none of the gaps may be excused as "not applicable".
+    // Only the checks that need no created task genuinely ran; nothing else
+    // may read as a pass, and none of the gaps may be excused as "not
+    // applicable". `tasks-invalid-task-id-rejected` is here because it probes a
+    // FABRICATED id and so establishes a real requirement even on a run that
+    // could not provoke a task.
     expect(
       result.checks
         .filter((entry) => entry.status === "passed")
         .map((entry) => entry.id)
         .sort()
-    ).toEqual(["tasks-declaration-hygiene", "tasks-wire-resolvable"]);
-    expect(unrunChecks(result)).toHaveLength(6);
+    ).toEqual([
+      "tasks-declaration-hygiene",
+      "tasks-invalid-task-id-rejected",
+      "tasks-wire-resolvable",
+    ]);
+    expect(unrunChecks(result)).toHaveLength(11);
     expect(
       result.checks.filter(
         (entry) =>
@@ -307,7 +343,10 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.incompleteReason).toContain("execution.taskSupport");
     expect(result.incompleteReason).toContain("2026-07-28");
     expect(result.incompleteReason).toContain(TASK_TOOL_NAME);
+    // The SUMMARY counts only the scored checks, so it still reads 6: the five
+    // new task-dependent gaps are pending under `mcp-tasks@2026-08-22.1`.
     expect(result.summary).toContain("6 could not run");
+    expect(result.summary).toContain("pending");
     expect(result.categorySummary.creation.couldNotRun).toBe(2);
     expect(result.discovery.createdTaskId).toBeUndefined();
   });
@@ -319,7 +358,7 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
 
     expect(result.outcome).toBe("incomplete");
     expect(result.passed).toBe(false);
-    expect(unrunChecks(result)).toHaveLength(6);
+    expect(unrunChecks(result)).toHaveLength(11);
     expect(result.incompleteReason).toContain('"task_toool"');
     expect(result.incompleteReason).toContain("is not listed by this server");
     // …and it points at what the server DOES list.

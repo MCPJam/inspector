@@ -23,33 +23,38 @@ describe("useComputersDataPlaneConfig — engines parse", () => {
     return await import("../useProjectComputer");
   }
 
-  it("parses the full new shape", async () => {
-    const mod = await loadWithConfig({
-      localConfigured: false,
-      remoteDataPlaneUrl: null,
-      engines: {
-        local: {
-          available: true,
-          terminalAvailable: true,
-          workspaceDisplayRoot: "~/.mcpjam/computer",
+  it.each([true, false, undefined, "yes"])(
+    "parses Browser availability independently (%s)",
+    async (browserAvailable) => {
+      const mod = await loadWithConfig({
+        localConfigured: false,
+        remoteDataPlaneUrl: null,
+        engines: {
+          local: {
+            available: true,
+            terminalAvailable: true,
+            browserAvailable,
+            workspaceDisplayRoot: "~/.mcpjam/computer",
+          },
+          cloud: { available: true },
         },
-        cloud: { available: true },
-      },
-      capabilities: {
-        personalCloudAvailable: true,
-        ephemeralCloudAvailable: false,
-      },
-      defaultEngine: "local",
-    });
-    const { result } = renderHook(() => mod.useComputersDataPlaneConfig());
-    await waitFor(() => expect(result.current).toBeDefined());
-    expect(result.current!.engines.local).toEqual({
-      available: true,
-      terminalAvailable: true,
-      workspaceDisplayRoot: "~/.mcpjam/computer",
-    });
-    expect(result.current!.defaultEngine).toBe("local");
-  });
+        capabilities: {
+          personalCloudAvailable: true,
+          ephemeralCloudAvailable: false,
+        },
+        defaultEngine: "local",
+      });
+      const { result } = renderHook(() => mod.useComputersDataPlaneConfig());
+      await waitFor(() => expect(result.current).toBeDefined());
+      expect(result.current!.engines.local).toEqual({
+        available: true,
+        terminalAvailable: true,
+        browserAvailable: browserAvailable === true,
+        workspaceDisplayRoot: "~/.mcpjam/computer",
+      });
+      expect(result.current!.defaultEngine).toBe("local");
+    },
+  );
 
   it("derives for an OLD server: local never exists, cloud from the legacy pair", async () => {
     const mod = await loadWithConfig({

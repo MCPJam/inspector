@@ -40,7 +40,7 @@ import {
 } from "@/lib/apis/web/servers-api";
 import { describeHostedOAuthFailure } from "@/lib/hosted-oauth-failure";
 import { toast } from "@/lib/toast";
-import { slugify } from "@/lib/chatbox-session";
+import { slugify } from "@/lib/scenario-session";
 import { captureCurrentReturnPath, routePaths } from "@/lib/app-navigation";
 import { ingestOAuthTraceLogs } from "@/stores/traffic-log-store";
 import {
@@ -288,7 +288,7 @@ export interface UseHostedOAuthGateOptions {
   pendingKey: string;
   servers: HostedOAuthServerDescriptor[];
   projectId?: string | null;
-  chatboxId?: string;
+  scenarioId?: string;
   isAuthenticated?: boolean;
 }
 
@@ -308,7 +308,7 @@ export function useHostedOAuthGate({
   pendingKey,
   servers,
   projectId,
-  chatboxId,
+  scenarioId,
   isAuthenticated = false,
 }: UseHostedOAuthGateOptions): UseHostedOAuthGateResult {
   const oauthServers = useMemo(
@@ -319,9 +319,9 @@ export function useHostedOAuthGate({
   // nothing is written to localStorage and polling for it would only burn the
   // resume window before reporting a token that was never missing. The score
   // surface completes through `completeHostedOAuthCallback` with a guest
-  // bearer — server-side, exactly like a chatbox guest — so it belongs here
-  // even though it has neither a signed-in user nor a chatbox.
-  const isVaultBacked = isAuthenticated || !!chatboxId || surface === "score";
+  // bearer — server-side, exactly like a scenario guest — so it belongs here
+  // even though it has neither a signed-in user nor a scenario.
+  const isVaultBacked = isAuthenticated || !!scenarioId || surface === "score";
   const verifyVaultCredentialOnLoad = isAuthenticated;
   // Servers a runtime 401 has proven need authorization after all. Kept
   // separately from the status map because the map is REBUILT from the
@@ -506,13 +506,13 @@ export function useHostedOAuthGate({
         const validation = await validateWithRetry(
           server.serverId,
           accessToken ?? undefined,
-          chatboxId && projectId
+          scenarioId && projectId
             ? {
                 projectId,
                 serverId: server.serverId,
                 serverName: server.serverName,
                 accessScope: "chat_v2",
-                chatboxId,
+                scenarioId,
               }
             : undefined
         );
@@ -585,7 +585,7 @@ export function useHostedOAuthGate({
     oauthStateByServerId,
     surface,
     isVaultBacked,
-    chatboxId,
+    scenarioId,
     projectId,
     showHostedOAuthFailureToast,
   ]);
@@ -628,12 +628,12 @@ export function useHostedOAuthGate({
         serverId: server.serverId,
         serverName: server.serverName,
         serverUrl: server.serverUrl,
-        accessScope: chatboxId
+        accessScope: scenarioId
           ? "chat_v2"
           : isAuthenticated
           ? "project_member"
           : undefined,
-        chatboxId,
+        scenarioId,
         returnPath,
       });
       // The sentinel is a legacy boolean; the structured marker written just
@@ -761,7 +761,7 @@ export function useHostedOAuthGate({
       isAuthenticated,
       isVaultBacked,
       pendingKey,
-      chatboxId,
+      scenarioId,
       surface,
       projectId,
     ]

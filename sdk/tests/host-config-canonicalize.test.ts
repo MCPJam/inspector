@@ -132,6 +132,232 @@ describe("canonicalizeHostConfigV2 — builtInToolIds", () => {
   });
 });
 
+describe("canonicalizeHostConfigV2 — browserToolPolicy", () => {
+  it("omits browserToolPolicy when absent (pre-feature rows stay byte-identical)", () => {
+    const canonical = JSON.parse(
+      JSON.stringify(canonicalizeHostConfigV2(base()))
+    );
+    expect("browserToolPolicy" in canonical).toBe(false);
+  });
+
+  it("HASHES the policy — two configs differing only by it are different hosts", async () => {
+    // The whole reason the canonicalizer must learn this field: a canonicalizer
+    // that does not know a field DROPS it, so editing the policy would leave
+    // the content hash unchanged — the edited config would dedupe onto the old
+    // row, and a frozen config would keep the old policy forever.
+    expect(await hash(base())).not.toBe(
+      await hash(base({ browserToolPolicy: { mode: "allow_all" } }))
+    );
+    expect(await hash(base({ browserToolPolicy: { mode: "allow_all" } }))).not.toBe(
+      await hash(base({ browserToolPolicy: { mode: "read_only" } }))
+    );
+  });
+
+  it("hashes a widened origin allowlist differently from a narrow one", async () => {
+    expect(
+      await hash(
+        base({
+          browserToolPolicy: {
+            mode: "allowlist",
+            originAllowlist: ["example.com"],
+          },
+        })
+      )
+    ).not.toBe(
+      await hash(
+        base({
+          browserToolPolicy: {
+            mode: "allowlist",
+            originAllowlist: ["example.com", "evil.test"],
+          },
+        })
+      )
+    );
+  });
+
+  it("is insensitive to allowlist ORDER and duplicates (they are sets)", async () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        browserToolPolicy: {
+          mode: "allowlist",
+          originAllowlist: ["b.test", "a.test", "b.test"],
+          toolAllowlist: ["browser_observe", "browser_act", "browser_observe"],
+        },
+      })
+    );
+    expect(c.browserToolPolicy?.originAllowlist).toEqual(["a.test", "b.test"]);
+    expect(c.browserToolPolicy?.toolAllowlist).toEqual([
+      "browser_act",
+      "browser_observe",
+    ]);
+    expect(
+      await hash(
+        base({
+          browserToolPolicy: {
+            mode: "allowlist",
+            originAllowlist: ["a.test", "b.test"],
+          },
+        })
+      )
+    ).toBe(
+      await hash(
+        base({
+          browserToolPolicy: {
+            mode: "allowlist",
+            originAllowlist: ["b.test", "a.test", "a.test"],
+          },
+        })
+      )
+    );
+  });
+
+  it("is insensitive to FIELD order", async () => {
+    expect(
+      await hash(
+        base({
+          browserToolPolicy: {
+            mode: "allowlist",
+            originAllowlist: ["a.test"],
+            toolAllowlist: ["browser_observe"],
+          },
+        })
+      )
+    ).toBe(
+      await hash(
+        base({
+          browserToolPolicy: {
+            toolAllowlist: ["browser_observe"],
+            originAllowlist: ["a.test"],
+            mode: "allowlist",
+          } as never,
+        })
+      )
+    );
+  });
+
+  it("trims entries — a stored-verbatim rule would silently match nothing", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        browserToolPolicy: {
+          mode: "allowlist",
+          originAllowlist: [" example.com "],
+        },
+      })
+    );
+    expect(c.browserToolPolicy?.originAllowlist).toEqual(["example.com"]);
+  });
+
+  it("collapses an empty allowlist to an omitted key", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        browserToolPolicy: { mode: "allow_all", originAllowlist: [] },
+      })
+    );
+    expect(c.browserToolPolicy).toEqual({ mode: "allow_all" });
+  });
+
+  it("collapses null to absent, so cleared and never-set hash identically", async () => {
+    expect(await hash(base({ browserToolPolicy: null as never }))).toBe(
+      await hash(base())
+    );
+  });
+
+  it("rejects an unknown mode", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ browserToolPolicy: { mode: "anything_goes" as never } })
+      )
+    ).toThrow(/browserToolPolicy\.mode must be one of/);
+  });
+
+  it("rejects a stray key rather than silently dropping it", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          browserToolPolicy: {
+            mode: "allow_all",
+            originAllowList: ["a.test"],
+          } as never,
+        })
+      )
+    ).toThrow(/browserToolPolicy has unknown key "originAllowList"/);
+  });
+
+  it("rejects a non-array or non-string allowlist", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          browserToolPolicy: {
+            mode: "allow_all",
+            originAllowlist: "a.test" as never,
+          },
+        })
+      )
+    ).toThrow(/originAllowlist must be a string\[\]/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          browserToolPolicy: {
+            mode: "allowlist",
+            toolAllowlist: [7 as never],
+          },
+        })
+      )
+    ).toThrow(/toolAllowlist entries must be strings/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          browserToolPolicy: { mode: "allowlist", toolAllowlist: ["  "] },
+        })
+      )
+    ).toThrow(/toolAllowlist entries must be non-empty strings/);
+  });
+
+  it("refuses a toolAllowlist in a mode that would never read it", async () => {
+    // Both readers in the browser builder gate on `mode === "allowlist"`, so a
+    // toolAllowlist anywhere else changes nothing a run does. Hashing it would
+    // give two configs that behave identically two identities; dropping it
+    // silently would let an author believe they had narrowed a policy that in
+    // fact permits every tool. Same choice `skillSelection` makes for
+    // `skillIds` under `all_visible`.
+    for (const mode of ["allow_all", "read_only"] as const) {
+      expect(() =>
+        canonicalizeHostConfigV2(
+          base({
+            browserToolPolicy: { mode, toolAllowlist: ["browser_observe"] },
+          })
+        )
+      ).toThrow(/toolAllowlist is only meaningful with mode "allowlist"/);
+    }
+    // `originAllowlist` is NOT mode-specific: it gates navigation in every
+    // mode, so it stays legal — and stays hashed — everywhere.
+    expect(
+      canonicalizeHostConfigV2(
+        base({
+          browserToolPolicy: { mode: "read_only", originAllowlist: ["a.test"] },
+        })
+      ).browserToolPolicy
+    ).toEqual({ mode: "read_only", originAllowlist: ["a.test"] });
+  });
+
+  it("refuses an `allowlist` mode that names nothing (it would mean everything)", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(base({ browserToolPolicy: { mode: "allowlist" } }))
+    ).toThrow(/needs a non-empty originAllowlist or toolAllowlist/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          browserToolPolicy: {
+            mode: "allowlist",
+            originAllowlist: [],
+            toolAllowlist: [],
+          },
+        })
+      )
+    ).toThrow(/needs a non-empty originAllowlist or toolAllowlist/);
+  });
+});
+
 describe("canonicalizeHostConfigV2 — undefined vs explicit", () => {
   it("distinguishes hostCapabilitiesOverride undefined from {}", async () => {
     const omitted = canonicalizeHostConfigV2(base());
@@ -235,6 +461,8 @@ describe("canonicalizeHostConfigV2 — computer", () => {
   const personal = { kind: "personal" } as const;
   // Original MVP input shape — still accepted, dropped from canonical.
   const legacy = { kind: "personal", toolset: "bash" } as const;
+  // Runtime-minted at a run-snapshot boundary; never authored.
+  const ephemeral = { kind: "ephemeral" } as const;
 
   it("omits the key entirely when absent (pre-feature byte shape)", () => {
     const c = canonicalizeHostConfigV2(base());
@@ -289,7 +517,54 @@ describe("canonicalizeHostConfigV2 — computer", () => {
       canonicalizeHostConfigV2(
         base({ computer: { kind: "shared", toolset: "bash" } as never })
       )
-    ).toThrow(/computer\.kind must be "personal"/);
+    ).toThrow(/computer\.kind must be "personal" or "ephemeral"/);
+  });
+
+  // ── The runtime-minted `ephemeral` kind ────────────────────────────────
+  // Platform-only: minted at a run-snapshot boundary (one box per eval
+  // iteration, booted from the run's frozen environment image), never
+  // authored. Persisted and content-addressed, so it canonicalizes like any
+  // other kind.
+
+  it("accepts the runtime-minted ephemeral kind and preserves it", () => {
+    expect(canonicalizeHostConfigV2(base({ computer: ephemeral })).computer)
+      .toEqual({ kind: "ephemeral" });
+  });
+
+  it("hashes ephemeral distinctly from personal and from absent", async () => {
+    const e = await hash(base({ computer: ephemeral }));
+    expect(e).not.toBe(await hash(base({ computer: personal })));
+    expect(e).not.toBe(await hash(base()));
+  });
+
+  it("drops the legacy toolset key on ephemeral too", async () => {
+    // The backend runs one `shimLegacyComputerToolset` pipeline for every
+    // kind; if `toolset` survived on ephemeral the two canonicalizers would
+    // diverge on a shape the backend can produce.
+    expect(
+      canonicalizeHostConfigV2(
+        base({ computer: { kind: "ephemeral", toolset: "bash" } })
+      ).computer
+    ).toEqual({ kind: "ephemeral" });
+    expect(
+      await hash(base({ computer: { kind: "ephemeral", toolset: "bash" } }))
+    ).toBe(await hash(base({ computer: ephemeral })));
+  });
+
+  it("treats workdir identically for both kinds — no kind-gated field rules", async () => {
+    // The platform mints ephemeral rows WITHOUT a workdir (provisioning
+    // supplies the box's cwd), and that rule is enforced at the minting site.
+    // It is deliberately NOT re-checked here: canonicalization is pure
+    // content-addressing, so one field's treatment must not depend on another's
+    // value. This pins that the code path stays single.
+    expect(
+      canonicalizeHostConfigV2(
+        base({ computer: { ...ephemeral, workdir: "  /w  " } })
+      ).computer
+    ).toEqual({ kind: "ephemeral", workdir: "/w" });
+    expect(
+      await hash(base({ computer: { ...ephemeral, workdir: "   " } }))
+    ).toBe(await hash(base({ computer: ephemeral })));
   });
 
   it("rejects an unknown legacy toolset value", () => {
@@ -388,6 +663,35 @@ describe("canonicalizeHostConfigV2 — validation", () => {
     ).toThrow(/must contain at least one mode/);
   });
 
+  it("preserves partial CSP probe findings", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          apps: {
+            mcpAppsOverrides: {
+              cspConnectDomains: { fetch: false, xhr: false },
+              cspResourceDomains: {
+                script: false,
+                stylesheet: false,
+                image: false,
+                font: false,
+                media: false,
+              },
+            },
+          },
+        },
+      })
+    );
+
+    expect(c.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: false, xhr: false },
+    });
+    expect(
+      c.mcpProfile?.apps?.mcpAppsOverrides?.cspConnectDomains
+    ).not.toHaveProperty("websocket");
+  });
+
   it("drops spec permission features from allowFeatures and blocks injection", () => {
     const c = canonicalizeHostConfigV2(
       base({
@@ -437,6 +741,28 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
     expect(c.mcpProfile?.initialize).toBeUndefined();
   });
 
+  it("preserves automatic dual-era selection in the existing initialize envelope", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          mcpProtocolVersion: "auto",
+          initialize: {
+            supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+            clientInfo: { name: "openai-mcp", version: "1.0.0" },
+          },
+        },
+      })
+    );
+    expect(c.mcpProfile).toMatchObject({
+      mcpProtocolVersion: "auto",
+      initialize: {
+        supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+        clientInfo: { name: "openai-mcp", version: "1.0.0" },
+      },
+    });
+  });
+
   it("throws ConflictingProtocolVersionPin when pin not advertised", () => {
     expect(() =>
       canonicalizeHostConfigV2(
@@ -450,13 +776,34 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
       )
     ).toThrow(/ConflictingProtocolVersionPin/);
   });
+
+  it("keeps an unadvertised 2026 pin — it never runs initialize", () => {
+    // A host saved this way predates the dual-era work. It must keep saving
+    // (editing an unrelated field would otherwise be rejected); the UI warns
+    // when a client is not verified for the selected revision.
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          mcpProtocolVersion: "2026-07-28",
+          initialize: { supportedProtocolVersions: ["2025-11-25"] },
+        },
+      })
+    );
+    expect(c.mcpProfile?.mcpProtocolVersion).toBe("2026-07-28");
+    expect(c.mcpProfile?.initialize?.supportedProtocolVersions).toEqual([
+      "2025-11-25",
+    ]);
+  });
 });
 
 describe("canonicalizeHostConfigV2 — toolParamHeaderMirroring", () => {
   it("round-trips both literals", () => {
     for (const mode of ["mirror", "omit"] as const) {
       const c = canonicalizeHostConfigV2(
-        base({ mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: mode } })
+        base({
+          mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: mode },
+        })
       );
       expect(c.mcpProfile?.toolParamHeaderMirroring).toBe(mode);
     }
@@ -474,9 +821,17 @@ describe("canonicalizeHostConfigV2 — toolParamHeaderMirroring", () => {
 
   it("does not collide with an untouched profile's hash", async () => {
     expect(
-      await hash(base({ mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "omit" } }))
+      await hash(
+        base({
+          mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "omit" },
+        })
+      )
     ).not.toBe(
-      await hash(base({ mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "mirror" } }))
+      await hash(
+        base({
+          mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "mirror" },
+        })
+      )
     );
   });
 
@@ -486,8 +841,7 @@ describe("canonicalizeHostConfigV2 — toolParamHeaderMirroring", () => {
         base({
           mcpProfile: {
             profileVersion: 1,
-            toolParamHeaderMirroring:
-              "corrupt" as unknown as "mirror",
+            toolParamHeaderMirroring: "corrupt" as unknown as "mirror",
           },
         })
       )
@@ -564,6 +918,145 @@ describe("canonicalizeHostConfigV2 — client-conformance knobs", () => {
       "paginationTraversal",
       "toolParamHeaderMirroring",
     ]);
+  });
+});
+
+describe("canonicalizeHostConfigV2 — toolListChanged / toolResult probe fields", () => {
+  it("round-trips both fields and omits them when absent", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          toolListChanged: { listens: false },
+          apps: {
+            mcpAppsOverrides: { toolResult: { structuredContent: false } },
+          },
+        },
+      })
+    );
+    expect(c.mcpProfile).toMatchObject({
+      toolListChanged: { listens: false },
+      apps: { mcpAppsOverrides: { toolResult: { structuredContent: false } } },
+    });
+
+    const absent = canonicalizeHostConfigV2(base());
+    expect(absent.mcpProfile).toBeUndefined();
+  });
+
+  it("round-trips toolResult.content and sandbox.browserStorage", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          apps: {
+            mcpAppsOverrides: {
+              toolResult: {
+                structuredContent: true,
+                content: {
+                  text: true,
+                  image: false,
+                  audio: true,
+                  resource: false,
+                  resourceLink: true,
+                },
+              },
+            },
+            sandbox: {
+              browserStorage: {
+                localStorage: true,
+                sessionStorage: false,
+                indexedDB: true,
+              },
+            },
+          },
+        },
+      })
+    );
+    expect(c.mcpProfile?.apps?.mcpAppsOverrides?.toolResult).toEqual({
+      content: {
+        text: true,
+        image: false,
+        audio: true,
+        resource: false,
+        resourceLink: true,
+      },
+      structuredContent: true,
+    });
+    expect(c.mcpProfile?.apps?.sandbox?.browserStorage).toEqual({
+      localStorage: true,
+      sessionStorage: false,
+      indexedDB: true,
+    });
+  });
+
+  it("hashes an empty record the same as absent, so pre-feature configs keep their hash", async () => {
+    const emptyHash = await hash(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          toolListChanged: {},
+          apps: {
+            mcpAppsOverrides: { toolResult: { content: {} } },
+            sandbox: { browserStorage: {} },
+          },
+        },
+      })
+    );
+    const absentHash = await hash(
+      base({ mcpProfile: { profileVersion: 1 } })
+    );
+    expect(emptyHash).toBe(absentHash);
+  });
+
+  it("throws on an unknown key rather than storing it", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            toolListChanged: { subscribes: true } as never,
+          },
+        })
+      )
+    ).toThrow(/toolListChanged has unknown key "subscribes"/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            apps: {
+              mcpAppsOverrides: { toolResult: { structured: true } as never },
+            },
+          },
+        })
+      )
+    ).toThrow(/toolResult has unknown key "structured"/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            apps: {
+              mcpAppsOverrides: {
+                toolResult: { content: { video: true } } as never,
+              },
+            },
+          },
+        })
+      )
+    ).toThrow(/toolResult\.content has unknown key "video"/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            apps: {
+              sandbox: { browserStorage: { cookies: true } } as never,
+            },
+          },
+        })
+      )
+    ).toThrow(/sandbox\.browserStorage has unknown key "cookies"/);
   });
 });
 
@@ -789,7 +1282,10 @@ describe("canonicalizeHostConfigV2 — skillSelection", () => {
   it("dedupes and sorts explicit skillIds deterministically (order-insensitive)", async () => {
     const c = canonicalizeHostConfigV2(
       base({
-        skillSelection: { mode: "explicit", skillIds: ["sk-b", "sk-a", "sk-b"] },
+        skillSelection: {
+          mode: "explicit",
+          skillIds: ["sk-b", "sk-a", "sk-b"],
+        },
       })
     );
     expect(c.skillSelection).toEqual({
@@ -798,7 +1294,9 @@ describe("canonicalizeHostConfigV2 — skillSelection", () => {
     });
     expect(
       await hash(
-        base({ skillSelection: { mode: "explicit", skillIds: ["sk-a", "sk-b"] } })
+        base({
+          skillSelection: { mode: "explicit", skillIds: ["sk-a", "sk-b"] },
+        })
       )
     ).toBe(
       await hash(

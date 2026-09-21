@@ -49,6 +49,11 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
   useComputersEnabled: () => false,
 }));
 vi.mock("@/hooks/useSkillsEnabled", () => ({ useSkillsEnabled: () => false }));
+// The secrets picker is a sibling section, not what this test is about, and it
+// reads a live Convex query — a real one here would need the whole provider.
+vi.mock("../ProjectEnvironmentSecretsPicker", () => ({
+  ProjectEnvironmentSecretsPicker: () => <div />,
+}));
 vi.mock("@/hooks/useSandboxImages", () => ({
   useSandboxImages: () => undefined,
 }));
@@ -56,8 +61,8 @@ vi.mock("@/hooks/useSandboxImages", () => ({
 vi.mock("@/components/hosts/HostPicker", () => ({
   HostPicker: () => <div data-testid="host-picker" />,
 }));
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => <div data-testid="server-group-picker" />,
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
 vi.mock("../EnvironmentCanvasPanel", () => ({
   EnvironmentCanvasPanel: () => <div data-testid="stub-env-canvas" />,
@@ -66,11 +71,11 @@ vi.mock("../use-project-environment-consumers", () => ({
   useProjectEnvironmentConsumers: () => ({
     suiteCount: 0,
     journeyCount: 0,
-    chatboxCount: 0,
+    scenarioCount: 0,
   }),
 }));
-vi.mock("@/hooks/useChatboxes", () => ({
-  useEnvironmentChatbox: () => ({ chatbox: null, isLoading: false }),
+vi.mock("@/hooks/useScenarios", () => ({
+  useEnvironmentScenario: () => ({ scenario: null, isLoading: false }),
 }));
 vi.mock("@/lib/toast", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
@@ -85,7 +90,7 @@ import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 const PROJECT_ID = "proj-1";
 
 function envRow(
-  overrides: Partial<ProjectEnvironmentView> = {}
+  overrides: Partial<ProjectEnvironmentView> = {},
 ): ProjectEnvironmentView {
   return {
     environmentId: "env-1",
@@ -116,7 +121,7 @@ function renderDetail(environment: ProjectEnvironmentView) {
           }
         />
       </Routes>
-    </MemoryRouter>
+    </MemoryRouter>,
   );
   fireEvent.click(screen.getByText("Prod-like"));
 }

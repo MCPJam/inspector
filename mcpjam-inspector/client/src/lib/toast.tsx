@@ -26,7 +26,14 @@ import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
  * Import `toast` from here rather than from "sonner" directly so error toasts
  * stay consistent across the app.
  */
-function CopyableErrorMessage({ text }: { text: string }) {
+function CopyableErrorMessage({
+  text,
+  copyText,
+}: {
+  text: string;
+  /** What the button writes, when that is more than the line it sits on. */
+  copyText?: string;
+}) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -36,7 +43,9 @@ function CopyableErrorMessage({ text }: { text: string }) {
   }, [copied]);
 
   return (
-    <div className="relative pr-7">
+    // `min-h-5` matches the button: a 19.5px line under a 20px button
+    // overflows, and raises a native scrollbar inside `[data-content]`.
+    <div className="relative min-h-5 pr-7">
       <span className="whitespace-pre-wrap break-words">{text}</span>
       <button
         type="button"
@@ -44,7 +53,7 @@ function CopyableErrorMessage({ text }: { text: string }) {
         title="Copy error message"
         onClick={(event) => {
           event.stopPropagation();
-          copyToClipboard(text).then((ok) => {
+          copyToClipboard(copyText ?? text).then((ok) => {
             if (ok) setCopied(true);
           });
         }}
@@ -99,7 +108,22 @@ function protocolPinFallbackAction(
 
 const error: typeof sonnerToast.error = (message, data) =>
   sonnerToast.error(
-    typeof message === "string" ? <CopyableErrorMessage text={message} /> : message,
+    typeof message === "string" ? (
+      <CopyableErrorMessage
+        text={message}
+        // A toast that splits its failure across title and description has to
+        // copy both, or the button hands over a server name and nothing else.
+        // Blank descriptions are skipped: the delimiter would be all it added.
+        copyText={
+          typeof data?.description === "string" &&
+          data.description.trim() !== ""
+            ? `${message}: ${data.description}`
+            : undefined
+        }
+      />
+    ) : (
+      message
+    ),
     {
       duration: ERROR_TOAST_DURATION_MS,
       ...data,
@@ -110,5 +134,5 @@ const error: typeof sonnerToast.error = (message, data) =>
 export const toast: typeof sonnerToast = Object.assign(
   (...args: Parameters<typeof sonnerToast>) => sonnerToast(...args),
   sonnerToast,
-  { error }
+  { error },
 );

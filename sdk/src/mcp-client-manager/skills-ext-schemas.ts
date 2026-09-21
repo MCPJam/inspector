@@ -1,7 +1,6 @@
 /**
- * PIN: modelcontextprotocol/docs @ d7490ec
- * (`seps/2640-skills-extension.mdx`). Re-diff against that commit when
- * re-syncing.
+ * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * Re-diff against that commit when re-syncing.
  */
 /**
  * Runtime validation for `io.modelcontextprotocol/skills` (SEP-2640)
@@ -26,6 +25,7 @@
  */
 
 import { z } from "zod";
+import { DYNAMIC_SKILL_RESOURCES } from "./skills-ext-types.js";
 
 /**
  * One entry in a skill's `resources` manifest: the complete list of files the
@@ -42,6 +42,12 @@ export const skillResourceRefSchema = z
   .object({
     uri: z.string().min(1),
     digest: z.string().min(1),
+    // REQUIRED by the draft, optional here. A non-negative integer when
+    // present: this is untrusted input that flows into a length comparison and
+    // a pre-fetch budget, and a negative or fractional byte count has no
+    // meaning in either. Absence is a server that predates the field, which
+    // `verifySize` reports rather than refuses — see `skills-ext-types.ts`.
+    size: z.number().int().nonnegative().optional(),
   })
   .loose();
 
@@ -50,11 +56,13 @@ export const skillResourceRefSchema = z
  * `skills/get` (as the whole result). SEP-2640 gives them the same shape on
  * purpose: a host that can render a listing entry can render a get.
  *
- * `resources` is OPTIONAL on the wire because the SEP allows a server to omit
- * it, but MCPJam declines to load a skill without one (digest verification is
- * mandatory for us) — that policy lives in `skills-integrity.ts` /
- * `server-skill-tools.ts`, not here. Parsing must still accept the entry so
- * the refusal can name it.
+ * `resources` is REQUIRED by the draft and takes one of two forms — an
+ * enumerated manifest, or the string `"dynamic"`. It stays OPTIONAL here
+ * anyway, for the same reason `digest` is presence-checked rather than
+ * shape-checked: a server that omits it must survive parsing so the refusal
+ * can name the skill and the violation. MCPJam declines to load anything
+ * without an enumerated manifest, and that policy lives in
+ * `skills-integrity.ts` / `server-skills.ts`, not here.
  */
 export const skillEntrySchema = z
   .object({
@@ -72,7 +80,17 @@ export const skillEntrySchema = z
     frontmatter: z.unknown().refine((value) => value !== undefined, {
       message: "frontmatter is required",
     }),
-    resources: z.array(skillResourceRefSchema).optional(),
+    // A UNION, not just an array: the draft's second form is the bare string
+    // `"dynamic"`, for a skill whose content is generated per request. Parsing
+    // only the array turns a conforming dynamic server into an
+    // `InvalidSkillsPayloadError` — a wire error where a stated policy refusal
+    // belongs, and one the user cannot act on.
+    resources: z
+      .union([
+        z.array(skillResourceRefSchema),
+        z.literal(DYNAMIC_SKILL_RESOURCES),
+      ])
+      .optional(),
   })
   .loose();
 

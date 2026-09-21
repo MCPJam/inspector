@@ -1,64 +1,69 @@
 import type { Command } from "commander";
 import { getGlobalOptions } from "../lib/server-config.js";
-import { writeResult } from "../lib/output.js";
+import { usageError, writeResult } from "../lib/output.js";
+import { runPlatformLogin, runPlatformLogout } from "../lib/platform-auth.js";
 import {
-  runPlatformLogin,
-  runPlatformLogout,
-} from "../lib/platform-auth.js";
+  platformOptionsOf,
+  runPlatformOperation,
+} from "../lib/platform-command.js";
 import {
-  buildPlatformClient,
   resolvePlatformBaseUrl,
   resolvePlatformOrigin,
-  toCliError,
 } from "../lib/platform-client.js";
 
 export function registerAuthCommands(program: Command): void {
   program
     .command("login")
     .description(
-      "Log in to MCPJam. Opens your browser for OAuth and stores the session locally.",
+      "Log in to MCPJam Cloud. Opens your browser for OAuth and stores the session locally."
     )
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)",
-    )
-    .option(
-      "--no-browser",
-      "Print the login URL instead of opening a browser",
-    )
+    .option("--no-browser", "Print the login URL instead of opening a browser")
     .action(async (options, command) => {
       const globalOptions = getGlobalOptions(command);
-      const apiUrl = resolvePlatformBaseUrl(options);
-      const origin = resolvePlatformOrigin(options);
+      const platform = platformOptionsOf(command);
+      if (platform.apiKey?.trim()) {
+        throw usageError(
+          "`mcpjam cloud login` uses browser OAuth. Pass --api-key to other cloud commands, or set MCPJAM_API_KEY."
+        );
+      }
+      const apiUrl = resolvePlatformBaseUrl(platform);
+      const origin = resolvePlatformOrigin(platform);
 
-      const result = await runPlatformLogin({ origin, apiUrl }, {
-        ...(options.browser === false
-          ? {
-              openUrl: async (url: string) => {
-                process.stderr.write(
-                  `Open this URL in your browser to continue:\n\n  ${url}\n\n`,
-                );
-              },
-            }
-          : {}),
-      });
+      const result = await runPlatformLogin(
+        { origin, apiUrl },
+        {
+          quiet: globalOptions.quiet,
+          ...(options.browser === false
+            ? {
+                openUrl: async (url: string) => {
+                  process.stderr.write(
+                    `Open this URL in your browser to continue:\n\n  ${url}\n\n`
+                  );
+                },
+              }
+            : {}),
+        }
+      );
 
       writeResult(
         {
           status: "logged_in",
           issuer: result.issuer,
+          apiUrl: result.apiUrl,
           authFile: result.authFilePath,
+          ...(result.email !== undefined ? { email: result.email } : {}),
+          ...(result.plan !== undefined ? { plan: result.plan } : {}),
           ...(result.expiresAt !== undefined
             ? { expiresAt: new Date(result.expiresAt).toISOString() }
             : {}),
         },
-        globalOptions.format,
+        globalOptions.format
       );
     });
 
   program
     .command("logout")
-    .description("Remove the stored MCPJam login.")
+    .description("Remove the stored MCPJam Cloud login.")
     .action(async (_options, command) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformLogout();
@@ -68,37 +73,43 @@ export function registerAuthCommands(program: Command): void {
           status: result.loggedOut ? "logged_out" : "not_logged_in",
           authFile: result.authFilePath,
         },
-        globalOptions.format,
+        globalOptions.format
       );
+
+      const envKey = process.env.MCPJAM_API_KEY?.trim();
+      if (
+        envKey &&
+        !envKey.startsWith("mcpjam_") &&
+        globalOptions.format === "human" &&
+        !globalOptions.quiet
+      ) {
+        process.stderr.write(
+          "MCPJAM_API_KEY is still set, so this CLI remains authenticated after logout.\n"
+        );
+      }
     });
 
   program
     .command("whoami")
-    .description("Show the MCPJam account behind the current credentials.")
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)",
-    )
-    .action(async (options, command) => {
+    .description("Show the MCPJam Cloud account behind the current credentials.")
+    .action(async (_options, command) => {
       const globalOptions = getGlobalOptions(command);
-
-      try {
-        const { client, credentialKind } = buildPlatformClient(options);
-        const me = await client.getMe();
-
-        writeResult(
-          {
+      const result = await runPlatformOperation(
+        platformOptionsOf(command),
+        globalOptions.timeout,
+        async ({ client, credentialKind }) => {
+          const me = await client.getMe();
+          return {
             id: me.id,
             email: me.email,
             name: me.name,
             ...(me.plan ? { plan: me.plan } : {}),
             credential: credentialKind,
-          },
-          globalOptions.format,
-        );
-      } catch (error) {
-        throw toCliError(error);
-      }
+          };
+        },
+        { announce: false, quiet: globalOptions.quiet }
+      );
+
+      writeResult(result, globalOptions.format);
     });
 }

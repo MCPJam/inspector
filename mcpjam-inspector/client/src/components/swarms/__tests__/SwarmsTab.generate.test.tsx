@@ -56,12 +56,16 @@ const {
   createPersonaMutation,
   createJourneyMutation,
   generatePersonaMock,
+  ensureAdhocMock,
+  environmentsEnabled,
   generateJourneysMock,
   toastMock,
 } = vi.hoisted(() => ({
   createPersonaMutation: vi.fn(),
   createJourneyMutation: vi.fn(),
   generatePersonaMock: vi.fn(),
+  ensureAdhocMock: vi.fn(),
+  environmentsEnabled: { value: true },
   generateJourneysMock: vi.fn(),
   toastMock: { success: vi.fn(), error: vi.fn() },
 }));
@@ -85,6 +89,8 @@ vi.mock("convex/react", () => ({
   useMutation: (name: string) => {
     if (name === "personas:createPersona") return createPersonaMutation;
     if (name === "journeys:createJourney") return createJourneyMutation;
+    if (name === "projectEnvironments:ensureAdhocEnvironments")
+      return ensureAdhocMock;
     return vi.fn().mockResolvedValue(undefined);
   },
   usePaginatedQuery: () => ({
@@ -94,6 +100,36 @@ vi.mock("convex/react", () => ({
     isLoading: false,
   }),
   useConvexAuth: () => ({ isAuthenticated: true }),
+}));
+
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => environmentsEnabled.value,
+  useProjectEnvironmentsEnabledState: () => environmentsEnabled.value,
+}));
+
+// The button is the handle the mid-flight test needs to retarget the dialog.
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: ({
+    onChange,
+    triggerId,
+  }: {
+    onChange: (id: string) => void;
+    triggerId?: string;
+  }) => (
+    <button
+      type="button"
+      id={triggerId}
+      data-testid="generate-server-picker"
+      onClick={() => onChange("att-other")}
+    >
+      server group
+    </button>
+  ),
+}));
+
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -119,7 +155,7 @@ vi.mock("@/lib/swarm-api", async (importOriginal) => {
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
   ShareUsageThreadDetail: () => null,
 }));
-vi.mock("@/lib/chatbox-session", () => ({
+vi.mock("@/lib/scenario-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
 vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
@@ -142,29 +178,40 @@ beforeEach(() => {
     return row;
   });
   createJourneyMutation.mockResolvedValue({ _id: "journey-new" });
+  environmentsEnabled.value = true;
+  ensureAdhocMock.mockResolvedValue([
+    {
+      environment: {
+        environmentId: "env-adhoc-1",
+        projectId: "proj-1",
+        hostId: "host-1",
+        origin: "adhoc",
+        revision: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      created: true,
+    },
+  ]);
 });
 
 function openGeneratePersona() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
   openPersonasTab();
   fireEvent.click(
-    screen.getByRole("button", { name: /generate persona with ai/i })
+    screen.getByRole("button", { name: /generate persona with ai/i }),
   );
 }
 
-async function pickEnvironment(name: string | RegExp) {
-  fireEvent.click(screen.getByTestId("generate-environments-picker"));
-  fireEvent.click(await screen.findByRole("checkbox", { name }));
-}
-
 describe("SwarmsTab — generate persona", () => {
-  it("keeps Generate disabled until an environment is picked", async () => {
+  it("opens ready to submit", async () => {
     openGeneratePersona();
-    const submit = screen.getByRole("button", { name: /generate persona/i });
-    expect(submit).toBeDisabled();
 
-    await pickEnvironment(/prod-like/i);
-    expect(submit).not.toBeDisabled();
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /generate persona/i }),
+      ).not.toBeDisabled();
+    });
   });
 
   it("creates the persona as generated, then one journey per result", async () => {
@@ -174,7 +221,6 @@ describe("SwarmsTab — generate persona", () => {
     });
 
     openGeneratePersona();
-    await pickEnvironment(/prod-like/i);
     fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
 
     await waitFor(() => {
@@ -187,7 +233,7 @@ describe("SwarmsTab — generate persona", () => {
         name: "Curious Newcomer",
         role: "hobbyist",
         notes: "n",
-      })
+      }),
     );
     // Avatar indices must be in `createPersona`'s accepted range — the
     // mutation throws (not clamps) on out-of-range values.
@@ -210,7 +256,7 @@ describe("SwarmsTab — generate persona", () => {
         hostIds: [],
         environmentIds: ["env-1"],
         config: { sessionsPerTarget: 1, maxTurns: 6 },
-      })
+      }),
     );
     // The unnamed journey must not send an empty `name`.
     const secondCall = createJourneyMutation.mock.calls[1]![0] as any;
@@ -230,7 +276,7 @@ describe("SwarmsTab — generate persona", () => {
         projectId: "proj-1",
         environmentId: "env-1",
         journeyCount: 3,
-      })
+      }),
     );
   });
 
@@ -244,12 +290,11 @@ describe("SwarmsTab — generate persona", () => {
       .mockRejectedValueOnce(new Error("nope"));
 
     openGeneratePersona();
-    await pickEnvironment(/prod-like/i);
     fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
 
     await waitFor(() => {
       expect(toastMock.success).toHaveBeenCalledWith(
-        "Created persona + 1 of 2 goals"
+        "Created persona + 1 of 2 goals",
       );
     });
   });
@@ -259,12 +304,9 @@ describe("SwarmsTab — generate persona", () => {
       persona: { name: "P", role: "R" },
       journeys: [{ goal: "one" }, { goal: "two" }],
     });
-    createJourneyMutation.mockRejectedValue(
-      new Error("Environment not found")
-    );
+    createJourneyMutation.mockRejectedValue(new Error("Environment not found"));
 
     openGeneratePersona();
-    await pickEnvironment(/prod-like/i);
     fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
 
     // No "0 of 2" success toast — the dialog stays open and says why.
@@ -287,7 +329,7 @@ describe("SwarmsTab — generate persona", () => {
     // footer action is relabelled. (Radix renders its own "Close" X, so assert
     // the absence of "Cancel" rather than the presence of "Close".)
     expect(
-      screen.queryByRole("button", { name: /^cancel$/i })
+      screen.queryByRole("button", { name: /^cancel$/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -298,7 +340,6 @@ describe("SwarmsTab — generate persona", () => {
     });
 
     openGeneratePersona();
-    await pickEnvironment(/prod-like/i);
     fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
 
     const alert = await screen.findByRole("alert");
@@ -308,23 +349,41 @@ describe("SwarmsTab — generate persona", () => {
     expect(toastMock.success).not.toHaveBeenCalled();
   });
 
+  it("names the servers field, and says what the pick is for", () => {
+    // Without the association a screen reader announces the trigger's VALUE
+    // with no field name, while the caption sits right above it. And the line
+    // under the field is the only place left that says why the pick matters —
+    // it came off the old picker's tooltip, which went with the picker.
+    openGeneratePersona();
+
+    expect(screen.getByLabelText("Servers")).toBe(
+      screen.getByTestId("generate-server-picker"),
+    );
+    expect(
+      screen.getByText(/Generation reads the tools on these servers/),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("Connect a client before generating."),
+    ).toBeNull();
+  });
+
   it("targets the environments selected at submit, not a mid-flight change", async () => {
     let releaseGenerate: (v: unknown) => void = () => {};
     generatePersonaMock.mockImplementation(
       () =>
         new Promise((resolve) => {
           releaseGenerate = resolve;
-        })
+        }),
     );
 
     openGeneratePersona();
-    await pickEnvironment(/prod-like/i);
     fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
+    await waitFor(() => {
+      expect(generatePersonaMock).toHaveBeenCalledTimes(1);
+    });
 
-    // Deselect the environment while the generation request is still in flight.
-    fireEvent.click(
-      await screen.findByRole("checkbox", { name: /prod-like/i })
-    );
+    // Retarget the dialog while the generation request is still in flight.
+    fireEvent.click(screen.getByTestId("generate-server-picker"));
 
     releaseGenerate({
       persona: { name: "P", role: "R" },
@@ -337,22 +396,21 @@ describe("SwarmsTab — generate persona", () => {
     // The snapshot wins: without it this would be [] and the mutation would
     // fail after the quota was already spent.
     expect(
-      (createJourneyMutation.mock.calls[0]![0] as any).environmentIds
+      (createJourneyMutation.mock.calls[0]![0] as any).environmentIds,
     ).toEqual(["env-1"]);
     // Env-based: no derived host list is stored.
     expect((createJourneyMutation.mock.calls[0]![0] as any).hostIds).toEqual(
-      []
+      [],
     );
   });
 
   it("dispatches one billed generation even on a double-click", async () => {
     let release: (v: unknown) => void = () => {};
     generatePersonaMock.mockImplementation(
-      () => new Promise((resolve) => (release = resolve))
+      () => new Promise((resolve) => (release = resolve)),
     );
 
     openGeneratePersona();
-    await pickEnvironment(/prod-like/i);
 
     const submit = screen.getByRole("button", { name: /generate persona/i });
     // Two clicks with no render in between: `pending` has not committed yet,
@@ -360,7 +418,9 @@ describe("SwarmsTab — generate persona", () => {
     fireEvent.click(submit);
     fireEvent.click(submit);
 
-    expect(generatePersonaMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(generatePersonaMock).toHaveBeenCalledTimes(1);
+    });
 
     release({ persona: { name: "P", role: "R" }, journeys: [{ goal: "g" }] });
     await waitFor(() => {
@@ -370,19 +430,46 @@ describe("SwarmsTab — generate persona", () => {
 
   it("renders a quota 429 inline instead of closing the dialog", async () => {
     generatePersonaMock.mockRejectedValue(
-      new SwarmGenerateError(429, "You've hit your usage limit for today.")
+      new SwarmGenerateError(429, "You've hit your usage limit for today."),
     );
 
     openGeneratePersona();
-    await pickEnvironment(/prod-like/i);
     fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("You've hit your usage limit for today.");
     expect(createPersonaMutation).not.toHaveBeenCalled();
     expect(
-      screen.getByRole("button", { name: /generate persona/i })
+      screen.getByRole("button", { name: /generate persona/i }),
     ).toBeInTheDocument();
+  });
+
+  /**
+   * The limit dialog already carries this sentence plus the actions that clear
+   * it. An inline card under the form would say the same thing twice with
+   * nothing to act on — so the dialog suppresses its own copy on the FLAG, not
+   * on the class (persona-cap failures share this catch and must keep showing).
+   */
+  it("leaves the message to the dialog when the limit wall was raised", async () => {
+    generatePersonaMock.mockRejectedValue(
+      new SwarmGenerateError(
+        429,
+        "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        true,
+      ),
+    );
+
+    openGeneratePersona();
+    fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
+
+    await waitFor(() => expect(generatePersonaMock).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /generate persona/i }),
+      ).toBeEnabled(),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(createPersonaMutation).not.toHaveBeenCalled();
   });
 });
 
@@ -397,10 +484,9 @@ describe("SwarmsTab — generate journeys", () => {
     // SwarmsTab auto-selects the first persona, so the journeys panel (and its
     // Generate button) is already mounted.
     fireEvent.click(
-      screen.getByRole("button", { name: /generate goals with ai/i })
+      screen.getByRole("button", { name: /generate goals with ai/i }),
     );
 
-    await pickEnvironment(/prod-like/i);
     fireEvent.click(screen.getByRole("button", { name: /generate goals/i }));
 
     await waitFor(() => {
@@ -414,7 +500,7 @@ describe("SwarmsTab — generate journeys", () => {
             role: "tester",
             notes: "cares about speed",
           },
-        })
+        }),
       );
     });
 
@@ -426,7 +512,7 @@ describe("SwarmsTab — generate journeys", () => {
           goal: "goal a",
           hostIds: [],
           environmentIds: ["env-1"],
-        })
+        }),
       );
     });
     // Generating journeys must never create a persona.
@@ -444,10 +530,9 @@ describe("SwarmsTab — generate journeys", () => {
     // SwarmsTab auto-selects the first persona, so the journeys panel (and its
     // Generate button) is already mounted.
     fireEvent.click(
-      screen.getByRole("button", { name: /generate goals with ai/i })
+      screen.getByRole("button", { name: /generate goals with ai/i }),
     );
 
-    await pickEnvironment(/prod-like/i);
     fireEvent.click(screen.getByRole("button", { name: /generate goals/i }));
 
     // Nothing was saved after spending generation quota — say so inline and
@@ -470,6 +555,7 @@ describe("GenerateSwarmDialog — latch release on early rejection", () => {
     onOpenChange: vi.fn(),
     projectId: "proj-1",
     environments: environments as any,
+    hosts: [host],
     onCreatePersona: vi.fn().mockResolvedValue("persona-new"),
     onCreateJourney: vi.fn().mockResolvedValue(undefined),
   };
@@ -481,16 +567,11 @@ describe("GenerateSwarmDialog — latch release on early rejection", () => {
     });
 
     const { rerender } = render(
-      <GenerateSwarmDialog {...baseProps} personaCount={200} />
+      <GenerateSwarmDialog {...baseProps} personaCount={200} />,
     );
-    fireEvent.click(screen.getByTestId("generate-environments-picker"));
-    fireEvent.click(
-      await screen.findByRole("checkbox", { name: /prod-like/i })
-    );
-
     fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "already has 200 personas"
+      "already has 200 personas",
     );
     expect(generatePersonaMock).not.toHaveBeenCalled();
 

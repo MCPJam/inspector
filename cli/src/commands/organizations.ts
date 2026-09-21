@@ -1,9 +1,9 @@
 /**
- * `mcpjam organizations` — the read half, which is the whole group.
+ * `mcpjam cloud organizations` — the read half, which is the whole group.
  *
  * It exists because an `organizationId` had nowhere to come from. `projects
- * list --organization` and `projects create --organization-id` both take one,
- * and until now the only way to learn one was to read it out of a browser URL.
+ * list --org` and `projects create --org` both take one, and until now the
+ * only way to learn one was to read it out of a browser URL.
  *
  * Deliberately list-only. Creating an organization, inviting or removing
  * members, changing roles, transferring ownership and everything billing stay
@@ -13,62 +13,18 @@
 import type { Command } from "commander";
 import {
   listOrganizationsOperation,
-  PlatformApiError,
 } from "@mcpjam/sdk/platform";
 import { writeResult } from "../lib/output.js";
 import { formatOrganizationsHuman } from "../lib/projects-render.js";
-import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
+import {
+  platformOptionsOf,
+  runPlatformOperation as runPlatformCommand,
+  type PlatformOptions,
+} from "../lib/platform-command.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
-type PlatformOptions = {
-  apiKey?: string;
-  apiUrl?: string;
-};
 
-function addPlatformOptions(command: Command): Command {
-  return command
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)",
-    );
-}
 
-async function runPlatformCommand<TOutput>(
-  options: PlatformOptions,
-  timeoutMs: number,
-  execute: (context: {
-    client: ReturnType<typeof buildPlatformClient>["client"];
-    signal: AbortSignal;
-  }) => Promise<TOutput>,
-): Promise<TOutput> {
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => {
-    controller.abort(
-      new PlatformApiError(`Request timed out after ${timeoutMs}ms`, "TIMEOUT", {
-        status: 0,
-      }),
-    );
-  }, timeoutMs);
-  timeoutHandle.unref?.();
-
-  try {
-    const { client } = buildPlatformClient({ ...options, timeoutMs });
-    return await execute({ client, signal: controller.signal });
-  } catch (error) {
-    // When OUR deadline fired, surface the armed TIMEOUT error rather than the
-    // bare AbortError some fetch implementations reject with.
-    if (
-      controller.signal.aborted &&
-      controller.signal.reason instanceof PlatformApiError
-    ) {
-      throw toCliError(controller.signal.reason);
-    }
-    throw toCliError(error);
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
-}
 
 export function registerOrganizationsCommands(program: Command): void {
   const organizations = program
@@ -76,22 +32,19 @@ export function registerOrganizationsCommands(program: Command): void {
     .alias("orgs")
     .description("Inspect the MCPJam organizations you belong to");
 
-  addPlatformOptions(
-    organizations
-      .command("list")
-      .description(
-        "List your organizations and their ids (an sk_ key sees only its own)",
-      ),
-    // `--api-key` / `--api-url` are declared only here, not on the group, so
-    // Commander hands them to this action directly — no `optsWithGlobals`
-    // merge dance like `projects`, whose `servers` group duplicates them.
-  ).action(async (options: PlatformOptions, command) => {
+  organizations
+    .command("list")
+    .description(
+      "List your organizations and their ids (an sk_ key sees only its own)",
+    )
+    .action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
     const result = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         listOrganizationsOperation.execute({}, { client, signal }),
+      { cloudScope: { kind: "account" }, quiet: globalOptions.quiet },
     );
 
     if (globalOptions.format === "human") {

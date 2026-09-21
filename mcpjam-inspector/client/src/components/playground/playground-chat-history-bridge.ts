@@ -13,11 +13,11 @@
  */
 import { create } from "zustand";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
-import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
 
 export interface PlaygroundChatHistoryBridge {
   activeSessionId: string | null;
-  hostStyle: ChatboxHostStyle | undefined;
+  hostStyle: ScenarioHostStyle | undefined;
   isAuthenticated: boolean;
   isStreaming: boolean;
   projectId: string | null | undefined;
@@ -26,7 +26,9 @@ export interface PlaygroundChatHistoryBridge {
   onSelectThread: (session: ChatHistorySession) => void | Promise<void>;
   /** Hover prefetch — warms detail + blob caches so click is near-instant. */
   onPrefetchThread?: (session: ChatHistorySession) => void;
-  onNewChat: (options?: { shared?: boolean }) => void | Promise<void>;
+  onNewChat: (options?: {
+    shared?: boolean;
+  }) => boolean | void | Promise<boolean | void>;
   beforeResetChatAfterArchiveAll?: () => boolean | Promise<boolean>;
   onArchiveAllComplete?: (hadActiveHistorySelection: boolean) => void;
   onSessionAction?: (event: {
@@ -55,8 +57,6 @@ export const usePlaygroundChatHistoryBridgeStore = create<BridgeStore>(
 );
 
 /** Selector hook for pane consumers. */
-export function usePlaygroundChatHistoryBridge():
-  | PlaygroundChatHistoryBridge
-  | null {
+export function usePlaygroundChatHistoryBridge(): PlaygroundChatHistoryBridge | null {
   return usePlaygroundChatHistoryBridgeStore((s) => s.bridge);
 }

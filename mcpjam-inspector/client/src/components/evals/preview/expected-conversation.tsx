@@ -47,6 +47,32 @@ export function describeCheck(p: Predicate): string {
       return `renders < ${p.ms}ms`;
     case "widgetNoConsoleErrors":
       return "no console errors";
+    case "noEndingQuestion":
+      return "no ending question";
+    case "toolLatencyUnder":
+      return `tool < ${p.ms}ms`;
+    case "toolResultSizeUnder":
+      return `result < ${p.maxBytes}B`;
+    case "toolResultContains":
+      return `result has "${p.needle || "…"}"`;
+    case "toolResultMatchesSchema":
+      return "result matches schema";
+    case "toolErrorNamesInput":
+      return "errors name an input";
+    case "fullPageHasContinuation":
+      return "full pages say there's more";
+    case "argumentsMatchToolSchema":
+      return "args match schema";
+    case "noRepeatedIdenticalCall":
+      return "no identical repeat";
+    case "toolCallCountUnder":
+      return `< ${p.count} calls`;
+    case "toolCalledBefore":
+      return `${p.toolName || "?"} before ${p.beforeToolName || "?"}`;
+    case "noDeprecatedToolCalled":
+      return "no deprecated tool";
+    case "noDestructiveToolCalled":
+      return "no destructive tool";
     default:
       return (p as { type: string }).type;
   }

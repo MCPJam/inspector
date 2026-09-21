@@ -1,13 +1,23 @@
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
 import path from "node:path";
 
 const CLI_DIR = process.cwd().endsWith(`${path.sep}cli`)
   ? process.cwd()
   : path.join(process.cwd(), "cli");
-const requireFromCli = createRequire(path.join(CLI_DIR, "package.json"));
-const TSX_CLI_PATH = requireFromCli.resolve("tsx/cli");
-const CLI_ENTRY_PATH = path.join(CLI_DIR, "src", "index.ts");
+
+/**
+ * The BUILT CLI, not `src/index.ts` under `tsx`.
+ *
+ * Every spawn here paid tsx's transpile on the way in: 0.85 s wall / 1.15 s
+ * user per run against 0.35 s / 0.40 s for the bundle. Across the ~114 spawns
+ * in this suite that was most of the cli lane's wall clock, and the lane was
+ * the critical path of the whole PR gate.
+ *
+ * `pretest:fast` in cli/package.json builds this before the suite runs. The
+ * outer `tsx` in scripts/run-tests.mjs — the one that executes the .ts test
+ * files themselves — is untouched; only the CLI the tests spawn changes.
+ */
+const CLI_ENTRY_PATH = path.join(CLI_DIR, "dist", "index.js");
 
 export interface CliRun {
   exitCode: number;
@@ -35,10 +45,10 @@ const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 export function runCli(
   args: string[],
   input?: string,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {},
 ): Promise<CliRun> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [TSX_CLI_PATH, CLI_ENTRY_PATH, ...args], {
+    const child = spawn(process.execPath, [CLI_ENTRY_PATH, ...args], {
       cwd: CLI_DIR,
       env: {
         ...process.env,
@@ -49,6 +59,10 @@ export function runCli(
         // variable leaking in from the host would silently disarm --interactive.
         CI: "",
         MCPJAM_NON_INTERACTIVE: "",
+        // Clearing CI above also un-suppresses the update notifier, which would
+        // otherwise reach npm once per spawn. Suppress it explicitly instead.
+        MCPJAM_NO_UPDATE_CHECK: "1",
+        ...options.env,
       },
       stdio: ["pipe", "pipe", "pipe"],
     });

@@ -1,0 +1,92 @@
+{
+  "__meta": {
+    "purpose": "EXTERNAL oracle for sdk/src/compare-stats.ts newcombeDifferenceInterval. These bounds were produced by an independent implementation, NOT by a second transcription of ours \u2014 a test that re-derives the formula it checks proves only that it was transcribed consistently.",
+    "oracle": "statsmodels.stats.proportion.confint_proportions_2indep(countCompare, nCompare, countBase, nBase, compare=\"diff\", method=\"newcomb\")",
+    "command": "uv run --with statsmodels==0.14.6 python oracle.py",
+    "statsmodelsVersion": "0.14.6",
+    "argumentOrder": "COMPARE side first, base second. statsmodels returns the interval for p1 - p2 and our delta is pCompare - pBase; the wrong order sign-reverses every bound while still looking plausible.",
+    "z": 1.959963984540054,
+    "precision": "12 decimal places, compared as strings via toFixed(12)",
+    "regenerate": "The generating script is deliberately NOT committed. To re-derive, re-run the command above against the same inputs; changing a bound requires re-running the oracle, not editing this file."
+  },
+  "cases": [
+    {
+      "base": {
+        "passed": 8,
+        "total": 10
+      },
+      "compare": {
+        "passed": 9,
+        "total": 10
+      },
+      "delta": "0.100000000000",
+      "lower": "-0.236224990908",
+      "upper": "0.420536441641"
+    },
+    {
+      "base": {
+        "passed": 45,
+        "total": 50
+      },
+      "compare": {
+        "passed": 40,
+        "total": 50
+      },
+      "delta": "-0.100000000000",
+      "lower": "-0.242097157814",
+      "upper": "0.043431785912"
+    },
+    {
+      "base": {
+        "passed": 0,
+        "total": 10
+      },
+      "compare": {
+        "passed": 10,
+        "total": 10
+      },
+      "delta": "1.000000000000",
+      "lower": "0.607509350431",
+      "upper": "1.000000000000"
+    },
+    {
+      "base": {
+        "passed": 1,
+        "total": 3
+      },
+      "compare": {
+        "passed": 2,
+        "total": 3
+      },
+      "delta": "0.333333333333",
+      "lower": "-0.315800684437",
+      "upper": "0.717775111924"
+    },
+    {
+      "base": {
+        "passed": 5,
+        "total": 10
+      },
+      "compare": {
+        "passed": 5,
+        "total": 10
+      },
+      "delta": "0.000000000000",
+      "lower": "-0.372513623820",
+      "upper": "0.372513623820"
+    },
+    {
+      "base": {
+        "passed": 56,
+        "total": 70
+      },
+      "compare": {
+        "passed": 48,
+        "total": 80
+      },
+      "delta": "-0.200000000000",
+      "lower": "-0.333872654037",
+      "upper": "-0.052431472402"
+    }
+  ]
+}

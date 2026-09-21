@@ -129,7 +129,7 @@ describe("slk_ service auth", () => {
     // This middleware is mounted on ~25 `/api/web/*` groups too, so a
     // default-allow posture would hand the bot's credential the entire app.
     for (const path of [
-      "/api/web/chatboxes",
+      "/api/web/scenarios",
       "/api/web/api-keys",
       "/api/v1/projects/p1/servers",
       "/api/v1/projects/p1/eval-suites",
@@ -143,7 +143,7 @@ describe("slk_ service auth", () => {
   it("does not even ask the backend for a non-allowlisted path", async () => {
     // Cheap, and it keeps a refused path indistinguishable from an invalid
     // token by latency.
-    await buildApp().request(request("/api/web/chatboxes"));
+    await buildApp().request(request("/api/web/scenarios"));
     expect(resolveSlackActingUser).not.toHaveBeenCalled();
   });
 

@@ -1,5 +1,5 @@
 /**
- * `resolveTurnRuntime` — the shared runtime adapter that turns a chatbox's
+ * `resolveTurnRuntime` — the shared runtime adapter that turns a scenario's
  * `ModelDefinition` (+ auth/attribution context) into a concrete
  * {@link TurnRuntime} for {@link runUnifiedAssistantTurn}, plus the three
  * side-concerns that live alongside runtime selection:
@@ -21,6 +21,12 @@
  *   - local BYOK → direct engine (model built via `buildOrgModelFromResolvedConfig`)
  *     and `finalizeUsage` posts `/stream/org/local-usage` with the identical
  *     body `runLocalOrgChatTurnHeadless`'s `postLocalUsage` emitted.
+ *   - external account → REFUSED. A runtime-chosen sentinel (`cursor/auto`)
+ *     never asks the org-provider config a question, and it never runs here
+ *     either: the runtime authenticates with the customer's own vendor
+ *     credential, which reaches `runHarnessTurn` only through the caller's
+ *     materialized project secrets — a seam `runUnifiedAssistantTurn` does not
+ *     have. See the branch for what wiring it would take.
  */
 
 import type { ToolSet } from "ai";
@@ -35,6 +41,7 @@ import {
   type SyntheticModelSource,
 } from "./org-model-config.js";
 import { postLocalUsage } from "./org-model-stream-handler.js";
+import { classifyTurnFailure } from "./turn-failure-classification.js";
 import { logger } from "./logger.js";
 import type {
   DirectRuntime,
@@ -45,8 +52,8 @@ import type {
 /**
  * Per-run attribution stamped onto the resulting usage record. `journeyRunId`
  * ties spend to a swarm (journey-execution) run; absent for real chat.
- * (The chatbox session-simulation arm — `synthesisRunId` — was removed with
- * the chatbox synthetic surface.)
+ * (The scenario session-simulation arm — `synthesisRunId` — was removed with
+ * the scenario synthetic surface.)
  */
 export type TurnRunAttribution = { journeyRunId: string } | undefined;
 
@@ -54,17 +61,17 @@ export type TurnRunAttribution = { journeyRunId: string } | undefined;
  * The narrowed source-of-traffic marker forwarded into chat-ingestion /
  * usage writeback. Mirrors `RunAssistantTurnOptions["sourceType"]`.
  */
-export type TurnSourceType = "direct" | "chatbox" | "eval" | "swarm";
+export type TurnSourceType = "direct" | "scenario" | "eval" | "swarm";
 
 export interface ResolveTurnRuntimeArgs {
   modelDefinition: ModelDefinition;
   projectId: string;
   authHeader?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   /** Selected MCP server ids — flow into the byok body + local-usage body. */
   serverIds?: string[];
-  /** Narrowed source marker (chatbox for synthetic). Used for local-usage. */
+  /** Narrowed source marker (scenario for synthetic). Used for local-usage. */
   sourceType: TurnSourceType;
   chatSessionId?: string;
   /**
@@ -102,27 +109,10 @@ export interface ResolvedTurnRuntime {
   classifyFailure(message: string): "rate_limited" | "failed";
 }
 
-/**
- * The single source of truth for folding spend-cap / rate-limit errors into
- * the amber `rate_limited` outcome vs a hard `failed`. Both `runOneSession`'s
- * catch AND the per-runtime `classifyFailure` delegate here so the regex can't
- * drift between the two call sites.
- *
- * Matches provider rate-limits (`rate limit`, `429`-phrased) AND org spend-cap
- * wording (`spend`, `cap`, `quota`, `budget`) — an org cap surfaced as
- * "quota exceeded" / "budget exhausted" must land in `rate_limited` so the
- * swarm fan-out's whole-run stop can fire on it (it re-inspects the message via
- * `classifyRateLimit`). `cap`/`quota`/`budget` are word-anchored so genuine
- * spend-cap wording matches but "capacity", "recap", "escape" do NOT
- * (a provider capacity error is a hard `failed`, not a spend cap).
- */
-export function classifyTurnFailure(
-  message: string,
-): "rate_limited" | "failed" {
-  return /rate.?limit|spend|\bquota\b|\bbudget\b|\bcap\b/i.test(message)
-    ? "rate_limited"
-    : "failed";
-}
+// Re-exported because this is where every existing importer looks for it; the
+// definition moved to a leaf module so callers that want only this predicate
+// need not load the model factories behind this one.
+export { classifyTurnFailure } from "./turn-failure-classification.js";
 
 const HOSTED_NOOP_FINALIZE = async (): Promise<void> => {
   // Hosted engines (MCPJam `/stream`, cloud BYOK `/stream/org`) record usage
@@ -141,7 +131,7 @@ export async function resolveTurnRuntime(
     modelDefinition: args.modelDefinition,
     projectId: args.projectId,
     authHeader: args.authHeader,
-    chatboxId: args.chatboxId,
+    scenarioId: args.scenarioId,
     accessVersion: args.accessVersion,
     serverIds: args.serverIds,
   });
@@ -163,7 +153,7 @@ export async function resolveTurnRuntime(
       Object.keys(args.tools as Record<string, unknown>).length > 0
     ) {
       throw new Error(
-        "Synthetic runs on local-runtime org BYOK models don't yet support approval-required tool calls. Disable tool approval on this chatbox or switch the provider to cloud runtime.",
+        "Synthetic runs on local-runtime org BYOK models don't yet support approval-required tool calls. Disable tool approval on this scenario or switch the provider to cloud runtime.",
       );
     }
 
@@ -212,7 +202,7 @@ export async function resolveTurnRuntime(
         turnId: result.turnTrace?.turnId,
         promptIndex: result.turnTrace?.promptIndex,
         authHeader: args.authHeader,
-        chatboxId: args.chatboxId,
+        scenarioId: args.scenarioId,
         accessVersion: args.accessVersion,
         selectedServers: args.serverIds,
         serverIds: args.serverIds,
@@ -230,6 +220,54 @@ export async function resolveTurnRuntime(
       finalizeUsage,
       classifyFailure: classifyTurnFailure,
     };
+  }
+
+  // --- Runtime-chosen sentinel → REFUSED on this surface ---
+  //
+  // The host's model id names no provider model (`cursor/auto`), so there is no
+  // org provider to resolve and no MCPJam credential to spend. That much is
+  // what `resolveSyntheticModelSource` already decided; what is left is whether
+  // this resolver's callers can actually RUN such a turn, and none of them can.
+  //
+  // Both refusals happen BEFORE the caller marks the turn as possibly-spent, so
+  // a v1 session turn that named `cursor/auto` releases its lease and gets a
+  // sentence that explains itself — where it previously reached Convex and came
+  // back `provider_not_configured: cursor`, i.e. "go configure a key" for a
+  // provider that has no keys.
+  //
+  // WITHOUT a harness the sentinel is unrunnable by construction: nothing else
+  // reaches the runtime that would choose the model.
+  //
+  // WITH a harness it is unrunnable HERE, and the difference matters enough to
+  // say separately. An external-account runtime authenticates with the
+  // customer's own vendor credential, and `runHarnessTurn` takes that credential
+  // from ONE place — the caller's materialized project secrets
+  // (`runtimeSecretsOverride`), because delivering a value into the box and
+  // scrubbing it out of the persisted transcript are two uses of one list and
+  // only the caller can wire the second. `runUnifiedAssistantTurn` — the facade
+  // every caller of this resolver drives — has no `runtimeSecrets` seam at all,
+  // so the credential cannot arrive. Returning a "hosted + harness" runtime here
+  // would advertise a turn that then dies inside `runHarnessTurn` telling the
+  // user to add a `CURSOR_API_KEY` secret they may well have already added — a
+  // wrong diagnosis for a turn this surface was never able to run.
+  //
+  // The fix is not a bigger error message: it is wiring the secrets fetch AND
+  // the transcript scrubber into the synthetic runner, which would also start
+  // delivering project secrets to the existing harnesses' synthetic turns
+  // (today they receive none). That is a security-relevant change with its own
+  // review; see the matching note in `run-harness-turn.ts`. Until then, refuse.
+  if (resolution.source === "external-account") {
+    throw new Error(
+      args.harness
+        ? `"${modelId}" is a placeholder for a runtime that reaches its model ` +
+            "on your own account with the runtime vendor, and this turn " +
+            "surface cannot deliver that credential — it has no path for the " +
+            "project secrets the runtime authenticates with. Run this host " +
+            "from chat, which materializes them."
+        : `"${modelId}" is a placeholder for a runtime that chooses its own ` +
+            "model, not a model MCPJam can run. Send this turn to a host " +
+            "whose harness provides that runtime, or pick a real model.",
+    );
   }
 
   // --- MCPJam-provided → hosted `/stream` ---

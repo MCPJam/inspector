@@ -175,7 +175,7 @@ export async function fetchRuntimeServerSecrets(args: {
   projectId: string;
   serverId: string;
   accessScope?: "project_member" | "chat_v2";
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   /**
    * When the caller authenticated via a WorkOS API key, Inspector exchanges
@@ -200,6 +200,19 @@ export async function fetchRuntimeServerSecrets(args: {
     );
   }
   const RUNTIME_REVEAL_TIMEOUT_MS = 10_000;
+  // A scenario grant authorizes using an MCP server, not downloading its
+  // credentials. Convex requires infrastructure authentication in addition
+  // to the viewer's bearer before delivering scenario secrets to this process.
+  const scenarioServiceToken = args.scenarioId
+    ? process.env.INSPECTOR_SERVICE_TOKEN
+    : undefined;
+  if (args.scenarioId && !scenarioServiceToken) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing INSPECTOR_SERVICE_TOKEN for scenario secret delivery",
+    );
+  }
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),
@@ -210,6 +223,9 @@ export async function fetchRuntimeServerSecrets(args: {
   try {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      ...(scenarioServiceToken
+        ? { "x-inspector-service-token": scenarioServiceToken }
+        : {}),
     };
     if (args.workosApiKeyActingAs) {
       const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
@@ -236,7 +252,7 @@ export async function fetchRuntimeServerSecrets(args: {
         projectId: args.projectId,
         serverId: args.serverId,
         ...(args.accessScope ? { accessScope: args.accessScope } : {}),
-        ...(args.chatboxId ? { chatboxId: args.chatboxId } : {}),
+        ...(args.scenarioId ? { scenarioId: args.scenarioId } : {}),
         ...(typeof args.accessVersion === "number"
           ? { accessVersion: args.accessVersion }
           : {}),

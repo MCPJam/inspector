@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   },
   paginatedCalls: [] as Array<{ name: string; args: unknown }>,
   detailThreadIds: [] as string[],
+  detailSessionLinks: [] as string[],
 }));
 
 vi.mock("convex/react", () => ({
@@ -52,13 +53,27 @@ vi.mock("convex/react", () => ({
 // panel's contract with it is just "opens the row's `id`", so stub it and
 // record the id.
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
-  ShareUsageThreadDetail: ({ threadId }: { threadId: string }) => {
+  ShareUsageThreadDetail: ({
+    threadId,
+    sessionLink,
+  }: {
+    threadId: string;
+    sessionLink?: string;
+  }) => {
     mocks.detailThreadIds.push(threadId);
+    if (sessionLink) mocks.detailSessionLinks.push(sessionLink);
     return <div data-testid="thread-detail-stub">{threadId}</div>;
   },
 }));
 
 import { SessionsPanel } from "@/components/sessions/SessionsPanel";
+
+/**
+ * A real Convex-id-shaped project id. The path builder refuses to put an
+ * unusable id in the canonical position, so `"p1"` would (correctly) produce
+ * an unscoped path and prove nothing.
+ */
+const PROJECT_ID = "k5700000000000000000000000a";
 
 function setRows(
   results: SessionFeedItem[],
@@ -101,6 +116,11 @@ function lastCall() {
 beforeEach(() => {
   mocks.paginatedCalls.length = 0;
   mocks.detailThreadIds.length = 0;
+  mocks.detailSessionLinks.length = 0;
+  // The panel reads its selection from the URL, so the URL is shared state
+  // between tests now — one that clicks a row would otherwise leave the next
+  // one rendering a detail pane it never asked for.
+  window.history.replaceState({}, "", "/sessions");
   setRows([]);
 });
 
@@ -126,7 +146,7 @@ describe("SessionsPanel — query contract", () => {
 
     // Selecting every pill means "no filter" — the arg must drop back out so
     // the backend serves the plain project index.
-    for (const pill of ["direct", "chatbox", "eval"]) {
+    for (const pill of ["direct", "scenario", "eval"]) {
       fireEvent.click(screen.getByTestId(`sessions-source-pill-${pill}`));
     }
     expect(lastCall().args).toEqual({ projectId: "p1" });
@@ -212,6 +232,43 @@ describe("SessionsPanel — rows and detail", () => {
     expect(quick.getByText("Quick Run")).toBeInTheDocument();
   });
 
+  test("renders an API origin chip and falls back for unknown origins", () => {
+    setRows([
+      makeRow({
+        chatSessionId: "cs_api",
+        sourceType: "direct",
+        origin: "api",
+        title: "Agent turn",
+      }),
+      makeRow({
+        chatSessionId: "cs_future",
+        sourceType: "direct",
+        origin: "future_surface",
+        title: "Unknown origin",
+      }),
+      makeRow({
+        chatSessionId: "cs_proto",
+        sourceType: "direct",
+        origin: "constructor",
+        title: "Inherited key",
+      }),
+    ]);
+    render(<SessionsPanel projectId="p1" />);
+
+    const apiRow = within(screen.getByTestId("session-row-cs_api"));
+    expect(apiRow.getByTestId("session-origin-chip")).toHaveTextContent("API");
+
+    const future = within(screen.getByTestId("session-row-cs_future"));
+    expect(future.getByTestId("session-origin-chip")).toHaveTextContent(
+      "future_surface"
+    );
+
+    const proto = within(screen.getByTestId("session-row-cs_proto"));
+    expect(proto.getByTestId("session-origin-chip")).toHaveTextContent(
+      "constructor"
+    );
+  });
+
   test("clicking a row opens the detail pane with the row's `id`, not its chatSessionId", () => {
     setRows([
       makeRow({ id: "doc_abc", chatSessionId: "cs_abc", title: "Pick me" }),
@@ -224,6 +281,53 @@ describe("SessionsPanel — rows and detail", () => {
     );
     expect(mocks.detailThreadIds).toContain("doc_abc");
     expect(mocks.detailThreadIds).not.toContain("cs_abc");
+  });
+
+  test("puts the selection in the URL, stamped with the panel's project", () => {
+    // Selection lives in the URL because `/sessions?session=` is the backend's
+    // universal permalink fallback: every `/v1/sessions` item carries a link
+    // pointing here, so arriving at one must open that session.
+    // Starts at a BARE /sessions: the panel must stamp its own projectId
+    // rather than copying the absent one forward. The project rides in the
+    // PATH now — a query the app consumed and stripped could not survive the
+    // recipient's refresh.
+    window.history.replaceState({}, "", "/sessions");
+    setRows([makeRow({ id: "doc_abc", chatSessionId: "cs_abc" })]);
+    render(<SessionsPanel projectId={PROJECT_ID} />);
+
+    fireEvent.click(screen.getByTestId("session-row-cs_abc"));
+
+    const url = new URL(window.location.href);
+    expect(url.pathname).toBe(`/p/${PROJECT_ID}/sessions`);
+    expect(url.searchParams.get("session")).toBe("doc_abc");
+    // Dropping the project would silently move the page to whatever project
+    // the viewer's picker was parked on.
+    expect(url.searchParams.get("project")).toBeNull();
+  });
+
+  test("opens the session named by ?session= on first render", () => {
+    // The permalink case. No click, and no page-walk: the detail pane loads by
+    // thread id independently of where the row falls in the list.
+    window.history.replaceState({}, "", "/sessions?session=doc_deep");
+    setRows([]);
+    render(<SessionsPanel projectId="p1" />);
+
+    expect(screen.getByTestId("thread-detail-stub")).toHaveTextContent(
+      "doc_deep"
+    );
+  });
+
+  test("hands the detail pane a shareable absolute link for the selection", () => {
+    window.history.replaceState({}, "", "/sessions?session=doc_abc");
+    setRows([makeRow({ id: "doc_abc", chatSessionId: "cs_abc" })]);
+    render(<SessionsPanel projectId={PROJECT_ID} />);
+
+    const link = mocks.detailSessionLinks.at(-1) ?? "";
+    // The panel's own projectId, in the path — a recipient parked on another
+    // project has to land on this one, and still be on it after a refresh.
+    expect(link).toContain(`/p/${PROJECT_ID}/sessions?session=doc_abc`);
+    expect(link).not.toContain("project=");
+    expect(link).toMatch(/^https?:\/\//);
   });
 
   test("an empty unfiltered feed shows the getting-started empty state", () => {

@@ -17,10 +17,10 @@ describe("previewIframeAllow", () => {
   // Default posture: when the host hasn't opted in via apps.sandbox.permissions,
   // emit the full SEP-1865 spec set on the wrapper so the inner mcp-apps
   // renderer (the authoritative per-resource gate) isn't pre-blocked. Mirrors
-  // the chatbox-surface CSP default of "permissive".
+  // the scenario-surface CSP default of "permissive".
   const FULL_SPEC = "camera; microphone; geolocation; clipboard-write";
 
-  it("emits full spec set when profile is undefined (permissive chatbox default)", () => {
+  it("emits full spec set when profile is undefined (permissive scenario default)", () => {
     expect(previewIframeAllow(undefined)).toBe(FULL_SPEC);
   });
 

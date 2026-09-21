@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MistralSpinnerIndicator } from "../mistral-spinner";
-import { ChatboxHostThemeProvider } from "@/contexts/chatbox-client-style-context";
+import { ScenarioHostThemeProvider } from "@/contexts/scenario-client-style-context";
 
 describe("MistralSpinnerIndicator", () => {
   it("renders Le Chat's five-square loader and shimmering 'Thinking' label", () => {
@@ -57,18 +57,18 @@ describe("MistralSpinnerIndicator", () => {
     expect(container.textContent).toContain("Thinking");
   });
 
-  it("defaults the label to data-theme='dark' when no chatbox host theme is mounted", () => {
+  it("defaults the label to data-theme='dark' when no scenario host theme is mounted", () => {
     render(<MistralSpinnerIndicator />);
     expect(
       screen.getByTestId("loading-indicator-mistral-label").dataset.theme
     ).toBe("dark");
   });
 
-  it("switches the label to data-theme='light' under a light chatbox host theme", () => {
+  it("switches the label to data-theme='light' under a light scenario host theme", () => {
     render(
-      <ChatboxHostThemeProvider value="light">
+      <ScenarioHostThemeProvider value="light">
         <MistralSpinnerIndicator />
-      </ChatboxHostThemeProvider>
+      </ScenarioHostThemeProvider>
     );
     expect(
       screen.getByTestId("loading-indicator-mistral-label").dataset.theme

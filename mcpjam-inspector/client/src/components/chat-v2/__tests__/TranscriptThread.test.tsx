@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
 import { TranscriptThread } from "../thread/transcript-thread";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
+import { ScenarioHostStyleProvider } from "@/contexts/scenario-client-style-context";
 
 const mockMessageView = vi.fn();
 
@@ -400,13 +400,13 @@ describe("TranscriptThread", () => {
 
   it("attaches an animated Claude footer to the latest assistant message in a Claude host context", () => {
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <TranscriptThread
           {...defaultProps}
           isLoading={true}
           lastRenderableMessageId="assistant-1"
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(mockMessageView).toHaveBeenCalledWith(
@@ -425,13 +425,13 @@ describe("TranscriptThread", () => {
 
   it("attaches the MCPJam dot footer to the latest assistant message while loading", () => {
     render(
-      <ChatboxHostStyleProvider value="mcpjam">
+      <ScenarioHostStyleProvider value="mcpjam">
         <TranscriptThread
           {...defaultProps}
           isLoading={true}
           lastRenderableMessageId="assistant-1"
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(mockMessageView).toHaveBeenCalledWith(
@@ -451,13 +451,13 @@ describe("TranscriptThread", () => {
 
   it("does not attach a Claude footer to MCPJam host messages", () => {
     render(
-      <ChatboxHostStyleProvider value="mcpjam">
+      <ScenarioHostStyleProvider value="mcpjam">
         <TranscriptThread
           {...defaultProps}
           isLoading={false}
           lastRenderableMessageId="assistant-1"
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(mockMessageView).toHaveBeenCalledWith(
@@ -471,13 +471,13 @@ describe("TranscriptThread", () => {
 
   it("keeps the latest Claude assistant footer static after loading completes", () => {
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <TranscriptThread
           {...defaultProps}
           isLoading={false}
           lastRenderableMessageId="assistant-1"
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(mockMessageView).toHaveBeenCalledWith(

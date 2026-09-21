@@ -56,11 +56,9 @@ function renderMatrix(initial?: Partial<HostConfigInputV2>) {
 }
 
 async function expandMcpAppsDimensions(
-  user: ReturnType<typeof userEvent.setup>,
+  user: ReturnType<typeof userEvent.setup>
 ) {
-  await user.click(
-    screen.getByRole("button", { name: /MCP App support/i }),
-  );
+  await user.click(screen.getByRole("button", { name: /MCP App support/i }));
 }
 
 describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
@@ -80,17 +78,22 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     expect(screen.queryByText(/Matches host style preset/)).toBeNull();
   });
 
-  it("renders the availableDisplayModes cluster with Claude's preset (all three modes)", async () => {
+  it("renders the availableDisplayModes cluster with Claude's probed preset", async () => {
     const user = userEvent.setup();
     renderMatrix();
     await expandMcpAppsDimensions(user);
-    // Claude advertises the FULL surface: inline + fullscreen + pip.
-    const cluster = screen.getByTestId("mcp-apps-dimension-availableDisplayModes");
-    for (const mode of ["inline", "fullscreen", "pip"] as const) {
+    // Claude advertises inline + fullscreen; pip is unavailable.
+    const cluster = screen.getByTestId(
+      "mcp-apps-dimension-availableDisplayModes"
+    );
+    for (const mode of ["inline", "fullscreen"] as const) {
       const button = within(cluster).getByRole("button", { name: mode });
       // Selected modes use the same primary color as the adjacent switches.
       expect(button.className).toMatch(/bg-primary/);
     }
+    expect(
+      within(cluster).getByRole("button", { name: "pip" }).className
+    ).not.toMatch(/bg-primary/);
   });
 
   it("toggling a boolean dimension produces a sparse override on the draft", async () => {
@@ -161,14 +164,14 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     await user.click(toggle); // back to preset → drop the override key
     expect(draftRef.current.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
     expect(draftRef.current.mcpProfile?.apps?.compatRuntime?.openaiApps).toBe(
-      false,
+      false
     );
   });
 
   it("renders the master advertise switch in the header", () => {
     renderMatrix();
     expect(
-      screen.getByRole("switch", { name: "Advertise MCP App support" }),
+      screen.getByRole("switch", { name: "Advertise MCP App support" })
     ).toBeChecked();
   });
 
@@ -177,7 +180,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     renderMatrix();
     await expandMcpAppsDimensions(user);
     expect(
-      screen.getByTestId("mcp-apps-dimension-sandboxPermissions"),
+      screen.getByTestId("mcp-apps-dimension-sandboxPermissions")
     ).toBeInTheDocument();
     expect(screen.queryByText("ADVANCED")).toBeNull();
     expect(screen.queryByText(/Notifications & capabilities/i)).toBeNull();
@@ -187,14 +190,14 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     const user = userEvent.setup();
     const { draftRef } = renderMatrix();
     await expandMcpAppsDimensions(user);
-    // Claude's preset is [inline, fullscreen, pip]. Click "pip" to
-    // remove it → override should be [inline, fullscreen].
-    const cluster = screen.getByTestId("mcp-apps-dimension-availableDisplayModes");
+    // Claude's preset is [inline, fullscreen]. Click "pip" to add it.
+    const cluster = screen.getByTestId(
+      "mcp-apps-dimension-availableDisplayModes"
+    );
     await user.click(within(cluster).getByRole("button", { name: "pip" }));
     expect(
-      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides
-        ?.availableDisplayModes,
-    ).toEqual(["inline", "fullscreen"]);
+      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides?.availableDisplayModes
+    ).toEqual(["inline", "fullscreen", "pip"]);
   });
 
   it("force-enables inline when the user unchecks the last enabled mode", async () => {
@@ -203,13 +206,14 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     await expandMcpAppsDimensions(user);
     // Copilot preset is already ["fullscreen"]; unchecking it should
     // coerce to ["inline"] (matrix invariant — never empty).
-    const cluster = screen.getByTestId("mcp-apps-dimension-availableDisplayModes");
+    const cluster = screen.getByTestId(
+      "mcp-apps-dimension-availableDisplayModes"
+    );
     await user.click(
-      within(cluster).getByRole("button", { name: "fullscreen" }),
+      within(cluster).getByRole("button", { name: "fullscreen" })
     );
     expect(
-      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides
-        ?.availableDisplayModes,
+      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides?.availableDisplayModes
     ).toEqual(["inline"]);
   });
 });
@@ -233,15 +237,11 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration
       message: { text: {} },
     };
     render(
-      <AppsExtensionTab
-        draft={draft}
-        onDraftChange={() => {}}
-        attention={[]}
-      />,
+      <AppsExtensionTab draft={draft} onDraftChange={() => {}} attention={[]} />
     );
     await expandMcpAppsDimensions(user);
     const serverResources = screen.getByTestId(
-      "mcp-apps-dimension-serverResources",
+      "mcp-apps-dimension-serverResources"
     );
     expect(within(serverResources).getByRole("switch")).not.toBeChecked();
     const logging = screen.getByTestId("mcp-apps-dimension-logging");
@@ -267,9 +267,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration
     });
     // Sanity: legacy is set, matrix is absent.
     expect(draftRef.current.hostCapabilitiesOverride).toBeDefined();
-    expect(
-      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
-    ).toBeUndefined();
+    expect(draftRef.current.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
     await expandMcpAppsDimensions(user);
     const row = screen.getByTestId("mcp-apps-dimension-toolInputPartial");
     await user.click(within(row).getByRole("switch"));
@@ -286,7 +284,6 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration
       toolInputPartial: false, // the user's edit
     });
   });
-
 });
 
 describe("AppsExtensionTab — master-toggle round-trip", () => {
@@ -315,7 +312,7 @@ describe("AppsExtensionTab — master-toggle round-trip", () => {
     const user = userEvent.setup();
     const { draftRef } = renderMatrix();
     const original = JSON.parse(
-      JSON.stringify(draftRef.current.clientCapabilities ?? {}),
+      JSON.stringify(draftRef.current.clientCapabilities ?? {})
     );
     const toggle = screen.getByRole("switch", {
       name: "Advertise MCP App support",
@@ -329,12 +326,12 @@ describe("AppsExtensionTab — master-toggle round-trip", () => {
     const user = userEvent.setup();
     const mistralTemplate = getCatalogTemplate(
       bundledHostCompatCatalog(),
-      "mistral",
+      "mistral"
     );
     if (!mistralTemplate) throw new Error("Missing Mistral catalog template");
     const { draftRef } = renderMatrix(mistralTemplate);
     const original = JSON.parse(
-      JSON.stringify(draftRef.current.clientCapabilities ?? {}),
+      JSON.stringify(draftRef.current.clientCapabilities ?? {})
     );
     const toggle = screen.getByRole("switch", {
       name: "Advertise MCP App support",

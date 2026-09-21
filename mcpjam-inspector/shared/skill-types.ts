@@ -151,6 +151,15 @@ export interface SkillListItem {
    * pickers treat absent as eligible and rely on the save-time backend gate.
    */
   pinnability?: SkillPinnability;
+  /**
+   * Cloud skills only — which revision this skill's "Latest" currently resolves
+   * to (Versioned Skills), for a `v3` badge and as the default in a version
+   * picker. Absent on a skill that predates versioning and has not been
+   * backfilled, and on older backends: consumers render nothing rather than
+   * guessing "v1".
+   */
+  currentVersionId?: string;
+  currentVersionNumber?: number;
 }
 
 /**

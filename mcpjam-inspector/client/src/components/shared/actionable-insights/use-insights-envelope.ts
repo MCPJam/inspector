@@ -21,7 +21,7 @@ export type InsightsEnvelopeSurface =
       projectId: string | null | undefined;
       runId: string | null | undefined;
     }
-  | { kind: "scenario"; chatboxId: string | null | undefined };
+  | { kind: "scenario"; scenarioId: string | null | undefined };
 
 function queryFor(surface: InsightsEnvelopeSurface): {
   name: string;
@@ -44,7 +44,7 @@ function queryFor(surface: InsightsEnvelopeSurface): {
     case "scenario":
       return {
         name: INSIGHTS_ENVELOPE_QUERIES.scenario,
-        args: surface.chatboxId ? { chatboxId: surface.chatboxId } : "skip",
+        args: surface.scenarioId ? { scenarioId: surface.scenarioId } : "skip",
       };
   }
 }

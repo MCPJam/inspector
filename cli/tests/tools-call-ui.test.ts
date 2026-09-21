@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import http from "node:http";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -13,66 +11,10 @@ import {
   resolveInspectorStartIfNeeded,
 } from "../src/commands/tools.js";
 import { buildInspectorServerName } from "../src/lib/inspector-render.js";
+import { runCli } from "./support/task-cli-harness.js";
 
-const CLI_DIR = process.cwd().endsWith(`${path.sep}cli`)
-  ? process.cwd()
-  : path.join(process.cwd(), "cli");
-const requireFromCli = createRequire(path.join(CLI_DIR, "package.json"));
-const TSX_CLI_PATH = requireFromCli.resolve("tsx/cli");
-const CLI_ENTRY_PATH = path.join(CLI_DIR, "src", "index.ts");
 const INSPECTOR_FRONTEND_HTML =
   '<!doctype html><meta name="mcpjam-inspector" content="true"><title>MCPJam Inspector</title><div id="root"></div>';
-
-async function runCli(
-  args: string[],
-  options: { env?: NodeJS.ProcessEnv } = {},
-): Promise<{
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}> {
-  return await new Promise((resolve, reject) => {
-    execFile(
-      process.execPath,
-      [TSX_CLI_PATH, CLI_ENTRY_PATH, ...args],
-      {
-        cwd: CLI_DIR,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          MCPJAM_CLI_DISABLE_BROWSER_OPEN: "1",
-          MCPJAM_TELEMETRY_DISABLED: "1",
-          NODE_NO_WARNINGS: "1",
-          ...options.env,
-        },
-      },
-      (error, stdout, stderr) => {
-        if (
-          error &&
-          (error as NodeJS.ErrnoException).code !== undefined &&
-          typeof (error as NodeJS.ErrnoException).code !== "number"
-        ) {
-          reject(
-            new Error(
-              `Failed to execute CLI: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            ),
-          );
-          return;
-        }
-        resolve({
-          exitCode:
-            typeof (error as NodeJS.ErrnoException | null)?.code === "number"
-              ? Number((error as NodeJS.ErrnoException).code)
-              : 0,
-          stdout,
-          stderr,
-        });
-      },
-    );
-  });
-}
 
 function lastJsonLine(stdout: string): string {
   const lines = stdout.trim().split(/\r?\n/);
@@ -91,6 +33,18 @@ function lastJsonLine(stdout: string): string {
   return "";
 }
 
+function assertToolResultWithDuration(
+  actual: unknown,
+  expected: Record<string, unknown>,
+): void {
+  assert.equal(typeof actual, "object");
+  assert.ok(actual && !Array.isArray(actual));
+  const { _durationMs, ...raw } = actual as Record<string, unknown>;
+  assert.deepEqual(raw, expected);
+  assert.equal(typeof _durationMs, "number");
+  assert.ok(Number.isFinite(_durationMs) && (_durationMs as number) >= 0);
+}
+
 async function readJsonBody(
   request: http.IncomingMessage,
 ): Promise<Record<string, unknown>> {
@@ -106,6 +60,8 @@ async function startMockServer(options: {
   hasActiveClient?: boolean;
   serveFrontend?: boolean;
   toolResult?: unknown;
+  /** Stall the `initialize` handshake so connect time is separable from the call. */
+  initializeDelayMs?: number;
   toolRpcError?: { code: number; message: string };
   failRender?: boolean;
   commandDelays?: Partial<Record<string, number>>;
@@ -156,6 +112,11 @@ async function startMockServer(options: {
       const id = body.id;
 
       if (method === "initialize") {
+        if (options.initializeDelayMs) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, options.initializeDelayMs),
+          );
+        }
         response.writeHead(200, { "Content-Type": "application/json" });
         response.end(
           JSON.stringify({
@@ -379,7 +340,8 @@ test("tools call --ui executes once and sends the raw result to Inspector", asyn
       payload.inspectorBrowserUrl,
       `http://127.0.0.1:${server.port}/#playground`,
     );
-    assert.deepEqual(payload.result, toolResult);
+    assert.equal("_durationMs" in payload, false);
+    assertToolResultWithDuration(payload.result, toolResult);
     assert.deepEqual(payload.parameterKeys, ["shape"]);
     assert.equal(payload.params, undefined);
     assert.ok(payload.inspectorRender);
@@ -486,6 +448,50 @@ test("tools call --ui --frontend-url uses the explicit browser URL without probi
   }
 });
 
+test("tools call _durationMs measures the call, not connection setup", async () => {
+  const connectDelayMs = 500;
+  const server = await startMockServer({
+    toolResult: { content: [{ type: "text", text: "fast" }] },
+    initializeDelayMs: connectDelayMs,
+  });
+
+  try {
+    const startedAt = Date.now();
+    const result = await runCli([
+      "--format",
+      "json",
+      "tools",
+      "call",
+      "--url",
+      `http://127.0.0.1:${server.port}/mcp`,
+      "--tool-name",
+      "create_view",
+      "--tool-args",
+      "{}",
+    ]);
+    const wallClockMs = Date.now() - startedAt;
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    const { _durationMs } = JSON.parse(result.stdout) as {
+      _durationMs?: number;
+    };
+
+    // The command really did wait on the stalled handshake...
+    assert.ok(
+      wallClockMs >= connectDelayMs,
+      `expected the run to include the ${connectDelayMs}ms handshake, took ${wallClockMs}ms`,
+    );
+    // ...but the reported number is the tool call alone, so it stays
+    // comparable with `durationMs` from POST /v1/.../tools/call.
+    assert.ok(
+      typeof _durationMs === "number" && _durationMs < connectDelayMs / 2,
+      `expected _durationMs to exclude the ${connectDelayMs}ms connect, got ${_durationMs}`,
+    );
+  } finally {
+    await server.stop();
+  }
+});
+
 test("tools call without --ui preserves raw output and does not contact Inspector", async () => {
   const toolResult = { content: [{ type: "text", text: "plain result" }] };
   const server = await startMockServer({ toolResult });
@@ -505,7 +511,14 @@ test("tools call without --ui preserves raw output and does not contact Inspecto
     ]);
 
     assert.equal(result.exitCode, 0, result.stderr);
-    assert.deepEqual(JSON.parse(result.stdout), toolResult);
+    const payload = JSON.parse(result.stdout) as {
+      content?: unknown;
+      _durationMs?: unknown;
+    };
+    const { _durationMs, ...raw } = payload;
+    assert.deepEqual(raw, toolResult);
+    assert.equal(typeof _durationMs, "number");
+    assert.ok(Number.isFinite(_durationMs) && (_durationMs as number) >= 0);
     assert.equal(
       server.requests.some((entry) => entry.url?.startsWith("/api/")),
       false,
@@ -730,6 +743,7 @@ test("tools call --ui opens by default in a TTY and may render while waiting for
         "--tool-args",
         "{}",
       ],
+      undefined,
       {
         env: {
           MCPJAM_CLI_TEST_STDOUT_TTY: "1",
@@ -784,6 +798,7 @@ test("tools call --ui --open keeps milestone progress but drops the elapsed hear
         "--tool-args",
         "{}",
       ],
+      undefined,
       {
         env: {
           MCPJAM_CLI_TEST_STDERR_TTY: "0",
@@ -1088,7 +1103,8 @@ test("tools call --ui keeps the tool result when Inspector render fails", async 
     assert.equal(result.exitCode, 1, result.stderr);
     const payload = JSON.parse(result.stdout) as Record<string, any>;
     assert.equal(payload.success, false);
-    assert.deepEqual(payload.result, toolResult);
+    assert.equal("_durationMs" in payload, false);
+    assertToolResultWithDuration(payload.result, toolResult);
     assert.equal(payload.error.code, "render_failed");
     assert.equal(
       payload.inspectorRender.commands.renderToolResult.error.code,
@@ -1504,7 +1520,8 @@ test("tools call --ui applies expect-success to the raw tool result", async () =
     assert.equal(result.exitCode, 1, result.stderr);
     const payload = JSON.parse(result.stdout) as Record<string, any>;
     assert.equal(payload.success, false);
-    assert.deepEqual(payload.result, errorToolResult);
+    assert.equal("_durationMs" in payload, false);
+    assertToolResultWithDuration(payload.result, errorToolResult);
     assert.ok(payload.inspectorRender);
   } finally {
     await server.stop();

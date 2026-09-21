@@ -19,7 +19,7 @@ interface ShareUsageDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onBackToSettings: () => void;
-  sourceType: "chatbox";
+  sourceType: "scenario";
   sourceId: string;
   title: string;
 }

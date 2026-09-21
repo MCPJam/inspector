@@ -353,6 +353,79 @@ describe("await mode", () => {
   });
 });
 
+/**
+ * A suppressed tool call gets a day-long request timeout so the call itself is
+ * never cancelled by its own timer. That budget belongs to the CALL and must
+ * not spread to the seam's reads.
+ *
+ * Ending a `tasks/get` does not cancel the task, so a poll gains nothing from
+ * the long timer — and loses something real to it: the await driver's deadline
+ * abandons an in-flight poll rather than aborting its request (it only stops
+ * waiting), so a hung poll on the call's timer would hold its socket for a day
+ * with nothing left to end it.
+ */
+describe("cancellation suppression does not reach the seam's reads", () => {
+  async function optionsSeenBy(
+    toolCallCancellation: { legacy?: boolean; modern?: boolean } | undefined
+  ) {
+    const fixture = await serve({
+      tools: { [TASK_TOOL_NAME]: taskTool(completingPhases()) },
+    });
+    const manager = await connect(fixture.url);
+    const { options } = collectingSeam({}, "await");
+
+    const seen: Array<Record<string, unknown> | undefined> = [];
+    const realGetTaskExt = manager.getTaskExt.bind(manager);
+    (manager as any).getTaskExt = (
+      serverId: string,
+      taskId: string,
+      requestOptions?: Record<string, unknown>
+    ) => {
+      seen.push(requestOptions);
+      return realGetTaskExt(serverId, taskId, requestOptions as never);
+    };
+
+    const tools = await manager.getToolsForAiSdk([SERVER_ID], {
+      tasks: options,
+      ...(toolCallCancellation ? { toolCallCancellation } : {}),
+    });
+    // A live turn: the signal is what makes the policy apply at all, and it is
+    // never aborted here — the question is only which options each leg gets.
+    await (tools[TASK_TOOL_NAME] as any).execute(
+      {},
+      {
+        toolCallId: "c1",
+        messages: [],
+        abortSignal: new AbortController().signal,
+      }
+    );
+    expect(seen.length).toBeGreaterThan(0);
+    return seen;
+  }
+
+  it("leaves polls on the connection's own timeout when the call is suppressed", async () => {
+    const seen = await optionsSeenBy({ legacy: false, modern: false });
+
+    // No day-long timer, and no signal either: withholding the signal is the
+    // suppression, and it is about the call, not the poll.
+    for (const requestOptions of seen) {
+      expect(requestOptions?.timeout).toBeUndefined();
+      expect(requestOptions?.signal).toBeUndefined();
+    }
+  });
+
+  it("still hands polls the turn's signal when nothing is suppressed", async () => {
+    // The control: without suppression the reads are unchanged from before the
+    // split, so aborting a turn still ends an in-flight poll.
+    const seen = await optionsSeenBy(undefined);
+
+    for (const requestOptions of seen) {
+      expect(requestOptions?.signal).toBeInstanceOf(AbortSignal);
+      expect(requestOptions?.timeout).toBeUndefined();
+    }
+  });
+});
+
 describe("mixed wires", () => {
   it("declares only on the extension server and never throws on the others", async () => {
     // `withTaskEligibilityDeclaration` THROWS on `wire: "none"`, so a turn

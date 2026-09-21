@@ -59,6 +59,84 @@ describe("requestLogContextMiddleware", () => {
     expect(capturedCtx.environment).toBeDefined();
   });
 
+  it("records the caller's user-agent", async () => {
+    const app = createTestApp();
+    let capturedCtx: any;
+    app.get("/api/web/test", (c) => {
+      capturedCtx = c.var.requestLogContext;
+      return c.json({ ok: true });
+    });
+
+    await app.request("/api/web/test", {
+      headers: { "user-agent": "mcpjam-cli/5.7.1 mcpjam-sdk/8.7.1" },
+    });
+
+    expect(capturedCtx.userAgent).toBe("mcpjam-cli/5.7.1 mcpjam-sdk/8.7.1");
+  });
+
+  it("omits the field when the caller sent no user-agent", async () => {
+    const app = createTestApp();
+    let capturedCtx: any;
+    app.get("/api/web/test", (c) => {
+      capturedCtx = c.var.requestLogContext;
+      return c.json({ ok: true });
+    });
+
+    await app.request("/api/web/test", { method: "GET" });
+
+    // Omitted, not defaulted: a caller who sent none is not an "unknown
+    // client", and a row that says so would be counted as one.
+    expect(capturedCtx).not.toHaveProperty("userAgent");
+  });
+
+  it("flattens tabs and whitespace runs into single spaces", async () => {
+    const app = createTestApp();
+    let capturedCtx: any;
+    app.get("/api/web/test", (c) => {
+      capturedCtx = c.var.requestLogContext;
+      return c.json({ ok: true });
+    });
+
+    // Tabs are legal in a header value, so they are what actually reaches the
+    // sanitizer. NUL and CRLF — the characters that would forge a log line —
+    // are rejected by the HTTP parser before this middleware runs, which is
+    // why there is no test for them here: it could only assert that the
+    // platform still does its job.
+    await app.request("/api/web/test", {
+      headers: { "user-agent": "agent/1.0\t\tbuild   42" },
+    });
+
+    expect(capturedCtx.userAgent).toBe("agent/1.0 build 42");
+  });
+
+  it("caps an unbounded user-agent rather than indexing all of it", async () => {
+    const app = createTestApp();
+    let capturedCtx: any;
+    app.get("/api/web/test", (c) => {
+      capturedCtx = c.var.requestLogContext;
+      return c.json({ ok: true });
+    });
+
+    await app.request("/api/web/test", {
+      headers: { "user-agent": "a".repeat(4096) },
+    });
+
+    expect(capturedCtx.userAgent).toHaveLength(256);
+  });
+
+  it("treats a blank user-agent as none at all", async () => {
+    const app = createTestApp();
+    let capturedCtx: any;
+    app.get("/api/web/test", (c) => {
+      capturedCtx = c.var.requestLogContext;
+      return c.json({ ok: true });
+    });
+
+    await app.request("/api/web/test", { headers: { "user-agent": "   " } });
+
+    expect(capturedCtx).not.toHaveProperty("userAgent");
+  });
+
   it("sets x-request-id response header via c.header()", async () => {
     const app = createTestApp();
     app.get("/api/web/test", (c) => c.json({ ok: true }));
@@ -341,6 +419,66 @@ describe("requestLogContextMiddleware", () => {
     expect(payload.errorCode).toBe("SERVER_UNREACHABLE");
     expect(payload.origin).toBe("ambiguous");
     expect(payload.slug).toBe("transport/fetch_failed");
+  });
+
+  // `hop` is the axis `origin` cannot carry: `ambiguous` is the catalog
+  // refusing to guess from the wire shape, and only the catch site knows which
+  // boundary it wrapped. Without this the fact travelled as far as the Sentry
+  // decision and was then discarded.
+  it("carries a declared hop onto http.request.failed", async () => {
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware);
+    app.get("/api/web/tools/list", (c) => {
+      c.set("webErrorMeta", {
+        status: 502,
+        code: "SERVER_UNREACHABLE",
+        message: "Couldn't reach the MCP server (fetch failed)",
+        origin: "ambiguous",
+        slug: "transport/fetch_failed",
+        hop: "user_server_hop",
+      });
+      return c.json({ code: "SERVER_UNREACHABLE" }, 502);
+    });
+
+    await app.request("/api/web/tools/list");
+
+    const failed = vi
+      .mocked(logger.event)
+      .mock.calls.filter(([name]) => name === "http.request.failed");
+    expect(failed).toHaveLength(1);
+    const payload = failed[0][2] as any;
+    expect(payload.hop).toBe("user_server_hop");
+    // Orthogonal, not folded together: the hop says which boundary broke and
+    // `origin` still says nobody has attributed the failure to anyone.
+    expect(payload.origin).toBe("ambiguous");
+  });
+
+  // ABSENT MEANS UNKNOWN. If a missing hop emitted as anything a consumer
+  // could read as "the user's", every route that has not declared one yet
+  // would silently drop out of the mcpjam-fault monitor.
+  it("omits hop entirely when the catch site declared none", async () => {
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware);
+    app.get("/api/web/resources/read", (c) => {
+      c.set("webErrorMeta", {
+        status: 500,
+        code: "INTERNAL_ERROR",
+        message: "Method not found",
+        origin: "ambiguous",
+        slug: "internal/unknown",
+      });
+      return c.json({ code: "INTERNAL_ERROR" }, 500);
+    });
+
+    await app.request("/api/web/resources/read");
+
+    const failed = vi
+      .mocked(logger.event)
+      .mock.calls.filter(([name]) => name === "http.request.failed");
+    expect(failed).toHaveLength(1);
+    const payload = failed[0][2] as any;
+    expect(payload.hop).toBeUndefined();
+    expect("hop" in payload).toBe(false);
   });
 
   it("ignores stale webErrorMeta from a different status", async () => {

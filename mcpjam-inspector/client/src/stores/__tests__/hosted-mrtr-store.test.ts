@@ -97,7 +97,7 @@ describe("hosted MRTR store", () => {
     useHostedMrtrStore.getState().enqueue(round(), { submit });
 
     await expect(
-      useHostedMrtrStore.getState().submit("cont-1:0", accept)
+      useHostedMrtrStore.getState().submit("cont-1:0", accept),
     ).rejects.toThrow("network down");
 
     expect(useHostedMrtrStore.getState().rounds).toHaveLength(1);
@@ -111,7 +111,7 @@ describe("hosted MRTR store", () => {
     useHostedMrtrStore.getState().enqueue(round(), { submit: vi.fn(), cancel });
 
     await expect(
-      useHostedMrtrStore.getState().cancel("cont-1:0")
+      useHostedMrtrStore.getState().cancel("cont-1:0"),
     ).rejects.toThrow("offline");
 
     expect(useHostedMrtrStore.getState().rounds).toHaveLength(0);
@@ -135,7 +135,7 @@ describe("hosted MRTR store", () => {
     useHostedMrtrStore.getState().resolveContinuation("cont-1");
 
     await expect(
-      useHostedMrtrStore.getState().submit("cont-1:0", accept)
+      useHostedMrtrStore.getState().submit("cont-1:0", accept),
     ).resolves.toBeUndefined();
   });
 

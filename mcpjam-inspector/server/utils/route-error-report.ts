@@ -27,8 +27,22 @@ import {
  *   an ECONNREFUSED classified `user_config` stays quiet, which is the
  *   documented gap: an internal-infrastructure connection refusal is not
  *   captured until the classifier can tell the two apart.
+ * - `"mcpjam_request_construction"` — the hop was still into the user's own
+ *   server, but what it rejected is a message MCPJam BUILT. The user's server
+ *   is the messenger, not the fault. Promotes `ambiguous` for the same reason
+ *   `mcpjam_internal` does, and is separate from it because the hop genuinely
+ *   is not internal — a triager reading `error_boundary` should be able to
+ *   tell "our infrastructure broke" from "our wire format was wrong".
+ *
+ *   Declare it ONLY where the site can rule out having asked for the
+ *   rejection. MCPJam is a debugger: it ships a knob that deliberately
+ *   simulates a non-conforming client, and conformance checks provoke these
+ *   rejections on purpose. Both are the product working.
  */
-export type RouteFailureHop = "user_server_hop" | "mcpjam_internal";
+export type RouteFailureHop =
+  | "user_server_hop"
+  | "mcpjam_internal"
+  | "mcpjam_request_construction";
 
 const BOUNDARY_FOR_HOP: Record<
   RouteFailureHop,
@@ -36,6 +50,7 @@ const BOUNDARY_FOR_HOP: Record<
 > = {
   user_server_hop: undefined,
   mcpjam_internal: "mcpjam_internal",
+  mcpjam_request_construction: "mcpjam_request_construction",
 };
 
 /**

@@ -62,7 +62,7 @@ describe("useSharedChatWidgetCapture", () => {
       useSharedChatWidgetCapture({
         enabled: true,
         chatSessionId: "chat-session-1",
-        hostedChatboxId: "cbx_1", hostedAccessVersion: 1,
+        hostedScenarioId: "cbx_1", hostedAccessVersion: 1,
         messages: [
           {
             id: "assistant-1",
@@ -132,7 +132,7 @@ describe("useSharedChatWidgetCapture", () => {
     expect(mockGenerateSnapshotUploadUrl).toHaveBeenCalledTimes(3);
     expect(global.fetch).toHaveBeenCalledTimes(3);
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledWith({
-      chatboxId: "cbx_1", accessVersion: 1,
+      scenarioId: "cbx_1", accessVersion: 1,
       chatSessionId: "chat-session-1",
       serverId: "server-1",
       toolCallId: "call-1",
@@ -177,7 +177,7 @@ describe("useSharedChatWidgetCapture", () => {
           enabled: true,
           readyToPersist,
           chatSessionId: "chat-session-1",
-          hostedChatboxId: "cbx_1", hostedAccessVersion: 1,
+          hostedScenarioId: "cbx_1", hostedAccessVersion: 1,
           messages: [
             {
               id: "assistant-1",
@@ -256,7 +256,7 @@ describe("useSharedChatWidgetCapture", () => {
         useSharedChatWidgetCapture({
           enabled: true,
           chatSessionId: "chat-session-1",
-          hostedChatboxId: "cbx_1", hostedAccessVersion: 1,
+          hostedScenarioId: "cbx_1", hostedAccessVersion: 1,
           messages: [
             {
               id: "assistant-1",
@@ -363,7 +363,7 @@ describe("useSharedChatWidgetCapture", () => {
         useSharedChatWidgetCapture({
           enabled: true,
           chatSessionId: "chat-session-pending",
-          hostedChatboxId: "cbx_1", hostedAccessVersion: 1,
+          hostedScenarioId: "cbx_1", hostedAccessVersion: 1,
           messages: [
             {
               id: "assistant-1",
@@ -422,12 +422,12 @@ describe("useSharedChatWidgetCapture", () => {
     }
   });
 
-  it("uploads chatbox widget snapshots with the originating server id", async () => {
+  it("uploads scenario widget snapshots with the originating server id", async () => {
     const { unmount } = renderHook(() =>
       useSharedChatWidgetCapture({
         enabled: true,
         chatSessionId: "chat-session-2",
-        hostedChatboxId: "cbx_1", hostedAccessVersion: 1,
+        hostedScenarioId: "cbx_1", hostedAccessVersion: 1,
         messages: [
           {
             id: "assistant-1",
@@ -436,7 +436,7 @@ describe("useSharedChatWidgetCapture", () => {
               {
                 type: "tool-search",
                 toolCallId: "call-2",
-                input: { q: "chatbox" },
+                input: { q: "scenario" },
                 output: {
                   result: "ok",
                   _meta: {
@@ -466,7 +466,7 @@ describe("useSharedChatWidgetCapture", () => {
                 theme: "dark",
                 displayMode: "inline",
               },
-              widgetHtml: "<div>Chatbox widget</div>",
+              widgetHtml: "<div>Scenario widget</div>",
               updatedAt: Date.now(),
             },
           ],
@@ -481,7 +481,7 @@ describe("useSharedChatWidgetCapture", () => {
     await flushMicrotasks();
 
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledWith({
-      chatboxId: "cbx_1", accessVersion: 1,
+      scenarioId: "cbx_1", accessVersion: 1,
       chatSessionId: "chat-session-2",
       serverId: "srv_123",
       toolCallId: "call-2",
@@ -510,13 +510,13 @@ describe("useSharedChatWidgetCapture", () => {
     unmount();
   });
 
-  it("requests a hosted-access refresh on chatbox_access_stale and skips the local retry", async () => {
+  it("requests a hosted-access refresh on scenario_access_stale and skips the local retry", async () => {
     const onStaleHostedAccess = vi.fn();
     class StaleError extends Error {
       data: { code: string; currentAccessVersion: number };
       constructor() {
-        super("Chatbox access version is stale; client must re-redeem.");
-        this.data = { code: "chatbox_access_stale", currentAccessVersion: 7 };
+        super("Scenario access version is stale; client must re-redeem.");
+        this.data = { code: "scenario_access_stale", currentAccessVersion: 7 };
       }
     }
     mockGenerateSnapshotUploadUrl.mockReset();
@@ -526,7 +526,7 @@ describe("useSharedChatWidgetCapture", () => {
       useSharedChatWidgetCapture({
         enabled: true,
         chatSessionId: "chat-session-stale",
-        hostedChatboxId: "cbx_1",
+        hostedScenarioId: "cbx_1",
         hostedAccessVersion: 1,
         onStaleHostedAccess,
         messages: [
@@ -607,8 +607,8 @@ describe("useSharedChatWidgetCapture", () => {
     class StaleError extends Error {
       data: { code: string; currentAccessVersion: number };
       constructor() {
-        super("Chatbox access version is stale; client must re-redeem.");
-        this.data = { code: "chatbox_access_stale", currentAccessVersion: 7 };
+        super("Scenario access version is stale; client must re-redeem.");
+        this.data = { code: "scenario_access_stale", currentAccessVersion: 7 };
       }
     }
     mockGenerateSnapshotUploadUrl.mockReset();
@@ -618,7 +618,7 @@ describe("useSharedChatWidgetCapture", () => {
       useSharedChatWidgetCapture({
         enabled: true,
         chatSessionId: "chat-session-refresh-fail",
-        hostedChatboxId: "cbx_1",
+        hostedScenarioId: "cbx_1",
         hostedAccessVersion: 1,
         onStaleHostedAccess,
         messages: [
@@ -711,8 +711,8 @@ describe("useSharedChatWidgetCapture", () => {
     class StaleError extends Error {
       data: { code: string; currentAccessVersion: number };
       constructor() {
-        super("Chatbox access version is stale; client must re-redeem.");
-        this.data = { code: "chatbox_access_stale", currentAccessVersion: 7 };
+        super("Scenario access version is stale; client must re-redeem.");
+        this.data = { code: "scenario_access_stale", currentAccessVersion: 7 };
       }
     }
     mockGenerateSnapshotUploadUrl.mockReset();
@@ -722,7 +722,7 @@ describe("useSharedChatWidgetCapture", () => {
       useSharedChatWidgetCapture({
         enabled: true,
         chatSessionId: "chat-session-backoff",
-        hostedChatboxId: "cbx_1",
+        hostedScenarioId: "cbx_1",
         hostedAccessVersion: 1,
         onStaleHostedAccess,
         messages: [
@@ -804,7 +804,7 @@ describe("useSharedChatWidgetCapture", () => {
         useSharedChatWidgetCapture({
           enabled: true,
           chatSessionId,
-          hostedChatboxId: "cbx_1",
+          hostedScenarioId: "cbx_1",
           hostedAccessVersion: 1,
           messages: [
             {
@@ -908,8 +908,8 @@ describe("useSharedChatWidgetCapture", () => {
     class StaleError extends Error {
       data: { code: string; currentAccessVersion: number };
       constructor() {
-        super("Chatbox access version is stale; client must re-redeem.");
-        this.data = { code: "chatbox_access_stale", currentAccessVersion: 7 };
+        super("Scenario access version is stale; client must re-redeem.");
+        this.data = { code: "scenario_access_stale", currentAccessVersion: 7 };
       }
     }
 
@@ -925,7 +925,7 @@ describe("useSharedChatWidgetCapture", () => {
         useSharedChatWidgetCapture({
           enabled: true,
           chatSessionId: "chat-session-replay",
-          hostedChatboxId: "cbx_1",
+          hostedScenarioId: "cbx_1",
           hostedAccessVersion,
           onStaleHostedAccess,
           messages: [
@@ -992,7 +992,7 @@ describe("useSharedChatWidgetCapture", () => {
     );
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
     expect(mockCreateWidgetSnapshot.mock.calls[0][0]).toMatchObject({
-      chatboxId: "cbx_1",
+      scenarioId: "cbx_1",
       accessVersion: 2,
       chatSessionId: "chat-session-replay",
       toolCallId: "call-replay",

@@ -21,6 +21,7 @@ const EVALS_TOOL_NAMES = [
   "ui_run_eval_suite",
   "ui_cancel_eval_run",
   "ui_generate_eval_tests",
+  "ui_edit_eval_case_draft",
   "ui_delete_eval_suite",
 ];
 
@@ -38,7 +39,7 @@ describe("evals group through useSurfaceAgentBridge", () => {
     expect(listSurfaceGroupToolNames("evals")).toEqual(EVALS_TOOL_NAMES);
   });
 
-  it("mount registers all five tools surface-scoped; unmount removes them", () => {
+  it("mount registers all six tools surface-scoped; unmount removes them", () => {
     const { unmount } = renderHook(() =>
       useSurfaceAgentBridge({
         surfaceId: "evals",

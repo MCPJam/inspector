@@ -10,6 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // NewJourneyButton's Advanced → Judge section pulls the model catalog via
 // useAvailableModels (AppStateProvider-coupled); these tests render SwarmsTab
 // without providers, so stub it to an empty catalog.
+vi.mock("@/hooks/use-host-snapshot", () => ({
+  useHostSnapshotForHost: () => ({ status: "unavailable" }),
+  useHostSnapshotForSession: () => ({ status: "unavailable" }),
+}));
+
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
@@ -93,8 +98,15 @@ const session = {
 // Capture every paginated-query dispatch so we can assert the session query's
 // arg NAME is `journeyRunId`.
 const paginatedCalls: Array<{ name: string; args: unknown }> = [];
+let projectSessionsStatus: "CanLoadMore" | "LoadingMore" | "Exhausted" =
+  "Exhausted";
+const projectSessionsLoadMore = vi.fn();
+let personaSessionsStatus: "CanLoadMore" | "LoadingMore" | "Exhausted" =
+  "Exhausted";
+const personaSessionsLoadMore = vi.fn();
 
 vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     switch (name) {
@@ -106,6 +118,23 @@ vi.mock("convex/react", () => ({
         return [host, hostTwo];
       case "journeys:getJourneyRollup":
         return { journeyRefId: "journey-1", runCount: 2, hosts: [] };
+      case "journeyRuns:getSwarmSessionMetrics":
+        return {
+          sessionCount: 653,
+          analyzedCount: 653,
+          truncated: false,
+          toolCallCount: 100,
+          toolErrorCount: 8,
+          toolErrorRate: 0.08,
+          sessionsWithToolErrors: 5,
+          topFailingTool: { toolName: "search_web", errorCount: 4 },
+          avgToolCallsPerSession: 8.3,
+          latencyP50Ms: 10500,
+          latencyP95Ms: 18500,
+          avgTokensPerSession: 3200,
+          tokenSampleCount: 653,
+          trend: [],
+        };
       default:
         return undefined;
     }
@@ -162,16 +191,16 @@ vi.mock("convex/react", () => ({
             firstMessagePreview: "hola",
           },
         ],
-        status: "Exhausted",
-        loadMore: vi.fn(),
+        status: projectSessionsStatus,
+        loadMore: projectSessionsLoadMore,
         isLoading: false,
       };
     }
     if (name === "journeyRuns:listSessionsByPersona") {
       return {
         results: [session],
-        status: "Exhausted",
-        loadMore: vi.fn(),
+        status: personaSessionsStatus,
+        loadMore: personaSessionsLoadMore,
         isLoading: false,
       };
     }
@@ -207,7 +236,7 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
     </div>
   ),
 }));
-vi.mock("@/lib/chatbox-session", () => ({
+vi.mock("@/lib/scenario-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
 vi.mock("@/hooks/useViews", () => ({
@@ -223,10 +252,15 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { SwarmsSessionsPanel } from "../SwarmsSessionsPanel";
 import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   paginatedCalls.length = 0;
+  projectSessionsStatus = "Exhausted";
+  projectSessionsLoadMore.mockReset();
+  personaSessionsStatus = "Exhausted";
+  personaSessionsLoadMore.mockReset();
 });
 
 afterEach(() => {
@@ -335,6 +369,41 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
     });
   });
 
+  it("does not show project-wide session metrics on a run Sessions tab", () => {
+    render(
+      <SwarmsSessionsPanel
+        projectId="proj-1"
+        personas={[persona]}
+        personaRefId={null}
+        onPersonaRefIdChange={() => {}}
+        journeyRunIds={["run-1"]}
+      />,
+    );
+
+    const panel = screen.getByTestId("swarms-sessions-panel");
+    expect(
+      within(panel).queryByTestId("swarm-sessions-metric-shell"),
+    ).toBeNull();
+    expect(within(panel).queryByText(/sessions in scope/i)).toBeNull();
+  });
+
+  it("keeps project-wide session metrics on the top-level Sessions tab", () => {
+    render(
+      <SwarmsSessionsPanel
+        projectId="proj-1"
+        personas={[persona]}
+        personaRefId={null}
+        onPersonaRefIdChange={() => {}}
+      />,
+    );
+
+    const panel = screen.getByTestId("swarms-sessions-panel");
+    expect(
+      within(panel).getByTestId("swarm-sessions-metric-shell"),
+    ).toBeInTheDocument();
+    expect(within(panel).getByText(/653 sessions in scope/i)).toBeInTheDocument();
+  });
+
   it("opens a specific run when its trend segment is clicked", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openPersonasTab();
@@ -393,7 +462,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
       .getAllByTestId("swarm-host-cell")
       .filter((el) => el.getAttribute("data-outcome") === "succeeded");
     expect(done.length).toBeGreaterThan(0);
-    expect(within(done[0]!).getByText("Done")).toBeInTheDocument();
+    expect(within(done[0]!).getByText("Ran")).toBeInTheDocument();
   });
 
   it("shows playground-style Trace / Chat / Raw tabs in the live pane", async () => {
@@ -421,6 +490,59 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 });
 
 describe("SwarmsTab — top-level Journeys view", () => {
+  it("pages the project feed a bounded number of times, then hands over Load more", async () => {
+    // Auto-paging exists to resolve a deep link and to fill the run-scoped
+    // view — not to drain an unbounded project history on tab open.
+    projectSessionsStatus = "CanLoadMore";
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
+    openSessionsTab();
+
+    const panel = await screen.findByTestId("swarms-sessions-panel");
+    await waitFor(() => {
+      expect(projectSessionsLoadMore).toHaveBeenCalled();
+    });
+
+    const loadMore = await within(panel).findByTestId(
+      "swarms-sessions-load-more"
+    );
+    // Auto-paging stopped on its own — the button only exists once it has.
+    const autoCalls = projectSessionsLoadMore.mock.calls.length;
+    fireEvent.click(loadMore);
+    // Exactly one page per click. The click must not re-arm auto-paging and
+    // drain the rest of the history the reader just took control of.
+    expect(projectSessionsLoadMore.mock.calls.length).toBe(autoCalls + 1);
+    await waitFor(() => {
+      expect(
+        within(panel).getByTestId("swarms-sessions-load-more")
+      ).toBeInTheDocument();
+    });
+    expect(projectSessionsLoadMore.mock.calls.length).toBe(autoCalls + 1);
+  });
+
+  it("re-arms the auto-page budget when the persona filter swaps the feed", async () => {
+    // The budget is per-feed. Spending it on the project feed must not strand
+    // the persona feed — a different query, whose results start over — on its
+    // first page.
+    projectSessionsStatus = "CanLoadMore";
+    personaSessionsStatus = "CanLoadMore";
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
+    openSessionsTab();
+
+    const panel = await screen.findByTestId("swarms-sessions-panel");
+    // Drain the project feed's budget until it hands over the button.
+    await within(panel).findByTestId("swarms-sessions-load-more");
+    expect(personaSessionsLoadMore).not.toHaveBeenCalled();
+
+    await selectPersonaFilter("Persona One");
+
+    // The fresh feed pages on its own rather than waiting on a click.
+    await waitFor(() => {
+      expect(personaSessionsLoadMore).toHaveBeenCalled();
+    });
+  });
+
   it("defaults to listSessionsByProject and opens the viewer on `id`", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openPersonasTab();

@@ -1,0 +1,2 @@
+# Raw wire logs from the last gate run. Regenerate with probe/run-gates.mjs.
+artifacts/

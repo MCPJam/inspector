@@ -131,6 +131,53 @@ describe("CrossHostMatrix row sort and summaries", () => {
     expect(screen.getByText("Copilot")).toBeInTheDocument();
   });
 
+  it("reads composite column keys for divergence and unique cells", () => {
+    const pass = makeCell(5000, 1000, 1);
+    const fail: CellData = {
+      ...makeCell(6000, 1100, 1),
+      passCount: 0,
+      failCount: 1,
+      passRate: 0,
+    };
+    const data: CrossHostData = {
+      hostColumns: [
+        {
+          hostId: "h1",
+          columnKey: "h1::client-default",
+          hostName: "Claude",
+          isHistorical: false,
+        },
+        {
+          hostId: "h1",
+          columnKey: "h1::google/gemini-2.5-flash",
+          hostName: "Claude",
+          isHistorical: false,
+          modelLabel: "gemini-2.5-flash",
+        },
+      ],
+      caseRows: [{ caseId: "c1", caseTitle: "Shared case" }],
+      matrix: new Map([
+        [
+          "c1",
+          new Map([
+            ["h1::client-default", pass],
+            ["h1::google/gemini-2.5-flash", fail],
+          ]),
+        ],
+      ]),
+      hasAnyData: true,
+      hasHostAttachments: true,
+    };
+    render(<CrossHostMatrix data={data} expanded />);
+    expect(screen.getByTestId("test-case-row-c1")).toHaveAttribute(
+      "data-divergence",
+      "diverge",
+    );
+    expect(within(screen.getByTestId("test-case-row-c1")).getAllByRole("cell")).toHaveLength(
+      3,
+    );
+  });
+
   it("reorders rows when sorting by latency", async () => {
     const user = userEvent.setup();
     render(<CrossHostMatrix data={makeData()} expanded />);

@@ -8,6 +8,7 @@ import {
 } from "@mcpjam/design-system/popover";
 import { cn } from "@/lib/utils";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 import {
   formatOverviewRelativeTime,
   getSuitePassFailCounts,
@@ -21,6 +22,13 @@ interface SuiteSwitcherProps {
   onSelectSuite: (suiteId: string) => void;
   onCreateSuite: () => void;
   onDeleteSuite?: (suite: EvalSuite) => void;
+  /**
+   * Per ROW, because the answer differs per row: deleting a suite takes the
+   * project manage tier OR authorship of that particular suite. Omitted means
+   * every listed suite may be deleted — the local/playground case, where there
+   * is no membership to rank.
+   */
+  canDeleteSuite?: (suite: EvalSuite) => boolean;
 }
 
 /**
@@ -33,6 +41,7 @@ export function SuiteSwitcher({
   onSelectSuite,
   onCreateSuite,
   onDeleteSuite,
+  canDeleteSuite,
 }: SuiteSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -131,7 +140,7 @@ export function SuiteSwitcher({
                         <span className="truncate text-[13px] font-medium text-foreground">
                           {name}
                         </span>
-                        <SuiteSourceBadge source={entry.suite.source} />
+                        <SuiteSourceBadge suite={entry.suite} />
                       </span>
                       <span className="block truncate text-[11px] text-muted-foreground">
                         {entry.latestRun
@@ -151,7 +160,7 @@ export function SuiteSwitcher({
                           ? "text-success"
                           : counts.passed === 0
                             ? "text-destructive"
-                            : "text-amber-600 dark:text-amber-400",
+                            : "text-warning",
                       )}
                     >
                       {counts.passed}/{counts.total}
@@ -163,9 +172,19 @@ export function SuiteSwitcher({
                   {/* CI-active suites (created by CI, or reported into by
                       CI) can't be deleted from the switcher: their history
                       is CI's record, and the next report would recreate the
-                      suite anyway. */}
+                      suite anyway.
+
+                      `isCiOwnedSuite` rather than `source !== "sdk"`, because
+                      a suite committed as a FILE carries `declaredSuiteId`
+                      with `source: "ui"` and no `lastSdkRunAt` — it passed
+                      this gate, and `suite.delete` is one of the actions the
+                      platform now refuses on a CI-owned suite. `lastSdkRunAt`
+                      stays as a second clause: this switcher deliberately
+                      hides delete for a suite CI merely reports INTO, which
+                      is broader than ownership. */}
                   {onDeleteSuite &&
-                  entry.suite.source !== "sdk" &&
+                  (canDeleteSuite?.(entry.suite) ?? true) &&
+                  !isCiOwnedSuite(entry.suite) &&
                   entry.suite.lastSdkRunAt == null ? (
                     <button
                       type="button"

@@ -1,8 +1,8 @@
 /**
- * `mcpjam user-testing` — what a published scenario produced, and who may
+ * `mcpjam cloud user-testing` — what a published scenario produced, and who may
  * reach it.
  *
- * `mcpjam scenarios` publishes an environment and takes it down again, keyed by
+ * `mcpjam cloud scenarios` publishes an environment and takes it down again, keyed by
  * environment because the scenario does not exist yet. This group is keyed by
  * the SCENARIO and covers everything after that: reading the sessions real
  * visitors had, the metrics and findings over them, and the controls that
@@ -217,7 +217,7 @@ export function registerUserTestingCommands(program: Command): void {
     scenarioCommand(
       group,
       "request-insights",
-      "Ask a model to analyze the current window. Returns pending; poll `insights`. SPENDS against a daily budget shared with swarm insights. A 409 means the window has not been mined yet — wait rather than retrying in a loop.",
+      "Ask a model to analyze the current window. Returns pending; poll `insights`. Included with MCPJam — no credits are consumed; it counts against a daily insight quota shared with swarm insights. A 409 means the window has not been mined yet — wait rather than retrying in a loop.",
     ).option("--force", "Regenerate over a window that already has insights."),
     requestUserTestingInsightsOperation,
     (options: ScenarioOptions & { force?: boolean }) => ({
@@ -231,7 +231,7 @@ export function registerUserTestingCommands(program: Command): void {
     scenarioCommand(
       group,
       "cancel-insights",
-      "Stop an in-flight generation. The recovery path for a window stuck pending — without it the only way forward is --force, which spends again.",
+      "Stop an in-flight generation. The recovery path for a window stuck pending — without it the only way forward is --force, which takes another slice of the daily insight quota.",
     ).requiredOption("--window <id>", "Window ID"),
     cancelUserTestingInsightsOperation,
     (options: ScenarioOptions & { window: string }) => ({

@@ -66,17 +66,17 @@ import { logger } from "../../utils/logger.js";
 const tasks = new Hono();
 
 /**
- * A chatbox visitor is not a project member — the registry's forwarded-bearer
+ * A scenario visitor is not a project member — the registry's forwarded-bearer
  * membership check would 403 them — and their tasks are the chat surface's
  * concern, not this tab's. Skipping is a scope decision, not a guest one:
  * guests are ordinary members here (see the backend route header — "Guests
  * are not a special case").
  */
-function isChatboxScoped(body: {
+function isScenarioScoped(body: {
   accessScope?: "project_member" | "chat_v2";
-  chatboxId?: string;
+  scenarioId?: string;
 }): boolean {
-  return body.accessScope === "chat_v2" || Boolean(body.chatboxId);
+  return body.accessScope === "chat_v2" || Boolean(body.scenarioId);
 }
 
 /**
@@ -91,10 +91,10 @@ async function fetchRegistryTasks(
     projectId: string;
     serverId: string;
     accessScope?: "project_member" | "chat_v2";
-    chatboxId?: string;
+    scenarioId?: string;
   },
 ): Promise<RegistryTaskEntry[] | null> {
-  if (isChatboxScoped(body)) return null;
+  if (isScenarioScoped(body)) return null;
   try {
     // Throws when the internal backend isn't configured (local/OSS deploys):
     // that is "no recovery source", not an error.
@@ -130,7 +130,7 @@ async function reportObservedStatuses(
     projectId: string;
     serverId: string;
     accessScope?: "project_member" | "chat_v2";
-    chatboxId?: string;
+    scenarioId?: string;
   },
   result: {
     wire: string;
@@ -138,7 +138,7 @@ async function reportObservedStatuses(
   },
 ): Promise<void> {
   try {
-    if (isChatboxScoped(body)) return;
+    if (isScenarioScoped(body)) return;
     if (result.wire !== "legacy" && result.wire !== "extension") return;
     const wire = result.wire;
     const updates: Array<{

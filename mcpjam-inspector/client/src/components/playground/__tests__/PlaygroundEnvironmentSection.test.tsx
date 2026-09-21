@@ -64,7 +64,7 @@ import { PlaygroundHostPicker } from "../PlaygroundHostPicker";
 import type { PlaygroundEnvironmentState } from "@/hooks/use-playground-environment";
 
 function environmentState(
-  overrides: Partial<PlaygroundEnvironmentState> = {}
+  overrides: Partial<PlaygroundEnvironmentState> = {},
 ): PlaygroundEnvironmentState {
   const preview = {
     specVersion: 1,
@@ -138,20 +138,19 @@ describe("PlaygroundEnvironmentSection", () => {
         projectId="p1"
         environment={environmentState()}
         disabled
-      />
+      />,
     );
     for (const button of screen.getAllByRole("button")) {
       expect(button).toBeDisabled();
     }
   });
 
-
   it("renders no summary line and no server chips — the composer menu and Tools rail own those", () => {
     render(
       <PlaygroundEnvironmentSection
         projectId="proj_1"
         environment={environmentState()}
-      />
+      />,
     );
     // The picker still names the selected environment; the header no longer
     // repeats the resolved bundle (rev/host/counts) or the server chips —
@@ -163,10 +162,10 @@ describe("PlaygroundEnvironmentSection", () => {
     expect(screen.queryByTestId("playground-environment-counts")).toBeNull();
     expect(screen.queryByTestId("playground-environment-servers")).toBeNull();
     expect(
-      screen.queryByTestId("playground-environment-server-srv_plugin")
+      screen.queryByTestId("playground-environment-server-srv_plugin"),
     ).toBeNull();
     expect(
-      screen.queryByTestId("playground-environment-modified-badge")
+      screen.queryByTestId("playground-environment-modified-badge"),
     ).toBeNull();
     expect(screen.queryByTestId("playground-environment-reset")).toBeNull();
   });
@@ -188,10 +187,10 @@ describe("PlaygroundEnvironmentSection", () => {
             },
           },
         })}
-      />
+      />,
     );
     expect(
-      screen.getByTestId("playground-environment-skill-limitation").textContent
+      screen.getByTestId("playground-environment-skill-limitation").textContent,
     ).toContain("can't consume skills");
   });
 
@@ -200,10 +199,10 @@ describe("PlaygroundEnvironmentSection", () => {
       <PlaygroundEnvironmentSection
         projectId="proj_1"
         environment={environmentState()}
-      />
+      />,
     );
     expect(
-      screen.queryByTestId("playground-environment-skill-limitation")
+      screen.queryByTestId("playground-environment-skill-limitation"),
     ).toBeNull();
   });
 
@@ -212,7 +211,7 @@ describe("PlaygroundEnvironmentSection", () => {
       <PlaygroundEnvironmentSection
         projectId="proj_1"
         environment={environmentState()}
-      />
+      />,
     );
     expect(mockTrack).toHaveBeenCalledWith("client_selected", {
       location: "project_environments",
@@ -226,7 +225,7 @@ describe("PlaygroundEnvironmentSection", () => {
       <PlaygroundEnvironmentSection
         projectId="proj_1"
         environment={environmentState({ clearEnvironment })}
-      />
+      />,
     );
     fireEvent.click(screen.getByTestId("playground-environment-clear"));
     expect(clearEnvironment).toHaveBeenCalled();
@@ -253,7 +252,7 @@ describe("PlaygroundHostPicker — environment mode is exclusive with comparison
           preview: null,
           executionTarget: undefined,
         })}
-      />
+      />,
     );
     expect(screen.getByTestId("multi-host-picker")).toBeTruthy();
   });
@@ -262,7 +261,7 @@ describe("PlaygroundHostPicker — environment mode is exclusive with comparison
     // An environment resolves to ONE host; a comparison grid driven from it
     // would either duplicate a column or run hosts the environment never named.
     render(
-      <PlaygroundHostPicker {...hostProps} environment={environmentState()} />
+      <PlaygroundHostPicker {...hostProps} environment={environmentState()} />,
     );
     expect(screen.queryByTestId("multi-host-picker")).toBeNull();
     expect(screen.getByTestId("playground-environment-section")).toBeTruthy();
@@ -271,7 +270,7 @@ describe("PlaygroundHostPicker — environment mode is exclusive with comparison
   it("hides the Environments section entirely when the flag is off", () => {
     mockFlagValue.value = false;
     render(
-      <PlaygroundHostPicker {...hostProps} environment={environmentState()} />
+      <PlaygroundHostPicker {...hostProps} environment={environmentState()} />,
     );
     expect(screen.queryByTestId("playground-environment-section")).toBeNull();
     // …and the ordinary host controls are back.

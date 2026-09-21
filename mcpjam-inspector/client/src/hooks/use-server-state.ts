@@ -1,3 +1,10 @@
+import { readPendingChatScopeStepUp } from "@/lib/scope-step-up-pending";
+import type { ConnectionIntent } from "@/shared/oauth-connections";
+import {
+  notifyOAuthConnectionsChanged,
+  OAUTH_CONNECTIONS_CHANGED,
+  listOAuthConnections,
+} from "@/lib/apis/web/oauth-connections";
 import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "@/lib/toast";
@@ -73,7 +80,7 @@ import {
   markPendingDirectScopeStepUpReplayReady,
 } from "@/lib/scope-step-up-replay";
 import { HOSTED_MODE } from "@/lib/config";
-import { isPrivateNetworkUrl } from "@/lib/oauth/private-address";
+import { isPrivateNetworkUrl } from "@/shared/private-address";
 import { resolveXaaIdentitySaveFields } from "@/lib/xaa/identity";
 import { validateServerFormData } from "@/lib/server-form-validation";
 import {
@@ -112,7 +119,7 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { track } from "@/lib/analytics";
 import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
-import { attributeToServer } from "@/lib/server-error-copy";
+import { toastServerConnectionFailure } from "@/lib/server-error-toast";
 import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import type { ConnectionDefaults } from "@/shared/connection-defaults";
@@ -734,6 +741,7 @@ export interface EnsureServerConnectionResult {
 
 interface ReconnectServerInternalOptions {
   forceOAuthFlow?: boolean;
+  connectionIntent?: ConnectionIntent;
   allowInteractiveOAuthFlow?: boolean;
   select?: boolean;
   suppressErrors?: boolean;
@@ -901,7 +909,7 @@ export function buildSecretSyncOptions(formData: ServerFormData): {
  * workspace, no retry will clear it, and the user has to rename.
  */
 type ServerSyncResult =
-  | { ok: true; serverId: string }
+  | { ok: true; projectId: string; serverId: string }
   | { ok: false; reason: "not-saved" }
   | { ok: false; reason: "workspace-name-taken"; takenByProjectId?: string };
 
@@ -1036,6 +1044,7 @@ export function useServerState({
   const prepareHostedProjectOAuthRedirect = useCallback(
     (params: {
       serverId?: string | null;
+      connectionIntent?: ConnectionIntent;
       serverName: string;
       serverUrl?: string | null;
     }): boolean => {
@@ -1048,12 +1057,24 @@ export function useServerState({
         return false;
       }
 
+      const stepUp = readPendingChatScopeStepUp();
+      const connectionIntent =
+        params.connectionIntent ??
+        (stepUp?.event.connectionId &&
+        (stepUp.event.serverId === params.serverId ||
+          stepUp.event.serverName === params.serverName)
+          ? {
+              kind: "replace" as const,
+              credentialId: stepUp.event.connectionId,
+            }
+          : undefined);
       const returnPath = captureCurrentReturnPath();
       const organizationId =
         effectiveProjects[effectiveActiveProjectId]?.organizationId ?? null;
       clearHostedOAuthPendingState();
       writeHostedOAuthPendingMarker({
         surface: "project",
+        ...(connectionIntent ? { connectionIntent } : {}),
         organizationId,
         projectId: effectiveActiveProjectId,
         serverId: params.serverId,
@@ -1087,6 +1108,16 @@ export function useServerState({
         ...server,
         config: server.config,
         connectionStatus: runtimeState?.connectionStatus || "disconnected",
+        // Why the last attempt failed. Convex server rows do not store it, so
+        // omitting it here left a hosted card reading "Failed" with an empty
+        // error area and an empty Overview: the toast was the only copy of the
+        // reason, and it vanished with the toast (BB-48). Sourced from runtime
+        // state ONLY — exactly like `connectionStatus` above — so a reload that
+        // drops the runtime drops the reason with it instead of showing a stale
+        // one next to a "disconnected" status.
+        lastError: runtimeState?.lastError,
+        lastNormalizedError: runtimeState?.lastNormalizedError,
+        lastOAuthTrace: runtimeState?.lastOAuthTrace,
         oauthTokens: runtimeState?.oauthTokens,
         initializationInfo: runtimeState?.initializationInfo,
         lastConnectionTime:
@@ -1338,7 +1369,7 @@ export function useServerState({
     (
       serverConfig: MCPServerConfig,
       // Optional mcpProfile (hostConfig.mcpProfile) that the caller has
-      // already resolved from a chatbox/project context. When provided,
+      // already resolved from a scenario/project context. When provided,
       // its `initialize.clientInfo` and first
       // `initialize.supportedProtocolVersions` entry flow onto the
       // ConnectionDefaults wire shape. Undefined preserves historical
@@ -1447,6 +1478,25 @@ export function useServerState({
       if (mcpProfile?.mrtrSupport === "none") {
         defaults.supportsMrtr = false;
       }
+      // Nested record rather than an enum, but the same rule: only an
+      // explicit `false` leaf travels.
+      if (mcpProfile?.toolListChanged?.listens === false) {
+        defaults.suppressListenChannel = true;
+      }
+      if (mcpProfile?.toolListChanged?.refetches === false) {
+        defaults.dropToolListChanged = true;
+      }
+      // Tool cancellation: forward the degraded leaves and let the SDK pick
+      // which one applies once the connection has negotiated. Resolving here
+      // cannot work for an unpinned host — the era does not exist yet.
+      const cancellationLeaves = Object.fromEntries(
+        (["legacy", "modern"] as const)
+          .filter((key) => mcpProfile?.toolCallCancellation?.[key] === false)
+          .map((key) => [key, false])
+      );
+      if (Object.keys(cancellationLeaves).length > 0) {
+        defaults.toolCallCancellation = cancellationLeaves;
+      }
       // Enterprise-managed authorization policy from the active host's
       // mcpProfile. Sent only when validly ON; an `invalid` stored policy
       // fails the connect client-side with an actionable message instead of
@@ -1537,15 +1587,15 @@ export function useServerState({
       // The authoritative pending server entry when this probe is part of a
       // form save (handleConnect). Threaded into the resolver so wire-era
       // resolution reads the new config/profile, not the stale stored one.
-      authoritativeServerEntry?: ServerWithName
+      authoritativeServerEntry?: ServerWithName,
+      syncedTarget?: { projectId: string; serverId: string }
     ) => {
       assertClientConfigSynced();
-      // Opt into the resolver path when both projectId and a Convex serverId
-      // are populated in the API context; otherwise fall back to legacy
-      // {serverConfig, serverId} so brand-new servers (not yet synced to
-      // Convex) keep working. The 2-arg call signature is preserved when no
-      // resolver context is available so existing test mocks keep matching.
-      const resolved = tryResolveProjectServer(serverName);
+      // Local and hosted connections both require a Convex project/server id.
+      // A brand-new save passes its just-created target directly so this probe
+      // does not race the reactive API-context mapping; older rows resolve
+      // through the normal name-to-id context.
+      const resolved = syncedTarget ?? tryResolveProjectServer(serverName);
       if (resolved) {
         // Re-resolve WITH the Convex serverId. Callers already applied
         // `withProjectConnectionDefaults`, but they only know the display
@@ -1647,6 +1697,25 @@ export function useServerState({
       buildStatelessProtocolConnectMetadata,
     ]
   );
+
+  useEffect(() => {
+    if (HOSTED_MODE) return;
+    const refreshAccounts = () => {
+      for (const [name, server] of Object.entries(appStateServersRef.current)) {
+        if (server.useOAuth && server.connectionStatus === "connected") {
+          void guardedReconnectServer(name, server.config).catch((error) =>
+            logger.warn("Could not refresh account connections", {
+              serverName: name,
+              error,
+            }),
+          );
+        }
+      }
+    };
+    window.addEventListener(OAUTH_CONNECTIONS_CHANGED, refreshAccounts);
+    return () =>
+      window.removeEventListener(OAUTH_CONNECTIONS_CHANGED, refreshAccounts);
+  }, [guardedReconnectServer]);
 
   // Shared with the forms that feed this save path (XAAServerModal, ...) so a
   // form can never pass a config the save path would reject and lose the
@@ -1880,7 +1949,11 @@ export function useServerState({
       const confirmSecretCreateIsOurs = async (
         newServerId: string
       ): Promise<ServerSyncResult> => {
-        const ok: ServerSyncResult = { ok: true, serverId: newServerId };
+        const ok: ServerSyncResult = {
+          ok: true,
+          projectId: latestProjectId,
+          serverId: newServerId,
+        };
         if (!isUserReadyRef.current) return ok;
         let rows: RemoteServer[] | undefined;
         try {
@@ -2030,7 +2103,11 @@ export function useServerState({
           } else {
             await convexUpdateServer(updatePayload);
           }
-          return { ok: true, serverId: serverIdToUpdate };
+          return {
+            ok: true,
+            projectId: latestProjectId,
+            serverId: serverIdToUpdate,
+          };
         }
 
         if (existing.workspaceTwin && hasSecretOperation) {
@@ -2048,7 +2125,11 @@ export function useServerState({
         if (!newId) return SERVER_NOT_SAVED;
         return hasSecretOperation
           ? await confirmSecretCreateIsOurs(newId as string)
-          : { ok: true, serverId: newId as string };
+          : {
+              ok: true,
+              projectId: latestProjectId,
+              serverId: newId as string,
+            };
       } catch (primaryError) {
         const primaryErrorMessage =
           primaryError instanceof Error
@@ -2091,7 +2172,11 @@ export function useServerState({
             } else {
               await convexUpdateServer(updatePayload);
             }
-            return { ok: true, serverId: retryExisting._id };
+            return {
+              ok: true,
+              projectId: latestProjectId,
+              serverId: retryExisting._id,
+            };
           }
           // A twin can surface here even when the first resolve missed it: a
           // sibling project may have won the name concurrently, or — the
@@ -2112,7 +2197,11 @@ export function useServerState({
           if (!newId) return SERVER_NOT_SAVED;
           return hasSecretOperation
             ? await confirmSecretCreateIsOurs(newId as string)
-            : { ok: true, serverId: newId as string };
+            : {
+                ok: true,
+                projectId: latestProjectId,
+                serverId: newId as string,
+              };
         } catch (fallbackError) {
           logger.error("Failed to sync server to Convex", {
             serverName,
@@ -2816,6 +2905,22 @@ export function useServerState({
           localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
         }
 
+        if (!result.success && hostedCallbackContext?.connectionIntent) {
+          toast.error(result.error ?? "Could not connect the account");
+          return;
+        }
+        if (result.success && hostedCallbackContext?.connectionIntent) {
+          if (!HOSTED_MODE && result.serverName) {
+            const existing =
+              appStateServersRef.current[result.serverName] ??
+              latestEffectiveServersRef.current[result.serverName];
+            if (existing)
+              await guardedReconnectServer(result.serverName, existing.config);
+          }
+          notifyOAuthConnectionsChanged();
+          toast.success("Account connected");
+          return;
+        }
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
           // Prefer the runtime entry over the project catalog: it holds the
@@ -3110,16 +3215,42 @@ export function useServerState({
       if (oauthCallbackHandledRef.current) {
         return;
       }
-      oauthCallbackHandledRef.current = true;
 
-      // Dispatch "connecting" immediately so SYNC_AGENT_STATUS (which fires
-      // concurrently) cannot set the server back to "disconnected" while the
-      // token exchange is still in flight.
       // Prefer the hostedOAuthCallbackContext server name (already validated),
       // fall back to the legacy localStorage key.
       const earlyPendingName =
         hostedOAuthCallbackContext?.serverName ??
         localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
+
+      // A `?code=` in the URL is NOT proof the callback is ours. This effect
+      // runs on every route, so any other OAuth-shaped return lands here too —
+      // notably the GitHub App bind at `/settings/integrations/github/callback`,
+      // which this handler used to claim, fail, toast "No pending OAuth flow
+      // found", and then navigate away from, stripping GitHub's `code`/`state`
+      // out of the URL before the route that owned them could read them.
+      //
+      // The guard is DERIVED, not a path denylist: both completion paths read
+      // exactly this pending marker and throw "No pending OAuth flow found"
+      // when it is absent (`mcp-oauth.ts` — `handleOAuthCallback` and
+      // `completeHostedOAuthCallback`). So with no marker there is no MCP flow
+      // to complete and claiming the callback could only ever have failed. A
+      // path list would have to grow by hand for every future OAuth route and
+      // would silently break the one nobody remembered to add.
+      //
+      // Deliberate consequence: a genuinely orphaned MCP callback (marker lost
+      // to a cleared localStorage or another tab) no longer raises a toast. It
+      // was unrecoverable either way, the message named nothing the user could
+      // act on, and leaving the URL intact is more honest than navigating away
+      // from a callback we cannot attribute.
+      if (!earlyPendingName) {
+        return;
+      }
+
+      oauthCallbackHandledRef.current = true;
+
+      // Dispatch "connecting" immediately so SYNC_AGENT_STATUS (which fires
+      // concurrently) cannot set the server back to "disconnected" while the
+      // token exchange is still in flight.
       if (earlyPendingName) {
         const earlyServer = effectiveServers[earlyPendingName];
         if (earlyServer) {
@@ -3243,6 +3374,9 @@ export function useServerState({
       });
       const token = nextOpToken(formData.name);
       let hostedServerId: string | undefined;
+      let syncedConnectionTarget:
+        | { projectId: string; serverId: string }
+        | undefined;
       const existingServerForSave = appState.servers[formData.name];
       const formOAuthProfile = buildOAuthProfileFromFormData(
         formData,
@@ -3327,6 +3461,10 @@ export function useServerState({
         );
         if (synced.ok) {
           hostedServerId = synced.serverId;
+          syncedConnectionTarget = {
+            projectId: synced.projectId,
+            serverId: synced.serverId,
+          };
           injectHostedServerMapping(formData.name, synced.serverId);
         } else {
           workspaceNameTaken = synced.reason === "workspace-name-taken";
@@ -3410,7 +3548,8 @@ export function useServerState({
           const storedCredentialResult = await guardedTestConnection(
             withProjectConnectionDefaults(serverConfig),
             formData.name,
-            serverEntryForSave
+            serverEntryForSave,
+            syncedConnectionTarget
           );
           if (isStaleOp(formData.name, token)) return;
           if (storedCredentialResult.success) {
@@ -3611,7 +3750,8 @@ export function useServerState({
               const connectionResult = await guardedTestConnection(
                 withProjectConnectionDefaults(oauthServerConfig),
                 formData.name,
-                serverEntryForSave
+                serverEntryForSave,
+                syncedConnectionTarget
               );
               if (isStaleOp(formData.name, token)) return;
               if (connectionResult.success) {
@@ -3683,7 +3823,8 @@ export function useServerState({
         const result = await guardedTestConnection(
           effectiveConfig,
           formData.name,
-          serverEntryForSave
+          serverEntryForSave,
+          syncedConnectionTarget
         );
         if (isStaleOp(formData.name, token)) return;
         if (result.success) {
@@ -3753,22 +3894,22 @@ export function useServerState({
                   },
                 }
               : // For XAA servers, offer a shortcut to the XAA Debugger so the
-                // dev can step through the handshake and pinpoint the failing
-                // claim (subject not provisioned, audience/issuer mismatch).
-                formData.useXaa
-                ? {
-                    action: {
-                      label: "Open XAA Debugger",
-                      onClick: () => {
-                        dispatch({
-                          type: "SELECT_SERVER",
-                          name: formData.name,
-                        });
-                        navigateApp(routePaths.xaaFlow);
-                      },
+              // dev can step through the handshake and pinpoint the failing
+              // claim (subject not provisioned, audience/issuer mismatch).
+              formData.useXaa
+              ? {
+                  action: {
+                    label: "Open XAA Debugger",
+                    onClick: () => {
+                      dispatch({
+                        type: "SELECT_SERVER",
+                        name: formData.name,
+                      });
+                      navigateApp(routePaths.xaaFlow);
                     },
-                  }
-                : undefined
+                  },
+                }
+              : undefined,
           );
         }
       } catch (error) {
@@ -4706,11 +4847,10 @@ export function useServerState({
         if (suppressErrors) return;
         // Reconnect is the path a user takes right AFTER changing the protocol
         // version, so it is the likeliest place to meet a pin the server
-        // doesn't offer — and its toast carries the bare message, with no
-        // action of its own. Matched on the message because that is all this
+        // doesn't offer. Matched on the message because that is all this
         // helper receives; the clause is MCPJam's own wording.
         if (isProtocolVersionPinFailure(undefined, errorMessage)) {
-          toast.error(errorMessage, {
+          toastServerConnectionFailure(serverName, errorMessage, {
             action: {
               label: "Change protocol version",
               onClick: () => {
@@ -4726,15 +4866,10 @@ export function useServerState({
           });
           return;
         }
-        // Name the server for everything else. The route stopped prefixing its
-        // payload with "Connection failed for server X:" — that preamble
-        // buried the sentence and repeated the name against errors that
-        // already carry it — but a generic failure ("Connection refused") then
-        // says nothing about WHICH server, and several can fail at once.
-        //
-        // So it is added here, in the copy layer, and only when the message
-        // does not already name the server: attribution without the stutter.
-        toast.error(attributeToServer(serverName, errorMessage));
+        // Everything else names the server in the toast title: a generic
+        // failure ("Connection refused") says nothing about WHICH one, and
+        // several can fail at once.
+        toastServerConnectionFailure(serverName, errorMessage);
       };
 
       if (isClientConfigSyncPending) {
@@ -4779,11 +4914,12 @@ export function useServerState({
       const server = latestEffectiveServersRef.current[serverName];
       if (!server) {
         const errorMessage = `Server ${serverName} not found`;
-        dispatch({
-          type: "CONNECT_FAILURE",
-          name: serverName,
-          error: errorMessage,
-        });
+        if (!options?.connectionIntent)
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: errorMessage,
+          });
         logger.error("Reconnection failed", {
           serverName,
           error: errorMessage,
@@ -4795,12 +4931,13 @@ export function useServerState({
         };
       }
 
-      dispatch({
-        type: "RECONNECT_REQUEST",
-        name: serverName,
-        config: server.config,
-        select,
-      });
+      if (!options?.connectionIntent)
+        dispatch({
+          type: "RECONNECT_REQUEST",
+          name: serverName,
+          config: server.config,
+          select,
+        });
       const token = nextOpToken(serverName);
       const hostedProjectServerId = activeProjectServersFlat?.find(
         (remoteServer) => remoteServer.name === serverName
@@ -4833,11 +4970,12 @@ export function useServerState({
         const serverUrl = (server.config as any)?.url?.toString?.();
         if (!serverUrl) {
           const errorMessage = "No server URL found for OAuth flow";
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: serverName,
-            error: errorMessage,
-          });
+          if (!options?.connectionIntent)
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: errorMessage,
+            });
           reportError(errorMessage);
           return {
             status: "failed",
@@ -4942,32 +5080,35 @@ export function useServerState({
             error instanceof Error
               ? error.message
               : "Failed to build the OAuth request";
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: serverName,
-            error: errorMessage,
-          });
+          if (!options?.connectionIntent)
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: errorMessage,
+            });
           reportError(errorMessage);
           return { status: "failed", error: errorMessage };
         }
 
-        clearOAuthData(serverName);
-        dispatch({
-          type: "UPSERT_SERVER",
-          name: serverName,
-          server: {
-            ...server,
-            connectionStatus: "oauth-flow",
-            enabled: true,
-            lastError: undefined,
-            useOAuth: true,
-          },
-        });
+        if (!options?.connectionIntent) clearOAuthData(serverName);
+        if (!options?.connectionIntent)
+          dispatch({
+            type: "UPSERT_SERVER",
+            name: serverName,
+            server: {
+              ...server,
+              connectionStatus: "oauth-flow",
+              enabled: true,
+              lastError: undefined,
+              useOAuth: true,
+            },
+          });
         let oauthResult: Awaited<ReturnType<typeof initiateOAuth>>;
         try {
-          await deleteServer(serverName);
+          if (!options?.connectionIntent) await deleteServer(serverName);
 
           prepareHostedProjectOAuthRedirect({
+            connectionIntent: options?.connectionIntent,
             serverId: hostedProjectServerId,
             serverName,
             serverUrl,
@@ -4985,11 +5126,12 @@ export function useServerState({
             error instanceof Error
               ? error.message
               : "Failed to start OAuth flow";
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: serverName,
-            error: errorMessage,
-          });
+          if (!options?.connectionIntent)
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: errorMessage,
+            });
           reportError(errorMessage);
           return {
             status: "failed",
@@ -5011,17 +5153,25 @@ export function useServerState({
             };
           }
           const errorMessage = oauthResult.error || "OAuth flow failed";
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: serverName,
-            error: errorMessage,
-            oauthTrace: oauthResult.oauthTrace,
-          });
+          if (!options?.connectionIntent)
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: errorMessage,
+              oauthTrace: oauthResult.oauthTrace,
+            });
           reportError(`OAuth failed: ${serverName}`);
           return {
             status: "failed",
             error: errorMessage,
           };
+        }
+        if (options?.connectionIntent) {
+          if (!HOSTED_MODE)
+            await guardedReconnectServer(serverName, server.config);
+          notifyOAuthConnectionsChanged();
+          toast.success("Account connected");
+          return { status: "connected" };
         }
         const oauthServerConfig = stripAuthorizationFromHttpConfig(
           oauthResult.serverConfig!
@@ -5055,12 +5205,13 @@ export function useServerState({
           return { status: "connected" };
         }
         const errorMessage = result.error || "Reconnection failed after OAuth";
-        dispatch({
-          type: "CONNECT_FAILURE",
-          name: serverName,
-          error: errorMessage,
-          oauthTrace: oauthResult.oauthTrace,
-        });
+        if (!options?.connectionIntent)
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: errorMessage,
+            oauthTrace: oauthResult.oauthTrace,
+          });
         reportError(errorMessage);
         return {
           status: "failed",
@@ -5085,11 +5236,12 @@ export function useServerState({
       }> => {
         if (server.authMethod !== "auto") return null;
         const fail = (errorMessage: string, status: "failed" | "reauth") => {
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: serverName,
-            error: errorMessage,
-          });
+          if (!options?.connectionIntent)
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: errorMessage,
+            });
           reportError(errorMessage);
           return { status, error: errorMessage };
         };
@@ -5169,11 +5321,12 @@ export function useServerState({
 
           if (!connectFailureRequiresOAuth(result)) {
             const errorMessage = result.error || "Reconnection failed";
-            dispatch({
-              type: "CONNECT_FAILURE",
-              name: serverName,
-              error: errorMessage,
-            });
+            if (!options?.connectionIntent)
+              dispatch({
+                type: "CONNECT_FAILURE",
+                name: serverName,
+                error: errorMessage,
+              });
             logger.error("OAuth reconnect failed", { serverName, result });
             reportError(errorMessage || `Failed to reconnect: ${serverName}`);
             return {
@@ -5208,11 +5361,12 @@ export function useServerState({
             error instanceof Error ? error.message : "Unknown error";
 
           if (!requiresFreshOAuthAuthorization(error)) {
-            dispatch({
-              type: "CONNECT_FAILURE",
-              name: serverName,
-              error: errorMessage,
-            });
+            if (!options?.connectionIntent)
+              dispatch({
+                type: "CONNECT_FAILURE",
+                name: serverName,
+                error: errorMessage,
+              });
             logger.error("OAuth reconnect failed", {
               serverName,
               error: errorMessage,
@@ -5276,12 +5430,17 @@ export function useServerState({
               error: authResult.error,
             };
           }
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: serverName,
-            error: authResult.error,
-            oauthTrace: authResult.oauthTrace,
-          });
+          if (!options?.connectionIntent)
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: authResult.error,
+              // Carry the orchestrator's typed block through. The reducer
+              // prefers it over re-describing the message, which is what keeps
+              // this state off `internal/unknown`.
+              normalized: authResult.normalized,
+              oauthTrace: authResult.oauthTrace,
+            });
           reportError(authResult.error);
           return {
             status: "reauth",
@@ -5299,12 +5458,13 @@ export function useServerState({
             // OAuth init failed before any redirect — nothing is pending.
             autoOAuthEscalation.markFailed(escalationIdentity);
           }
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: serverName,
-            error: authResult.error,
-            oauthTrace: authResult.oauthTrace,
-          });
+          if (!options?.connectionIntent)
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: authResult.error,
+              oauthTrace: authResult.oauthTrace,
+            });
           reportError(`Failed to connect: ${serverName}`);
           return {
             status: "failed",
@@ -5349,16 +5509,17 @@ export function useServerState({
           autoOAuthEscalation.markFailed(escalationIdentity);
         }
         const errorMessage = result.error || "Reconnection failed";
-        dispatch({
-          type: "CONNECT_FAILURE",
-          name: serverName,
-          error: errorMessage,
-          oauthTrace: authResult.oauthTrace,
-          // Preserve the backend-attached normalized block so the reducer
-          // doesn't have to re-derive a (less specific) slug from just
-          // the message string.
-          ...(result.normalized ? { normalized: result.normalized } : {}),
-        });
+        if (!options?.connectionIntent)
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: errorMessage,
+            oauthTrace: authResult.oauthTrace,
+            // Preserve the backend-attached normalized block so the reducer
+            // doesn't have to re-derive a (less specific) slug from just
+            // the message string.
+            ...(result.normalized ? { normalized: result.normalized } : {}),
+          });
         logger.error("Reconnection failed", { serverName, result });
         reportError(errorMessage || `Failed to reconnect: ${serverName}`);
         return {
@@ -5374,11 +5535,12 @@ export function useServerState({
             error: errorMessage,
           };
         }
-        dispatch({
-          type: "CONNECT_FAILURE",
-          name: serverName,
-          error: errorMessage,
-        });
+        if (!options?.connectionIntent)
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: errorMessage,
+          });
         logger.error("Reconnection failed", {
           serverName,
           error: errorMessage,
@@ -5411,11 +5573,29 @@ export function useServerState({
       serverName: string,
       options?: {
         forceOAuthFlow?: boolean;
+        connectionIntent?: ConnectionIntent;
         allowInteractiveOAuthFlow?: boolean;
-      }
+      },
     ) => {
+      let connectionIntent = options?.connectionIntent;
+      if (options?.forceOAuthFlow && !connectionIntent) {
+        const target = tryResolveProjectServer(serverName);
+        if (target) {
+          const result = await listOAuthConnections(
+            target.projectId,
+            target.serverId,
+          );
+          const current = result.connections.find((c) => c.isDefault);
+          if (current)
+            connectionIntent = {
+              kind: "replace",
+              credentialId: current.connectionId,
+            };
+        }
+      }
       await reconnectServerInternal(serverName, {
         forceOAuthFlow: options?.forceOAuthFlow,
+        connectionIntent,
         allowInteractiveOAuthFlow: options?.allowInteractiveOAuthFlow ?? true,
         select: true,
       });
@@ -5489,7 +5669,10 @@ export function useServerState({
   );
 
   const ensureServersReady = useCallback(
-    async (serverNames: string[]): Promise<EnsureServersReadyResult> => {
+    async (
+      serverNames: string[],
+      options?: { allowInteractiveOAuthFlow?: boolean },
+    ): Promise<EnsureServersReadyResult> => {
       const uniqueServerNames = [...new Set(serverNames.filter(Boolean))];
 
       const resolveToProjectServerKey = (serverRef: string): string => {
@@ -5559,7 +5742,7 @@ export function useServerState({
               ] as const;
             }
 
-            if (server.connectionStatus === "oauth-flow") {
+            if (server.connectionStatus === "oauth-flow" && !options?.allowInteractiveOAuthFlow) {
               return [
                 resolvedKey,
                 {
@@ -5569,14 +5752,27 @@ export function useServerState({
               ] as const;
             }
 
-            return [
-              resolvedKey,
-              await reconnectServerInternal(resolvedKey, {
-                allowInteractiveOAuthFlow: false,
-                select: false,
-                suppressErrors: true,
-              }),
-            ] as const;
+            const outcome = await reconnectServerInternal(resolvedKey, {
+              allowInteractiveOAuthFlow: options?.allowInteractiveOAuthFlow ?? false,
+              select: false,
+              suppressErrors: true,
+            });
+
+            // "superseded" means a newer connect op took the pin mid-flight
+            // (e.g. the host-switch recycle racing a send). That op — not this
+            // one — drives the server to its final state, so returning
+            // superseded here would leave the server in NO bucket: not ready,
+            // not failed. Callers that gate on `readyServerNames` (the chat
+            // send path) then refuse to send even though the server is about
+            // to be connected. Follow the newer op to its real outcome.
+            if (outcome.status === "superseded") {
+              return [
+                resolvedKey,
+                await waitForServerReconnectOutcome(resolvedKey),
+              ] as const;
+            }
+
+            return [resolvedKey, outcome] as const;
           }
         )
       );
@@ -5610,10 +5806,10 @@ export function useServerState({
             reauthServerNames.push(serverName);
             break;
           case "superseded":
-            // A newer op is already handling this server; it owns the
-            // outcome. Don't classify it as failed — that would produce a
-            // false "failed to connect" signal for a connection that's just
-            // still in progress.
+            // Resolved above by following the newer op to its real outcome, so
+            // this is unreachable in practice. Kept as a defensive branch: a
+            // superseded connection is still in progress, and classifying it
+            // as failed would raise a false "failed to connect".
             break;
           case "failed":
           default:

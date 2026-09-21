@@ -6,6 +6,7 @@ import type { ContentBlock } from "@modelcontextprotocol/client";
 import { Button } from "@mcpjam/design-system/button";
 import { CopyMessageAction } from "@/components/chat-v2/shared/copy-message-action";
 import { EditMessageAction } from "@/components/chat-v2/shared/edit-message-action";
+import { MessageTimestamp, getMessageTimestampMs } from "@mcpjam/chat-ui";
 import { UserMessageBubble } from "./user-message-bubble";
 import { PartSwitch } from "./part-switch";
 import type { RecorderProps } from "./recorder-types";
@@ -13,9 +14,9 @@ import { ModelDefinition } from "@/shared/types";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
-  useChatboxHostStyle,
-  useChatboxHostTheme,
-} from "@/contexts/chatbox-client-style-context";
+  useScenarioHostStyle,
+  useScenarioHostTheme,
+} from "@/contexts/scenario-client-style-context";
 import {
   groupAssistantPartsIntoSteps,
   isHiddenInternalMessage,
@@ -49,7 +50,7 @@ interface MessageViewProps {
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    }
+    },
   ) => void;
   onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   pipWidgetId: string | null;
@@ -67,6 +68,7 @@ interface MessageViewProps {
   showInlineEdit?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
+  widgetPolicy?: "live" | "placeholder";
   reasoningDisplayMode?: ReasoningDisplayMode;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   claudeFooterMode?: ClaudeFooterMode;
@@ -108,7 +110,7 @@ interface MessageViewProps {
    */
   onEditUserMessage?: (
     message: UIMessage,
-    text: string
+    text: string,
   ) => void | boolean | Promise<void | boolean>;
   /** Blocks the edit affordance while a response is streaming. */
   editDisabled?: boolean;
@@ -131,7 +133,8 @@ function shouldRerenderMessage(prevMessage: UIMessage, nextMessage: UIMessage) {
     prevMessage === nextMessage ||
     (prevMessage.id === nextMessage.id &&
       prevMessage.role === nextMessage.role &&
-      prevMessage.parts === nextMessage.parts)
+      prevMessage.parts === nextMessage.parts &&
+      getMessageTimestampMs(prevMessage) === getMessageTimestampMs(nextMessage))
   );
 }
 
@@ -173,7 +176,7 @@ function getPartKey(part: MessagePart, stepIndex: number, partIndex: number) {
 
 function isSameSenderAvatar(
   prev: ProjectThreadOwnerAvatar | undefined,
-  next: ProjectThreadOwnerAvatar | undefined
+  next: ProjectThreadOwnerAvatar | undefined,
 ) {
   if (prev === next) return true;
   if (!prev || !next) return false;
@@ -188,7 +191,7 @@ function isSameSenderAvatar(
 
 function areMessageViewPropsEqual(
   prev: Readonly<MessageViewProps>,
-  next: Readonly<MessageViewProps>
+  next: Readonly<MessageViewProps>,
 ) {
   return (
     !shouldRerenderMessage(prev.message, next.message) &&
@@ -215,6 +218,7 @@ function areMessageViewPropsEqual(
     prev.showInlineEdit === next.showInlineEdit &&
     prev.minimalMode === next.minimalMode &&
     prev.interactive === next.interactive &&
+    prev.widgetPolicy === next.widgetPolicy &&
     prev.reasoningDisplayMode === next.reasoningDisplayMode &&
     prev.mcpToolResultImageRendering === next.mcpToolResultImageRendering &&
     prev.claudeFooterMode === next.claudeFooterMode &&
@@ -257,7 +261,7 @@ function extractEditableUserMessageText(message: UIMessage): string {
   return parts
     .filter(
       (part): part is { type: string; text: string } =>
-        part.type === "text" && typeof part.text === "string"
+        part.type === "text" && typeof part.text === "string",
     )
     .map((part) => part.text)
     .join("\n\n");
@@ -285,7 +289,7 @@ function UserMessageRow({
   actions: React.ReactNode;
   onEditUserMessage?: (
     message: UIMessage,
-    text: string
+    text: string,
   ) => void | boolean | Promise<void | boolean>;
   editDisabled: boolean;
   senderAvatar?: ProjectThreadOwnerAvatar;
@@ -411,7 +415,8 @@ function UserMessageRow({
           {/* Text and other parts inside the bubble */}
           {bubble}
           {showActionRow ? (
-            <div className="flex max-w-[min(100%,48rem)] justify-end gap-1 opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
+            <div className="flex max-w-[min(100%,48rem)] items-center justify-end gap-1 opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
+              <MessageTimestamp message={message} />
               <CopyMessageAction getText={() => originalText} />
               {onEditUserMessage ? (
                 <EditMessageAction
@@ -453,6 +458,7 @@ function MessageViewImpl({
   showInlineEdit = true,
   minimalMode = false,
   interactive = true,
+  widgetPolicy = "live",
   reasoningDisplayMode = "inline",
   mcpToolResultImageRendering,
   claudeFooterMode = "none",
@@ -466,20 +472,20 @@ function MessageViewImpl({
   recorder,
 }: MessageViewProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const chatboxHostStyle = useChatboxHostStyle();
-  const chatboxHostTheme = useChatboxHostTheme();
+  const scenarioHostStyle = useScenarioHostStyle();
+  const scenarioHostTheme = useScenarioHostTheme();
   const assistantAvatar = getAssistantAvatarDescriptor({
     model,
-    themeMode: chatboxHostTheme ?? themeMode,
-    chatboxHostStyle,
+    themeMode: scenarioHostTheme ?? themeMode,
+    scenarioHostStyle,
   });
-  const shouldRenderMistralAssistantAvatar = chatboxHostStyle === "mistral";
+  const shouldRenderMistralAssistantAvatar = scenarioHostStyle === "mistral";
   const shouldRenderAssistantAvatar =
-    chatboxHostStyle === null || shouldRenderMistralAssistantAvatar;
+    scenarioHostStyle === null || shouldRenderMistralAssistantAvatar;
   // Copilot mimics show their own "Copilot + mascot" row above the
   // message content (faithful to real M365 Copilot's avatar/name header).
   // Other host styles keep the inspector's existing layout.
-  const shouldRenderCopilotHeader = chatboxHostStyle === "copilot";
+  const shouldRenderCopilotHeader = scenarioHostStyle === "copilot";
   if (isHiddenInternalMessage(message)) return null;
   const role = message.role;
   if (role !== "user" && role !== "assistant") return null;
@@ -520,6 +526,7 @@ function MessageViewImpl({
               showInlineEdit={showInlineEdit}
               minimalMode={minimalMode}
               interactive={interactive}
+              widgetPolicy={widgetPolicy}
               reasoningDisplayMode={reasoningDisplayMode}
               mcpToolResultImageRendering={mcpToolResultImageRendering}
             />
@@ -556,6 +563,7 @@ function MessageViewImpl({
               showInlineEdit={showInlineEdit}
               minimalMode={minimalMode}
               interactive={interactive}
+              widgetPolicy={widgetPolicy}
               reasoningDisplayMode={reasoningDisplayMode}
               mcpToolResultImageRendering={mcpToolResultImageRendering}
             />
@@ -587,8 +595,9 @@ function MessageViewImpl({
     (part) =>
       part.type === "text" &&
       typeof part.text === "string" &&
-      part.text.length > 0
+      part.text.length > 0,
   );
+  const hasTimestamp = getMessageTimestampMs(message) !== undefined;
   return (
     <article
       className={
@@ -659,6 +668,7 @@ function MessageViewImpl({
                   showInlineEdit={showInlineEdit}
                   minimalMode={minimalMode}
                   interactive={interactive}
+                  widgetPolicy={widgetPolicy}
                   reasoningDisplayMode={reasoningDisplayMode}
                   mcpToolResultImageRendering={mcpToolResultImageRendering}
                   {...recorder}
@@ -680,11 +690,14 @@ function MessageViewImpl({
             <ClaudeLoadingIndicator mode={claudeFooterMode} />
           </div>
         ) : null}
-        {hasAssistantText ? (
-          <div className="flex gap-1 pt-2 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 focus-within:opacity-100">
-            <CopyMessageAction
-              getText={() => extractEditableUserMessageText(message)}
-            />
+        {hasAssistantText || hasTimestamp ? (
+          <div className="flex items-center gap-1 pt-2 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 focus-within:opacity-100">
+            {hasAssistantText ? (
+              <CopyMessageAction
+                getText={() => extractEditableUserMessageText(message)}
+              />
+            ) : null}
+            <MessageTimestamp message={message} />
           </div>
         ) : null}
         {renderAssistantTurnFooter?.(message)}

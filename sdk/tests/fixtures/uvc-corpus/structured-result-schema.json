@@ -1,0 +1,65 @@
+{
+  "id": "structured-result-schema",
+  "title": "A structured result graded against an authored schema",
+  "rationale": "`toolResultMatchesSchema` over `structuredContent`, with an array root — legal under protocol 2026-07-28 and the reason the check does not require an object.",
+  "transcript": {
+    "toolCalls": [
+      { "toolCallId": "c1", "toolName": "list_regions", "arguments": {} },
+      { "toolCallId": "c2", "toolName": "get_region", "arguments": { "code": "eu-west-1" } }
+    ],
+    "toolErrors": [],
+    "finalAssistantMessage": "eu-west-1 is in Ireland and is currently healthy.",
+    "turnCount": 1,
+    "toolInventory": [
+      {
+        "name": "list_regions",
+        "description": "Every region code.",
+        "inputSchema": { "type": "object", "properties": {} },
+        "annotations": { "readOnlyHint": true }
+      },
+      {
+        "name": "get_region",
+        "description": "One region.",
+        "inputSchema": { "type": "object", "properties": { "code": { "type": "string" } }, "required": ["code"] },
+        "annotations": { "readOnlyHint": true }
+      }
+    ],
+    "toolResults": [
+      {
+        "toolCallId": "c1",
+        "toolName": "list_regions",
+        "text": "[\"eu-west-1\",\"us-east-1\"]",
+        "structuredContent": ["eu-west-1", "us-east-1"],
+        "isError": false,
+        "size": { "bytes": 25, "basis": "model_visible_output", "complete": true }
+      },
+      {
+        "toolCallId": "c2",
+        "toolName": "get_region",
+        "text": "{\"code\":\"eu-west-1\",\"healthy\":\"yes\"}",
+        "structuredContent": { "code": "eu-west-1", "healthy": "yes" },
+        "isError": false,
+        "size": { "bytes": 36, "basis": "model_visible_output", "complete": true }
+      }
+    ],
+    "toolCallTimings": [
+      { "toolCallId": "c1", "toolName": "list_regions", "durationMs": 60, "provenance": "span" },
+      { "toolCallId": "c2", "toolName": "get_region", "durationMs": 70, "provenance": "span" }
+    ],
+    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+  },
+  "expect": [
+    {
+      "predicate": { "type": "toolResultMatchesSchema", "toolName": "list_regions", "schema": { "type": "array", "items": { "type": "string" } } },
+      "observation": "pass",
+      "relevance": "neutral",
+      "note": "an array root, which 2025-11-25 would have refused and 2026-07-28 allows"
+    },
+    {
+      "predicate": { "type": "toolResultMatchesSchema", "toolName": "get_region", "schema": { "type": "object", "properties": { "healthy": { "type": "boolean" } }, "required": ["healthy"] } },
+      "observation": "fail",
+      "relevance": "useful",
+      "note": "`healthy` is the string \"yes\" where the authored schema says boolean"
+    }
+  ]
+}

@@ -14,7 +14,7 @@ import {
 /**
  * Layout constants. Host card at the top, an add-server pseudo-node in
  * the middle, then a vertical stack of server cards below. Spacing is
- * tighter than the chatbox builder because hosts don't render a tools
+ * tighter than the scenario builder because hosts don't render a tools
  * collapsible on each server card.
  */
 const HOST_NODE_Y = 0;

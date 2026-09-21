@@ -9,7 +9,7 @@ import {
   type GuestSessionFetchContext,
   type GuestSessionRequestBody,
 } from "../../utils/guest-session-source.js";
-import { getClientIp } from "../../utils/client-ip.js";
+import { getSpendClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
 import {
   GUEST_SESSION_COOKIE_NAME,
@@ -26,6 +26,11 @@ const guestSession = new Hono();
 // Real guest JWTs are well under this limit; anything larger is either
 // malformed or an attempt to inflate the upstream request body.
 const MAX_LEGACY_TOKEN_LENGTH = 4096;
+// Copy shown when the per-IP creation cap refuses a new guest. Sign-in is the
+// real next step; retrying is not.
+export const GUEST_SESSION_REFUSED_MESSAGE =
+  "Too many guest sessions from your network today. Sign in to continue.";
+const GUEST_SESSION_REFUSED_RETRY_AFTER_S = 600;
 
 function parseRequestBody(raw: unknown): GuestSessionRequestBody {
   if (!raw || typeof raw !== "object") return {};
@@ -61,17 +66,7 @@ function parseRequestBody(raw: unknown): GuestSessionRequestBody {
  * Rate limited to 10 requests per minute per IP.
  */
 guestSession.post("/", async (c) => {
-  if (process.env.MCPJAM_NONPROD_LOCKDOWN === "true") {
-    return c.json(
-      {
-        code: ErrorCode.FORBIDDEN,
-        message: "Guest access is disabled in this environment.",
-      },
-      403
-    );
-  }
-
-  const ip = getClientIp(c);
+  const ip = getSpendClientIp(c);
   if (!ip && process.env.NODE_ENV === "production") {
     return c.json(
       {
@@ -107,7 +102,7 @@ guestSession.post("/", async (c) => {
   // guest's session row. Lets the credit-balance display reflect the
   // per-IP cap on the very first load after a cookie clear, before any
   // /stream call has run.
-  const clientIp = getClientIp(c);
+  const clientIp = getSpendClientIp(c);
   const ipHash = clientIp ? await hashGuestSpendIp(clientIp) : null;
 
   const context: GuestSessionFetchContext = {
@@ -140,6 +135,24 @@ guestSession.post("/", async (c) => {
         message: "Guest session revoked.",
       },
       403
+    );
+  }
+
+  // The backend caps guest session CREATION per client IP (mcpjam-backend
+  // #1391/#1392). That is a deliberate refusal, not an outage: surface it as
+  // the 429 it is, with the upstream's Retry-After, so the client stops
+  // retrying and offers sign-in instead of "try again".
+  if (result.status === 429) {
+    c.header(
+      "Retry-After",
+      String(result.retryAfterSeconds ?? GUEST_SESSION_REFUSED_RETRY_AFTER_S),
+    );
+    return c.json(
+      {
+        code: ErrorCode.RATE_LIMITED,
+        message: GUEST_SESSION_REFUSED_MESSAGE,
+      },
+      429,
     );
   }
 
@@ -185,16 +198,6 @@ function buildExpiredGuestSessionCookie(): string {
 }
 
 guestSession.post("/revoke", async (c) => {
-  if (process.env.MCPJAM_NONPROD_LOCKDOWN === "true") {
-    return c.json(
-      {
-        code: ErrorCode.FORBIDDEN,
-        message: "Guest access is disabled in this environment.",
-      },
-      403
-    );
-  }
-
   const context: GuestSessionFetchContext = {
     cookie: extractGuestSessionCookie(c.req.header("cookie")),
     userAgent: c.req.header("user-agent") ?? null,
@@ -249,17 +252,7 @@ guestSession.post("/revoke", async (c) => {
  * route so a stolen secret cannot be used to flood the upstream.
  */
 guestSession.post("/promotion-proof", async (c) => {
-  if (process.env.MCPJAM_NONPROD_LOCKDOWN === "true") {
-    return c.json(
-      {
-        code: ErrorCode.FORBIDDEN,
-        message: "Guest access is disabled in this environment.",
-      },
-      403
-    );
-  }
-
-  const ip = getClientIp(c);
+  const ip = getSpendClientIp(c);
   if (!ip && process.env.NODE_ENV === "production") {
     return c.json(
       {

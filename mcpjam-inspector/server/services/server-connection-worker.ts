@@ -202,6 +202,20 @@ async function runValidationStep(
   }
 
   if (context.authMethod === "oauth" && !context.accessToken) {
+    if (context.credentialRetryable) {
+      // The credential is still there; its authorization server just could not
+      // be reached to refresh it. Consent cannot fix an outage, and asking for
+      // it anyway spends one of the request's three OAuth attempts — so a few
+      // minutes of tenant downtime would fail the request outright.
+      await reportValidation({
+        requestId,
+        leaseId,
+        outcome: "retryable",
+        errorCode: "VALIDATION_FAILED",
+        errorMessage: "Could not reach the authorization server.",
+      });
+      return;
+    }
     // Authorized, but nothing came back from the credential store. Sending the
     // user back to consent is the only thing that can fix it.
     await reportValidation({

@@ -1,8 +1,11 @@
+import { capRequestPayloadsForPersist } from "../../utils/live-chat-trace-stream";
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ConvexHttpClient } from "convex/browser";
 import type { ModelMessage } from "ai";
 import type {
   BrowserInteractionStepPayload,
   EvalTraceSpan,
+  EvalTraceVideoMeta,
   EvalTraceWidgetSnapshot,
   PromptTraceSummary,
   SerializedBrowserInteractionStep,
@@ -192,6 +195,7 @@ export async function persistEvalTraceFanout(args: {
   modelSource?: "mcpjam" | "byok" | "local_byok";
   messages: ModelMessage[];
   spans: EvalTraceSpan[] | undefined;
+  requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   prompts: PromptTraceSummary[] | undefined;
   /**
    * Eval widget snapshots captured via `captureMcpAppWidgetSnapshots`.
@@ -228,6 +232,8 @@ export async function persistEvalTraceFanout(args: {
    * to resolve into a `videoUrl`.
    */
   videoBlobId?: string;
+  /** What that recording says about itself. Rides the same last-turn call. */
+  videoMeta?: EvalTraceVideoMeta;
 }): Promise<FanoutResult> {
   const turns = sliceTraceIntoTurns({
     messages: args.messages,
@@ -306,7 +312,13 @@ export async function persistEvalTraceFanout(args: {
           // Iteration-level replay video: attach to the last turn only (like
           // widgetSnapshots). Backend stores it on the iteration trace.
           ...(isLastTurn && args.videoBlobId
-            ? { videoBlobId: args.videoBlobId }
+            ? {
+                videoBlobId: args.videoBlobId,
+                // Only WITH the blob: metadata describing a video nothing
+                // uploaded would render a duration and an fps under an empty
+                // player, asserting a recording that is not there.
+                ...(args.videoMeta ? { videoMeta: args.videoMeta } : {}),
+              }
             : {}),
           turn: {
             promptIndex: turn.promptIndex,
@@ -314,6 +326,17 @@ export async function persistEvalTraceFanout(args: {
             turnEndedAt: now,
             sessionMessages: sanitizeForConvexTransport(turn.sessionMessages),
             spans: sanitizeForConvexTransport(turn.spans),
+            ...(args.requestPayloads?.length
+              ? {
+                  requestPayloadsJson: JSON.stringify(
+                    capRequestPayloadsForPersist(
+                      args.requestPayloads.filter(
+                        (entry) => entry.promptIndex === turn.promptIndex,
+                      ),
+                    ),
+                  ),
+                }
+              : {}),
             ...(turn.prompts.length > 0
               ? { prompts: sanitizeForConvexTransport(turn.prompts) }
               : {}),

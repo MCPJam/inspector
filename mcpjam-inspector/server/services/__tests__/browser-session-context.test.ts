@@ -2,7 +2,7 @@
  * browser-session-context.test.ts — shared browser session context.
  *
  * Covers the attachment surface every "mock a user session" runner (eval
- * iterations, synthetic chatbox sessions) wires into its turn driver:
+ * iterations, synthetic scenario sessions) wires into its turn driver:
  * Computer Use tool construction (wire format), the advertised-tool gate,
  * both render hooks (engine `onToolResult` + local AI-SDK
  * `onToolResultChunk`), input caching, prompt-index stamping, incremental

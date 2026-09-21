@@ -1,3 +1,11 @@
+import { refreshAuthorization } from "../oauth/browser-auth.js";
+// Profile verification is an active, contractually read-only probe, enabled
+// after this run acquires a token. This runner has no provided-token mode.
+// verification.profile.enabled=false opts out; no intrusive-probes gate applies.
+import {
+  captureOpenAIProfile,
+  findOpenAIProfileTool,
+} from "../openai-profile/capture.js";
 import { randomInt } from "node:crypto";
 import { decideConformanceOutcome } from "../conformance-outcome.js";
 import {
@@ -6,6 +14,7 @@ import {
   getConformanceClientCredentialsDynamicRegistrationMetadata,
 } from "../oauth/client-identity.js";
 import { createOAuthStateMachine } from "../oauth/state-machines/factory.js";
+import { isLoopbackOAuthUrl } from "../oauth/ssrf-guard.js";
 import {
   getStepInfo,
   type OAuthStepInfo,
@@ -586,6 +595,12 @@ export class OAuthConformanceTest {
         serverUrl: this.config.serverUrl,
         serverName: this.config.serverName,
         redirectUrl,
+        // The executor below is the caller's `fetchFn`, so the factory's
+        // pre-flight guard is the only address check on this path: it has to
+        // learn about the local allowance or a loopback server under test is
+        // refused before its first well-known fetch.
+        allowLoopbackMetadataFetch: isLoopbackOAuthUrl(this.config.serverUrl),
+        allowPrivateMetadataFetch: this.config.allowPrivateNetwork,
         requestExecutor: (request) => trackedRequest(request),
         loadPreregisteredCredentials: async () => ({
           clientId: this.config.client.preregistered?.clientId,
@@ -987,6 +1002,7 @@ export class OAuthConformanceTest {
 
     // ── Post-auth verification ────────────────────────────────────────
     let verification: VerificationResult | undefined;
+    let profileId: string | undefined;
 
     if (passed && this.config.verification.listTools && state.accessToken) {
       verification = {};
@@ -1021,6 +1037,195 @@ export class OAuthConformanceTest {
               steps.push(
                 buildStepResult("verify_list_tools", "passed", listDuration, [], []),
               );
+              if (
+                this.config.verification.profile?.enabled !== false &&
+                findOpenAIProfileTool(toolsResult.tools)
+              ) {
+                const start = Date.now();
+                const first = await captureOpenAIProfile(manager, serverId, {
+                  timeoutMs: this.config.verification.timeout,
+                });
+                const shapeOk = !!first.profile && first.structuredContent;
+                steps.push({
+                  ...buildStepResult(
+                    "verify_profile_shape",
+                    shapeOk ? "passed" : "failed",
+                    Date.now() - start,
+                    [],
+                    [],
+                    shapeOk
+                      ? undefined
+                      : {
+                          message:
+                            "Return a valid profile in structuredContent.",
+                        }
+                  ),
+                  intrusiveness: "active",
+                });
+                if (!shapeOk) {
+                  passed = false;
+                  outcome = "failed";
+                }
+                if (first.profile) {
+                  profileId = first.profile.id;
+                  const second = await captureOpenAIProfile(manager, serverId, {
+                    timeoutMs: this.config.verification.timeout,
+                  });
+                  const stable = second.profile?.id === first.profile.id;
+                  steps.push({
+                    ...buildStepResult(
+                      "verify_profile_stable",
+                      stable ? "passed" : "failed",
+                      Date.now() - start,
+                      [],
+                      [],
+                      stable
+                        ? undefined
+                        : {
+                            message:
+                              "The same credentials did not return the same profile identity.",
+                          }
+                    ),
+                    intrusiveness: "active",
+                  });
+                  if (!stable) {
+                    passed = false;
+                    outcome = "failed";
+                  }
+                  const resemblesDisplay =
+                    first.profile.id === first.profile.email ||
+                    first.profile.id === first.profile.name ||
+                    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(first.profile.id);
+                  steps.push({
+                    ...buildStepResult(
+                      "verify_profile_id_opaque",
+                      "passed",
+                      0,
+                      [],
+                      []
+                    ),
+                    ...(resemblesDisplay
+                      ? {
+                          warnings: [
+                            "The ID resembles display metadata; verify immutability and non-reassignment. This is a heuristic.",
+                          ],
+                        }
+                      : {}),
+                    intrusiveness: "passive",
+                  });
+                  if (
+                    state.refreshToken &&
+                    state.authorizationServerUrl &&
+                    state.clientId
+                  ) {
+                    const refreshStarted = Date.now();
+                    try {
+                      const refreshed = await refreshAuthorization(
+                        state.authorizationServerUrl,
+                        {
+                          metadata: state.authorizationServerMetadata,
+                          clientInformation: {
+                            client_id: state.clientId,
+                            ...(state.clientSecret
+                              ? { client_secret: state.clientSecret }
+                              : {}),
+                            ...(state.tokenEndpointAuthMethod
+                              ? {
+                                  token_endpoint_auth_method:
+                                    state.tokenEndpointAuthMethod,
+                                }
+                              : {}),
+                          },
+                          refreshToken: state.refreshToken,
+                          resource: resolveResourceIndicatorValue({
+                            serverUrl: this.config.serverUrl,
+                            prmResource: state.resourceMetadata?.resource,
+                            resolved: state.resourceIndicator,
+                          }),
+                          // An authorization server that requires one of the
+                          // run's custom headers gets it on discovery and on
+                          // the token exchange; without it here the refresh
+                          // fails and a healthy server is reported as failing
+                          // profile stability. Authorization is excluded —
+                          // `refreshAuthorization` owns that one.
+                          fetchFn: (input, init) => {
+                            const headers = new Headers(init?.headers);
+                            for (const [name, value] of Object.entries(
+                              this.config.customHeaders ?? {}
+                            ))
+                              if (
+                                name.toLowerCase() !== "authorization" &&
+                                !headers.has(name)
+                              )
+                                headers.set(name, value);
+                            return (this.config.fetchFn ?? fetch)(input, {
+                              ...init,
+                              headers,
+                              signal: AbortSignal.timeout(
+                                this.config.verification.timeout ?? 30_000
+                              ),
+                            });
+                          },
+                        }
+                      );
+                      state = {
+                        ...state,
+                        accessToken: refreshed.access_token,
+                        refreshToken:
+                          refreshed.refresh_token ?? state.refreshToken,
+                      };
+                      const refreshedProfile = await withEphemeralClient(
+                        {
+                          ...verifyConfig,
+                          accessToken: refreshed.access_token,
+                        },
+                        (freshManager, freshKey) =>
+                          captureOpenAIProfile(freshManager, freshKey, {
+                            timeoutMs: this.config.verification.timeout,
+                          })
+                      );
+                      const same = refreshedProfile.profile?.id === profileId;
+                      steps.push({
+                        ...buildStepResult(
+                          "verify_profile_stable_after_refresh",
+                          same ? "passed" : "failed",
+                          Date.now() - refreshStarted,
+                          [],
+                          [],
+                          same
+                            ? undefined
+                            : {
+                                message:
+                                  "Profile identity changed or became unavailable after refresh.",
+                              }
+                        ),
+                        intrusiveness: "active",
+                      });
+                      if (!same) {
+                        passed = false;
+                        outcome = "failed";
+                      }
+                    } catch {
+                      steps.push({
+                        ...buildStepResult(
+                          "verify_profile_stable_after_refresh",
+                          "failed",
+                          Date.now() - refreshStarted,
+                          [],
+                          [],
+                          {
+                            message:
+                              "Could not refresh and verify the profile identity.",
+                          }
+                        ),
+                        intrusiveness: "active",
+                      });
+                      passed = false;
+                      outcome = "failed";
+                    }
+                  }
+                }
+              }
             } catch (error) {
               const listDuration = Date.now() - listStart;
               const message = error instanceof Error ? error.message : String(error);
@@ -1108,6 +1313,7 @@ export class OAuthConformanceTest {
       durationMs,
       credentials: buildCredentials(state),
       verification,
+      ...(profileId ? { profileId } : {}),
     };
   }
 }

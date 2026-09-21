@@ -57,7 +57,7 @@ const REMOTE = {
 };
 
 function composeState(
-  stack: Partial<EnvironmentComposerState["stack"]> = {}
+  stack: Partial<EnvironmentComposerState["stack"]> = {},
 ): EnvironmentComposerState {
   return {
     environmentIds: [],
@@ -66,6 +66,7 @@ function composeState(
       serverAttachmentId: null,
       skillSelection: null,
       computerEnvironmentId: null,
+      modelSelection: { includeClientDefaults: true, explicitModelIds: [] },
       ...stack,
     },
     customized: false,
@@ -73,7 +74,7 @@ function composeState(
 }
 
 function environment(
-  overrides: Partial<ProjectEnvironmentView> = {}
+  overrides: Partial<ProjectEnvironmentView> = {},
 ): ProjectEnvironmentView {
   return {
     environmentId: "env-1",
@@ -89,10 +90,10 @@ function environment(
 
 function assess(
   state: EnvironmentComposerState,
-  environments: ProjectEnvironmentView[] = []
+  environments: ProjectEnvironmentView[] = [],
 ) {
   return renderHook(() =>
-    useCloudServerReadiness({ projectId: "proj-1", state, environments })
+    useCloudServerReadiness({ projectId: "proj-1", state, environments }),
   ).result.current;
 }
 
@@ -105,6 +106,8 @@ describe("useCloudServerReadiness", () => {
     expect(assess(composeState())).toEqual({
       status: "no_servers",
       labels: ["Claude"],
+      attachable: [],
+      poolSize: 0,
     });
   });
 
@@ -117,7 +120,7 @@ describe("useCloudServerReadiness", () => {
     ];
 
     expect(assess(composeState({ serverAttachmentId: "grp-1" }))).toEqual({
-      status: "local_only",
+      status: "unrunnable_servers",
       labels: ["Local group"],
       serverNames: ["Fetch"],
     });
@@ -135,9 +138,14 @@ describe("useCloudServerReadiness", () => {
           stack: composeState().stack,
           customized: false,
         },
-        [environment()]
-      )
-    ).toEqual({ status: "no_servers", labels: ["Staging"] });
+        [environment()],
+      ),
+    ).toEqual({
+      status: "no_servers",
+      labels: ["Staging"],
+      attachable: [],
+      poolSize: 0,
+    });
   });
 
   it("leaves an environment with pinned plugins to the resolver", () => {
@@ -152,8 +160,8 @@ describe("useCloudServerReadiness", () => {
           stack: composeState().stack,
           customized: false,
         },
-        [environment({ pluginVersionIds: ["pv-1"] })]
-      )
+        [environment({ pluginVersionIds: ["pv-1"] })],
+      ),
     ).toEqual({ status: "ok" });
   });
 

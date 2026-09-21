@@ -33,7 +33,7 @@ export function registerMcpCommands(program: Command): void {
 
         if (!globalOptions.quiet) {
           // stdout carries JSON-RPC in this mode; status goes to stderr only.
-          process.stderr.write("MCPJam MCP server listening on stdio\n");
+          process.stderr.write("MCPJam CLI MCP server listening on stdio\n");
         }
 
         await closed;

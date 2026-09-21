@@ -61,6 +61,9 @@ export const FIXTURE_PAGE_SIZE = 4;
 export const FIXTURE_TOTAL_ITEMS = FIXTURE_PAGE_SIZE * 3;
 
 export interface MultiPageFixtureOptions {
+  /** Keep duplicate raw names to test capture before name-keyed conversion. */
+  duplicateToolName?: boolean;
+  declareOutputSchema?: boolean;
   /**
    * Which capabilities to advertise. A key set to `false` is OMITTED from
    * the server's declared capabilities entirely (not just emptied) — this
@@ -116,6 +119,15 @@ export interface MultiPageFixtureOptions {
    * or silently reverts to a conforming one.
    */
   hideFromList?: string[];
+  /**
+   * Advertise the held-open `slow-tool` in `tools/list` as well as serving it.
+   *
+   * Off by default because every pagination assertion in this fixture counts
+   * `FIXTURE_TOTAL_ITEMS`, and an extra listed tool would move those numbers.
+   * Opt in when the tool has to arrive through a path that only knows listed
+   * tools — `getToolsForAiSdk`, for one, builds its set from `tools/list`.
+   */
+  listSlowTool?: boolean;
 }
 
 /** The SEP-2243 `HeaderMismatch` JSON-RPC error code (2026-07-28). */
@@ -210,12 +222,27 @@ export function buildMultiPageFixtureServer(
   });
 
   const { tools, prompts, resources, resourceTemplates } = buildItems();
+  if (options.duplicateToolName) tools[1].name = tools[0].name;
+  if (options.declareOutputSchema) Object.assign(tools[0], { outputSchema: { type: "object", properties: { value: { type: "string" } } } });
 
   if (caps.tools) {
+    const baseTools = options.listSlowTool
+      ? [
+          ...tools,
+          {
+            name: "slow-tool",
+            description: "Held open until the caller aborts",
+            inputSchema: {
+              type: "object" as const,
+              properties: { delayMs: { type: "number" as const } },
+            },
+          },
+        ]
+      : tools;
     const listedTools =
       options.hideFromList && options.hideFromList.length > 0
-        ? tools.filter((tool) => !options.hideFromList!.includes(tool.name))
-        : tools;
+        ? baseTools.filter((tool) => !options.hideFromList!.includes(tool.name))
+        : baseTools;
     server.setRequestHandler("tools/list", (request: any) => {
       const { items, nextCursor } = paginatedPage(
         listedTools,

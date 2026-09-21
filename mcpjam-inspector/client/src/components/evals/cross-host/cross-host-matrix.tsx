@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { Trash2 } from "lucide-react";
 import { HostChip } from "@/components/hosts/host-chip";
+import { findHostStyle } from "@/lib/client-styles";
+import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import { cn } from "@/lib/utils";
 import { usePersistedState } from "../use-persisted-state";
 import {
@@ -108,7 +110,7 @@ export type HostVerdictMap = Map<string, HostVerdict>;
 
 const HOST_VERDICT_TONE: Record<HostVerdict["verdict"], string> = {
   strong: "text-success",
-  mixed: "text-amber-600 dark:text-amber-400",
+  mixed: "text-warning",
   weak: "text-destructive",
   incomplete: "text-muted-foreground",
 };
@@ -131,10 +133,25 @@ function HostColumnHeader({
     >
       <HostChip
         name={displayName}
-        hostId={col.hostId}
+        hostId={col.namedHostId}
+        logoSrc={col.hostStyle && findHostStyle(col.hostStyle) ? getScenarioHostLogo(col.hostStyle) : undefined}
         layout="stack"
         size="sm"
       />
+      {col.modelLabel ? (
+        <span className="max-w-full truncate font-mono text-[9px] text-muted-foreground">
+          {col.modelLabel}
+        </span>
+      ) : col.modelKey && col.modelKey !== "client-default" ? (
+        <span className="max-w-full truncate font-mono text-[9px] text-muted-foreground">
+          {col.modelKey}
+        </span>
+      ) : null}
+      {col.splitLabel ? (
+        <span className="max-w-full truncate font-mono text-[9px] text-muted-foreground">
+          · {col.splitLabel}
+        </span>
+      ) : null}
       {col.isHistorical ? (
         <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground">
           historical
@@ -207,7 +224,7 @@ export function CrossHostMatrix({
         <colgroup>
           <col style={{ width: CASE_COLUMN_WIDTH_PX }} />
           {hostColumns.map((col) => (
-            <col key={col.hostId} />
+            <col key={col.columnKey ?? col.hostId} />
           ))}
         </colgroup>
         <thead>
@@ -236,7 +253,7 @@ export function CrossHostMatrix({
             </th>
             {hostColumns.map((col) => (
               <th
-                key={col.hostId}
+                key={col.columnKey ?? col.hostId}
                 className={cn(
                   "border-b border-r border-border/60 text-center align-bottom",
                   evalSurfaceHeaderClass,
@@ -267,7 +284,7 @@ export function CrossHostMatrix({
             // still running mid-"Run all" carry no verdict yet, so excluding
             // them keeps the row from flashing red before any iteration lands.
             const settledOutcomes = hostColumns
-              .map((col) => byHost?.get(col.hostId))
+              .map((col) => byHost?.get(col.columnKey ?? col.hostId))
               .filter(
                 (c): c is NonNullable<typeof c> => !!c && c.totalCount > 0,
               )
@@ -292,14 +309,14 @@ export function CrossHostMatrix({
                 data-divergence={rowTone ?? undefined}
                 className={cn(
                   "group",
-                  rowTone === "diverge" && "bg-amber-500/[0.05]",
+                  rowTone === "diverge" && "bg-warning/[0.05]",
                 )}
               >
                 <td
                   className={cn(
                     "z-10 w-[300px] max-w-[300px] align-top px-4 py-2.5",
                     stickyCaseColumnClass,
-                    rowTone === "diverge" && "border-l-2 border-l-amber-500",
+                    rowTone === "diverge" && "border-l-2 border-l-warning",
                     rowTone === "allfail" &&
                       "border-l-2 border-l-destructive",
                     onTestCaseClick && "cursor-pointer hover:bg-muted/40",
@@ -363,7 +380,7 @@ export function CrossHostMatrix({
                   </div>
                 </td>
                 {hostColumns.map((col) => {
-                  const cell = byHost?.get(col.hostId);
+                  const cell = byHost?.get(col.columnKey ?? col.hostId);
                   const cellInteractive = !!(
                     onCellOpen &&
                     cell &&
@@ -394,7 +411,7 @@ export function CrossHostMatrix({
                   };
                   return (
                     <td
-                      key={col.hostId}
+                      key={col.columnKey ?? col.hostId}
                       className={cn(
                         "border-r border-border/50 align-top",
                         evalSurfaceCellClass,

@@ -21,6 +21,21 @@
  */
 import type { WidgetCspMeta } from "./widget-helpers";
 
+export type SandboxProxyCspSubtypePolicy = {
+  cspConnectDomains?: {
+    fetch?: boolean;
+    xhr?: boolean;
+    websocket?: boolean;
+  };
+  cspResourceDomains?: {
+    script?: boolean;
+    stylesheet?: boolean;
+    image?: boolean;
+    font?: boolean;
+    media?: boolean;
+  };
+};
+
 /**
  * Mirror of `sandbox-proxy.html`'s `mergeDirective` with no inspector-override
  * (`cspDirectives`) tokens: order-preserving de-duplication, drop `'none'` once
@@ -60,7 +75,8 @@ export function sanitizeProxyDomain(domain: string): string {
  * {@link sanitizeProxyDomain} exactly as the proxy does at build time.
  */
 export function buildSandboxProxyWidgetCsp(
-  cspMeta?: WidgetCspMeta | null
+  cspMeta?: WidgetCspMeta | null,
+  cspSubtypePolicy?: SandboxProxyCspSubtypePolicy
 ): string {
   const connect = (cspMeta?.connect_domains ?? [])
     .map(sanitizeProxyDomain)
@@ -74,9 +90,24 @@ export function buildSandboxProxyWidgetCsp(
 
   // data:/blob: are always allowed for inline content; declared resource
   // domains add to them. No forced CDNs and no 'self' (SEP-1865).
-  const resourceTokens =
-    resource.length > 0 ? ["data:", "blob:", ...resource] : ["data:", "blob:"];
-  const connectTokens = connect.length > 0 ? connect : ["'none'"];
+  const resourceTokens = (
+    subtype: keyof NonNullable<
+      SandboxProxyCspSubtypePolicy["cspResourceDomains"]
+    >
+  ) =>
+    cspSubtypePolicy?.cspResourceDomains?.[subtype] === false
+      ? ["data:", "blob:"]
+      : resource.length > 0
+      ? ["data:", "blob:", ...resource]
+      : ["data:", "blob:"];
+  const connectPolicy = cspSubtypePolicy?.cspConnectDomains;
+  const keepDeclaredConnectDomains =
+    !connectPolicy ||
+    (["fetch", "xhr", "websocket"] as const).some(
+      (subtype) => connectPolicy[subtype] !== false
+    );
+  const connectTokens =
+    keepDeclaredConnectDomains && connect.length > 0 ? connect : ["'none'"];
   const frameTokens = frame.length > 0 ? frame : ["'none'"];
   // WidgetCspMeta does not model base-uri, so it is always 'none' here. That
   // matches the proxy for widgets that declare no base-uri, and is otherwise
@@ -85,11 +116,14 @@ export function buildSandboxProxyWidgetCsp(
 
   return [
     directive("default-src", ["'none'"]),
-    directive("script-src", ["'unsafe-inline'", ...resourceTokens]),
-    directive("style-src", ["'unsafe-inline'", ...resourceTokens]),
-    directive("img-src", resourceTokens),
-    directive("font-src", resourceTokens),
-    directive("media-src", resourceTokens),
+    directive("script-src", ["'unsafe-inline'", ...resourceTokens("script")]),
+    directive("style-src", [
+      "'unsafe-inline'",
+      ...resourceTokens("stylesheet"),
+    ]),
+    directive("img-src", resourceTokens("image")),
+    directive("font-src", resourceTokens("font")),
+    directive("media-src", resourceTokens("media")),
     directive("connect-src", connectTokens),
     directive("frame-src", frameTokens),
     directive("object-src", ["'none'"]),

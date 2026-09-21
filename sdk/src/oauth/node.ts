@@ -50,3 +50,11 @@ export {
   validateUrl,
 } from "../oauth-proxy.js";
 export type { OAuthProxyRequest, OAuthProxyResponse } from "../oauth-proxy.js";
+
+// The STREAMING half of the same guarantee. `executeOAuthProxy` buffers, so it
+// can carry OAuth metadata but never `text/event-stream`; this one hands the
+// body back as a live `ReadableStream`, which is what lets the real MCP
+// connection — SSE included — ride the pinned path instead of an unguarded
+// `globalThis.fetch`.
+export { createPinnedStreamingFetch } from "./pinned-stream-fetch.js";
+export type { PinnedStreamingFetchOptions } from "./pinned-stream-fetch.js";

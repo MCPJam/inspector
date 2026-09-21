@@ -10,6 +10,17 @@ const sdkSkillReferenceEntry = path.resolve(
   "../sdk/src/skill-reference.ts",
 );
 const sdkMatchersEntry = path.resolve(rootDir, "../sdk/src/matchers.ts");
+// Versioned evaluation contract — browser-safe, so the client renders scores
+// from the same schemas and the same pure hash the SDK produced them with.
+const sdkContractEntry = path.resolve(rootDir, "../sdk/src/contract/index.ts");
+const sdkPredicatesEntry = path.resolve(
+  rootDir,
+  "../sdk/src/predicates/index.ts",
+);
+const sdkAssertionsEntry = path.resolve(
+  rootDir,
+  "../sdk/src/assertions/index.ts",
+);
 // Same rationale as sdkBrowserEntry: the workspace-linked @mcpjam/sdk advertises
 // ./host-config/internal via its package exports, but a clean checkout has no
 // dist/host-config/internal.* until `npm run build -w @mcpjam/sdk` runs. The
@@ -50,6 +61,10 @@ const chatUiThreadHelpersEntry = path.resolve(
   "../chat-ui/src/thread-helpers.ts",
 );
 const chatUiTraceEntry = path.resolve(rootDir, "../chat-ui/src/trace.ts");
+const chatUiJsonTokensEntry = path.resolve(
+  rootDir,
+  "../chat-ui/src/json-tokens.ts",
+);
 // Tier B Phase 3c: resolve @mcpjam/widget-react from source (its published
 // exports point at dist, which a clean checkout hasn't built).
 const widgetReactEntry = path.resolve(rootDir, "../widget-react/src/index.ts");
@@ -69,6 +84,7 @@ export default defineConfig({
     // Tests that exercise SDK host-style seed paths need this defined or the
     // codex/mcpjam templates throw a `ReferenceError`.
     __APP_VERSION__: JSON.stringify("test"),
+    __BUILD_SURFACE__: JSON.stringify("local"),
   },
   plugins: [
     {
@@ -129,6 +145,7 @@ export default defineConfig({
   resolve: {
     alias: [
       // More specific subpaths must precede the bare alias (first match wins).
+      { find: "@mcpjam/chat-ui/json-tokens", replacement: chatUiJsonTokensEntry },
       {
         find: "@mcpjam/chat-ui/thread-helpers",
         replacement: chatUiThreadHelpersEntry,
@@ -142,6 +159,9 @@ export default defineConfig({
       },
       { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
       { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },
+      { find: "@mcpjam/sdk/contract", replacement: sdkContractEntry },
+      { find: "@mcpjam/sdk/predicates", replacement: sdkPredicatesEntry },
+      { find: "@mcpjam/sdk/assertions", replacement: sdkAssertionsEntry },
       {
         find: "@mcpjam/sdk/widget-runtime",
         replacement: sdkWidgetRuntimeEntry,

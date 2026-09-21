@@ -96,7 +96,7 @@ export function PlaygroundEnvironmentSection({
       // so the section stays self-contained wherever it is slotted.
       className={cn(
         "flex w-full min-w-0 max-w-[26rem] flex-col gap-1.5",
-        className
+        className,
       )}
       data-testid="playground-environment-section"
     >

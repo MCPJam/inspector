@@ -8,7 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { SessionFlowSankey } from "../SessionFlowSankey";
 import type {
-  ClusterRunState,
+  InsightsAnalysisSummary,
   InsightsSankey,
   UsageBreakdown,
 } from "@/hooks/useUsageInsights";
@@ -68,17 +68,28 @@ const SANKEY: InsightsSankey = {
   foldedByStage: {},
 };
 
-function run(overrides: Partial<ClusterRunState> = {}): ClusterRunState {
+function analysis(
+  overrides: Partial<InsightsAnalysisSummary> = {},
+): InsightsAnalysisSummary {
   return {
-    _id: "run-1",
-    status: "done",
-    startedAt: 0,
-    finishedAt: 1,
-    sessionCount: 4,
-    clusterCount: 1,
-    errorMessage: null,
-    signalsVersion: 3,
-    isStale: false,
+    total: 4,
+    analyzed: 4,
+    pending: 0,
+    running: 0,
+    failed: 0,
+    skipped: 0,
+    deferred: 0,
+    awaitingTaxonomy: 0,
+    unassigned: 0,
+    staleAssignments: 0,
+    projectionPending: 0,
+    projectionFailed: 0,
+    deferredUntil: null,
+    lastAnalyzedAt: 1,
+    failures: {},
+    skips: {},
+    sampled: false,
+    taxonomies: [],
     ...overrides,
   };
 }
@@ -98,7 +109,7 @@ function breakdown(overrides: Partial<UsageBreakdown> = {}): UsageBreakdown {
     labeledOutcomeCount: 4,
     outcomeFeedbackCalibration: [],
     totalSessions: 4,
-    latestRun: run(),
+    analysis: analysis(),
     ...overrides,
   };
 }
@@ -258,40 +269,6 @@ describe("SessionFlowSankey", () => {
     expect(other.getAttribute("aria-label")).toMatch(/not selectable/);
   });
 
-  it("offers a rebuild when the last run predates session signals", async () => {
-    const user = userEvent.setup();
-    const { onRebuild } = renderSankey({
-      breakdown: breakdown({
-        sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
-        latestRun: run({ signalsVersion: null }),
-      }),
-    });
-
-    expect(
-      screen.getByText(/before session signals existed/),
-    ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Rebuild clusters/ }));
-    expect(onRebuild).toHaveBeenCalledTimes(1);
-  });
-
-  it("draws what exists and prompts a rebuild when only goals were clustered", async () => {
-    // A version-2 run produced the goal column, so the honest thing is to draw
-    // it and explain the empty ones — not replace the panel with a blank state.
-    const user = userEvent.setup();
-    const { onRebuild } = renderSankey({
-      breakdown: breakdown({ latestRun: run({ signalsVersion: 2 }) }),
-    });
-
-    expect(screen.getByText("Session flow")).toBeInTheDocument();
-    expect(
-      screen.getByText(/before every column was clustered/),
-    ).toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: /Rebuild for themes/ }),
-    );
-    expect(onRebuild).toHaveBeenCalledTimes(1);
-  });
-
   it("does not prompt once every column is clustered", () => {
     renderSankey();
     expect(
@@ -304,7 +281,7 @@ describe("SessionFlowSankey", () => {
     // diagram — it must not swallow the only affordance that fills it in.
     const user = userEvent.setup();
     const { onRebuild } = renderSankey({
-      breakdown: breakdown({ latestRun: null }),
+      breakdown: breakdown({ analysis: undefined }),
       stageTitles: { goal: "Journey" },
     });
 
@@ -314,16 +291,64 @@ describe("SessionFlowSankey", () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Analyze sessions/ }));
     expect(onRebuild).toHaveBeenCalledTimes(1);
+    // No arguments: wiring the callback straight to `onClick` handed it a
+    // React synthetic event, which Convex could not serialize ("Converting
+    // circular structure to JSON"), so analysis never started.
+    expect(onRebuild.mock.calls[0]).toEqual([]);
   });
 
   it("reports an analysis in flight instead of offering to start one", () => {
     renderSankey({
-      breakdown: breakdown({ latestRun: run({ status: "queued" }) }),
+      breakdown: breakdown({ analysis: analysis({ pending: 4 }) }),
     });
     expect(screen.getByText(/Analyzing sessions/)).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Analyze sessions/ }),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps offering to analyze on a surface that waits to be asked", () => {
+    // The same state WITHOUT the promise. The benchmark diagram is the paid
+    // one and deliberately waits, so the default must not change.
+    renderSankey({ breakdown: breakdown({ analysis: undefined }) });
+    expect(
+      screen.getByRole("button", { name: /Analyze sessions/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("stops advertising a rebuild while one is already running", () => {
+    // True on every surface, not just the self-analyzing ones: this branch
+    // used to offer "Rebuild clusters" during a rebuild.
+    renderSankey({
+      breakdown: breakdown({
+        sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
+        analysis: analysis({ running: 4 }),
+      }),
+    });
+
+    expect(screen.getByText(/Analyzing sessions/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Rebuild clusters/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers no voluntary rebuild on an empty flow a completed analysis produced", () => {
+    // Voluntary re-analysis is gated off (#5277): analysis runs on its own as
+    // sessions settle, and the one place to ask for it again is the freshness
+    // chip's popover. The empty state must not grow a second door.
+    const { onRebuild } = renderSankey({
+      breakdown: breakdown({
+        sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
+        analysis: analysis(),
+      }),
+      analysisIsAutomatic: true,
+    });
+
+    expect(screen.getByText("No session flow yet")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /rebuild clusters/i }),
+    ).not.toBeInTheDocument();
+    expect(onRebuild).not.toHaveBeenCalled();
   });
 
   it("draws each column header at its own column's x", () => {
@@ -341,18 +366,6 @@ describe("SessionFlowSankey", () => {
     // it sits over its column, with the label gutter beyond it.
     expect(xs).toEqual([...xs].sort((a, b) => a - b));
     expect(new Set(xs).size).toBe(4);
-  });
-
-  it("says how many themes were folded away, across all columns", () => {
-    renderSankey({
-      breakdown: breakdown({
-        sankey: {
-          ...SANKEY,
-          foldedByStage: { goal: 2, behavior: 1 },
-        },
-      }),
-    });
-    expect(screen.getByText(/3 smaller themes folded/)).toBeInTheDocument();
   });
 
   it("warns that the counts are windowed when the scan truncated", () => {
@@ -415,7 +428,7 @@ describe("SessionFlowSankey", () => {
 
     try {
       renderSankey({ fillHeight: true });
-      const root = screen.getByTestId("chatbox-insights-sankey");
+      const root = screen.getByTestId("scenario-insights-sankey");
       expect(root).toHaveAttribute("data-fill-height", "true");
       expect(root.className).toMatch(/h-full/);
       const svg = screen.getByRole("group", {

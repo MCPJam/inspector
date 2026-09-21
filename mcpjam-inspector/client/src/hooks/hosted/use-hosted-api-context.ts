@@ -18,15 +18,18 @@ interface UseApiContextOptions {
   // Sibling conformance knobs; only the non-default value is ever set.
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   // Active host's enterprise-managed authorization policy (validated `on`
   // value only) — rides ad-hoc chat/eval request bodies.
   xaaPolicy?: XaaEnterprisePolicy;
   clientConfigSyncPending?: boolean;
   getAccessToken: () => Promise<string | undefined | null>;
   oauthTokensByServerId?: Record<string, string>;
-  // Resolved chatbox identity (post-redeem) — drives chatbox-aware request
+  // Resolved scenario identity (post-redeem) — drives scenario-aware request
   // shaping inside the API context.
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   isAuthenticated?: boolean;
   hasSession?: boolean;
@@ -43,11 +46,14 @@ export function useApiContext({
   mirrorToolParamHeaders,
   firstPageOnly,
   supportsMrtr,
+  suppressListenChannel,
+  dropToolListChanged,
+  toolCallCancellation,
   xaaPolicy,
   clientConfigSyncPending,
   getAccessToken,
   oauthTokensByServerId,
-  chatboxId,
+  scenarioId,
   accessVersion,
   isAuthenticated,
   hasSession,
@@ -73,11 +79,14 @@ export function useApiContext({
       mirrorToolParamHeaders,
       firstPageOnly,
       supportsMrtr,
+      suppressListenChannel,
+      dropToolListChanged,
+      toolCallCancellation,
       xaaPolicy,
       clientConfigSyncPending,
       getAccessToken,
       oauthTokensByServerId,
-      chatboxId,
+      scenarioId,
       accessVersion,
       isAuthenticated,
       hasSession,
@@ -97,11 +106,14 @@ export function useApiContext({
     mirrorToolParamHeaders,
     firstPageOnly,
     supportsMrtr,
+    suppressListenChannel,
+    dropToolListChanged,
+    toolCallCancellation,
     xaaPolicy,
     clientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,
-    chatboxId,
+    scenarioId,
     accessVersion,
     isAuthenticated,
     hasSession,

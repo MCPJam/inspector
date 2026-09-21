@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_PLATFORM_API_BASE_URL,
+  DEFAULT_PLATFORM_USER_AGENT,
   PlatformApiClient,
   PlatformApiError,
 } from "../../src/platform/index.js";
@@ -37,6 +38,103 @@ function requestOf(fetchMock: FetchMock, call = 0): { url: URL; init: RequestIni
 describe("PlatformApiClient", () => {
   it("defaults to the hosted production base URL", () => {
     expect(DEFAULT_PLATFORM_API_BASE_URL).toBe("https://app.mcpjam.com/api/v1");
+  });
+
+  it("resolves a relative baseUrl against the current origin (browser/worker)", async () => {
+    // The directory-readiness client passes baseUrl "/api/v1" so the request
+    // rides the current origin's session. `new URL("/api/v1/...")` throws
+    // "Invalid URL" on its own, so the origin must be supplied as the base.
+    vi.stubGlobal("location", { origin: "https://staging.mcpjam.com" });
+    try {
+      const fetchMock = vi.fn(async () => jsonResponse({ items: [] }));
+      const client = makeClient(fetchMock, { baseUrl: "/api/v1" });
+
+      await client.listReadinessRuns({
+        projectId: "p1",
+        readinessKind: "claude",
+        serverId: "s1",
+        limit: 1,
+      });
+
+      const { url } = requestOf(fetchMock);
+      expect(url.origin).toBe("https://staging.mcpjam.com");
+      expect(url.pathname).toBe("/api/v1/projects/p1/readiness-runs");
+      expect(url.searchParams.get("readinessKind")).toBe("claude");
+      expect(url.searchParams.get("serverId")).toBe("s1");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("starts a Claude readiness run through a relative baseUrl", async () => {
+    // Regression: the /conformance page's "Directory Readiness" run threw
+    // "Failed to construct 'URL': Invalid URL" because the relative baseUrl
+    // reached `new URL` with no base.
+    vi.stubGlobal("location", { origin: "https://staging.mcpjam.com" });
+    try {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse({ runId: "run-1", status: "running" }, { status: 202 })
+      );
+      const client = makeClient(fetchMock, { baseUrl: "/api/v1" });
+
+      const receipt = await client.startClaudeReadinessRun({
+        projectId: "p1",
+        serverId: "s1",
+      });
+
+      const { url, init } = requestOf(fetchMock);
+      expect(url.href).toBe(
+        "https://staging.mcpjam.com/api/v1/projects/p1/servers/s1/readiness-runs/claude"
+      );
+      expect(init.method).toBe("POST");
+      expect(receipt.runId).toBe("run-1");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("starts a conformance run through a relative baseUrl", async () => {
+    vi.stubGlobal("location", { origin: "https://staging.mcpjam.com" });
+    try {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse({ runId: "run-1", status: "queued" }, { status: 202 })
+      );
+      const client = makeClient(fetchMock, { baseUrl: "/api/v1" });
+
+      const receipt = await client.startConformanceRun({
+        projectId: "p1",
+        serverId: "s1",
+        suites: ["protocol"],
+      });
+
+      const { url, init } = requestOf(fetchMock);
+      expect(url.href).toBe(
+        "https://staging.mcpjam.com/api/v1/projects/p1/servers/s1/conformance-runs"
+      );
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(String(init.body))).toEqual({ suites: ["protocol"] });
+      expect(receipt.runId).toBe("run-1");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("lists conformance runs with optional server and cursor", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ items: [] }));
+    const client = makeClient(fetchMock);
+
+    await client.listConformanceRuns({
+      projectId: "p1",
+      serverId: "s1",
+      limit: 10,
+      cursor: "c1",
+    });
+
+    const { url } = requestOf(fetchMock);
+    expect(url.pathname).toBe("/api/v1/projects/p1/conformance-runs");
+    expect(url.searchParams.get("serverId")).toBe("s1");
+    expect(url.searchParams.get("limit")).toBe("10");
+    expect(url.searchParams.get("cursor")).toBe("c1");
   });
 
   it("sends GET requests with bearer auth and skips undefined query params", async () => {
@@ -162,18 +260,18 @@ describe("PlatformApiClient", () => {
     expect(result.status).toBe("closed");
   });
 
-  it("builds chatbox read URLs with encoded path params", async () => {
+  it("builds scenario read URLs with encoded path params", async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ items: [] }));
     const client = makeClient(fetchMock);
 
-    await client.listChatboxes({ projectId: "p1" });
-    await client.getChatbox({ projectId: "p1", chatboxId: "box/1" });
+    await client.listScenarios({ projectId: "p1" });
+    await client.getScenario({ projectId: "p1", scenarioId: "box/1" });
 
     expect(requestOf(fetchMock, 0).url.pathname).toBe(
-      "/api/v1/projects/p1/chatboxes"
+      "/api/v1/projects/p1/scenarios"
     );
     const detail = requestOf(fetchMock, 1);
-    expect(detail.url.pathname).toBe("/api/v1/projects/p1/chatboxes/box%2F1");
+    expect(detail.url.pathname).toBe("/api/v1/projects/p1/scenarios/box%2F1");
     expect(detail.init.method).toBe("GET");
   });
 
@@ -285,21 +383,83 @@ describe("PlatformApiClient", () => {
     expect(suiteRuns.searchParams.get("limit")).toBe("10");
   });
 
-  it("sets a user-agent header only when configured", async () => {
+  it("identifies the SDK by default, and keeps the caller's own token", async () => {
     const fetchMock = vi.fn(async () => jsonResponse({}));
     await makeClient(fetchMock).getMe();
     await makeClient(fetchMock, { userAgent: "mcpjam-cli/1.0" }).getMe();
 
-    expect(
+    const header = (index: number) =>
+      new Headers(requestOf(fetchMock, index).init.headers as HeadersInit).get(
+        "user-agent"
+      );
+
+    // It used to send nothing here, which is why "who is on the SDK, and on
+    // which version?" had no answer in the request logs.
+    expect(header(0)).toBe(DEFAULT_PLATFORM_USER_AGENT);
+    // Prefixed, not replaced: which program is calling AND which SDK it links.
+    expect(header(1)).toBe(`mcpjam-cli/1.0 ${DEFAULT_PLATFORM_USER_AGENT}`);
+  });
+
+  describe("in a browser", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    const header = (fetchMock: FetchMock) =>
       new Headers(requestOf(fetchMock, 0).init.headers as HeadersInit).get(
         "user-agent"
-      )
-    ).toBeNull();
-    expect(
-      new Headers(requestOf(fetchMock, 1).init.headers as HeadersInit).get(
-        "user-agent"
-      )
-    ).toBe("mcpjam-cli/1.0");
+      );
+
+    it("sets no default user-agent where a page could send it", async () => {
+      // Firefox lets a script set `User-Agent` (the Fetch spec no longer
+      // forbids it), and the inspector bundles the SDK from source, where the
+      // version is `unknown` — so a default here would log every Firefox user
+      // as `mcpjam-sdk/unknown`.
+      vi.stubGlobal("window", {});
+      vi.stubGlobal("document", {});
+      const fetchMock = vi.fn(async () => jsonResponse({}));
+      await makeClient(fetchMock).getMe();
+
+      expect(header(fetchMock)).toBeNull();
+    });
+
+    it("still sends a caller's own user-agent unchanged", async () => {
+      vi.stubGlobal("window", {});
+      vi.stubGlobal("document", {});
+      const fetchMock = vi.fn(async () => jsonResponse({}));
+      await makeClient(fetchMock, { userAgent: "mcpjam-cli/1.0" }).getMe();
+
+      expect(header(fetchMock)).toBe("mcpjam-cli/1.0");
+    });
+
+    it("does not mistake a Workers runtime, which has only `navigator`, for one", async () => {
+      vi.stubGlobal("window", undefined);
+      vi.stubGlobal("document", undefined);
+      vi.stubGlobal("navigator", { userAgent: "Cloudflare-Workers" });
+      const fetchMock = vi.fn(async () => jsonResponse({}));
+      await makeClient(fetchMock).getMe();
+
+      expect(header(fetchMock)).toBe(DEFAULT_PLATFORM_USER_AGENT);
+    });
+
+    it("sends the default in Node", async () => {
+      expect(typeof (globalThis as { window?: unknown }).window).toBe(
+        "undefined"
+      );
+      const fetchMock = vi.fn(async () => jsonResponse({}));
+      await makeClient(fetchMock).getMe();
+
+      expect(header(fetchMock)).toBe(DEFAULT_PLATFORM_USER_AGENT);
+    });
+  });
+
+  it("names a version rather than claiming one it was not given", () => {
+    // `unknown` is the honest answer when a consumer bundles the SDK from
+    // source with no `define` — a stamp asserting a version nobody injected
+    // would be worse than one admitting it does not know.
+    expect(DEFAULT_PLATFORM_USER_AGENT).toMatch(
+      /^mcpjam-sdk\/(unknown|\d+\.\d+\.\d+.*)$/
+    );
   });
 
   it("maps wire error envelopes onto PlatformApiError", async () => {

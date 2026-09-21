@@ -1,4 +1,11 @@
-import { ActivitySquare, Building2, FolderKanban, Inbox } from "lucide-react";
+import {
+  ActivitySquare,
+  Building2,
+  CreditCard,
+  FolderKanban,
+  Inbox,
+  Wallet,
+} from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { PopoverContent } from "@mcpjam/design-system/popover";
@@ -27,11 +34,17 @@ function formatTimeAgo(timestamp: number): string {
 }
 
 function getNotificationIcon(type: NotificationType) {
+  if (type === "organization_seat_payment_required") {
+    return <CreditCard className="h-4 w-4" />;
+  }
   if (type.startsWith("project")) {
     return <FolderKanban className="h-4 w-4" />;
   }
   if (type.startsWith("scheduled_eval")) {
     return <ActivitySquare className="h-4 w-4" />;
+  }
+  if (type === "organization_spend_threshold") {
+    return <Wallet className="h-4 w-4" />;
   }
   return <Building2 className="h-4 w-4" />;
 }
@@ -49,10 +62,21 @@ function getNotificationMessage(notification: Notification): string {
       return `${actor} added you to organization "${entityName}"`;
     case "organization_removed":
       return `${actor} removed you from organization "${entityName}"`;
+    case "workspace_added":
+      return `${actor} added you to workspace "${entityName}"`;
+    case "workspace_removed":
+      return `${actor} removed you from workspace "${entityName}"`;
+    case "organization_seat_payment_required":
+      return `${actor} signed up and needs a paid seat in "${entityName}"`;
     case "scheduled_eval_failed":
       return `Scheduled run failed for suite "${entityName}"`;
     case "scheduled_eval_paused":
       return `Schedule paused for suite "${entityName}" after repeated failures`;
+    // No actor: nobody performed this, the organization's own spend crossed a
+    // line it set. The threshold itself is on the budget page rather than in
+    // this line, which has one sentence to spend.
+    case "organization_spend_threshold":
+      return `"${entityName}" is approaching or has reached its spend budget`;
     default:
       return "You have a new notification";
   }
@@ -82,9 +106,11 @@ function NotificationItem({
       <div
         className={cn(
           "flex items-center justify-center h-8 w-8 rounded-full shrink-0",
-          notification.type.includes("added")
-            ? "bg-success/10 text-success"
-            : "bg-destructive/10 text-destructive"
+          notification.type === "organization_seat_payment_required"
+            ? "bg-primary/10 text-primary"
+            : notification.type.includes("added")
+              ? "bg-success/10 text-success"
+              : "bg-destructive/10 text-destructive"
         )}
       >
         {getNotificationIcon(notification.type)}

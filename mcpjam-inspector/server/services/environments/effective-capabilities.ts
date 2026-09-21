@@ -66,7 +66,26 @@ export interface RuntimeSkillFile {
   size: number;
   /** Signed, short-lived. `null` when the backend could not mint one. */
   url: string | null;
+  /**
+   * Reads the bytes directly, for an origin that has no URL to sign.
+   *
+   * The local filesystem is the case: its files are on disk, not in Convex
+   * storage. Preferred over `url` when present.
+   */
+  read?: () => Promise<Uint8Array>;
 }
+
+/**
+ * A skill body, inline or fetched on demand.
+ *
+ * Captured origins (an environment's resolved set, a pinned run) carry the
+ * bytes: they were read in the same transaction as the hashes, and that is what
+ * makes the snapshot a snapshot. A LIVE origin cannot afford that — a project
+ * with 200 skills would fetch every body on every turn to build a catalog the
+ * model mostly ignores — so it supplies a thunk the `loadSkill` tool awaits for
+ * the one skill actually asked for.
+ */
+export type RuntimeSkillContent = string | (() => Promise<string>);
 
 interface RuntimeSkillBase {
   /**
@@ -79,10 +98,17 @@ interface RuntimeSkillBase {
   /** The materialized skill's own name — NOT unique across plugins. */
   name: string;
   description: string;
-  content: string;
+  content: RuntimeSkillContent;
   /** Folds supporting files; equals the content hash when there are none. */
   aggregateHash: string;
   files: RuntimeSkillFile[];
+  /**
+   * Fetches the supporting-file list on demand.
+   *
+   * Same reasoning as a lazy `content`: a live origin lists a skill's files
+   * only when the model asks. Consulted when `files` is empty.
+   */
+  listFiles?: () => Promise<RuntimeSkillFile[]>;
 }
 
 export interface RuntimePluginSkill extends RuntimeSkillBase {
@@ -93,6 +119,20 @@ export interface RuntimePluginSkill extends RuntimeSkillBase {
 export interface RuntimeStandaloneSkill extends RuntimeSkillBase {
   /** Which channel(s) delivered it; `[]` under deploy skew. */
   channels: RuntimeSkillChannel[];
+}
+
+/**
+ * A skill read from the machine the inspector is running on.
+ *
+ * The fourth origin, and the one that made "which source is this?" a mode the
+ * user had to switch between rather than a property of a skill. It is namespaced
+ * `local/<name>` for the same reason a plugin skill is namespaced: a local
+ * `code-review` and a project `code-review` are different instructions, and a
+ * bare-name surface would silently pick whichever was indexed first.
+ */
+export interface RuntimeLocalSkill extends RuntimeSkillBase {
+  /** Absolute directory, for provenance in the catalog listing. */
+  directory: string;
 }
 
 /** A captured skill selected from one connected MCP server. */
@@ -137,6 +177,8 @@ export interface EffectiveCapabilitySet {
   pluginSkills: RuntimePluginSkill[];
   standaloneSkills: RuntimeStandaloneSkill[];
   serverSkills: RuntimeServerSkill[];
+  /** Skills on the inspector's own filesystem. Empty in hosted deployments. */
+  localSkills: RuntimeLocalSkill[];
   /** Every version that contributed to this turn, in pin order. */
   pluginVersions: RuntimePluginVersion[];
   problems: RuntimeCapabilityProblem[];
@@ -362,6 +404,9 @@ export function resolveEffectiveCapabilities(
     pluginSkills,
     standaloneSkills,
     serverSkills,
+    // An environment is resolved server-side and has no view of the machine the
+    // inspector runs on; live surfaces add this family themselves.
+    localSkills: [],
     pluginVersions,
     problems,
   };
@@ -382,8 +427,82 @@ export function pluginOriginByServerId(
 }
 
 /** Every skill in the set, plugin channel first (stable advertisement order). */
+/**
+ * An effective set for a LIVE turn — one with no environment behind it.
+ *
+ * The desktop app and the hosted Playground's default target resolve no
+ * environment: there is no pinned spec, just whatever the user has right now.
+ * They still deserve the ref-addressed, ambiguity-refusing, budgeted surface
+ * that environment turns get, so they build a set from families directly.
+ *
+ * Refs cannot collide ACROSS these two families — a project skill's ref is its
+ * bare name and a local one is `local/<name>`, and a skill name cannot contain
+ * a slash — so a collision here can only be within a family, which is what the
+ * `usedRefs` pass catches.
+ *
+ * A local `code-review` alongside a project `code-review` is therefore not a
+ * collision at all: they are two refs, both addressable. `loadSkill` resolves
+ * the exact ref first, so `code-review` is a direct hit on the project skill
+ * rather than an ambiguity — which is what keeps a project skill addressable
+ * regardless of what the user has on disk. The ambiguity refusal is for the
+ * case where NOTHING is an exact hit and two namespaced refs share a name.
+ */
+export function buildLiveEffectiveCapabilities(args: {
+  standaloneSkills?: RuntimeStandaloneSkill[];
+  localSkills?: RuntimeLocalSkill[];
+}): EffectiveCapabilitySet {
+  const usedRefs = new Set<string>();
+  const problems: RuntimeCapabilityProblem[] = [];
+  const standaloneSkills: RuntimeStandaloneSkill[] = [];
+  const localSkills: RuntimeLocalSkill[] = [];
+
+  const claim = (ref: string, skillId: string): boolean => {
+    if (usedRefs.has(ref)) {
+      problems.push({
+        code: "skill_ref_collision",
+        message: `Two skills resolved to the reference "${ref}"; only the first is loadable.`,
+        ref,
+        skillId,
+      });
+      return false;
+    }
+    usedRefs.add(ref);
+    return true;
+  };
+
+  for (const skill of args.standaloneSkills ?? []) {
+    if (claim(skill.ref, skill.skillId)) standaloneSkills.push(skill);
+  }
+  for (const skill of args.localSkills ?? []) {
+    if (claim(skill.ref, skill.skillId)) localSkills.push(skill);
+  }
+
+  return {
+    explicitServerIds: [],
+    pluginServerIds: [],
+    effectiveServerIds: [],
+    servers: [],
+    pluginSkills: [],
+    standaloneSkills,
+    serverSkills: [],
+    localSkills,
+    pluginVersions: [],
+    problems,
+  };
+}
+
 export function allEffectiveSkills(
   set: EffectiveCapabilitySet
-): Array<RuntimePluginSkill | RuntimeStandaloneSkill | RuntimeServerSkill> {
-  return [...set.pluginSkills, ...set.standaloneSkills, ...set.serverSkills];
+): Array<
+  | RuntimePluginSkill
+  | RuntimeStandaloneSkill
+  | RuntimeServerSkill
+  | RuntimeLocalSkill
+> {
+  return [
+    ...set.pluginSkills,
+    ...set.standaloneSkills,
+    ...set.serverSkills,
+    ...set.localSkills,
+  ];
 }

@@ -63,6 +63,7 @@ import {
 } from "./helpers";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
+import type { CrossHostEnvironment } from "./cross-host/use-cross-host-data";
 import { GroupCrossHostDashboard } from "./group-cross-host-dashboard";
 import {
   CASE_ROW_SORT_STORAGE_KEY,
@@ -86,6 +87,12 @@ export interface SuiteResultsSplitProps {
    */
   hostNamesById: Map<string, string | null>;
   /**
+   * The suite's project environments, owned by the parent like `hostNamesById`.
+   * Without them the matrix can only place a run by its resolved host, so two
+   * model cells on one client share a column.
+   */
+  environments?: readonly CrossHostEnvironment[];
+  /**
    * The full "All runs" surface (TestCasesOverview), built by the parent so we
    * don't re-thread its ~20 props. Shown when the "All runs" rail item is
    * selected.
@@ -101,6 +108,14 @@ export interface SuiteResultsSplitProps {
   onRunClick: (runId: string) => void;
   /** Render the Monitoring rail item + pane. */
   showMonitoring?: boolean;
+  /**
+   * WHICH HALF of the Monitoring pane may render. The pane serves two features
+   * on different flags, and `showMonitoring` is their OR — so it says the pane
+   * is reachable, never which sections are allowed inside it. Passed through
+   * rather than re-derived here: `suite-dashboard.tsx` reads the flags.
+   */
+  showScheduledRuns?: boolean;
+  showProbeLatency?: boolean;
   /**
    * The run currently in the URL. When set, the right pane shows `runDetailPane`
    * and the rail highlights that run (auto-expanding its group). The URL is the
@@ -159,13 +174,13 @@ const runTimestamp = (r: EvalSuiteRun): number =>
   r.completedAt ?? r.createdAt ?? r._creationTime ?? 0;
 
 function toneFor(value: number): string {
-  return value >= 85 ? "bg-success" : value >= 70 ? "bg-amber-500" : "bg-destructive";
+  return value >= 85 ? "bg-success" : value >= 70 ? "bg-warning" : "bg-destructive";
 }
 function textToneFor(value: number): string {
   return value >= 85
     ? "text-success"
     : value >= 70
-      ? "text-amber-600 dark:text-amber-400"
+      ? "text-warning"
       : "text-destructive";
 }
 
@@ -492,11 +507,14 @@ export function SuiteResultsSplit({
   runs,
   allIterations,
   hostNamesById,
+  environments,
   allRunsPane,
   onTestCaseClick,
   onOpenCaseIteration,
   onRunClick,
   showMonitoring = false,
+  showScheduledRuns = true,
+  showProbeLatency = true,
   selectedRunId,
   runDetailPane,
   onExitRun,
@@ -920,6 +938,7 @@ export function SuiteResultsSplit({
                   onCellOpen={handleCellOpen}
                   onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                   hostNamesById={hostNamesById}
+                  environments={environments}
                 />
               </div>
             ) : (
@@ -928,7 +947,12 @@ export function SuiteResultsSplit({
               </div>
             )
           ) : view.kind === "monitoring" ? (
-            <MonitoringTab suiteId={suite._id} onRunClick={onRunClick} />
+            <MonitoringTab
+              suiteId={suite._id}
+              onRunClick={onRunClick}
+              showScheduledRuns={showScheduledRuns}
+              showProbeLatency={showProbeLatency}
+            />
           ) : view.kind === "compare" ? (
             <SuiteGroupCompare
               groups={railGroups.map((g) => ({ key: g.key, label: g.label, runs: g.runs }))}
@@ -950,6 +974,7 @@ export function SuiteResultsSplit({
                 onCellOpen={handleCellOpen}
                 onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                 hostNamesById={hostNamesById}
+                environments={environments}
               />
             </div>
           ) : (

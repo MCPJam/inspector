@@ -38,6 +38,10 @@ const CRITERIA: Criterion[] = [
 function claimResult(
   messages: Array<Record<string, unknown>> | null,
   criteria: Criterion[] = CRITERIA,
+  extras: {
+    usage?: { inputTokens?: number; outputTokens?: number } | null;
+    widgetRenderObservations?: Array<Record<string, unknown>>;
+  } = {},
 ) {
   return {
     claimed: true as const,
@@ -45,7 +49,16 @@ function claimResult(
     checkDocId: "check_1",
     sessionDocId: "session_1",
     criteria,
-    envelope: messages === null ? null : { messages },
+    envelope:
+      messages === null
+        ? null
+        : {
+            messages,
+            ...(extras.widgetRenderObservations
+              ? { widgetRenderObservations: extras.widgetRenderObservations }
+              : {}),
+          },
+    usage: extras.usage ?? null,
   };
 }
 
@@ -54,6 +67,17 @@ describe("runSwarmChecks", () => {
     claimSwarmChecksMock.mockReset();
     completeSwarmChecksMock.mockReset().mockResolvedValue(undefined);
     failSwarmChecksMock.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("never reports a pass from an empty or incomplete transcript", async () => {
+    for (const envelope of [
+      { messages: [] },
+      { messages: [{ role: "user", content: "help" }], traceComplete: false },
+    ]) {
+      claimSwarmChecksMock.mockResolvedValue({ ...claimResult([]), envelope });
+      expect(await runSwarmChecks(ARGS)).toMatchObject({ status: "failed" });
+    }
+    expect(completeSwarmChecksMock).not.toHaveBeenCalled();
   });
 
   it("evaluates the pinned criteria and correlates verdicts back by criterionId", async () => {
@@ -75,7 +99,11 @@ describe("runSwarmChecks", () => {
     expect(outcome.status).toBe("completed");
     const [, , payload] = completeSwarmChecksMock.mock.calls[0];
     expect(payload.criterionResults).toEqual([
-      expect.objectContaining({ criterionId: "crit-search", passed: true }),
+      expect.objectContaining({
+        criterionId: "crit-search",
+        passed: true,
+        status: "scored",
+      }),
       // One user turn, budget 3 ⇒ passes strictly under.
       expect.objectContaining({ criterionId: "crit-quick", passed: true }),
     ]);
@@ -105,6 +133,10 @@ describe("runSwarmChecks", () => {
       false,
       false,
     ]);
+    expect(payload.criterionResults.map((r: any) => r.status)).toEqual([
+      "scored",
+      "scored",
+    ]);
     // Reasons carry the evidence; the compact session stamp will not.
     expect(payload.criterionResults[1].reason).toContain("3");
   });
@@ -122,6 +154,26 @@ describe("runSwarmChecks", () => {
     await runSwarmChecks(ARGS);
 
     expect(order).toEqual(["claim", "complete"]);
+  });
+
+  it("preserves evaluator errors when a check cannot read the tool inventory", async () => {
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult(
+        [{ role: "user", content: "help" }],
+        [{ id: "schema", predicate: { type: "argumentsMatchToolSchema" } }],
+      ),
+    );
+    const outcome = await runSwarmChecks(ARGS);
+    expect(outcome.status).toBe("completed");
+    expect(failSwarmChecksMock).not.toHaveBeenCalled();
+    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
+    expect(payload.criterionResults).toEqual([
+      expect.objectContaining({
+        criterionId: "schema",
+        passed: false,
+        status: "error",
+      }),
+    ]);
   });
 
   it("skips entirely when the run carries no rubric — nothing is stamped", async () => {
@@ -167,7 +219,7 @@ describe("runSwarmChecks", () => {
     expect(failSwarmChecksMock).not.toHaveBeenCalled();
   });
 
-  it("fails tokenBudgetUnder closed — swarm envelopes carry no token accounting", async () => {
+  it("fails tokenBudgetUnder closed when the claim carries no usage", async () => {
     claimSwarmChecksMock.mockResolvedValue(
       claimResult([{ role: "user", content: "hi" }], [
         {
@@ -187,6 +239,111 @@ describe("runSwarmChecks", () => {
     expect(payload.criterionResults[0].reason).toContain("unavailable");
   });
 
+  it("grades tokenBudgetUnder against the claim's session usage", async () => {
+    const tokenCriteria: Criterion[] = [
+      {
+        id: "crit-under",
+        predicate: { type: "tokenBudgetUnder" as const, tokens: 500 },
+      },
+      {
+        id: "crit-over",
+        predicate: { type: "tokenBudgetUnder" as const, tokens: 100 },
+      },
+    ];
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult([{ role: "user", content: "hi" }], tokenCriteria, {
+        usage: { inputTokens: 120, outputTokens: 80 },
+      }),
+    );
+
+    await runSwarmChecks(ARGS);
+
+    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
+    // 120 + 80 = 200: under 500, not under 100.
+    expect(payload.criterionResults[0]).toMatchObject({
+      criterionId: "crit-under",
+      passed: true,
+    });
+    expect(payload.criterionResults[1]).toMatchObject({
+      criterionId: "crit-over",
+      passed: false,
+    });
+  });
+
+  it("degrades malformed claim usage to unmeasured, never to a passing zero", async () => {
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult(
+        [{ role: "user", content: "hi" }],
+        [
+          {
+            id: "crit-tokens",
+            predicate: { type: "tokenBudgetUnder" as const, tokens: 1_000 },
+          },
+        ],
+        // Wire data a buggy or older backend could emit.
+        { usage: { inputTokens: Number.NaN } as never },
+      ),
+    );
+
+    await runSwarmChecks(ARGS);
+
+    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
+    expect(payload.criterionResults[0].passed).toBe(false);
+    expect(payload.criterionResults[0].reason).toContain("unavailable");
+  });
+
+  it("grades widget checks against the envelope's render observations", async () => {
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult(
+        [{ role: "user", content: "hi" }],
+        [
+          {
+            id: "crit-rendered",
+            predicate: { type: "widgetRendered" as const },
+          },
+        ],
+        {
+          widgetRenderObservations: [
+            {
+              toolCallId: "call_1",
+              toolName: "show_chart",
+              serverId: "srv_1",
+              status: "rendered",
+              elapsedMs: 420,
+            },
+          ],
+        },
+      ),
+    );
+
+    await runSwarmChecks(ARGS);
+
+    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
+    expect(payload.criterionResults[0]).toMatchObject({
+      criterionId: "crit-rendered",
+      passed: true,
+    });
+  });
+
+  it("fails widget checks closed when the envelope carries no observations", async () => {
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult([{ role: "user", content: "hi" }], [
+        {
+          id: "crit-rendered",
+          predicate: { type: "widgetRendered" as const },
+        },
+      ]),
+    );
+
+    await runSwarmChecks(ARGS);
+
+    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
+    expect(payload.criterionResults[0]).toMatchObject({
+      criterionId: "crit-rendered",
+      passed: false,
+    });
+  });
+
   it("treats a `{ ok: false }` COMPLETE as a failure, not a persisted verdict", async () => {
     // The route answers 200 with `{ ok: false }` on a rejected payload. If the
     // wrapper swallowed that, the runner would report `completed` while the
@@ -201,19 +358,13 @@ describe("runSwarmChecks", () => {
     await expect(runSwarmChecks(ARGS)).rejects.toThrow(/completeSwarmChecks/);
   });
 
-  it("grades an EMPTY-transcript session rather than skipping it", async () => {
-    // A failed attempt that never produced a turn is still a graded session:
-    // "no tool errors" holds trivially and "called search" does not, and both
-    // are facts worth having.
+  it("records unavailable grading for a session with no captured conversation", async () => {
     claimSwarmChecksMock.mockResolvedValue(claimResult([]));
-
-    const outcome = await runSwarmChecks(ARGS);
-
-    expect(outcome.status).toBe("completed");
-    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
-    expect(payload.criterionResults).toHaveLength(2);
-    expect(payload.criterionResults[0].passed).toBe(false);
-    // Zero user turns is a real reading, not absence, so `< 3` passes.
-    expect(payload.criterionResults[1].passed).toBe(true);
+    expect(await runSwarmChecks(ARGS)).toMatchObject({
+      status: "failed",
+      error: "transcript envelope unreadable",
+    });
+    expect(completeSwarmChecksMock).not.toHaveBeenCalled();
+    expect(failSwarmChecksMock).toHaveBeenCalledOnce();
   });
 });

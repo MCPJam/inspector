@@ -1,0 +1,3145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://modelcontextprotocol.io/ext-tasks/schema.json",
+  "title": "MCP Tasks Extension",
+  "description": "JSON Schema for MCP Tasks extension protocol messages. Extension Identifier: io.modelcontextprotocol/tasks",
+  "$defs": {
+    "CancelTaskRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "$ref": "#/$defs/JSONRPCRequest"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "const": "tasks/cancel"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "taskId"
+              ]
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ]
+        }
+      ]
+    },
+    "CancelTaskResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "$ref": "#/$defs/Result"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "resultType": {
+              "type": "string",
+              "const": "complete"
+            }
+          },
+          "required": [
+            "resultType"
+          ]
+        }
+      ]
+    },
+    "CancelledTask": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "const": "cancelled"
+        },
+        "statusMessage": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "lastUpdatedAt": {
+          "type": "string"
+        },
+        "ttlMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pollIntervalMs": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "taskId",
+        "status",
+        "createdAt",
+        "lastUpdatedAt",
+        "ttlMs"
+      ]
+    },
+    "CompletedTask": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "const": "completed"
+        },
+        "statusMessage": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "lastUpdatedAt": {
+          "type": "string"
+        },
+        "ttlMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pollIntervalMs": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "result": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "taskId",
+        "status",
+        "createdAt",
+        "lastUpdatedAt",
+        "ttlMs",
+        "result"
+      ]
+    },
+    "CreateTaskResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "$ref": "#/$defs/Result"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "const": "working"
+                },
+                {
+                  "type": "string",
+                  "const": "input_required"
+                },
+                {
+                  "type": "string",
+                  "const": "completed"
+                },
+                {
+                  "type": "string",
+                  "const": "failed"
+                },
+                {
+                  "type": "string",
+                  "const": "cancelled"
+                }
+              ]
+            },
+            "statusMessage": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "lastUpdatedAt": {
+              "type": "string"
+            },
+            "ttlMs": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pollIntervalMs": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "taskId",
+            "status",
+            "createdAt",
+            "lastUpdatedAt",
+            "ttlMs"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "resultType": {
+              "type": "string",
+              "const": "task"
+            }
+          },
+          "required": [
+            "resultType"
+          ]
+        }
+      ]
+    },
+    "DetailedTask": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "const": "working"
+            },
+            "statusMessage": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "lastUpdatedAt": {
+              "type": "string"
+            },
+            "ttlMs": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pollIntervalMs": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "taskId",
+            "status",
+            "createdAt",
+            "lastUpdatedAt",
+            "ttlMs"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "const": "input_required"
+            },
+            "statusMessage": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "lastUpdatedAt": {
+              "type": "string"
+            },
+            "ttlMs": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pollIntervalMs": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "inputRequests": {
+              "$ref": "#/$defs/InputRequests"
+            }
+          },
+          "required": [
+            "taskId",
+            "status",
+            "createdAt",
+            "lastUpdatedAt",
+            "ttlMs",
+            "inputRequests"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "const": "completed"
+            },
+            "statusMessage": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "lastUpdatedAt": {
+              "type": "string"
+            },
+            "ttlMs": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pollIntervalMs": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "result": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            }
+          },
+          "required": [
+            "taskId",
+            "status",
+            "createdAt",
+            "lastUpdatedAt",
+            "ttlMs",
+            "result"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "const": "failed"
+            },
+            "statusMessage": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "lastUpdatedAt": {
+              "type": "string"
+            },
+            "ttlMs": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pollIntervalMs": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "error": {
+              "$ref": "#/$defs/Error"
+            }
+          },
+          "required": [
+            "taskId",
+            "status",
+            "createdAt",
+            "lastUpdatedAt",
+            "ttlMs",
+            "error"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "const": "cancelled"
+            },
+            "statusMessage": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "lastUpdatedAt": {
+              "type": "string"
+            },
+            "ttlMs": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pollIntervalMs": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "taskId",
+            "status",
+            "createdAt",
+            "lastUpdatedAt",
+            "ttlMs"
+          ]
+        }
+      ]
+    },
+    "FailedTask": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "const": "failed"
+        },
+        "statusMessage": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "lastUpdatedAt": {
+          "type": "string"
+        },
+        "ttlMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pollIntervalMs": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "error": {
+          "$ref": "#/$defs/Error"
+        }
+      },
+      "required": [
+        "taskId",
+        "status",
+        "createdAt",
+        "lastUpdatedAt",
+        "ttlMs",
+        "error"
+      ]
+    },
+    "GetTaskRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "$ref": "#/$defs/JSONRPCRequest"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "const": "tasks/get"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "taskId"
+              ]
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ]
+        }
+      ]
+    },
+    "GetTaskResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "$ref": "#/$defs/Result"
+        },
+        {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "const": "working"
+                },
+                "statusMessage": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "lastUpdatedAt": {
+                  "type": "string"
+                },
+                "ttlMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "pollIntervalMs": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "taskId",
+                "status",
+                "createdAt",
+                "lastUpdatedAt",
+                "ttlMs"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "const": "input_required"
+                },
+                "statusMessage": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "lastUpdatedAt": {
+                  "type": "string"
+                },
+                "ttlMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "pollIntervalMs": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "inputRequests": {
+                  "$ref": "#/$defs/InputRequests"
+                }
+              },
+              "required": [
+                "taskId",
+                "status",
+                "createdAt",
+                "lastUpdatedAt",
+                "ttlMs",
+                "inputRequests"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "const": "completed"
+                },
+                "statusMessage": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "lastUpdatedAt": {
+                  "type": "string"
+                },
+                "ttlMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "pollIntervalMs": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "result": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                }
+              },
+              "required": [
+                "taskId",
+                "status",
+                "createdAt",
+                "lastUpdatedAt",
+                "ttlMs",
+                "result"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "const": "failed"
+                },
+                "statusMessage": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "lastUpdatedAt": {
+                  "type": "string"
+                },
+                "ttlMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "pollIntervalMs": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "error": {
+                  "$ref": "#/$defs/Error"
+                }
+              },
+              "required": [
+                "taskId",
+                "status",
+                "createdAt",
+                "lastUpdatedAt",
+                "ttlMs",
+                "error"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "const": "cancelled"
+                },
+                "statusMessage": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "lastUpdatedAt": {
+                  "type": "string"
+                },
+                "ttlMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "pollIntervalMs": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "taskId",
+                "status",
+                "createdAt",
+                "lastUpdatedAt",
+                "ttlMs"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "resultType": {
+              "type": "string",
+              "const": "complete"
+            }
+          },
+          "required": [
+            "resultType"
+          ]
+        }
+      ]
+    },
+    "InputRequiredTask": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "const": "input_required"
+        },
+        "statusMessage": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "lastUpdatedAt": {
+          "type": "string"
+        },
+        "ttlMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pollIntervalMs": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "inputRequests": {
+          "$ref": "#/$defs/InputRequests"
+        }
+      },
+      "required": [
+        "taskId",
+        "status",
+        "createdAt",
+        "lastUpdatedAt",
+        "ttlMs",
+        "inputRequests"
+      ]
+    },
+    "Task": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "working"
+            },
+            {
+              "type": "string",
+              "const": "input_required"
+            },
+            {
+              "type": "string",
+              "const": "completed"
+            },
+            {
+              "type": "string",
+              "const": "failed"
+            },
+            {
+              "type": "string",
+              "const": "cancelled"
+            }
+          ]
+        },
+        "statusMessage": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "lastUpdatedAt": {
+          "type": "string"
+        },
+        "ttlMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pollIntervalMs": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "taskId",
+        "status",
+        "createdAt",
+        "lastUpdatedAt",
+        "ttlMs"
+      ]
+    },
+    "TaskStatusNotificationParams": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "$ref": "#/$defs/NotificationParams"
+        },
+        {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "const": "working"
+                },
+                "statusMessage": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "lastUpdatedAt": {
+                  "type": "string"
+                },
+                "ttlMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "pollIntervalMs": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "taskId",
+                "status",
+                "createdAt",
+                "lastUpdatedAt",
+                "ttlMs"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "const": "input_required"
+                },
+                "statusMessage": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "lastUpdatedAt": {
+                  "type": "string"
+                },
+                "ttlMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "pollIntervalMs": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "inputRequests": {
+                  "$ref": "#/$defs/InputRequests"
+                }
+              },
+              "required": [
+                "taskId",
+                "status",
+                "createdAt",
+                "lastUpdatedAt",
+                "ttlMs",
+                "inputRequests"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "const": "completed"
+                },
+                "statusMessage": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "lastUpdatedAt": {
+                  "type": "string"
+                },
+                "ttlMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "pollIntervalMs": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "result": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                }
+              },
+              "required": [
+                "taskId",
+                "status",
+                "createdAt",
+                "lastUpdatedAt",
+                "ttlMs",
+                "result"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "const": "failed"
+                },
+                "statusMessage": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "lastUpdatedAt": {
+                  "type": "string"
+                },
+                "ttlMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "pollIntervalMs": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "error": {
+                  "$ref": "#/$defs/Error"
+                }
+              },
+              "required": [
+                "taskId",
+                "status",
+                "createdAt",
+                "lastUpdatedAt",
+                "ttlMs",
+                "error"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "const": "cancelled"
+                },
+                "statusMessage": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "lastUpdatedAt": {
+                  "type": "string"
+                },
+                "ttlMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "pollIntervalMs": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "taskId",
+                "status",
+                "createdAt",
+                "lastUpdatedAt",
+                "ttlMs"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      ]
+    },
+    "TaskStatusNotification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "$ref": "#/$defs/JSONRPCNotification"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "const": "notifications/tasks"
+            },
+            "params": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/NotificationParams"
+                },
+                {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "taskId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "const": "working"
+                        },
+                        "statusMessage": {
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        },
+                        "lastUpdatedAt": {
+                          "type": "string"
+                        },
+                        "ttlMs": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "pollIntervalMs": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "taskId",
+                        "status",
+                        "createdAt",
+                        "lastUpdatedAt",
+                        "ttlMs"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "taskId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "const": "input_required"
+                        },
+                        "statusMessage": {
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        },
+                        "lastUpdatedAt": {
+                          "type": "string"
+                        },
+                        "ttlMs": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "pollIntervalMs": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "inputRequests": {
+                          "$ref": "#/$defs/InputRequests"
+                        }
+                      },
+                      "required": [
+                        "taskId",
+                        "status",
+                        "createdAt",
+                        "lastUpdatedAt",
+                        "ttlMs",
+                        "inputRequests"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "taskId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "const": "completed"
+                        },
+                        "statusMessage": {
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        },
+                        "lastUpdatedAt": {
+                          "type": "string"
+                        },
+                        "ttlMs": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "pollIntervalMs": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "result": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "taskId",
+                        "status",
+                        "createdAt",
+                        "lastUpdatedAt",
+                        "ttlMs",
+                        "result"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "taskId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "const": "failed"
+                        },
+                        "statusMessage": {
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        },
+                        "lastUpdatedAt": {
+                          "type": "string"
+                        },
+                        "ttlMs": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "pollIntervalMs": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "error": {
+                          "$ref": "#/$defs/Error"
+                        }
+                      },
+                      "required": [
+                        "taskId",
+                        "status",
+                        "createdAt",
+                        "lastUpdatedAt",
+                        "ttlMs",
+                        "error"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "taskId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "const": "cancelled"
+                        },
+                        "statusMessage": {
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        },
+                        "lastUpdatedAt": {
+                          "type": "string"
+                        },
+                        "ttlMs": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "pollIntervalMs": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "taskId",
+                        "status",
+                        "createdAt",
+                        "lastUpdatedAt",
+                        "ttlMs"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                }
+              ]
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ]
+        }
+      ]
+    },
+    "TaskStatus": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "working"
+        },
+        {
+          "type": "string",
+          "const": "input_required"
+        },
+        {
+          "type": "string",
+          "const": "completed"
+        },
+        {
+          "type": "string",
+          "const": "failed"
+        },
+        {
+          "type": "string",
+          "const": "cancelled"
+        }
+      ]
+    },
+    "TaskSubscriptionAcknowledgedNotifications": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "taskIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "TaskSubscriptionNotifications": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "taskIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "TasksExtensionCapability": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "not": {}
+      }
+    },
+    "UpdateTaskRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "$ref": "#/$defs/JSONRPCRequest"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "const": "tasks/update"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                },
+                "inputResponses": {
+                  "$ref": "#/$defs/InputResponses"
+                }
+              },
+              "required": [
+                "taskId",
+                "inputResponses"
+              ]
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ]
+        }
+      ]
+    },
+    "UpdateTaskResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "$ref": "#/$defs/Result"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "resultType": {
+              "type": "string",
+              "const": "complete"
+            }
+          },
+          "required": [
+            "resultType"
+          ]
+        }
+      ]
+    },
+    "WorkingTask": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "const": "working"
+        },
+        "statusMessage": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "lastUpdatedAt": {
+          "type": "string"
+        },
+        "ttlMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pollIntervalMs": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "taskId",
+        "status",
+        "createdAt",
+        "lastUpdatedAt",
+        "ttlMs"
+      ]
+    },
+    "Annotations": {
+      "description": "Optional annotations for the client. The client can use annotations to inform how objects are used or displayed",
+      "properties": {
+        "audience": {
+          "description": "Describes who the intended audience of this object or data is.\n\nIt can include multiple entries to indicate content useful for multiple audiences (e.g., `[\"user\", \"assistant\"]`).",
+          "items": {
+            "$ref": "#/$defs/Role"
+          },
+          "type": "array"
+        },
+        "lastModified": {
+          "description": "The moment the resource was last modified, as an ISO 8601 formatted string.\n\nShould be an ISO 8601 formatted string (e.g., \"2025-01-12T15:00:58Z\").\n\nExamples: last activity timestamp in an open file, timestamp when the resource\nwas attached, etc.",
+          "type": "string"
+        },
+        "priority": {
+          "description": "Describes how important this data is for operating the server.\n\nA value of 1 means \"most important,\" and indicates that the data is\neffectively required, while 0 means \"least important,\" and indicates that\nthe data is entirely optional.",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "AudioContent": {
+      "description": "Audio provided to or from an LLM.",
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/MetaObject"
+        },
+        "annotations": {
+          "$ref": "#/$defs/Annotations",
+          "description": "Optional annotations for the client."
+        },
+        "data": {
+          "description": "The base64-encoded audio data.",
+          "format": "byte",
+          "type": "string"
+        },
+        "mimeType": {
+          "description": "The MIME type of the audio. Different providers may support different audio types.",
+          "type": "string"
+        },
+        "type": {
+          "const": "audio",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "mimeType",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BlobResourceContents": {
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/MetaObject"
+        },
+        "blob": {
+          "description": "A base64-encoded string representing the binary data of the item.",
+          "format": "byte",
+          "type": "string"
+        },
+        "mimeType": {
+          "description": "The MIME type of this resource, if known.",
+          "type": "string"
+        },
+        "uri": {
+          "description": "The URI of this resource.",
+          "format": "uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "blob",
+        "uri"
+      ],
+      "type": "object"
+    },
+    "BooleanSchema": {
+      "properties": {
+        "default": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "const": "boolean",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "ContentBlock": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TextContent"
+        },
+        {
+          "$ref": "#/$defs/ImageContent"
+        },
+        {
+          "$ref": "#/$defs/AudioContent"
+        },
+        {
+          "$ref": "#/$defs/ResourceLink"
+        },
+        {
+          "$ref": "#/$defs/EmbeddedResource"
+        }
+      ]
+    },
+    "CreateMessageRequest": {
+      "description": "A request from the server to sample an LLM via the client. The client has full discretion over which model to select. The client should also inform the user before beginning sampling, to allow them to inspect the request (human in the loop) and decide whether to approve it.",
+      "properties": {
+        "method": {
+          "const": "sampling/createMessage",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/CreateMessageRequestParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "type": "object"
+    },
+    "CreateMessageRequestParams": {
+      "description": "Parameters for a `sampling/createMessage` request.",
+      "properties": {
+        "includeContext": {
+          "description": "A request to include context from one or more MCP servers (including the caller), to be attached to the prompt.\nThe client MAY ignore this request.\n\nDefault is `\"none\"`. The values `\"thisServer\"` and `\"allServers\"` are deprecated (SEP-2596): servers SHOULD\nomit this field or use `\"none\"`, and SHOULD only use the deprecated values if the client declares\n{@link ClientCapabilities.sampling.context}.",
+          "enum": [
+            "allServers",
+            "none",
+            "thisServer"
+          ],
+          "type": "string"
+        },
+        "maxTokens": {
+          "description": "The requested maximum number of tokens to sample (to prevent runaway completions).\n\nThe client MAY choose to sample fewer tokens than the requested maximum.",
+          "type": "integer"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/SamplingMessage"
+          },
+          "type": "array"
+        },
+        "metadata": {
+          "$ref": "#/$defs/JSONObject",
+          "description": "Optional metadata to pass through to the LLM provider. The format of this metadata is provider-specific."
+        },
+        "modelPreferences": {
+          "$ref": "#/$defs/ModelPreferences",
+          "description": "The server's preferences for which model to select. The client MAY ignore these preferences."
+        },
+        "stopSequences": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "systemPrompt": {
+          "description": "An optional system prompt the server wants to use for sampling. The client MAY modify or omit this prompt.",
+          "type": "string"
+        },
+        "temperature": {
+          "type": "number"
+        },
+        "toolChoice": {
+          "$ref": "#/$defs/ToolChoice",
+          "description": "Controls how the model uses tools.\nThe client MUST return an error if this field is provided but {@link ClientCapabilities.sampling.tools} is not declared.\nDefault is `{ mode: \"auto\" }`."
+        },
+        "tools": {
+          "description": "Tools that the model may use during generation.\nThe client MUST return an error if this field is provided but {@link ClientCapabilities.sampling.tools} is not declared.",
+          "items": {
+            "$ref": "#/$defs/Tool"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "maxTokens",
+        "messages"
+      ],
+      "type": "object"
+    },
+    "CreateMessageResult": {
+      "description": "The result returned by the client for a {@link CreateMessageRequestsampling/createMessage} request.\nThe client should inform the user before returning the sampled message, to allow them\nto inspect the response (human in the loop) and decide whether to allow the server to see it.",
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/MetaObject"
+        },
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextContent"
+            },
+            {
+              "$ref": "#/$defs/ImageContent"
+            },
+            {
+              "$ref": "#/$defs/AudioContent"
+            },
+            {
+              "$ref": "#/$defs/ToolUseContent"
+            },
+            {
+              "$ref": "#/$defs/ToolResultContent"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/SamplingMessageContentBlock"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "model": {
+          "description": "The name of the model that generated the message.",
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/Role"
+        },
+        "stopReason": {
+          "description": "The reason why sampling stopped, if known.\n\nStandard values:\n- `\"endTurn\"`: Natural end of the assistant's turn\n- `\"stopSequence\"`: A stop sequence was encountered\n- `\"maxTokens\"`: Maximum token limit was reached\n- `\"toolUse\"`: The model wants to use one or more tools\n\nThis field is an open string to allow for provider-specific stop reasons.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "model",
+        "role"
+      ],
+      "type": "object"
+    },
+    "ElicitRequest": {
+      "description": "A request from the server to elicit additional information from the user via the client.",
+      "properties": {
+        "method": {
+          "const": "elicitation/create",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/ElicitRequestParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "type": "object"
+    },
+    "ElicitRequestFormParams": {
+      "description": "The parameters for a request to elicit non-sensitive information from the user via a form in the client.",
+      "properties": {
+        "message": {
+          "description": "The message to present to the user describing what information is being requested.",
+          "type": "string"
+        },
+        "mode": {
+          "const": "form",
+          "description": "The elicitation mode.",
+          "type": "string"
+        },
+        "requestedSchema": {
+          "description": "A restricted subset of JSON Schema.\nOnly top-level properties are allowed, without nesting.",
+          "properties": {
+            "$schema": {
+              "type": "string"
+            },
+            "properties": {
+              "additionalProperties": {
+                "$ref": "#/$defs/PrimitiveSchemaDefinition"
+              },
+              "type": "object"
+            },
+            "required": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "object",
+              "type": "string"
+            }
+          },
+          "required": [
+            "properties",
+            "type"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "message",
+        "requestedSchema"
+      ],
+      "type": "object"
+    },
+    "ElicitRequestParams": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ElicitRequestFormParams"
+        },
+        {
+          "$ref": "#/$defs/ElicitRequestURLParams"
+        }
+      ],
+      "description": "The parameters for a request to elicit additional information from the user via the client."
+    },
+    "ElicitRequestURLParams": {
+      "description": "The parameters for a request to elicit information from the user via a URL in the client.",
+      "properties": {
+        "message": {
+          "description": "The message to present to the user explaining why the interaction is needed.",
+          "type": "string"
+        },
+        "mode": {
+          "const": "url",
+          "description": "The elicitation mode.",
+          "type": "string"
+        },
+        "url": {
+          "description": "The URL that the user should navigate to.",
+          "format": "uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message",
+        "mode",
+        "url"
+      ],
+      "type": "object"
+    },
+    "ElicitResult": {
+      "description": "The result returned by the client for an {@link ElicitRequestelicitation/create} request.",
+      "properties": {
+        "action": {
+          "description": "The user action in response to the elicitation.\n- `\"accept\"`: User submitted the form/confirmed the action\n- `\"decline\"`: User explicitly declined the action\n- `\"cancel\"`: User dismissed without making an explicit choice",
+          "enum": [
+            "accept",
+            "cancel",
+            "decline"
+          ],
+          "type": "string"
+        },
+        "content": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": [
+                  "string",
+                  "integer",
+                  "boolean"
+                ]
+              }
+            ]
+          },
+          "description": "The submitted form data, only present when action is `\"accept\"` and mode was `\"form\"`.\nContains values matching the requested schema.\nOmitted for out-of-band mode responses.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "EmbeddedResource": {
+      "description": "The contents of a resource, embedded into a prompt or tool call result.\n\nIt is up to the client how best to render embedded resources for the benefit\nof the LLM and/or the user.",
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/MetaObject"
+        },
+        "annotations": {
+          "$ref": "#/$defs/Annotations",
+          "description": "Optional annotations for the client."
+        },
+        "resource": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextResourceContents"
+            },
+            {
+              "$ref": "#/$defs/BlobResourceContents"
+            }
+          ]
+        },
+        "type": {
+          "const": "resource",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resource",
+        "type"
+      ],
+      "type": "object"
+    },
+    "Error": {
+      "properties": {
+        "code": {
+          "description": "The error type that occurred.",
+          "type": "integer"
+        },
+        "data": {
+          "description": "Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.)."
+        },
+        "message": {
+          "description": "A short description of the error. The message SHOULD be limited to a concise single sentence.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "Icon": {
+      "description": "An optionally-sized icon that can be displayed in a user interface.",
+      "properties": {
+        "mimeType": {
+          "description": "Optional MIME type override if the source MIME type is missing or generic.\nFor example: `\"image/png\"`, `\"image/jpeg\"`, or `\"image/svg+xml\"`.",
+          "type": "string"
+        },
+        "sizes": {
+          "description": "Optional array of strings that specify sizes at which the icon can be used.\nEach string should be in WxH format (e.g., `\"48x48\"`, `\"96x96\"`) or `\"any\"` for scalable formats like SVG.\n\nIf not provided, the client should assume that the icon can be used at any size.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "src": {
+          "description": "A standard URI pointing to an icon resource. May be an HTTP/HTTPS URL or a\n`data:` URI with Base64-encoded image data.\n\nConsumers SHOULD take steps to ensure URLs serving icons are from the\nsame domain as the client/server or a trusted domain.\n\nConsumers SHOULD take appropriate precautions when consuming SVGs as they can contain\nexecutable JavaScript.",
+          "format": "uri",
+          "type": "string"
+        },
+        "theme": {
+          "description": "Optional specifier for the theme this icon is designed for. `\"light\"` indicates\nthe icon is designed to be used with a light background, and `\"dark\"` indicates\nthe icon is designed to be used with a dark background.\n\nIf not provided, the client should assume the icon can be used with any theme.",
+          "enum": [
+            "dark",
+            "light"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "src"
+      ],
+      "type": "object"
+    },
+    "ImageContent": {
+      "description": "An image provided to or from an LLM.",
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/MetaObject"
+        },
+        "annotations": {
+          "$ref": "#/$defs/Annotations",
+          "description": "Optional annotations for the client."
+        },
+        "data": {
+          "description": "The base64-encoded image data.",
+          "format": "byte",
+          "type": "string"
+        },
+        "mimeType": {
+          "description": "The MIME type of the image. Different providers may support different image types.",
+          "type": "string"
+        },
+        "type": {
+          "const": "image",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "mimeType",
+        "type"
+      ],
+      "type": "object"
+    },
+    "Implementation": {
+      "description": "Describes the MCP implementation.",
+      "properties": {
+        "description": {
+          "description": "An optional human-readable description of what this implementation does.\n\nThis can be used by clients or servers to provide context about their purpose\nand capabilities. For example, a server might describe the types of resources\nor tools it provides, while a client might describe its intended use case.",
+          "type": "string"
+        },
+        "icons": {
+          "description": "Optional set of sized icons that the client can display in a user interface.\n\nClients that support rendering icons MUST support at least the following MIME types:\n- `image/png` - PNG images (safe, universal compatibility)\n- `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)\n\nClients that support rendering icons SHOULD also support:\n- `image/svg+xml` - SVG images (scalable but requires security precautions)\n- `image/webp` - WebP images (modern, efficient format)",
+          "items": {
+            "$ref": "#/$defs/Icon"
+          },
+          "type": "array"
+        },
+        "name": {
+          "description": "Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).",
+          "type": "string"
+        },
+        "title": {
+          "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
+          "type": "string"
+        },
+        "version": {
+          "description": "The version of this implementation.",
+          "type": "string"
+        },
+        "websiteUrl": {
+          "description": "An optional URL of the website for this implementation.",
+          "format": "uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "type": "object"
+    },
+    "InputRequest": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CreateMessageRequest"
+        },
+        {
+          "$ref": "#/$defs/ListRootsRequest"
+        },
+        {
+          "$ref": "#/$defs/ElicitRequest"
+        }
+      ]
+    },
+    "InputRequests": {
+      "additionalProperties": {
+        "$ref": "#/$defs/InputRequest"
+      },
+      "description": "A map of server-initiated requests that the client must fulfill.\nKeys are server-assigned identifiers; values are the request objects.",
+      "type": "object"
+    },
+    "InputResponse": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CreateMessageResult"
+        },
+        {
+          "$ref": "#/$defs/ListRootsResult"
+        },
+        {
+          "$ref": "#/$defs/ElicitResult"
+        }
+      ]
+    },
+    "InputResponses": {
+      "additionalProperties": {
+        "$ref": "#/$defs/InputResponse"
+      },
+      "description": "A map of client responses to server-initiated requests.\nKeys correspond to the keys in the {@link InputRequests} map;\nvalues are the client's result for each request.",
+      "type": "object"
+    },
+    "JSONObject": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JSONValue"
+      },
+      "type": "object"
+    },
+    "JSONRPCNotification": {
+      "description": "A notification which does not expect a response.",
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": {},
+          "type": "object"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "method"
+      ],
+      "type": "object"
+    },
+    "JSONRPCRequest": {
+      "description": "A request that expects a response.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": {},
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "jsonrpc",
+        "method"
+      ],
+      "type": "object"
+    },
+    "JSONValue": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/JSONObject"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/JSONValue"
+          },
+          "type": "array"
+        },
+        {
+          "type": [
+            "string",
+            "integer",
+            "boolean"
+          ]
+        }
+      ]
+    },
+    "LegacyTitledEnumSchema": {
+      "description": "Use {@link TitledSingleSelectEnumSchema} instead.\nThis interface will be removed in a future version.",
+      "properties": {
+        "default": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "enum": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enumNames": {
+          "description": "(Legacy) Display names for enum values.\nNon-standard according to JSON schema 2020-12.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "const": "string",
+          "type": "string"
+        }
+      },
+      "required": [
+        "enum",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ListRootsRequest": {
+      "description": "Sent from the server to request a list of root URIs from the client. Roots allow\nservers to ask for specific directories or files to operate on. A common example\nfor roots is providing a set of repositories or directories a server should operate\non.\n\nThis request is typically used when the server needs to understand the file system\nstructure or access specific locations that the client has permission to read from.",
+      "properties": {
+        "method": {
+          "const": "roots/list",
+          "type": "string"
+        },
+        "params": {
+          "properties": {
+            "_meta": {
+              "$ref": "#/$defs/MetaObject"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "method"
+      ],
+      "type": "object"
+    },
+    "ListRootsResult": {
+      "description": "The result returned by the client for a {@link ListRootsRequestroots/list} request.\nThis result contains an array of {@link Root} objects, each representing a root directory\nor file that the server can operate on.",
+      "properties": {
+        "roots": {
+          "items": {
+            "$ref": "#/$defs/Root"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "roots"
+      ],
+      "type": "object"
+    },
+    "MetaObject": {
+      "description": "Represents the contents of a `_meta` field, which clients and servers use to attach additional metadata to their interactions.\n\nCertain key names are reserved by MCP for protocol-level metadata; implementations MUST NOT make assumptions about values at these keys. Additionally, specific schema definitions may reserve particular names for purpose-specific metadata, as declared in those definitions.\n\nValid keys have two segments:\n\n**Prefix:**\n- Optional — if specified, MUST be a series of _labels_ separated by dots (`.`), followed by a slash (`/`).\n- Labels MUST start with a letter and end with a letter or digit. Interior characters may be letters, digits, or hyphens (`-`).\n- Implementations SHOULD use reverse DNS notation (e.g., `com.example/` rather than `example.com/`).\n- Any prefix where the second label is `modelcontextprotocol` or `mcp` is **reserved** for MCP use. For example: `io.modelcontextprotocol/`, `dev.mcp/`, `org.modelcontextprotocol.api/`, and `com.mcp.tools/` are all reserved. However, `com.example.mcp/` is NOT reserved, as the second label is `example`.\n\n**Name:**\n- Unless empty, MUST start and end with an alphanumeric character (`[a-z0-9A-Z]`).\n- Interior characters may be alphanumeric, hyphens (`-`), underscores (`_`), or dots (`.`).",
+      "type": "object"
+    },
+    "ModelHint": {
+      "description": "Hints to use for model selection.\n\nKeys not declared here are currently left unspecified by the spec and are up\nto the client to interpret.",
+      "properties": {
+        "name": {
+          "description": "A hint for a model name.\n\nThe client SHOULD treat this as a substring of a model name; for example:\n - `claude-3-5-sonnet` should match `claude-3-5-sonnet-20241022`\n - `sonnet` should match `claude-3-5-sonnet-20241022`, `claude-3-sonnet-20240229`, etc.\n - `claude` should match any Claude model\n\nThe client MAY also map the string to a different provider's model name or a different model family, as long as it fills a similar niche; for example:\n - `gemini-1.5-flash` could match `claude-3-haiku-20240307`",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ModelPreferences": {
+      "description": "The server's preferences for model selection, requested of the client during sampling.\n\nBecause LLMs can vary along multiple dimensions, choosing the \"best\" model is\nrarely straightforward.  Different models excel in different areas—some are\nfaster but less capable, others are more capable but more expensive, and so\non. This interface allows servers to express their priorities across multiple\ndimensions to help clients make an appropriate selection for their use case.\n\nThese preferences are always advisory. The client MAY ignore them. It is also\nup to the client to decide how to interpret these preferences and how to\nbalance them against other considerations.",
+      "properties": {
+        "costPriority": {
+          "description": "How much to prioritize cost when selecting a model. A value of 0 means cost\nis not important, while a value of 1 means cost is the most important\nfactor.",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "hints": {
+          "description": "Optional hints to use for model selection.\n\nIf multiple hints are specified, the client MUST evaluate them in order\n(such that the first match is taken).\n\nThe client SHOULD prioritize these hints over the numeric priorities, but\nMAY still use the priorities to select from ambiguous matches.",
+          "items": {
+            "$ref": "#/$defs/ModelHint"
+          },
+          "type": "array"
+        },
+        "intelligencePriority": {
+          "description": "How much to prioritize intelligence and capabilities when selecting a\nmodel. A value of 0 means intelligence is not important, while a value of 1\nmeans intelligence is the most important factor.",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "speedPriority": {
+          "description": "How much to prioritize sampling speed (latency) when selecting a model. A\nvalue of 0 means speed is not important, while a value of 1 means speed is\nthe most important factor.",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "NotificationMetaObject": {
+      "description": "Extends {@link MetaObject} with additional notification-specific fields. All key naming rules from `MetaObject` apply.",
+      "properties": {
+        "io.modelcontextprotocol/subscriptionId": {
+          "$ref": "#/$defs/RequestId",
+          "description": "Identifies the subscription stream a notification was delivered on. The\nserver MUST include this key on every notification delivered via a\n{@link SubscriptionsListenRequestsubscriptions/listen} stream, so the\nclient can correlate the notification with the originating subscription.\nThe key is absent on notifications not delivered via a subscription\nstream (e.g. progress notifications for an in-flight request), which is\nwhy it is optional here.\n\nThe value is the JSON-RPC ID of the `subscriptions/listen` request that\nopened the stream."
+        }
+      },
+      "type": "object"
+    },
+    "NotificationParams": {
+      "description": "Common params for any notification.",
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/NotificationMetaObject"
+        }
+      },
+      "type": "object"
+    },
+    "NumberSchema": {
+      "properties": {
+        "default": {
+          "type": "number"
+        },
+        "description": {
+          "type": "string"
+        },
+        "maximum": {
+          "type": "number"
+        },
+        "minimum": {
+          "type": "number"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "integer",
+            "number"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "PrimitiveSchemaDefinition": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StringSchema"
+        },
+        {
+          "$ref": "#/$defs/NumberSchema"
+        },
+        {
+          "$ref": "#/$defs/BooleanSchema"
+        },
+        {
+          "$ref": "#/$defs/UntitledSingleSelectEnumSchema"
+        },
+        {
+          "$ref": "#/$defs/TitledSingleSelectEnumSchema"
+        },
+        {
+          "$ref": "#/$defs/UntitledMultiSelectEnumSchema"
+        },
+        {
+          "$ref": "#/$defs/TitledMultiSelectEnumSchema"
+        },
+        {
+          "$ref": "#/$defs/LegacyTitledEnumSchema"
+        }
+      ],
+      "description": "Restricted schema definitions that only allow primitive types\nwithout nested objects or arrays."
+    },
+    "RequestId": {
+      "description": "A uniquely identifying ID for a request in JSON-RPC.",
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "ResourceLink": {
+      "description": "A resource that the server is capable of reading, included in a prompt or tool call result.\n\nNote: resource links returned by tools are not guaranteed to appear in the results of {@link ListResourcesRequestresources/list} requests.",
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/MetaObject"
+        },
+        "annotations": {
+          "$ref": "#/$defs/Annotations",
+          "description": "Optional annotations for the client."
+        },
+        "description": {
+          "description": "A description of what this resource represents.\n\nThis can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a \"hint\" to the model.",
+          "type": "string"
+        },
+        "icons": {
+          "description": "Optional set of sized icons that the client can display in a user interface.\n\nClients that support rendering icons MUST support at least the following MIME types:\n- `image/png` - PNG images (safe, universal compatibility)\n- `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)\n\nClients that support rendering icons SHOULD also support:\n- `image/svg+xml` - SVG images (scalable but requires security precautions)\n- `image/webp` - WebP images (modern, efficient format)",
+          "items": {
+            "$ref": "#/$defs/Icon"
+          },
+          "type": "array"
+        },
+        "mimeType": {
+          "description": "The MIME type of this resource, if known.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).",
+          "type": "string"
+        },
+        "size": {
+          "description": "The size of the raw resource content, in bytes (i.e., before base64 encoding or any tokenization), if known.\n\nThis can be used by Hosts to display file sizes and estimate context window usage.",
+          "type": "integer"
+        },
+        "title": {
+          "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
+          "type": "string"
+        },
+        "type": {
+          "const": "resource_link",
+          "type": "string"
+        },
+        "uri": {
+          "description": "The URI of this resource.",
+          "format": "uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "uri"
+      ],
+      "type": "object"
+    },
+    "Result": {
+      "additionalProperties": {},
+      "description": "Common result fields.",
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/ResultMetaObject"
+        },
+        "resultType": {
+          "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resultType"
+      ],
+      "type": "object"
+    },
+    "ResultMetaObject": {
+      "description": "Extends {@link MetaObject} with additional result-specific fields. All key naming rules from `MetaObject` apply.",
+      "properties": {
+        "io.modelcontextprotocol/serverInfo": {
+          "$ref": "#/$defs/Implementation",
+          "description": "Identifies the server software producing the response. Servers SHOULD\ninclude this field on every response unless specifically configured not\nto do so.\n\nThe {@link Implementation} schema requires `name` and `version`; other\nfields are optional.\n\nThe value is self-reported by the server and is not verified by the\nprotocol. It is intended for display, logging, and debugging. Clients\nSHOULD NOT use it to change their behavior, and SHOULD NOT rely on it for\nsecurity decisions."
+        }
+      },
+      "type": "object"
+    },
+    "Role": {
+      "description": "The sender or recipient of messages and data in a conversation.",
+      "enum": [
+        "assistant",
+        "user"
+      ],
+      "type": "string"
+    },
+    "Root": {
+      "description": "Represents a root directory or file that the server can operate on.",
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/MetaObject"
+        },
+        "name": {
+          "description": "An optional name for the root. This can be used to provide a human-readable\nidentifier for the root, which may be useful for display purposes or for\nreferencing the root in other parts of the application.",
+          "type": "string"
+        },
+        "uri": {
+          "description": "The URI identifying the root. This *must* start with `file://` for now.\nThis restriction may be relaxed in future versions of the protocol to allow\nother URI schemes.",
+          "format": "uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "uri"
+      ],
+      "type": "object"
+    },
+    "SamplingMessage": {
+      "description": "Describes a message issued to or received from an LLM API.",
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/MetaObject"
+        },
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextContent"
+            },
+            {
+              "$ref": "#/$defs/ImageContent"
+            },
+            {
+              "$ref": "#/$defs/AudioContent"
+            },
+            {
+              "$ref": "#/$defs/ToolUseContent"
+            },
+            {
+              "$ref": "#/$defs/ToolResultContent"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/SamplingMessageContentBlock"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "role": {
+          "$ref": "#/$defs/Role"
+        }
+      },
+      "required": [
+        "content",
+        "role"
+      ],
+      "type": "object"
+    },
+    "SamplingMessageContentBlock": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TextContent"
+        },
+        {
+          "$ref": "#/$defs/ImageContent"
+        },
+        {
+          "$ref": "#/$defs/AudioContent"
+        },
+        {
+          "$ref": "#/$defs/ToolUseContent"
+        },
+        {
+          "$ref": "#/$defs/ToolResultContent"
+        }
+      ]
+    },
+    "StringSchema": {
+      "properties": {
+        "default": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "date",
+            "date-time",
+            "email",
+            "uri"
+          ],
+          "type": "string"
+        },
+        "maxLength": {
+          "type": "integer"
+        },
+        "minLength": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "const": "string",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextContent": {
+      "description": "Text provided to or from an LLM.",
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/MetaObject"
+        },
+        "annotations": {
+          "$ref": "#/$defs/Annotations",
+          "description": "Optional annotations for the client."
+        },
+        "text": {
+          "description": "The text content of the message.",
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextResourceContents": {
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/MetaObject"
+        },
+        "mimeType": {
+          "description": "The MIME type of this resource, if known.",
+          "type": "string"
+        },
+        "text": {
+          "description": "The text of the item. This must only be set if the item can actually be represented as text (not binary data).",
+          "type": "string"
+        },
+        "uri": {
+          "description": "The URI of this resource.",
+          "format": "uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "uri"
+      ],
+      "type": "object"
+    },
+    "TitledMultiSelectEnumSchema": {
+      "description": "Schema for multiple-selection enumeration with display titles for each option.",
+      "properties": {
+        "default": {
+          "description": "Optional default value.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "description": {
+          "description": "Optional description for the enum field.",
+          "type": "string"
+        },
+        "items": {
+          "description": "Schema for array items with enum options and display labels.",
+          "properties": {
+            "anyOf": {
+              "description": "Array of enum options with values and display labels.",
+              "items": {
+                "properties": {
+                  "const": {
+                    "description": "The constant enum value.",
+                    "type": "string"
+                  },
+                  "title": {
+                    "description": "Display title for this option.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "const",
+                  "title"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "anyOf"
+          ],
+          "type": "object"
+        },
+        "maxItems": {
+          "description": "Maximum number of items to select.",
+          "type": "integer"
+        },
+        "minItems": {
+          "description": "Minimum number of items to select.",
+          "type": "integer"
+        },
+        "title": {
+          "description": "Optional title for the enum field.",
+          "type": "string"
+        },
+        "type": {
+          "const": "array",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TitledSingleSelectEnumSchema": {
+      "description": "Schema for single-selection enumeration with display titles for each option.",
+      "properties": {
+        "default": {
+          "description": "Optional default value.",
+          "type": "string"
+        },
+        "description": {
+          "description": "Optional description for the enum field.",
+          "type": "string"
+        },
+        "oneOf": {
+          "description": "Array of enum options with values and display labels.",
+          "items": {
+            "properties": {
+              "const": {
+                "description": "The enum value.",
+                "type": "string"
+              },
+              "title": {
+                "description": "Display label for this option.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "const",
+              "title"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "title": {
+          "description": "Optional title for the enum field.",
+          "type": "string"
+        },
+        "type": {
+          "const": "string",
+          "type": "string"
+        }
+      },
+      "required": [
+        "oneOf",
+        "type"
+      ],
+      "type": "object"
+    },
+    "Tool": {
+      "description": "Definition for a tool the client can call.",
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/MetaObject"
+        },
+        "annotations": {
+          "$ref": "#/$defs/ToolAnnotations",
+          "description": "Optional additional tool information.\n\nDisplay name precedence order is: `title`, `annotations.title`, then `name`."
+        },
+        "description": {
+          "description": "A human-readable description of the tool.\n\nThis can be used by clients to improve the LLM's understanding of available tools. It can be thought of like a \"hint\" to the model.",
+          "type": "string"
+        },
+        "icons": {
+          "description": "Optional set of sized icons that the client can display in a user interface.\n\nClients that support rendering icons MUST support at least the following MIME types:\n- `image/png` - PNG images (safe, universal compatibility)\n- `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)\n\nClients that support rendering icons SHOULD also support:\n- `image/svg+xml` - SVG images (scalable but requires security precautions)\n- `image/webp` - WebP images (modern, efficient format)",
+          "items": {
+            "$ref": "#/$defs/Icon"
+          },
+          "type": "array"
+        },
+        "inputSchema": {
+          "additionalProperties": {},
+          "description": "A JSON Schema object defining the expected parameters for the tool.\n\nTool arguments are always JSON objects, so `type: \"object\"` is required at the root.\nBeyond that, any JSON Schema 2020-12 keyword may appear alongside `type` — including\ncomposition keywords (`oneOf`, `anyOf`, `allOf`, `not`), conditional keywords\n(`if`/`then`/`else`), reference keywords (`$ref`, `$defs`, `$anchor`), and any other\nstandard validation or annotation keywords.\n\nProperty schemas may carry an `x-mcp-header` annotation to mirror the\nargument value into an HTTP header on the Streamable HTTP transport. See\nthe Streamable HTTP transport specification for the validity and\nextraction rules.\n\nDefaults to JSON Schema 2020-12 when no explicit `$schema` is provided.",
+          "properties": {
+            "$schema": {
+              "type": "string"
+            },
+            "type": {
+              "const": "object",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        "name": {
+          "description": "Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).",
+          "type": "string"
+        },
+        "outputSchema": {
+          "additionalProperties": {},
+          "description": "An optional JSON Schema object defining the structure of the tool's output returned in\nthe structuredContent field of a {@link CallToolResult}. This can be any valid JSON Schema 2020-12.\n\nDefaults to JSON Schema 2020-12 when no explicit `$schema` is provided.",
+          "properties": {
+            "$schema": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "title": {
+          "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "inputSchema",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ToolAnnotations": {
+      "description": "Additional properties describing a {@link Tool} to clients.\n\nNOTE: all properties in `ToolAnnotations` are **hints**.\nThey are not guaranteed to provide a faithful description of\ntool behavior (including descriptive properties like `title`).\n\nClients should never make tool use decisions based on `ToolAnnotations`\nreceived from untrusted servers.",
+      "properties": {
+        "destructiveHint": {
+          "description": "If true, the tool may perform destructive updates to its environment.\nIf false, the tool performs only additive updates.\n\n(This property is meaningful only when `readOnlyHint == false`)\n\nDefault: true",
+          "type": "boolean"
+        },
+        "idempotentHint": {
+          "description": "If true, calling the tool repeatedly with the same arguments\nwill have no additional effect on its environment.\n\n(This property is meaningful only when `readOnlyHint == false`)\n\nDefault: false",
+          "type": "boolean"
+        },
+        "openWorldHint": {
+          "description": "If true, this tool may interact with an \"open world\" of external\nentities. If false, the tool's domain of interaction is closed.\nFor example, the world of a web search tool is open, whereas that\nof a memory tool is not.\n\nDefault: true",
+          "type": "boolean"
+        },
+        "readOnlyHint": {
+          "description": "If true, the tool does not modify its environment.\n\nDefault: false",
+          "type": "boolean"
+        },
+        "title": {
+          "description": "A human-readable title for the tool.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ToolChoice": {
+      "description": "Controls tool selection behavior for sampling requests.",
+      "properties": {
+        "mode": {
+          "description": "Controls the tool use ability of the model:\n- `\"auto\"`: Model decides whether to use tools (default)\n- `\"required\"`: Model MUST use at least one tool before completing\n- `\"none\"`: Model MUST NOT use any tools",
+          "enum": [
+            "auto",
+            "none",
+            "required"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ToolResultContent": {
+      "description": "The result of a tool use, provided by the user back to the assistant.",
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/MetaObject",
+          "description": "Optional metadata about the tool result. Clients SHOULD preserve this field when\nincluding tool results in subsequent sampling requests to enable caching optimizations."
+        },
+        "content": {
+          "description": "The unstructured result content of the tool use.\n\nThis has the same format as {@link CallToolResult.content} and can include text, images,\naudio, resource links, and embedded resources.",
+          "items": {
+            "$ref": "#/$defs/ContentBlock"
+          },
+          "type": "array"
+        },
+        "isError": {
+          "description": "Whether the tool use resulted in an error.\n\nIf true, the content typically describes the error that occurred.\nDefault: false",
+          "type": "boolean"
+        },
+        "structuredContent": {
+          "description": "An optional structured result value.\n\nThis can be any JSON value (object, array, string, number, boolean, or null).\nIf the tool defined an {@link Tool.outputSchema}, this SHOULD conform to that schema."
+        },
+        "toolUseId": {
+          "description": "The ID of the tool use this result corresponds to.\n\nThis MUST match the ID from a previous {@link ToolUseContent}.",
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "toolUseId",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolUseContent": {
+      "description": "A request from the assistant to call a tool.",
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/MetaObject",
+          "description": "Optional metadata about the tool use. Clients SHOULD preserve this field when\nincluding tool uses in subsequent sampling requests to enable caching optimizations."
+        },
+        "id": {
+          "description": "A unique identifier for this tool use.\n\nThis ID is used to match tool results to their corresponding tool uses.",
+          "type": "string"
+        },
+        "input": {
+          "additionalProperties": {},
+          "description": "The arguments to pass to the tool, conforming to the tool's input schema.",
+          "type": "object"
+        },
+        "name": {
+          "description": "The name of the tool to call.",
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_use",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "UntitledMultiSelectEnumSchema": {
+      "description": "Schema for multiple-selection enumeration without display titles for options.",
+      "properties": {
+        "default": {
+          "description": "Optional default value.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "description": {
+          "description": "Optional description for the enum field.",
+          "type": "string"
+        },
+        "items": {
+          "description": "Schema for the array items.",
+          "properties": {
+            "enum": {
+              "description": "Array of enum values to choose from.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "string",
+              "type": "string"
+            }
+          },
+          "required": [
+            "enum",
+            "type"
+          ],
+          "type": "object"
+        },
+        "maxItems": {
+          "description": "Maximum number of items to select.",
+          "type": "integer"
+        },
+        "minItems": {
+          "description": "Minimum number of items to select.",
+          "type": "integer"
+        },
+        "title": {
+          "description": "Optional title for the enum field.",
+          "type": "string"
+        },
+        "type": {
+          "const": "array",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items",
+        "type"
+      ],
+      "type": "object"
+    },
+    "UntitledSingleSelectEnumSchema": {
+      "description": "Schema for single-selection enumeration without display titles for options.",
+      "properties": {
+        "default": {
+          "description": "Optional default value.",
+          "type": "string"
+        },
+        "description": {
+          "description": "Optional description for the enum field.",
+          "type": "string"
+        },
+        "enum": {
+          "description": "Array of enum values to choose from.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "description": "Optional title for the enum field.",
+          "type": "string"
+        },
+        "type": {
+          "const": "string",
+          "type": "string"
+        }
+      },
+      "required": [
+        "enum",
+        "type"
+      ],
+      "type": "object"
+    }
+  }
+}

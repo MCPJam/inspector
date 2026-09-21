@@ -10,6 +10,12 @@ import { cn } from "@/lib/utils";
 
 export type PersonaPixelState = "idle" | "thinking" | "running" | "error";
 
+/**
+ * Body pose. `stand` is every avatar in the product; `wave` exists for the one
+ * hero graphic the Swarm Describe frame specifies (BB-160) and raises one arm.
+ */
+export type PersonaPixelPose = "stand" | "wave";
+
 type Mineral = {
   name: string;
   dark: string;
@@ -226,6 +232,7 @@ function generatePixelGolem(
   familyIndex: number,
   mineralIndex: number,
   state: PersonaPixelState,
+  pose: PersonaPixelPose = "stand",
 ): GolemParts {
   const rng = mulberry32(fnv1a(seed));
   const F = FAMILIES[familyIndex % FAMILIES.length]!;
@@ -285,11 +292,40 @@ function generatePixelGolem(
     }
   }
 
-  if (F.arms && rng() < 0.85) {
-    const al = ri(2, 3);
-    for (let y = bodyTop + 1; y < Math.min(bodyTop + 1 + al, bodyBot); y++) {
-      put(cxR + bw, y, 1);
-      put(cxL - bw, y, 1);
+  if (F.arms) {
+    // The roll is read either way so a `stand` golem consumes exactly the rng
+    // it always did — this generator's later draws are positional, and one
+    // extra call would restyle every avatar in the product.
+    const rolledArms = rng() < 0.85;
+    // A waving golem has to wave: the hero graphic cannot be left to a die.
+    if (rolledArms || pose === "wave") {
+      // Length is rolled only when the roll granted the arms. A forced wave
+      // takes a fixed one instead, so it draws no rng a `stand` golem of the
+      // same seed would not have drawn either.
+      const al = rolledArms ? ri(2, 3) : 2;
+      const armBot = Math.min(bodyTop + 1 + al, bodyBot);
+      if (pose === "wave") {
+        // Right arm hangs as usual. The left is raised: shoulder, forearm
+        // straight up into the gap beside the head, then a two-cell hand.
+        //
+        // Orthogonally connected throughout, and anchored at `bodyTop + 1`
+        // rather than `bodyTop`, both on purpose. A diagonal arm reads as loose
+        // pixels on a 16-cell grid, and a tapered family narrows its top row,
+        // so attaching there leaves the arm floating a cell clear of the body.
+        //
+        // `put` is bounds-checked, so a body wide enough to push the hand past
+        // the edge loses that cell rather than wrapping to the other side.
+        for (let y = bodyTop + 1; y < armBot; y++) put(cxR + bw, y, 1);
+        put(cxL - bw, bodyTop + 1, 1);
+        put(cxL - bw, bodyTop, 1);
+        put(cxL - bw, bodyTop - 1, 1);
+        put(cxL - bw - 1, bodyTop - 1, 1);
+      } else {
+        for (let y = bodyTop + 1; y < armBot; y++) {
+          put(cxR + bw, y, 1);
+          put(cxL - bw, y, 1);
+        }
+      }
     }
   }
 
@@ -445,6 +481,7 @@ export function PersonaPixelAvatar({
   paletteIndex: paletteOverride,
   size = "md",
   state = "idle",
+  pose = "stand",
   className,
 }: {
   /** Stable id (persona `_id`) — picks family + mineral when overrides absent. */
@@ -459,6 +496,8 @@ export function PersonaPixelAvatar({
    * motion answers "is a journey happening?" — not "is this row selected?".
    */
   state?: PersonaPixelState;
+  /** See {@link PersonaPixelPose}. Only the Swarm hero passes `wave`. */
+  pose?: PersonaPixelPose;
   className?: string;
 }) {
   const { shapeIndex, paletteIndex } = resolvePersonaPixelLook(seed, {
@@ -467,8 +506,8 @@ export function PersonaPixelAvatar({
   });
 
   const parts = useMemo(
-    () => generatePixelGolem(seed, shapeIndex, paletteIndex, state),
-    [seed, shapeIndex, paletteIndex, state],
+    () => generatePixelGolem(seed, shapeIndex, paletteIndex, state, pose),
+    [seed, shapeIndex, paletteIndex, state, pose],
   );
 
   const px = cellPx(size);

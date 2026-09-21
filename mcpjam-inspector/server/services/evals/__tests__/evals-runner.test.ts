@@ -1,8 +1,12 @@
+import { logger } from "../../../utils/logger";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const generateTextMock = vi.hoisted(() => vi.fn());
 const streamTextMock = vi.hoisted(() => vi.fn());
 const fetchMock = vi.hoisted(() => vi.fn());
+const preparedToolsOverride = vi.hoisted(() => ({
+  current: undefined as Record<string, any> | undefined,
+}));
 const createLlmModelMock = vi.hoisted(() =>
   vi.fn(
     (
@@ -89,7 +93,7 @@ vi.mock("@/shared/http-tool-calls", () => ({
 
 vi.mock("../../../utils/chat-v2-orchestration", () => ({
   prepareChatV2: vi.fn(async (options: any) => ({
-    allTools: {},
+    allTools: preparedToolsOverride.current ?? {},
     enhancedSystemPrompt: options?.systemPrompt ?? "",
     resolvedTemperature: options?.temperature,
     scrubMessages: (msgs: unknown[]) => msgs,
@@ -103,9 +107,9 @@ vi.mock("../../../utils/chat-v2-orchestration", () => ({
 
 import {
   createConcurrencyLimiter,
-  EVAL_ITERATION_TIMEOUT_MS,
+  defaultEvalExecutionBudgets,
   runEvalSuiteWithAiSdk,
-  runIterationWithTimeout,
+  runIterationUnderBudget,
   streamTestCase,
 } from "../../evals-runner";
 
@@ -117,7 +121,11 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   };
   const mcpClientManager = {
     getToolsForAiSdk: vi.fn(),
+    listTools: vi.fn(),
+    getConnectionStatus: vi.fn(),
     listServers: vi.fn(),
+    getAllToolAnnotations: vi.fn(),
+    hasCachedToolAnnotations: vi.fn(),
     // PR 3 of the engine consolidation: the engine that
     // `runIterationViaBackend` now drives calls
     // `getAllToolsMetadata(serverId)` during message scrubbing
@@ -141,6 +149,10 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     convexClient.query.mockResolvedValue({ status: "running" });
     convexClient.action.mockResolvedValue(undefined);
     mcpClientManager.getToolsForAiSdk.mockResolvedValue({});
+    mcpClientManager.listTools.mockResolvedValue({ tools: [] });
+    mcpClientManager.getAllToolAnnotations.mockReturnValue({});
+    mcpClientManager.hasCachedToolAnnotations.mockReturnValue(true);
+    mcpClientManager.getConnectionStatus.mockReturnValue("connected");
     mcpClientManager.listServers.mockReturnValue(["srv-1"]);
     mcpClientManager.executeTool.mockResolvedValue({
       content: [{ type: "text", text: "Pinned result" }],
@@ -158,6 +170,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       },
     });
     streamTextMock.mockReset();
+    preparedToolsOverride.current = undefined;
     // PR 4b of the engine consolidation: `runIterationWithAiSdk` now
     // drives `runDirectChatTurn` (which calls `streamText`). Provide a
     // default streamText return shape so suite-style tests using
@@ -183,7 +196,84 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     delete process.env.CONVEX_HTTP_URL;
   });
 
-  async function runQuickTestCase(compareRunId?: string) {
+  it.each(["Credits exhausted", "Daily credit limit reached."])(
+    "stops remaining iterations after %s and preserves completed results",
+    async (message) => {
+      const infoSpy = vi.spyOn(logger, "info");
+      const success = streamTextMock.getMockImplementation()!;
+      streamTextMock
+        .mockImplementationOnce(success)
+        .mockImplementationOnce(() => {
+          throw new Error(message);
+        });
+      const config = buildQuickRunConfig();
+      config.config.tests[0].runs = 4;
+      let nextId = 0;
+      convexClient.mutation.mockImplementation(async (name) =>
+        name === "testSuites:recordIterationStartWithoutRun"
+          ? { iterationId: `iteration-${++nextId}` }
+          : { iterationId: "iteration" },
+      );
+      const result = await runEvalSuiteWithAiSdk(config as any);
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[evals] credits exhausted; remaining iterations skipped",
+        { event: "evals.credits_exhausted", iterationId: "iteration-2" },
+      );
+      infoSpy.mockRestore();
+      expect(streamTextMock).toHaveBeenCalledTimes(2);
+      expect(result?.quickRunIterationOutcomes).toHaveLength(2);
+      expect(result?.quickRunIterationOutcomes?.[0].evaluation.passed).toBe(
+        true,
+      );
+      expect(result?.quickRunIterationOutcomes?.[1].creditsExhausted).toBe(
+        true,
+      );
+      const skipped = convexClient.action.mock.calls.filter(
+        ([name, args]) =>
+          name === "testSuites:updateTestIteration" &&
+          args.status === "skipped",
+      );
+      expect(skipped).toHaveLength(2);
+      for (const [, args] of skipped) {
+        expect(args.error).toContain("Completed results are saved; remaining iterations were skipped.");
+      }
+      expect(skipped.map(([, args]) => args.iterationId)).toEqual([
+        "iteration-3",
+        "iteration-4",
+      ]);
+    },
+  );
+
+  it("finishes a credit-blocked suite as failed while retaining its completed summary", async () => {
+    const success = streamTextMock.getMockImplementation()!;
+    streamTextMock
+      .mockImplementationOnce(success)
+      .mockImplementationOnce(() => {
+        throw new Error("Credits exhausted");
+      });
+    const config = buildQuickRunConfig();
+    config.config.tests[0].runs = 3;
+    const recorder = {
+      startIteration: vi.fn().mockResolvedValue("iteration"),
+      finishIteration: vi.fn().mockResolvedValue(undefined),
+      finalize: vi.fn().mockResolvedValue(undefined),
+    };
+    await runEvalSuiteWithAiSdk({
+      ...config,
+      runId: "suite-run",
+      recorder,
+    } as any);
+    expect(streamTextMock).toHaveBeenCalledTimes(2);
+    expect(recorder.finishIteration).toHaveBeenCalledTimes(2);
+    expect(recorder.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
+      }),
+    );
+  });
+
+  async function runQuickTestCase(compareRunId?: string, intent?: string) {
     // Use a BYOK-only model id so the runner takes the local generateText
     // path (which the test mocks). gpt-5-mini has a hosted "openai/gpt-5-mini"
     // counterpart and would otherwise route through the backend.
@@ -199,6 +289,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             model: "gpt-4-turbo",
             provider: "openai",
             expectedToolCalls: [],
+            ...(intent !== undefined ? { intent } : {}),
             promptTurns: [
               { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
             ],
@@ -275,8 +366,241 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     await expect(
       runEvalSuiteWithAiSdk(buildQuickRunConfig() as any)
     ).rejects.toThrow(
-      'Could not start eval because "Asana" is not connected. Reconnect the server and try again.'
+      // The clause callers key on; the reason that now follows it is the
+      // setup observer's and is pinned in run-setup-failure.test.ts.
+      'Could not start eval because "Asana" is not connected'
     );
+  });
+
+  async function runPolicyTool(
+    policy: { mode: "default" | "readOnly"; allow?: string[]; deny?: string[] },
+    annotations?: Record<string, unknown>,
+    expectedToolCall = false,
+    toolName = "write"
+  ) {
+    const originalExecute = vi.fn(async () =>
+      mcpClientManager.executeTool("srv-1", toolName, {})
+    );
+    preparedToolsOverride.current = {
+      [toolName]: {
+        ...(toolName === "write" ? { _serverId: "srv-1" } : {}),
+        execute: originalExecute,
+      },
+    };
+    mcpClientManager.listTools.mockResolvedValueOnce({
+      tools: [
+        {
+          name: toolName,
+          ...(annotations !== undefined ? { annotations } : {}),
+        },
+      ],
+    });
+    mcpClientManager.getAllToolAnnotations.mockReturnValue({
+      [toolName]: annotations,
+    });
+    streamTextMock.mockImplementationOnce((options: any) => ({
+      consumeStream: async () => {
+        await options.tools[toolName].execute(
+          {},
+          { toolCallId: "policy-call" }
+        );
+      },
+      response: Promise.resolve({
+        modelId: "gpt-4-turbo",
+        messages: [
+          {
+            role: "assistant",
+            content: expectedToolCall
+              ? [
+                  {
+                    type: "tool-call",
+                    toolName,
+                    toolCallId: "policy-call",
+                    input: {},
+                  },
+                ]
+              : "Done",
+          },
+        ],
+      }),
+      steps: Promise.resolve([]),
+      totalUsage: Promise.resolve({
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+      }),
+      finishReason: Promise.resolve("stop"),
+    }));
+
+    const runConfig = buildQuickRunConfig();
+    if (expectedToolCall) {
+      const testConfig = runConfig.config.tests[0];
+      testConfig.expectedToolCalls = [{ toolName, arguments: {} }];
+      testConfig.promptTurns[0].expectedToolCalls = [
+        { toolName, arguments: {} },
+      ];
+    }
+    await runEvalSuiteWithAiSdk({
+      ...runConfig,
+      toolPolicy: policy,
+    } as any);
+
+    const updateCall = convexClient.action.mock.calls.find(
+      (call) => call[0] === "testSuites:updateTestIteration"
+    );
+    return {
+      originalExecute,
+      payload: updateCall?.[1] as {
+        result?: string;
+        status?: string;
+        metadata?: Record<string, any>;
+      },
+    };
+  }
+
+  it("blocks destructive MCP execution and records a non-failing policy block", async () => {
+    const { originalExecute, payload } = await runPolicyTool(
+      { mode: "default" },
+      { destructiveHint: true }
+    );
+    expect(originalExecute).not.toHaveBeenCalled();
+    expect(mcpClientManager.executeTool).not.toHaveBeenCalled();
+    expect(payload.result).toBe("passed");
+    expect(payload.status).toBe("completed");
+    expect(payload.metadata?.policyBlockCount).toBe(1);
+    expect(payload.metadata?.policyBlocks).toMatchObject([
+      {
+        toolName: "write",
+        reason: "destructiveDefaultDeny",
+        classification: "destructive",
+      },
+    ]);
+    expect(payload.metadata?.failureCategory).toBeUndefined();
+    const applicableStages = (
+      (payload.metadata?.stageResults as Array<{
+        state: string;
+        reason?: string;
+      }>) ?? []
+    ).filter((row) => row.state !== "notApplicable");
+    expect(applicableStages.length).toBeGreaterThan(0);
+    expect(applicableStages).toEqual(
+      expect.arrayContaining(
+        applicableStages.map((row) =>
+          expect.objectContaining({
+            state: "notMeasured",
+            reason: "blockedByPolicy",
+          })
+        )
+      )
+    );
+    expect(applicableStages.some((row) => row.state === "failed")).toBe(false);
+  });
+
+  it("does not let a blocked tool call satisfy expectedToolCalls", async () => {
+    const { payload } = await runPolicyTool(
+      { mode: "default" },
+      { destructiveHint: true },
+      true
+    );
+    expect(payload.result).toBe("failed");
+    expect(payload.metadata?.policyBlockCount).toBe(1);
+    const applicableStages = (
+      (payload.metadata?.stageResults as Array<{
+        state: string;
+        reason?: string;
+      }>) ?? []
+    ).filter((row) => row.state !== "notApplicable");
+    expect(applicableStages.length).toBeGreaterThan(0);
+    expect(
+      applicableStages.every(
+        (row) => row.state === "notMeasured" && row.reason === "blockedByPolicy"
+      )
+    ).toBe(true);
+    expect(
+      applicableStages.some(
+        (row) => row.state === "failed" || row.reason === "missingToolCall"
+      )
+    ).toBe(false);
+  });
+
+  it("allows an explicitly allowed destructive MCP tool through the runner", async () => {
+    const { originalExecute, payload } = await runPolicyTool(
+      { mode: "default", allow: ["write"] },
+      { destructiveHint: true },
+    );
+    expect(originalExecute).toHaveBeenCalledTimes(1);
+    expect(mcpClientManager.executeTool).toHaveBeenCalledTimes(1);
+    expect(payload.metadata?.policyBlockCount).toBeUndefined();
+  });
+
+  it("accepts an explicit deny for the injected bash tool and blocks execution", async () => {
+    const { originalExecute, payload } = await runPolicyTool(
+      { mode: "default", deny: ["bash"] },
+      undefined,
+      false,
+      "bash"
+    );
+    expect(originalExecute).not.toHaveBeenCalled();
+    expect(payload.metadata?.policyBlocks).toMatchObject([
+      { toolName: "bash", reason: "denyList" },
+    ]);
+  });
+
+  it("accepts an explicit deny for the injected computer tool and blocks execution", async () => {
+    const { originalExecute, payload } = await runPolicyTool(
+      { mode: "default", deny: ["computer"] },
+      undefined,
+      false,
+      "computer"
+    );
+    expect(originalExecute).not.toHaveBeenCalled();
+    expect(payload.metadata?.policyBlocks).toMatchObject([
+      { toolName: "computer", reason: "denyList" },
+    ]);
+  });
+
+  it("blocks an unannotated MCP tool in readOnly mode through the runner", async () => {
+    const { originalExecute, payload } = await runPolicyTool({
+      mode: "readOnly",
+    });
+    expect(originalExecute).not.toHaveBeenCalled();
+    expect(mcpClientManager.executeTool).not.toHaveBeenCalled();
+    expect(payload.metadata?.policyBlocks).toMatchObject([
+      { reason: "readOnlyModeUnclassified", classification: "unknown" },
+    ]);
+  });
+
+  it("refuses an unmatched deny name once before starting iterations", async () => {
+    await expect(
+      runEvalSuiteWithAiSdk({
+        ...buildQuickRunConfig(),
+        toolPolicy: { mode: "default", deny: ["missing"] },
+      } as any)
+    ).rejects.toThrow(
+      "TOOL_POLICY_INVALID: Tool policy deny name(s) did not match any available tool"
+    );
+    expect(streamTextMock).not.toHaveBeenCalled();
+  });
+
+  it("persists a warning for an unmatched allow name", async () => {
+    const { payload } = await runPolicyTool({
+      mode: "default",
+      allow: ["missing"],
+    });
+    expect(payload.metadata?.policyWarnings).toEqual([
+      "Tool policy allow name(s) did not match any available tool: missing",
+    ]);
+  });
+
+  it("refuses a policy run when annotation cache data is unavailable", async () => {
+    mcpClientManager.hasCachedToolAnnotations.mockReturnValueOnce(false);
+    await expect(
+      runEvalSuiteWithAiSdk({
+        ...buildQuickRunConfig(),
+        toolPolicy: { mode: "default" },
+      } as any)
+    ).rejects.toThrow("TOOL_POLICY_ANNOTATIONS_UNAVAILABLE");
+    expect(streamTextMock).not.toHaveBeenCalled();
   });
 
   it("surfaces a clear error when the selected server fails tools/list", async () => {
@@ -287,7 +611,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     await expect(
       runEvalSuiteWithAiSdk(buildQuickRunConfig() as any)
     ).rejects.toThrow(
-      'Could not start eval because "Asana" failed to list tools. Reconnect the server and try again.'
+      'Could not start eval because "Asana" failed to list tools'
     );
   });
 
@@ -310,7 +634,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         recorder,
       } as any)
     ).rejects.toThrow(
-      'Could not start eval because "Asana" failed to list tools. Reconnect the server and try again.'
+      'Could not start eval because "Asana" failed to list tools'
     );
 
     expect(recorder.finalize).toHaveBeenCalledWith({
@@ -351,40 +675,112 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   });
 
   // Regression: the run-lifecycle watchdog must stop a stuck iteration.
-  // Without `runIterationWithTimeout`, a hung iteration (stuck LLM call /
-  // browser render) leaves the suite run "running" forever. These lock the
-  // wrapper that the runner uses to bound every iteration.
-  describe("runIterationWithTimeout (lifecycle watchdog)", () => {
-    it("rejects with the iteration-timeout stop reason and fires onTimeout when the run hangs", async () => {
+  // Without a per-iteration budget, a hung iteration (stuck LLM call / browser
+  // render) leaves the suite run "running" forever.
+  //
+  // This block was rewritten when iteration timeouts stopped killing the run.
+  // The OLD contract — reject with `stopReason: "iteration_timeout"` — was not
+  // a detail: `runIterationWithTimeout` raced a bare timer, declared a winner,
+  // and walked away, so the losing iteration kept running with its stream and
+  // its sandbox open. The timeout bounded the WAIT, not the WORK.
+  describe("runIterationUnderBudget (per-iteration clock)", () => {
+    const UNIT_MS = 10 * 60 * 1000;
+    const timedOut = { evaluation: { passed: false } } as never;
+
+    it("aborts the iteration's own signal and RESOLVES a timed-out outcome", async () => {
       vi.useFakeTimers();
       try {
         const onTimeout = vi.fn().mockResolvedValue(undefined);
-        const rejection = runIterationWithTimeout({
-          run: () => new Promise<never>(() => {}), // never settles
+        let seen: AbortSignal | undefined;
+        const promise = runIterationUnderBudget({
+          run: (iterationSignal) => {
+            seen = iterationSignal;
+            return new Promise<never>(() => {}); // never settles
+          },
+          runSignal: undefined,
+          unitTimeoutMs: UNIT_MS,
+          graceMs: 1_000,
           onTimeout,
-          shouldSkipTimeout: () => false,
+          timedOutOutcome: () => timedOut,
         });
-        // Assert before the timer fires so the rejection is observed (no leak).
-        const assertion = expect(rejection).rejects.toMatchObject({
-          stopReason: "iteration_timeout",
-          terminalStatus: "timed_out",
-        });
-        await vi.advanceTimersByTimeAsync(EVAL_ITERATION_TIMEOUT_MS + 1);
-        await assertion;
+
+        await vi.advanceTimersByTimeAsync(UNIT_MS + 1);
+        await vi.advanceTimersByTimeAsync(1_001); // grace window
+        await expect(promise).resolves.toBe(timedOut);
+
+        // The work is actually stopped, not merely un-awaited.
+        expect(seen?.aborted).toBe(true);
+        // ...and the abort names WHICH clock fired, so the persisted row can
+        // say `iteration` rather than a bare "aborted".
+        expect((seen?.reason as { clock?: string })?.clock).toBe("iteration");
         expect(onTimeout).toHaveBeenCalledTimes(1);
       } finally {
         vi.useRealTimers();
       }
     });
 
-    it("resolves with the run result and never fires onTimeout when the run finishes first", async () => {
+    it("NEVER rejects on its own budget", async () => {
+      // The load-bearing property. The caller is a sequential
+      // `for (runIndex…)` loop with no try/catch, so a rejection here skips
+      // iterations runIndex+1..N of that case entirely — leaving pre-created
+      // rows `pending` forever and blocking the run's terminal transition.
+      vi.useFakeTimers();
+      try {
+        const promise = runIterationUnderBudget({
+          run: () => new Promise<never>(() => {}),
+          runSignal: undefined,
+          unitTimeoutMs: UNIT_MS,
+          graceMs: 0,
+          onTimeout: async () => {},
+          timedOutOutcome: () => timedOut,
+        });
+        await vi.advanceTimersByTimeAsync(UNIT_MS + 10);
+        await expect(promise).resolves.toBeDefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("writes the terminal row BEFORE resolving", async () => {
+      // Ordering, not decoration: `internalUpdateTestIteration` lets
+      // `timed_out` overwrite `failed` but never the reverse, so a
+      // fire-and-forget write races the runner's own failure write and can
+      // silently downgrade an infrastructure timeout to a product failure.
+      vi.useFakeTimers();
+      try {
+        const order: string[] = [];
+        const promise = runIterationUnderBudget({
+          run: () => new Promise<never>(() => {}),
+          runSignal: undefined,
+          unitTimeoutMs: UNIT_MS,
+          graceMs: 0,
+          onTimeout: async () => {
+            order.push("wrote");
+          },
+          timedOutOutcome: () => {
+            order.push("resolved");
+            return timedOut;
+          },
+        });
+        await vi.advanceTimersByTimeAsync(UNIT_MS + 10);
+        await promise;
+        expect(order).toEqual(["wrote", "resolved"]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("resolves with the real result and never fires onTimeout when it finishes first", async () => {
       vi.useFakeTimers();
       try {
         const onTimeout = vi.fn();
-        const result = await runIterationWithTimeout({
-          run: async () => "done",
+        const result = await runIterationUnderBudget({
+          run: async () => "done" as never,
+          runSignal: undefined,
+          unitTimeoutMs: UNIT_MS,
+          graceMs: 0,
           onTimeout,
-          shouldSkipTimeout: () => false,
+          timedOutOutcome: () => timedOut,
         });
         expect(result).toBe("done");
         expect(onTimeout).not.toHaveBeenCalled();
@@ -393,23 +789,114 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       }
     });
 
-    it("skips the timeout (no onTimeout, no reject) when the run was already aborted", async () => {
+    it("still times out when a result arrives inside the grace window", async () => {
+      // This pins a CORRECTED contract. The first version kept a value that
+      // arrived after the clock fired, reasoning that a trial finishing by a
+      // hair had produced real evidence.
+      //
+      // That reasoning does not survive the control flow: we only reach the
+      // grace window because the ABORT won the race, so the trial had not
+      // finished, and what arrives afterwards is post-abort. In practice it is
+      // the runner's own cancellation stub — and once the runners began
+      // THROWING on a budget abort instead, the same arm propagated the throw
+      // out of the helper, which is the reject-don't-resolve failure that
+      // strands a case's remaining iterations at `pending`.
+      //
+      // Reading the clock before honouring the race winner covers both shapes.
+      // The grace window stays, for letting partial writes land.
       vi.useFakeTimers();
       try {
-        const onTimeout = vi.fn();
-        let resolveRun: (v: string) => void = () => {};
-        const rejection = runIterationWithTimeout({
-          run: () => new Promise<string>((res) => (resolveRun = res)),
+        const onTimeout = vi.fn().mockResolvedValue(undefined);
+        let finish: (v: never) => void = () => {};
+        const promise = runIterationUnderBudget({
+          run: () => new Promise<never>((res) => (finish = res)),
+          runSignal: undefined,
+          unitTimeoutMs: UNIT_MS,
+          graceMs: 30_000,
           onTimeout,
-          shouldSkipTimeout: () => true, // run was aborted elsewhere
+          timedOutOutcome: () => timedOut,
         });
-        await vi.advanceTimersByTimeAsync(EVAL_ITERATION_TIMEOUT_MS + 1);
-        resolveRun("late");
-        await expect(rejection).resolves.toBe("late");
-        expect(onTimeout).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(UNIT_MS + 1);
+        finish("late-but-real" as never);
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(promise).resolves.toBe(timedOut);
+        expect(onTimeout).toHaveBeenCalledTimes(1);
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it("RESOLVES a timed-out outcome when the runner throws its budget abort", async () => {
+      // The runners throw on a budget abort so the timeout cannot be swallowed
+      // as a benign cancellation. This helper must absorb that throw, not
+      // propagate it: `runSingleIteration` rejecting means iterations
+      // `runIndex+1..N` of that case never start, land `pending`, and block the
+      // run's terminal transition until the stale reaper takes the whole run.
+      vi.useFakeTimers();
+      try {
+        const onTimeout = vi.fn().mockResolvedValue(undefined);
+        const promise = runIterationUnderBudget({
+          run: (iterationSignal) =>
+            new Promise<never>((_resolve, reject) => {
+              iterationSignal.addEventListener(
+                "abort",
+                () => reject(iterationSignal.reason),
+                { once: true },
+              );
+            }),
+          runSignal: undefined,
+          unitTimeoutMs: UNIT_MS,
+          graceMs: 1_000,
+          onTimeout,
+          timedOutOutcome: () => timedOut,
+        });
+
+        await vi.advanceTimersByTimeAsync(UNIT_MS + 1);
+        await vi.advanceTimersByTimeAsync(1_001);
+
+        await expect(promise).resolves.toBe(timedOut);
+        expect(onTimeout).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("re-throws the RUN's stop rather than claiming an iteration timeout", async () => {
+      // The run being cancelled is not this iteration's problem to report.
+      // `firedClock()` is what tells the two apart — the composed signal
+      // aborts either way.
+      const runController = new AbortController();
+      const stop = Object.assign(new Error("cancelled"), {
+        stopReason: "user_cancelled",
+      });
+      const onTimeout = vi.fn();
+      const promise = runIterationUnderBudget({
+        run: () => new Promise<never>(() => {}),
+        runSignal: runController.signal,
+        unitTimeoutMs: UNIT_MS,
+        graceMs: 0,
+        onTimeout,
+        timedOutOutcome: () => timedOut,
+      });
+      runController.abort(stop);
+      await expect(promise).rejects.toBe(stop);
+      expect(onTimeout).not.toHaveBeenCalled();
+    });
+
+    it("propagates a genuine failure untouched", async () => {
+      const boom = new Error("model refused");
+      await expect(
+        runIterationUnderBudget({
+          run: async () => {
+            throw boom;
+          },
+          runSignal: undefined,
+          unitTimeoutMs: UNIT_MS,
+          graceMs: 0,
+          onTimeout: async () => {},
+          timedOutOutcome: () => timedOut,
+        }),
+      ).rejects.toBe(boom);
     });
   });
 
@@ -496,6 +983,17 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(callsByRef["testSuites:appendEvalTurnTrace"]).toBeGreaterThan(0);
     expect(callsByRef["testSuites:updateTestIteration"]).toBeGreaterThan(0);
     expect(callsByRef["testSuites:lockEvalSession"]).toBe(1);
+  });
+
+  it("freezes the authored intent in a quick-run iteration snapshot", async () => {
+    await runQuickTestCase(undefined, "Task search");
+
+    const createCall = convexClient.mutation.mock.calls.find(
+      (call) => call[0] === "testSuites:recordIterationStartWithoutRun"
+    );
+    expect(createCall?.[1]?.testCaseSnapshot).toMatchObject({
+      intent: "Task search",
+    });
   });
 
   it("derives lockReason from iteration STATUS, not verdict: failed-verdict + clean cycle → eval_completed", async () => {
@@ -674,6 +1172,113 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     const updatePayload = await runQuickTestCase();
 
     expect(updatePayload.metadata).not.toHaveProperty("compareRunId");
+  });
+
+  describe("description-experiment rewrite stamp", () => {
+    const rewriteMarker = {
+      experimentId: "exp_1",
+      toolName: "search",
+      description: "Find documents by query.",
+      proposalHash: "hash_1",
+    };
+
+    async function runWithOverride(args: {
+      preparedDescription?: string;
+      suiteHostConfig?: Record<string, unknown>;
+      omitOverride?: boolean;
+      /** The prepared catalog does not offer the tool at all. */
+      absentTool?: boolean;
+    }) {
+      preparedToolsOverride.current = args.absentTool
+        ? { other_tool: { description: "unrelated" } }
+        : {
+            search: {
+              description: args.preparedDescription ?? rewriteMarker.description,
+            },
+          };
+      await runEvalSuiteWithAiSdk({
+        ...buildQuickRunConfig(),
+        ...(args.omitOverride
+          ? {}
+          : { toolDescriptionOverride: rewriteMarker }),
+        ...(args.suiteHostConfig
+          ? { suiteHostConfig: args.suiteHostConfig }
+          : {}),
+      } as any);
+      const updateCall = convexClient.action.mock.calls.find(
+        (call) => call[0] === "testSuites:updateTestIteration"
+      );
+      return updateCall?.[1] as {
+        metadata?: Record<string, unknown>;
+      };
+    }
+
+    it("stamps applied true when the prepared tool description matches", async () => {
+      const orchestration = await import("../../../utils/chat-v2-orchestration");
+      const payload = await runWithOverride({});
+      expect(payload.metadata?.descriptionExperiment).toEqual({
+        experimentId: "exp_1",
+        arm: "rewrite",
+        toolName: "search",
+        proposalHash: "hash_1",
+        applied: true,
+      });
+      expect(vi.mocked(orchestration.prepareChatV2)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolDescriptionOverrides: { search: rewriteMarker.description },
+        })
+      );
+    });
+
+    it("stamps applied false when the prepared tool description does not match", async () => {
+      const payload = await runWithOverride({
+        preparedDescription: "the original catalog copy",
+      });
+      expect(payload.metadata?.descriptionExperiment).toEqual({
+        experimentId: "exp_1",
+        arm: "rewrite",
+        toolName: "search",
+        proposalHash: "hash_1",
+        applied: false,
+      });
+    });
+
+    it("stamps applied false when the prepared catalog lacks the tool", async () => {
+      // The case a customer actually hits: the rewrite arm replays against
+      // servers that no longer offer the tool, so nothing was rewritten.
+      const payload = await runWithOverride({ absentTool: true });
+      expect(payload.metadata?.descriptionExperiment).toEqual({
+        experimentId: "exp_1",
+        arm: "rewrite",
+        toolName: "search",
+        proposalHash: "hash_1",
+        applied: false,
+      });
+      expect(payload.metadata).not.toHaveProperty(
+        "tools_description_overridden"
+      );
+    });
+
+    it("does not stamp descriptionExperiment on the original arm", async () => {
+      const payload = await runWithOverride({ omitOverride: true });
+      expect(payload.metadata).not.toHaveProperty("descriptionExperiment");
+    });
+
+    it("refuses a harness host with DESCRIPTION_OVERRIDE_ENGINE_UNSUPPORTED", async () => {
+      preparedToolsOverride.current = {
+        search: { description: rewriteMarker.description },
+      };
+      await expect(
+        runEvalSuiteWithAiSdk({
+          ...buildQuickRunConfig(),
+          toolDescriptionOverride: rewriteMarker,
+          suiteHostConfig: { harness: "claude-code" },
+        } as any)
+      ).rejects.toMatchObject({
+        status: 400,
+        details: { reason: "DESCRIPTION_OVERRIDE_ENGINE_UNSUPPORTED" },
+      });
+    });
   });
 
   it("does not throw from non-streaming onStepFinish and records tokens once", async () => {
@@ -863,6 +1468,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     });
 
     await streamTestCase({
+      budgets: defaultEvalExecutionBudgets(),
       test: {
         title: "Case",
         query: "Hello",
@@ -1106,6 +1712,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
     await expect(
       streamTestCase({
+        budgets: defaultEvalExecutionBudgets(),
         test: {
           title: "Case",
           query: "Hello",
@@ -1294,6 +1901,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     const prepareMock = vi.mocked(orchestration.prepareChatV2);
 
     await streamTestCase({
+      budgets: defaultEvalExecutionBudgets(),
       test: {
         title: "Case",
         query: "Hello",
@@ -1827,6 +2435,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     const emitted: Array<Record<string, unknown>> = [];
     try {
       await streamTestCase({
+        budgets: defaultEvalExecutionBudgets(),
         test: {
           title: "Stream backend setup-fail case",
           query: "Hello",
@@ -1834,6 +2443,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           model: "claude-haiku-4.5",
           provider: "anthropic",
           expectedToolCalls: [],
+          intent: "Stream task",
           promptTurns: [
             { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
           ],
@@ -1863,14 +2473,23 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         ])
       );
 
-      // And the failure must still be persisted (status:"failed").
+      // And the failure must still be persisted — as a SETUP failure: the
+      // environment never came up, so `failed` (which claims the run happened
+      // and the server under test lost) would be the wrong word.
       const updateCall = convexClient.action.mock.calls.find(
         (c) => c[0] === "testSuites:updateTestIteration"
       );
       expect(updateCall).toBeDefined();
       const payload = updateCall![1] as Record<string, unknown>;
-      expect(payload.status).toBe("failed");
+      expect(payload.status).toBe("setup_failed");
       expect(payload.result).toBe("failed");
+
+      const createCall = convexClient.mutation.mock.calls.find(
+        (call) => call[0] === "testSuites:recordIterationStartWithoutRun"
+      );
+      expect(createCall?.[1]?.testCaseSnapshot).toMatchObject({
+        intent: "Stream task",
+      });
 
       // The runner must NOT have hit the backend — failure happens before
       // the per-step fetch loop.
@@ -1998,7 +2617,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(String(payload.error)).toMatch(/backend (stream|step)/i);
   });
 
-  it("does not record an iteration when abortSignal fires mid-turn (PR 3 review fix)", async () => {
+  it("records a cancelled iteration, not a cycle failure, when abortSignal fires mid-turn (PR 3 review fix)", async () => {
     // Cursor review on PR #2457: the engine swallows AbortError
     // internally (sets its `aborted` flag, returns with no `turnTrace`,
     // doesn't throw). `RunAssistantTurnResult` doesn't expose the
@@ -2073,17 +2692,28 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
       expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
 
-      // The aborted iteration must NOT be finalized via the action
-      // pipeline — no updateTestIteration, no appendEvalTurnTrace, no
-      // lockEvalSession.
+      // The aborted iteration must NOT be finalized as a completed or failed
+      // trial — no appendEvalTurnTrace, no lockEvalSession, and nothing that
+      // dresses a cancellation up as a cycle failure.
       const finalizeCall = convexClient.action.mock.calls.find((c) =>
         [
-          "testSuites:updateTestIteration",
           "testSuites:appendEvalTurnTrace",
           "testSuites:lockEvalSession",
         ].includes(c[0] as string)
       );
       expect(finalizeCall).toBeUndefined();
+
+      // It IS recorded as cancelled, though. Writing nothing used to leave the
+      // claimed row `running` forever, so the case history showed a trial that
+      // never ended and nothing said a person had stopped it.
+      const iterationWrites = convexClient.action.mock.calls.filter(
+        (c) => c[0] === "testSuites:updateTestIteration"
+      );
+      expect(iterationWrites).toHaveLength(1);
+      expect(iterationWrites[0]?.[1]).toMatchObject({
+        status: "cancelled",
+        result: "cancelled",
+      });
     } finally {
       runAssistantTurnSpy.mockRestore();
     }
@@ -3257,6 +3887,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       }));
 
       await streamTestCase({
+        budgets: defaultEvalExecutionBudgets(),
         test: {
           title: "Case",
           query: "Hello",
@@ -3305,6 +3936,70 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       });
       expect(persistedCarriesIt).toBe(true);
     });
+
+    it("persists a stopped quick run as a cancelled iteration", async () => {
+      // The editor's Stop aborts the stream. The iteration row was claimed
+      // before the first turn, so writing nothing here leaves it `running`
+      // forever and the case history shows a trial that never ends.
+      const controller = new AbortController();
+      streamTextMock.mockReset();
+      streamTextMock.mockImplementationOnce((_options: any) => ({
+        fullStream: (async function* () {
+          controller.abort(new Error("Eval stream aborted by the client"));
+        })(),
+        steps: Promise.resolve([]),
+        response: Promise.resolve({ messages: [] }),
+      }));
+
+      // However the call settles — a cooperative return or the abort reason
+      // rethrown — the row must not be left mid-flight.
+      await streamTestCase({
+        budgets: defaultEvalExecutionBudgets(),
+        test: {
+          title: "Case",
+          query: "Hello",
+          runs: 1,
+          model: "gpt-4-turbo",
+          provider: "openai",
+          expectedToolCalls: [],
+          promptTurns: [
+            { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+          ],
+          testCaseId: "case-stopped",
+        },
+        tools: {},
+        selectedServers: [],
+        mcpClientManager: mcpClientManager as any,
+        recorder: null,
+        modelApiKeys: { openai: "sk-test" },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        testCaseId: "case-stopped",
+        suiteId: "suite-1",
+        runId: null,
+        abortSignal: controller.signal,
+        emit: () => {},
+      } as any).catch(() => {});
+
+      const cancelWrite = convexClient.action.mock.calls.find(
+        (call) =>
+          call[0] === "testSuites:updateTestIteration" &&
+          (call[1] as Record<string, unknown> | undefined)?.status ===
+            "cancelled",
+      );
+      expect(cancelWrite).toBeDefined();
+      expect(cancelWrite?.[1]).toMatchObject({
+        iterationId: "iter-1",
+        status: "cancelled",
+        result: "cancelled",
+        metadata: { stopReason: "user_cancelled" },
+      });
+      // The reason the person will read, carried from the abort itself.
+      expect((cancelWrite?.[1] as any).error).toBe(
+        "Eval stream aborted by the client",
+      );
+    });
   });
 
   describe("PR2 — streaming quick-run routes by step kind", () => {
@@ -3344,6 +4039,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       await expect(
         streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           ...streamBase,
           test: {
             title: "Show me a redbull",
@@ -3411,6 +4107,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       await expect(
         streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           ...streamBase,
           selectedServers: ["amazon"],
           modelApiKeys: { openai: "sk-test" },
@@ -3467,6 +4164,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       await expect(
         streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           ...streamBase,
           selectedServers: ["amazon"],
           test: {
@@ -3530,6 +4228,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     }) {
       const emitted = args.emitCollector ?? [];
       await streamTestCase({
+        budgets: defaultEvalExecutionBudgets(),
         test: {
           title: "Case",
           query: "Hello",
@@ -3733,6 +4432,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "Backend SSE prefix",
             query: "Hello",
@@ -4132,6 +4832,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b SSE vocabulary",
             query: "Hello",
@@ -4260,6 +4961,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b step usage delta",
             query: "Hello",
@@ -4374,6 +5076,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b mid-turn snapshot fidelity",
             query: "Hello",
@@ -4542,6 +5245,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b cumulative partials across steps",
             query: "Hello",
@@ -4705,6 +5409,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b-followup-2 turnSpans",
             query: "Hello",
@@ -4822,6 +5527,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b-followup-2 guardrail detail",
             query: "Hello",
@@ -4934,6 +5640,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b-followup-2 error-span engine error",
             query: "Hello",
@@ -5024,6 +5731,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b settledWithError gate",
             query: "Hello",
@@ -5091,6 +5799,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b call shape",
             query: "Hello",

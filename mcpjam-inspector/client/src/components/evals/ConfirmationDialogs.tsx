@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import type { EvalSuite } from "./types";
+import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "./constants";
 
 const SKIP_DELETE_TEST_CASE_CONFIRMATION_KEY = "skipDeleteTestCaseConfirmation";
 
@@ -101,7 +102,7 @@ export function ConfirmationDialogs({
               Cancel
             </Button>
             <Button
-              variant="destructive"
+              className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
               onClick={onConfirmDeleteSuite}
               disabled={!!deletingSuiteId}
             >
@@ -139,7 +140,7 @@ export function ConfirmationDialogs({
               Cancel
             </Button>
             <Button
-              variant="destructive"
+              className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
               onClick={onConfirmDeleteRun}
               disabled={!!deletingRunId}
             >
@@ -190,7 +191,7 @@ export function ConfirmationDialogs({
                   Cancel
                 </Button>
                 <Button
-                  variant="destructive"
+                  className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
                   onClick={handleConfirmDeleteTestCase}
                   disabled={!!deletingTestCaseId}
                 >

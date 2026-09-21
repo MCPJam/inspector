@@ -7,7 +7,7 @@ import {
 
 const profileFor = (id: HostTemplateId) =>
   hostConnectionProfile(
-    seedHostTemplate(id) as unknown as Record<string, unknown>,
+    seedHostTemplate(id) as unknown as Record<string, unknown>
   );
 
 const extensions = (caps: Record<string, unknown> | undefined) =>
@@ -17,14 +17,16 @@ describe("hostConnectionProfile", () => {
   it("derives Claude's identity + the MCP Apps UI capability", () => {
     const p = profileFor("claude");
     expect(p.clientInfo?.name).toBe("claude-ai");
-    expect(extensions(p.clientCapabilities)["io.modelcontextprotocol/ui"]).toBeDefined();
+    expect(
+      extensions(p.clientCapabilities)["io.modelcontextprotocol/ui"]
+    ).toBeDefined();
     // Claude's model filters app-only tools (default visibility policy).
     expect(p.respectToolVisibility).not.toBe(false);
   });
 
   it("pins Goose's advertised protocol version", () => {
     expect(profileFor("goose").supportedProtocolVersions).toContain(
-      "2025-03-26",
+      "2025-03-26"
     );
   });
 
@@ -54,8 +56,27 @@ describe("hostConnectionProfile", () => {
     expect(
       hostConnectionProfile({
         mcpProfile: { initialize: { mcpProtocolVersion: "2026-07-28" } },
-      }).mcpProtocolVersion,
+      }).mcpProtocolVersion
     ).toBeUndefined();
+  });
+
+  it("reduces auto to no wire pin while preserving the nested connection profile", () => {
+    const p = hostConnectionProfile({
+      mcpProfile: {
+        profileVersion: 1,
+        mcpProtocolVersion: "auto",
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+          clientInfo: { name: "openai-mcp", version: "1.0.0" },
+        },
+      },
+    });
+    expect(p.mcpProtocolVersion).toBeUndefined();
+    expect(p.supportedProtocolVersions).toEqual(["2025-11-25", "2026-07-28"]);
+    expect(p.clientInfo).toMatchObject({
+      name: "openai-mcp",
+      version: "1.0.0",
+    });
   });
 
   describe("toolParamHeaderMirroring → mirrorToolParamHeaders", () => {
@@ -96,22 +117,106 @@ describe("hostConnectionProfile", () => {
           profileVersion: 1,
           paginationTraversal: "firstPageOnly",
           mrtrSupport: "none",
+          toolCallCancellation: { legacy: false, modern: false },
         },
       });
       expect(p.firstPageOnly).toBe(true);
       expect(p.supportsMrtr).toBe(false);
+      expect(p.toolCallCancellation).toEqual({ legacy: false, modern: false });
     });
 
     it("collapses default literals AND absent fields to no wire field", () => {
       for (const mcpProfile of [
-        { profileVersion: 1, paginationTraversal: "full", mrtrSupport: "full" },
+        {
+          profileVersion: 1,
+          paginationTraversal: "full",
+          mrtrSupport: "full",
+          toolCallCancellation: { legacy: true, modern: true },
+        },
         { profileVersion: 1 },
         undefined,
       ]) {
         const p = hostConnectionProfile(mcpProfile ? { mcpProfile } : {});
-        for (const key of ["firstPageOnly", "supportsMrtr"]) {
+        for (const key of [
+          "firstPageOnly",
+          "supportsMrtr",
+          "toolCallCancellation",
+        ]) {
           expect(key in p).toBe(false);
         }
+      }
+    });
+
+    it("reduces the toolListChanged record per leaf", () => {
+      const p = hostConnectionProfile({
+        mcpProfile: {
+          profileVersion: 1,
+          toolListChanged: { listens: false, refetches: false },
+        },
+      });
+      expect(p.suppressListenChannel).toBe(true);
+      expect(p.dropToolListChanged).toBe(true);
+    });
+
+    it("reduces only the leaf that is set", () => {
+      // ChatGPT's real shape: measured not-listening, with `refetches`
+      // deliberately unmeasured because nothing is ever delivered to it.
+      const p = hostConnectionProfile({
+        mcpProfile: {
+          profileVersion: 1,
+          toolListChanged: { listens: false },
+        },
+      });
+      expect(p.suppressListenChannel).toBe(true);
+      expect("dropToolListChanged" in p).toBe(false);
+    });
+
+    it("collapses true leaves, an empty record, and absence alike", () => {
+      for (const toolListChanged of [
+        { listens: true, refetches: true },
+        {},
+        undefined,
+      ]) {
+        const p = hostConnectionProfile({
+          mcpProfile: { profileVersion: 1, ...(toolListChanged ? { toolListChanged } : {}) },
+        });
+        expect("suppressListenChannel" in p).toBe(false);
+        expect("dropToolListChanged" in p).toBe(false);
+      }
+    });
+
+    it("forwards only the degraded leaves, never resolving the era here", () => {
+      // Resolution is the SDK's job at request time: on an unpinned host the
+      // era does not exist yet, and picking one here made the other era's
+      // toggle unreachable.
+      const forward = (toolCallCancellation: Record<string, unknown>) =>
+        hostConnectionProfile({
+          mcpProfile: { profileVersion: 1, toolCallCancellation },
+        }).toolCallCancellation;
+
+      expect(forward({ legacy: false })).toEqual({ legacy: false });
+      expect(forward({ modern: false })).toEqual({ modern: false });
+      // Conforming and malformed leaves are dropped, so an all-good host emits
+      // nothing and keeps hashing as it did before the field existed.
+      expect(forward({ legacy: true, modern: false })).toEqual({
+        modern: false,
+      });
+      expect(forward({ legacy: "false" })).toBeUndefined();
+    });
+
+    it("is unaffected by the version pin", () => {
+      // The pin used to decide the leaf here. It must not any more — a pinned
+      // and an unpinned host forward the same thing.
+      for (const mcpProtocolVersion of ["2026-07-28", "2025-11-25", "auto"]) {
+        expect(
+          hostConnectionProfile({
+            mcpProfile: {
+              profileVersion: 1,
+              mcpProtocolVersion,
+              toolCallCancellation: { legacy: false },
+            },
+          }).toolCallCancellation
+        ).toEqual({ legacy: false });
       }
     });
 
@@ -123,8 +228,12 @@ describe("hostConnectionProfile", () => {
           profileVersion: 1,
           paginationTraversal: "everyOtherPage",
           mrtrSupport: "partial",
+          // Not a record at all, and a record with an unknown leaf: neither
+          // may read as the degraded value.
+          toolCallCancellation: "sometimes",
         },
       });
+      expect("toolCallCancellation" in p).toBe(false);
       expect("firstPageOnly" in p).toBe(false);
       expect("supportsMrtr" in p).toBe(false);
     });

@@ -1,3 +1,4 @@
+import { WidgetPlaceholder } from "@mcpjam/chat-ui";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { type ToolUIPart, type DynamicToolUIPart, type UITools } from "ai";
 import { UIMessage } from "@ai-sdk/react";
@@ -27,7 +28,11 @@ import {
   getToolServerId,
   ToolServerMap,
 } from "@/lib/apis/mcp-tools-api";
-import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import {
+  detectUIType,
+  getUIResourceUri,
+  UIType,
+} from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   AnyPart,
   getDataLabel,
@@ -39,7 +44,7 @@ import {
 import { useSharedAppState } from "@/state/app-state-context";
 import { UI_CONTEXT_PART_TYPE } from "@/shared/ui-context";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
-import { useChatboxHostStyle } from "@/contexts/chatbox-client-style-context";
+import { useScenarioHostStyle } from "@/contexts/scenario-client-style-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import {
   ToolRenderOverride,
@@ -58,7 +63,8 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
-import { readMcpToolOriginServerId } from "@/shared/mcp-tool-origin-metadata";
+import { readMcpToolOriginServerId,
+  readMcpToolConnectionId } from "@/shared/mcp-tool-origin-metadata";
 import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 import { reportPossiblyOurFailure } from "@/lib/error-reporting";
 
@@ -131,6 +137,7 @@ export function PartSwitch({
   showInlineEdit = true,
   minimalMode = false,
   interactive = true,
+  widgetPolicy = "live",
   reasoningDisplayMode = "inline",
   mcpToolResultImageRendering,
   recordCapable,
@@ -152,7 +159,7 @@ export function PartSwitch({
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    }
+    },
   ) => void;
   onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   pipWidgetId: string | null;
@@ -171,6 +178,7 @@ export function PartSwitch({
   showInlineEdit?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
+  widgetPolicy?: "live" | "placeholder";
   reasoningDisplayMode?: ReasoningDisplayMode;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   // Tier 3 recorder (default off — see recorder-types.ts).
@@ -188,7 +196,7 @@ export function PartSwitch({
 
   const appState = useSharedAppState();
   const resolveHostCaps = useActiveHostCapsResolver();
-  const hostStyle = useChatboxHostStyle();
+  const hostStyle = useScenarioHostStyle();
 
   const toolInfoFromPart =
     isToolPart(part) || isDynamicTool(part)
@@ -214,18 +222,18 @@ export function PartSwitch({
   );
   const [isEditing, setIsEditing] = useState(false);
   const [editedInput, setEditedInput] = useState<{ value: unknown } | null>(
-    null
+    null,
   );
   // Manual hand-edits to the Result JSON (null = none).
   const [editedOutput, setEditedOutput] = useState<{ value: unknown } | null>(
-    null
+    null,
   );
   // The most recent server Run result, kept as the metadata anchor: it becomes
   // the base whose _meta / toolResponseMetadata applies to later manual edits,
   // so "Run, then tweak the result" keeps the latest run's metadata, not the
   // original tool result's.
   const [lastRunOutput, setLastRunOutput] = useState<{ value: unknown } | null>(
-    null
+    null,
   );
   const [isRunning, setIsRunning] = useState(false);
   // Bumped to remount + reseed the JsonEditors on a hard reset (Revert /
@@ -242,16 +250,16 @@ export function PartSwitch({
 
   const handleInputChange = useCallback(
     (value: unknown) => setEditedInput({ value }),
-    []
+    [],
   );
   const handleOutputChange = useCallback(
     (value: unknown) => setEditedOutput({ value }),
-    []
+    [],
   );
   // The input editor reports its parse state on every keystroke (null = valid).
   const handleInputValidityChange = useCallback(
     (valid: boolean) => setInputInvalid(!valid),
-    []
+    [],
   );
   const handleToggleEdit = useCallback(() => setIsEditing((p) => !p), []);
   const handleRevert = useCallback(() => {
@@ -336,6 +344,13 @@ export function PartSwitch({
       readMcpToolOriginServerId((toolPart as any).callProviderMetadata) ??
       readMcpToolOriginServerId((toolPart as any).providerMetadata) ??
       readMcpToolOriginServerId((toolPart as any).providerOptions);
+    // Which credential produced this result, when the server had more than one
+    // live. Rerun resolves a server, not a connection, so a call made on a
+    // specific account cannot be replayed faithfully yet.
+    const attributedConnectionId =
+      readMcpToolConnectionId((toolPart as any).callProviderMetadata) ??
+      readMcpToolConnectionId((toolPart as any).providerMetadata) ??
+      readMcpToolConnectionId((toolPart as any).providerOptions);
     const serverId =
       renderOverride?.serverId ??
       providerMetadataServerId ??
@@ -349,7 +364,10 @@ export function PartSwitch({
       : toolInfo.output ?? toolInfo.rawOutput;
 
     // --- Inline edit: effective values fed to BOTH the editors and the iframe ---
-    const baseInput = (toolInfo.input ?? null) as Record<string, unknown> | null;
+    const baseInput = (toolInfo.input ?? null) as Record<
+      string,
+      unknown
+    > | null;
     // Tool input is an arguments object. Mirror the output normalization: ignore
     // non-object edits (null / array / string) for BOTH the live widget feed and
     // Run, falling back to the original — otherwise the preview could render one
@@ -420,14 +438,17 @@ export function PartSwitch({
       isServerConnected &&
       !isRunning &&
       !inputInvalid &&
-      !inputEditedToNonObject;
+      !inputEditedToNonObject &&
+      !attributedConnectionId;
     const runDisabledReason = !isServerConnected
       ? "Connect the server to run"
+      : attributedConnectionId
+      ? "This call ran on a specific account; rerun would use the server's default account"
       : inputInvalid
-        ? "Fix the invalid input JSON to run"
-        : inputEditedToNonObject
-          ? "Input must be a JSON object to run"
-          : undefined;
+      ? "Fix the invalid input JSON to run"
+      : inputEditedToNonObject
+      ? "Input must be a JSON object to run"
+      : undefined;
 
     const handleRun = async () => {
       if (!serverId) return;
@@ -498,27 +519,59 @@ export function PartSwitch({
         uiType === UIType.MCP_APPS ||
         uiType === UIType.OPENAI_SDK_AND_MCP_APPS);
 
+    // Session review records the presence of a widget, without mounting its
+    // runtime or fetching HTML from today's server. This policy also overrides
+    // frozen screenshots: the Browser tab owns recorded renders for Sessions.
+    if (widgetPolicy === "placeholder" && (
+      uiType === UIType.OPENAI_SDK || uiType === UIType.MCP_APPS ||
+      uiType === UIType.OPENAI_SDK_AND_MCP_APPS || renderOverride?.resourceUri ||
+      renderOverride?.cachedWidgetHtmlUrl || renderOverride?.frozenScreenshotUrl
+    )) {
+      return (
+        <>
+          <ToolPart part={toolPart} chatSessionId={chatSessionId} uiType={uiType}
+            minimalMode={minimalMode} serverId={serverId}
+            mcpToolResultImageRendering={mcpToolResultImageRendering} rawOutput={rawToolOutput} />
+          <WidgetPlaceholder toolName={toolInfo.toolName} />
+        </>
+      );
+    }
+
     // A frozen recorded screenshot (eval replay) renders INDEPENDENTLY of live
     // widget eligibility: a completed run's widget can fail host-caps / server /
     // `uiType` checks at view-time, but we still have its capture. The inner
     // ternary below shows the screenshot in place of the live <WidgetReplay>.
     if (widgetSlotShouldRender(shouldRenderWidget, renderOverride)) {
+      const isFrozenWidget = !!renderOverride?.frozenScreenshotUrl;
+      const allowWidgetDisplayModeChanges = interactive && !isFrozenWidget;
       return (
         <>
           <ToolPart
             part={toolPart}
             chatSessionId={chatSessionId}
             uiType={uiType}
-            displayMode={interactive ? displayMode : undefined}
+            displayMode={
+              allowWidgetDisplayModeChanges ? displayMode : undefined
+            }
             pipWidgetId={pipWidgetId}
             fullscreenWidgetId={fullscreenWidgetId}
-            onDisplayModeChange={interactive ? onDisplayModeChange : undefined}
-            onRequestFullscreen={interactive ? onRequestFullscreen : undefined}
-            onExitFullscreen={interactive ? onExitFullscreen : undefined}
-            onRequestPip={interactive ? onRequestPip : undefined}
-            onExitPip={interactive ? onExitPip : undefined}
+            onDisplayModeChange={
+              allowWidgetDisplayModeChanges ? onDisplayModeChange : undefined
+            }
+            onRequestFullscreen={
+              allowWidgetDisplayModeChanges ? onRequestFullscreen : undefined
+            }
+            onExitFullscreen={
+              allowWidgetDisplayModeChanges ? onExitFullscreen : undefined
+            }
+            onRequestPip={
+              allowWidgetDisplayModeChanges ? onRequestPip : undefined
+            }
+            onExitPip={allowWidgetDisplayModeChanges ? onExitPip : undefined}
             appSupportedDisplayModes={
-              interactive ? appSupportedDisplayModes : undefined
+              allowWidgetDisplayModeChanges
+                ? appSupportedDisplayModes
+                : undefined
             }
             allowInlineEdit={allowInlineEdit}
             isEditing={isEditing}
@@ -539,6 +592,24 @@ export function PartSwitch({
             serverId={serverId}
             mcpToolResultImageRendering={mcpToolResultImageRendering}
             rawOutput={rawToolOutput}
+            recordedWidgetDiagnostics={
+              isFrozenWidget
+                ? {
+                    resourceUri:
+                      renderOverride?.resourceUri ??
+                      getUIResourceUri(uiType, effectiveToolMeta) ??
+                      undefined,
+                    csp: renderOverride?.widgetCsp,
+                    permissions: renderOverride?.widgetPermissions,
+                    permissive: renderOverride?.widgetPermissive,
+                    prefersBorder: renderOverride?.prefersBorder,
+                    consoleErrors:
+                      renderOverride?.recordedWidgetErrors?.consoleErrors,
+                    blockedRequests:
+                      renderOverride?.recordedWidgetErrors?.blockedRequests,
+                  }
+                : undefined
+            }
             {...approvalProps}
           />
           {renderOverride?.frozenScreenshotUrl ? (
@@ -570,7 +641,7 @@ export function PartSwitch({
                     toolName: toolInfo.toolName,
                     toolCallId: tcid,
                     widgetPromptIndex,
-                  }
+                  },
                 );
                 recorderDebug("part record decision", {
                   toolName: toolInfo.toolName,
@@ -611,7 +682,7 @@ export function PartSwitch({
                     });
                   },
                   onReplayControllerReady: (
-                    replay: ReplayControllerEvent["replay"]
+                    replay: ReplayControllerEvent["replay"],
                   ) => {
                     onReplayControllerReady?.({
                       promptIndex: pi,
@@ -693,7 +764,10 @@ export function PartSwitch({
   // is addressed to the model, not the reader — the user already knows what
   // screen they're on, and `isDataPart` below would render it as a JSON blob
   // in the middle of their own message.
-  if (part.type === UI_CONTEXT_PART_TYPE) {
+  if (
+    part.type === UI_CONTEXT_PART_TYPE ||
+    part.type === "data-browser-readiness"
+  ) {
     return null;
   }
 

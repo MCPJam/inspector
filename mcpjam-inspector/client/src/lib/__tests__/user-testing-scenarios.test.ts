@@ -1,17 +1,17 @@
 /**
- * The rule that decides which chatbox rows are SCENARIOS.
+ * The rule that decides which scenario rows are SCENARIOS.
  *
- * The bug it exists for: `hosts.createHost` mints a chatbox per client, and an
+ * The bug it exists for: `hosts.createHost` mints a scenario per client, and an
  * empty project gets four of them before anyone opens User Testing (three
  * seeded by the Playground, one by the host bar). The surface listed all of
  * them, so a brand-new project showed scenarios nobody made.
  */
 import { describe, expect, it } from "vitest";
-import type { ChatboxListItem } from "@/hooks/useChatboxes";
+import type { ScenarioListItem } from "@/hooks/useScenarios";
 import { isDeliberateScenario } from "@/lib/user-testing-scenarios";
 
-const row = (over: Partial<ChatboxListItem> = {}): ChatboxListItem => ({
-  chatboxId: "cb-1",
+const row = (over: Partial<ScenarioListItem> = {}): ScenarioListItem => ({
+  scenarioId: "cb-1",
   projectId: "p1",
   name: "Claude Code",
   hostStyle: "claude",

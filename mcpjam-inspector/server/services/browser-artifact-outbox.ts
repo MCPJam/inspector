@@ -31,18 +31,20 @@
  * as a video-only write when every batch already landed per-turn.
  *
  * Surface-neutral: the caller supplies the Convex identity and, for a hosted
- * chatbox, its access pair. A swarm run passes neither, and the mutation
+ * scenario, its access pair. A swarm run passes neither, and the mutation
  * authorizes the session owner (the run launcher) instead.
  */
 
 import { ConvexHttpClient } from "convex/browser";
 import type {
   BrowserInteractionStepPayload,
+  EvalTraceVideoMeta,
   RunnerBrowserInteractionStep,
   RunnerWidgetRenderObservation,
   WidgetRenderObservationPayload,
 } from "@/shared/eval-trace";
 import { logger } from "../utils/logger.js";
+import { writeUntilAcknowledged } from "../utils/acknowledged-write.js";
 import { uploadVideoBlob } from "../utils/mcp-app-widget-capture.js";
 import type { BrowserSessionContext } from "./browser-session-context.js";
 import {
@@ -74,11 +76,25 @@ export interface BrowserArtifactOutbox {
    * somehow arrives without a `promptIndex` of its own.
    */
   take(browser: BrowserSessionContext, fallbackPromptIndex: number): void;
+  enqueueSteps(
+    steps: RunnerBrowserInteractionStep[],
+    fallbackPromptIndex: number,
+  ): void;
   /**
    * Upload the terminal replay video and hold its blob id for the next flush.
    * Idempotent — a no-op once a video is staged or attached. Never throws.
+   *
+   * `options` names the container and what the recording says about itself.
+   * Omitted by the local harness, whose replay has always been a `.webm` — the
+   * uploader's default. A hosted daemon's MP4 MUST say so: Convex serves back
+   * exactly the content type the bytes were posted with, so an MP4 announced
+   * as webm is a file the browser refuses to play, and the only symptom is an
+   * empty player on the trace page.
    */
-  stageVideo(bytes: Buffer): Promise<void>;
+  stageVideo(
+    bytes: Buffer,
+    options?: { mime?: string; meta?: EvalTraceVideoMeta },
+  ): Promise<void>;
   /**
    * Serialize anything not yet serialized, then attempt every held batch (and
    * the staged video). Whatever fails stays held. Never throws; returns what
@@ -97,13 +113,13 @@ export function createBrowserArtifactOutbox(args: {
   chatSessionId: string;
   /** Convex bearer for the uploads + the mutation. */
   convexAuthToken: string;
-  /** Hosted-chatbox auth pair. Omitted ⇒ the direct-session (owner) branch. */
-  chatboxId?: string;
+  /** Hosted-scenario auth pair. Omitted ⇒ the direct-session (owner) branch. */
+  scenarioId?: string;
   accessVersion?: number;
   /** Log prefix so each surface stays greppable. */
   logScope: string;
 }): BrowserArtifactOutbox {
-  const { chatSessionId, convexAuthToken, chatboxId, accessVersion, logScope } =
+  const { chatSessionId, convexAuthToken, scenarioId, accessVersion, logScope } =
     args;
 
   // Both keyed by promptIndex so repeat takes for the same turn merge instead of
@@ -111,6 +127,8 @@ export function createBrowserArtifactOutbox(args: {
   const raw = new Map<number, RawBucket>();
   const wire = new Map<number, WireBatch>();
   let stagedVideoBlobId: string | undefined;
+  /** What the staged recording says about itself; rides the same write. */
+  let stagedVideoMeta: EvalTraceVideoMeta | undefined;
   let videoAttached = false;
   let client: ConvexHttpClient | null = null;
   let clientUnavailable = false;
@@ -255,6 +273,12 @@ export function createBrowserArtifactOutbox(args: {
       return new Set([...raw.keys(), ...wire.keys()]).size;
     },
 
+    enqueueSteps(steps, fallbackPromptIndex) {
+      for (const step of steps)
+        rawBucket(bucketOf(step.promptIndex, fallbackPromptIndex)).steps.push(
+          step,
+        );
+    },
     take(browser, fallbackPromptIndex) {
       const { observations, steps } = browser.drainNewArtifacts();
       for (const obs of observations) {
@@ -269,12 +293,18 @@ export function createBrowserArtifactOutbox(args: {
       }
     },
 
-    async stageVideo(bytes) {
+    async stageVideo(bytes, options) {
       if (videoAttached || stagedVideoBlobId || bytes.length === 0) return;
       const convexClient = getClient();
       if (!convexClient) return;
       try {
-        stagedVideoBlobId = await uploadVideoBlob(convexClient, bytes);
+        stagedVideoBlobId = await uploadVideoBlob(convexClient, bytes, {
+          ...(options?.mime ? { contentType: options.mime } : {}),
+        });
+        // Held beside the blob id and written with it, never on its own:
+        // metadata describing a video nothing uploaded would render a duration
+        // and an fps under an empty player.
+        stagedVideoMeta = stagedVideoBlobId ? options?.meta : undefined;
         if (stagedVideoBlobId === undefined) {
           // `uploadVideoBlob` also returns undefined WITHOUT throwing — an
           // unusable upload URL, or a response carrying no storageId. Staging
@@ -306,11 +336,10 @@ export function createBrowserArtifactOutbox(args: {
         };
       }
 
-
       await serializePending(convexClient);
 
       const auth = {
-        ...(chatboxId !== undefined ? { chatboxId } : {}),
+        ...(scenarioId !== undefined ? { scenarioId } : {}),
         ...(accessVersion !== undefined ? { accessVersion } : {}),
         chatSessionId,
       };
@@ -330,40 +359,66 @@ export function createBrowserArtifactOutbox(args: {
         // Ride the staged video along on the first write of this flush — one
         // fewer round trip, and the attach is first-write-wins server-side.
         const carriesVideo = !videoAttached && stagedVideoBlobId !== undefined;
-        try {
-          const result = await convexClient.mutation(
-            "chatSessions:recordBrowserArtifacts" as any,
-            {
-              ...auth,
-              promptIndex: batch.promptIndex,
-              ...(batch.observations.length
-                ? { widgetRenderObservations: batch.observations }
-                : {}),
-              ...(batch.steps.length
-                ? { browserInteractionSteps: batch.steps }
-                : {}),
-              ...(carriesVideo ? { videoBlobId: stagedVideoBlobId } : {}),
-            },
-          );
-          if (result == null) {
-            // The session row hasn't landed yet (`/ingest-chat` race). Keep the
-            // batch — a later flush retries it, and the write is idempotent.
-            continue;
+        // ONE attempt per flush, through the shared acknowledgement primitive:
+        // the retry cadence here is "the next flush", not a loop inside this
+        // one, so a stalled backend never holds a terminal path open. What is
+        // shared with the evidence client is the RULE, not the schedule —
+        // state is released only on a confirmed acknowledgement.
+        const attempt = await writeUntilAcknowledged(
+          async () => {
+            const result = await convexClient.mutation(
+              "chatSessions:recordBrowserArtifacts" as any,
+              {
+                ...auth,
+                promptIndex: batch.promptIndex,
+                ...(batch.observations.length
+                  ? { widgetRenderObservations: batch.observations }
+                  : {}),
+                ...(batch.steps.length
+                  ? { browserInteractionSteps: batch.steps }
+                  : {}),
+                ...(carriesVideo
+                  ? {
+                      videoBlobId: stagedVideoBlobId,
+                      ...(stagedVideoMeta
+                        ? { videoMeta: stagedVideoMeta }
+                        : {}),
+                    }
+                  : {}),
+              },
+            );
+            // The session row hasn't landed yet (`/ingest-chat` race) — a
+            // legitimate `null`, not a failure, and the write is idempotent so
+            // the next flush retries it.
+            return result == null
+              ? { status: "retryable" as const, reason: "session row not ready" }
+              : { status: "acknowledged" as const, value: result };
+          },
+          { maxAttempts: 1 },
+        );
+
+        if (!attempt.acknowledged) {
+          if (attempt.reason !== "session row not ready") {
+            logger.warn(
+              `[${logScope}] browser artifact write failed; retrying`,
+              {
+                chatSessionId,
+                promptIndex: batch.promptIndex,
+                observations: batch.observations.length,
+                steps: batch.steps.length,
+                error: attempt.reason,
+              },
+            );
           }
-          wire.delete(batch.promptIndex);
-          written += 1;
-          if (carriesVideo) {
-            videoAttached = true;
-            stagedVideoBlobId = undefined;
-          }
-        } catch (err) {
-          logger.warn(`[${logScope}] browser artifact write failed; retrying`, {
-            chatSessionId,
-            promptIndex: batch.promptIndex,
-            observations: batch.observations.length,
-            steps: batch.steps.length,
-            error: err instanceof Error ? err.message : String(err),
-          });
+          continue;
+        }
+
+        wire.delete(batch.promptIndex);
+        written += 1;
+        if (carriesVideo) {
+          videoAttached = true;
+          stagedVideoBlobId = undefined;
+          stagedVideoMeta = undefined;
         }
       }
 
@@ -373,11 +428,17 @@ export function createBrowserArtifactOutbox(args: {
         try {
           const result = await convexClient.mutation(
             "chatSessions:recordBrowserArtifacts" as any,
-            { ...auth, promptIndex: 0, videoBlobId: stagedVideoBlobId },
+            {
+              ...auth,
+              promptIndex: 0,
+              videoBlobId: stagedVideoBlobId,
+              ...(stagedVideoMeta ? { videoMeta: stagedVideoMeta } : {}),
+            },
           );
           if (result != null) {
             videoAttached = true;
             stagedVideoBlobId = undefined;
+            stagedVideoMeta = undefined;
           }
         } catch (err) {
           logger.warn(`[${logScope}] replay video attach failed`, {

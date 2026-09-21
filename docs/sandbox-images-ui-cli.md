@@ -151,7 +151,7 @@ Mirror the `hosts` stack: command (`cli/src/commands/hosts.ts`) → SDK operatio
 3. **`sdk/src/platform/operations.ts`** — operations with zod input schemas +
    `resolveProjectOrThrow(client, input.project, signal)`.
 4. **`cli/src/commands/images.ts`**, registered in `cli/src/index.ts`:
-   `mcpjam images list|get|create|edit|build|logs|use|reset|promote|delete`.
+   `mcpjam cloud images list|get|create|edit|build|logs|use|reset|promote|delete`.
    `create`/`edit` read the blueprint from `--file <path>` or stdin (the "edit
    them with the CLI" requirement); `--format json` like the rest.
 5. **OpenAPI:** add entries for every new route to **`docs/reference/openapi.json`**
@@ -169,8 +169,8 @@ Mirror the `hosts` stack: command (`cli/src/commands/hosts.ts`) → SDK operatio
   → build (stub ⇒ instant on dev) → attach → reset → delete. With
   `COMPUTERS_PROVIDER=e2b` + default stub builder, confirm attach is rejected with
   a clean error. Real builds need `COMPUTERS_ENV_BUILDER=e2b` on the deployment.
-- **CLI**: with an `sk_` key — `mcpjam images create --file blueprint.yaml`,
-  `mcpjam images build <name>`, `mcpjam images logs <name>`, `mcpjam images use <name>`;
+- **CLI**: with an `sk_` key — `mcpjam cloud images create --file blueprint.yaml`,
+  `mcpjam cloud images build <name>`, `mcpjam cloud images logs <name>`, `mcpjam cloud images use <name>`;
   guest token → 401.
 - typecheck + lint each package; **openapi-drift** + the new route/CLI tests pass.
 

@@ -1,3 +1,6 @@
+import { useBrowserChatHandoff } from "@/lib/browser-shell/chat-handoff";
+import { useState } from "react";
+import { useConversationTargetRestoration } from "../use-conversation-target-restoration";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { generateId } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +10,7 @@ import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 
 const mockState = vi.hoisted(() => ({
+  appState: null as any,
   sendMessage: vi.fn(),
   stop: vi.fn(),
   setMessages: vi.fn(),
@@ -26,8 +30,7 @@ const mockState = vi.hoisted(() => ({
   useSharedChatWidgetCapture: vi.fn(),
   latestOnData: undefined as ((part: unknown) => void) | undefined,
   latestOnToolCall: undefined as
-    | ((options: { toolCall: unknown }) => Promise<void> | void)
-    | undefined,
+    ((options: { toolCall: unknown }) => Promise<void> | void) | undefined,
   addToolOutput: vi.fn(),
   convexAuth: {
     isAuthenticated: true,
@@ -45,6 +48,10 @@ const mockState = vi.hoisted(() => ({
   })),
   countTextTokens: vi.fn(async () => null),
   selectedModelId: "anthropic/claude-haiku-4.5",
+}));
+vi.mock("@/state/app-state-context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/state/app-state-context")>()),
+  useOptionalSharedAppState: () => mockState.appState,
 }));
 let lastTransportOptions: any;
 
@@ -115,7 +122,7 @@ vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   ]),
   getDefaultModel: vi.fn((models: Array<typeof guestModel>) => models[0]),
   isMCPJamProvidedModelMenuItem: vi.fn((model: { id: string }) =>
-    String(model.id).includes("/")
+    String(model.id).includes("/"),
   ),
 }));
 
@@ -184,7 +191,7 @@ vi.mock("@/lib/apis/web/context", () => ({
       serverNames,
       oauthTokens,
       accessScope,
-      chatboxId,
+      scenarioId,
       accessVersion,
     }: {
       projectId: string;
@@ -192,7 +199,7 @@ vi.mock("@/lib/apis/web/context", () => ({
       serverNames: string[];
       oauthTokens?: Record<string, string>;
       accessScope?: string;
-      chatboxId?: string;
+      scenarioId?: string;
       accessVersion?: number;
     }) => ({
       projectId,
@@ -200,9 +207,11 @@ vi.mock("@/lib/apis/web/context", () => ({
       serverNames,
       ...(oauthTokens ? { oauthTokens } : {}),
       ...(accessScope ? { accessScope } : {}),
-      ...(chatboxId ? { chatboxId } : {}),
-      ...(chatboxId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
-    })
+      ...(scenarioId ? { scenarioId } : {}),
+      ...(scenarioId && Number.isFinite(accessVersion)
+        ? { accessVersion }
+        : {}),
+    }),
   ),
   getApiContextRevision: vi.fn(() => 0),
   subscribeApiContext: vi.fn(() => () => {}),
@@ -240,9 +249,7 @@ vi.mock("@ai-sdk/react", async () => {
           sendMessages: (options: any) => Promise<unknown>;
         };
         onData?: (part: unknown) => void;
-        onToolCall?: (options: {
-          toolCall: unknown;
-        }) => Promise<void> | void;
+        onToolCall?: (options: { toolCall: unknown }) => Promise<void> | void;
       }) => {
         const latchedIdRef = React.useRef(id);
         const latchedTransportRef = React.useRef(transport);
@@ -284,12 +291,13 @@ vi.mock("@ai-sdk/react", async () => {
           addToolApprovalResponse: mockState.addToolApprovalResponse,
           addToolOutput: mockState.addToolOutput,
         };
-      }
+      },
     ),
   };
 });
 
-vi.mock("ai", () => ({
+vi.mock("ai", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("ai")>()),
   DefaultChatTransport: class MockTransport {
     options: any;
     sendMessages: ReturnType<typeof vi.fn>;
@@ -329,6 +337,7 @@ describe("useChatSession hosted mode", () => {
     mockState.setMessages.mockReset();
     mockState.buildServerRequest.mockReset();
     mockState.getAccessToken.mockReset();
+    mockState.appState = null;
     mockState.getAccessToken.mockResolvedValue("access-token");
     mockState.getGuestBearerToken.mockReset();
     mockState.getGuestBearerToken.mockResolvedValue("guest-token");
@@ -339,6 +348,41 @@ describe("useChatSession hosted mode", () => {
     vi.mocked(generateId).mockReset();
     vi.mocked(generateId).mockReturnValue("chat-session-id");
     useTrafficLogStore.getState().clear();
+  });
+
+  it("waits for browser control before dispatching the next user message", async () => {
+    let finish!: (ok: boolean) => void;
+    const release = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const { result, unmount } = renderHook(() => {
+      const chat = useChatSession({
+        selectedServers: [],
+        hostedContext: { projectId: "handoff-test", selectedServerIds: [] },
+      });
+      useBrowserChatHandoff({
+        projectId: "handoff-test",
+        sessionId: chat.chatSessionId,
+        holding: true,
+        release,
+      });
+      return chat;
+    });
+    let send!: Promise<boolean>;
+    act(() => {
+      send = result.current.sendMessage({ text: "continue" });
+    });
+    expect(release).toHaveBeenCalledOnce();
+    expect(mockState.authFetch).not.toHaveBeenCalled();
+    await act(async () => {
+      finish(true);
+      await send;
+    });
+    await waitFor(() => expect(mockState.authFetch).toHaveBeenCalledOnce());
+    unmount();
   });
 
   it("announces the hosted-elicitation handshake", async () => {
@@ -353,7 +397,7 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     expect(lastTransportOptions.body()).toMatchObject({
@@ -373,7 +417,7 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     expect(lastTransportOptions.body()).toMatchObject({
@@ -388,10 +432,10 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
-      })
+      }),
     );
 
     const body = lastTransportOptions.body();
@@ -401,27 +445,27 @@ describe("useChatSession hosted mode", () => {
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
       selectedServerNames: ["server-1"],
-      chatboxId: "cbx_test",
+      scenarioId: "cbx_test",
       accessVersion: 1,
       accessScope: "chat_v2",
     });
     unmount();
   });
 
-  it("includes chatboxId and accessVersion in the hosted transport body", async () => {
+  it("includes scenarioId and accessVersion in the hosted transport body", async () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
           oauthTokens: {
             "server-id-1": "browser-token",
           },
         },
-      })
+      }),
     );
 
     const body = lastTransportOptions.body();
@@ -431,7 +475,7 @@ describe("useChatSession hosted mode", () => {
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
       selectedServerNames: ["server-1"],
-      chatboxId: "cbx_test",
+      scenarioId: "cbx_test",
       accessVersion: 1,
       accessScope: "chat_v2",
     });
@@ -439,23 +483,23 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
-  it("includes chatbox surface in the hosted transport body", async () => {
+  it("includes scenario surface in the hosted transport body", async () => {
     const { unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
-          chatboxSurface: "preview",
+          scenarioSurface: "preview",
         },
-      })
+      }),
     );
 
     const body = lastTransportOptions.body();
     expect(body).toMatchObject({
-      chatboxId: "cbx_test",
+      scenarioId: "cbx_test",
       accessVersion: 1,
       surface: "preview",
     });
@@ -463,10 +507,14 @@ describe("useChatSession hosted mode", () => {
   });
 
   it("never ships WebMCP ui_* tools from the generic hook", async () => {
-    // MCPJam UI tools are agent-surface-only: even with a non-empty internal
-    // registry, the generic chat body must not carry a `uiTools` field on any
-    // surface. The only sender is agent-chat-instances.ts
-    // (/api/web/mcpjam-agent).
+    // The Playground and every other generic chat surface stay isolated from
+    // the UI-tool catalog: even with a non-empty registry, the body must not
+    // carry a `uiTools` field on any surface. The only sender is
+    // agent-chat-instances.ts (/api/web/mcpjam-agent). A user who explicitly
+    // opts a turn into an open WebMCP session's `pageTools` still gets those
+    // — this is about the automatic snapshot, not about page tools. (The
+    // catalog ALSO reaches browser-native agents now, but through
+    // `document.modelContext`, which never touches this request body.)
     const unregister = useUiToolsRegistry.getState().registerUiTool({
       name: "ui_navigate",
       description: "Navigate the MCPJam inspector",
@@ -484,26 +532,26 @@ describe("useChatSession hosted mode", () => {
             projectId: "project-1",
             selectedServerIds: ["server-id-1"],
           },
-        })
+        }),
       );
       expect(lastTransportOptions.body()).not.toHaveProperty("uiTools");
       direct.unmount();
 
-      // Chatbox session (published/share-link or owner preview): same —
+      // Scenario session (published/share-link or owner preview): same —
       // the field is absent entirely, not sent as an empty list.
-      const chatbox = renderHook(() =>
+      const scenario = renderHook(() =>
         useChatSession({
           selectedServers: ["server-1"],
           hostedContext: {
             projectId: "project-1",
             selectedServerIds: ["server-id-1"],
-            chatboxId: "cbx_test",
+            scenarioId: "cbx_test",
             accessVersion: 1,
           },
-        })
+        }),
       );
       expect(lastTransportOptions.body()).not.toHaveProperty("uiTools");
-      chatbox.unmount();
+      scenario.unmount();
     } finally {
       unregister();
     }
@@ -532,7 +580,7 @@ describe("useChatSession hosted mode", () => {
             projectId: "project-1",
             selectedServerIds: ["server-id-1"],
           },
-        })
+        }),
       );
       expect(mockState.latestOnToolCall).toBeDefined();
 
@@ -573,12 +621,12 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     await waitFor(() => {
       expect(result.current.availableModels.map((model) => model.id)).toContain(
-        "gpt-4o-mini"
+        "gpt-4o-mini",
       );
     });
     expect(result.current.selectedModel.id).toBe("gpt-4o-mini");
@@ -600,7 +648,7 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: string;
           selectedServerIds: string[];
-          chatboxId: string;
+          scenarioId: string;
           accessVersion: number;
         };
       }) =>
@@ -614,11 +662,11 @@ describe("useChatSession hosted mode", () => {
           hostedContext: {
             projectId: "project-1",
             selectedServerIds: ["server-id-1"],
-            chatboxId: "cbx_1",
+            scenarioId: "cbx_1",
             accessVersion: 1,
           },
         },
-      }
+      },
     );
 
     await waitFor(() => {
@@ -634,7 +682,7 @@ describe("useChatSession hosted mode", () => {
       hostedContext: {
         projectId: "project-2",
         selectedServerIds: ["server-id-2"],
-        chatboxId: "cbx_2",
+        scenarioId: "cbx_2",
         accessVersion: 1,
       },
     });
@@ -647,13 +695,69 @@ describe("useChatSession hosted mode", () => {
     expect(onReset).toHaveBeenCalledWith("auth-bootstrap");
   });
 
+  it("restores a saved host before hydrating, so its scope reset cannot erase the reopened session", async () => {
+    const onReset = vi.fn();
+    const { result } = renderHook(() => {
+      const [hostId, setHostId] = useState<string | null>("host-a");
+      const chat = useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          projectId: "project-1",
+          hostId: hostId ?? undefined,
+          selectedServerIds: [],
+        },
+        onReset,
+      });
+      const restoration = useConversationTargetRestoration({
+        projectId: "project-1",
+        composer: { kind: "host", hostId },
+        settled: chat.isSessionBootstrapComplete,
+        hostsLoading: false,
+        hostIds: ["host-a", "host-b"],
+        environmentsEnabled: false,
+        selectHost: setHostId,
+        selectEnvironment: () => {},
+        clearEnvironment: () => {},
+      });
+      return { chat, restoration, hostId };
+    });
+    await waitFor(() =>
+      expect(result.current.chat.isSessionBootstrapComplete).toBe(true),
+    );
+    onReset.mockClear();
+    let resumed!: Promise<void>;
+    act(() => {
+      resumed = result.current.restoration
+        .restoreTarget({ kind: "host", hostId: "host-b" }, () => true)
+        .then(async (apply) => {
+          expect(apply).toBe(true);
+          await result.current.chat.loadChatSession({
+            chatSessionId: "saved-chat",
+            messagesBlobUrl: null,
+            version: 3,
+          });
+        });
+    });
+    await waitFor(() =>
+      expect(result.current.chat.chatSessionId).toBe("saved-chat"),
+    );
+    await resumed;
+    expect(result.current.hostId).toBe("host-b");
+    expect(result.current.chat.chatSessionId).toBe("saved-chat");
+    expect(result.current.chat.resumedVersion).toBe(3);
+    expect(onReset.mock.calls.map(([reason]) => reason)).toEqual([
+      "auth-bootstrap",
+      "hydrate",
+    ]);
+  });
+
   it("marks session bootstrap complete only after auth setup finishes", async () => {
     let resolveAccessToken: (value: string) => void = () => {};
     mockState.getAccessToken.mockImplementation(
       () =>
         new Promise<string>((resolve) => {
           resolveAccessToken = resolve;
-        })
+        }),
     );
 
     const { result } = renderHook(() =>
@@ -663,7 +767,7 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     expect(result.current.isSessionBootstrapComplete).toBe(false);
@@ -696,7 +800,7 @@ describe("useChatSession hosted mode", () => {
           selectedServers: ["server-1"],
           hostedSelectedServerIds: ["server-id-1"],
         },
-      }
+      },
     );
 
     await waitFor(() => {
@@ -719,11 +823,10 @@ describe("useChatSession hosted mode", () => {
         String(
           (
             mockState.authFetch.mock.calls.at(-1)?.[1] as
-              | RequestInit
-              | undefined
-          )?.body ?? "{}"
-        )
-      )
+              RequestInit | undefined
+          )?.body ?? "{}",
+        ),
+      ),
     ).toMatchObject({
       chatSessionId: initialChatSessionId,
       selectedServerIds: ["server-id-1"],
@@ -749,11 +852,10 @@ describe("useChatSession hosted mode", () => {
         String(
           (
             mockState.authFetch.mock.calls.at(-1)?.[1] as
-              | RequestInit
-              | undefined
-          )?.body ?? "{}"
-        )
-      )
+              RequestInit | undefined
+          )?.body ?? "{}",
+        ),
+      ),
     ).toMatchObject({
       chatSessionId: initialChatSessionId,
       selectedServerIds: ["server-id-2"],
@@ -766,7 +868,7 @@ describe("useChatSession hosted mode", () => {
       () =>
         new Promise<Array<{ serverId: string }>>((resolve) => {
           resolvePreflight = resolve;
-        })
+        }),
     );
 
     const { result, rerender } = renderHook(
@@ -779,7 +881,7 @@ describe("useChatSession hosted mode", () => {
             ensureServerIds,
           },
         }),
-      { initialProps: { selectedServers: ["server-a", "server-b"] } }
+      { initialProps: { selectedServers: ["server-a", "server-b"] } },
     );
 
     mockState.authFetch.mockClear();
@@ -805,8 +907,8 @@ describe("useChatSession hosted mode", () => {
     const body = JSON.parse(
       String(
         (mockState.authFetch.mock.calls.at(-1)?.[1] as RequestInit | undefined)
-          ?.body ?? "{}"
-      )
+          ?.body ?? "{}",
+      ),
     );
     // Ids ride with the names they were resolved from — never stale ids
     // paired with the fresh (shrunk) selection.
@@ -832,7 +934,7 @@ describe("useChatSession hosted mode", () => {
       () =>
         new Promise<Array<{ serverId: string }>>((resolve) => {
           resolvePreflight = resolve;
-        })
+        }),
     );
 
     const { result } = renderHook(() =>
@@ -843,7 +945,7 @@ describe("useChatSession hosted mode", () => {
           selectedServerIds: [],
           ensureServerIds,
         },
-      })
+      }),
     );
 
     // `authFetch`, not `mockState.sendMessage`: the mocked `useChat` returns
@@ -855,8 +957,7 @@ describe("useChatSession hosted mode", () => {
     let sendPromise: Promise<boolean> | undefined;
     act(() => {
       sendPromise = result.current.sendMessage({ text: "hi" }) as unknown as
-        | Promise<boolean>
-        | undefined;
+        Promise<boolean> | undefined;
     });
     expect(ensureServerIds).toHaveBeenCalledWith(["server-a"]);
 
@@ -877,7 +978,7 @@ describe("useChatSession hosted mode", () => {
 
   it("does not block submit on unresolved server ids when a send-time resolver is provided", async () => {
     const ensureServerIds = vi.fn(async (names: string[]) =>
-      names.map((name) => ({ serverId: `id-${name}` }))
+      names.map((name) => ({ serverId: `id-${name}` })),
     );
     const { result } = renderHook(() =>
       useChatSession({
@@ -889,7 +990,7 @@ describe("useChatSession hosted mode", () => {
           selectedServerIds: [],
           ensureServerIds,
         },
-      })
+      }),
     );
     await waitFor(() => {
       expect(result.current.inputDisabled).toBe(false);
@@ -919,8 +1020,8 @@ describe("useChatSession hosted mode", () => {
         {
           status: 500,
           headers: { "Content-Type": "application/json" },
-        }
-      )
+        },
+      ),
     );
 
     const { result } = renderHook(() =>
@@ -930,7 +1031,7 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     await waitFor(() => {
@@ -949,7 +1050,7 @@ describe("useChatSession hosted mode", () => {
             serverName: "server-1",
             method: "tools/list",
           }),
-        ])
+        ]),
       );
     });
   });
@@ -962,7 +1063,7 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     act(() => {
@@ -990,7 +1091,7 @@ describe("useChatSession hosted mode", () => {
           direction: "RECEIVE",
           method: "result",
         }),
-      ])
+      ]),
     );
   });
 
@@ -1004,10 +1105,10 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
-      })
+      }),
     );
 
     await waitFor(() => {
@@ -1042,10 +1143,10 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
-      })
+      }),
     );
 
     await waitFor(() => {
@@ -1054,7 +1155,7 @@ describe("useChatSession hosted mode", () => {
 
     // No longer gated → the persisted model stays selected (no fallback).
     expect(result.current.selectedModel.id).toBe(
-      "google/gemini-3.1-pro-preview"
+      "google/gemini-3.1-pro-preview",
     );
     unmount();
   });
@@ -1068,10 +1169,10 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
-      })
+      }),
     );
 
     await waitFor(() => {
@@ -1082,7 +1183,7 @@ describe("useChatSession hosted mode", () => {
     expect(
       result.current.availableModels
         .filter((model) => !model.disabled)
-        .map((model) => model.id)
+        .map((model) => model.id),
     ).toEqual([
       "anthropic/claude-opus-4.6",
       "google/gemini-3.1-pro-preview",
@@ -1104,7 +1205,7 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     await waitFor(() => {
@@ -1134,7 +1235,7 @@ describe("useChatSession hosted mode", () => {
         expect.objectContaining({
           chatSessionId: "history-session-1",
           persistedSnapshotToolCallIds: ["tool-call-1"],
-        })
+        }),
       );
     });
 
@@ -1154,7 +1255,7 @@ describe("useChatSession hosted mode", () => {
       new Response(JSON.stringify(toolOutput), {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      })
+      }),
     );
 
     const { result, unmount } = renderHook(() =>
@@ -1164,7 +1265,7 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     await waitFor(() => {
@@ -1193,7 +1294,7 @@ describe("useChatSession hosted mode", () => {
 
     await waitFor(() => {
       expect(
-        result.current.restoredToolRenderOverrides["tool-call-1"]?.toolOutput
+        result.current.restoredToolRenderOverrides["tool-call-1"]?.toolOutput,
       ).toEqual(toolOutput);
     });
 
@@ -1209,7 +1310,7 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     await waitFor(() => {
@@ -1258,13 +1359,13 @@ describe("useChatSession hosted mode", () => {
       // connected.
       expect(mcp?.liveFetchPreferred).toBe(true);
       expect(mcp?.cachedWidgetHtmlUrl).toBe(
-        "https://storage.example.com/mcp-widget.html"
+        "https://storage.example.com/mcp-widget.html",
       );
       // OpenAI Apps revisit: cached path only (cannot live-fetch
       // `outputTemplate = "__cached__"`).
       expect(openai?.liveFetchPreferred).toBe(false);
       expect(openai?.cachedWidgetHtmlUrl).toBe(
-        "https://storage.example.com/openai-widget.html"
+        "https://storage.example.com/openai-widget.html",
       );
       expect(openai?.isOffline).toBe(true);
     });
@@ -1279,21 +1380,21 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
-      })
+      }),
     );
 
     await waitFor(() => {
       expect(result.current.availableModels.map((model) => model.id)).toContain(
-        "openai/gpt-5.4-pro"
+        "openai/gpt-5.4-pro",
       );
     });
     expect(
       result.current.availableModels.find(
-        (model) => model.id === "openai/gpt-5.4-pro"
-      )?.disabled
+        (model) => model.id === "openai/gpt-5.4-pro",
+      )?.disabled,
     ).toBeUndefined();
     unmount();
   });
@@ -1321,7 +1422,7 @@ describe("useChatSession — environment execution target", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: environmentContext,
-      })
+      }),
     );
 
     const body = lastTransportOptions.body();
@@ -1338,13 +1439,13 @@ describe("useChatSession — environment execution target", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: environmentContext,
-      })
+      }),
     );
 
     // Absent ⇒ "resolve the environment's own server set". Sending an envelope
     // here would freeze whatever the set happened to be at page load.
     expect(lastTransportOptions.body()).not.toHaveProperty(
-      "environmentOverrides"
+      "environmentOverrides",
     );
     unmount();
   });
@@ -1357,7 +1458,7 @@ describe("useChatSession — environment execution target", () => {
           ...environmentContext,
           environmentOverrides: { serverIds: [] },
         },
-      })
+      }),
     );
 
     // `[]` means "run this turn with no MCP servers" and must survive the trip.
@@ -1375,7 +1476,7 @@ describe("useChatSession — environment execution target", () => {
           ...environmentContext,
           environmentOverrides: { serverIds: ["srv_a", "srv_b"] },
         },
-      })
+      }),
     );
 
     expect(lastTransportOptions.body()).toMatchObject({
@@ -1396,7 +1497,7 @@ describe("useChatSession — environment execution target", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: { ...environmentContext, ensureServerIds },
-      })
+      }),
     );
 
     await act(async () => {
@@ -1415,7 +1516,7 @@ describe("useChatSession — environment execution target", () => {
       useChatSession({
         selectedServers: ["server-1", "hidden-plugin-server"],
         hostedContext: { ...environmentContext, selectedServerIds: [] },
-      })
+      }),
     );
 
     await waitFor(() => expect(result.current.submitBlocked).toBe(false));
@@ -1431,7 +1532,7 @@ describe("useChatSession — environment execution target", () => {
           requiresWebChatApi: true,
           hostId: "host_1",
         },
-      })
+      }),
     );
     expect(hostMode.result.current.submitBlocked).toBe(true);
     hostMode.unmount();
@@ -1452,7 +1553,7 @@ describe("useChatSession — environment execution target", () => {
           ...environmentContext,
           presentationHostId: "host_env",
         },
-      })
+      }),
     );
 
     act(() => {
@@ -1465,7 +1566,7 @@ describe("useChatSession — environment execution target", () => {
     // `h:<hostId>` is the store's own key shape, and the rail reads it with the
     // previewed host id — which in environment mode IS the environment's host.
     expect(useHarnessWorkdirStore.getState().byKey["h:host_env"]).toBe(
-      "/home/user/claude-code-abc"
+      "/home/user/claude-code-abc",
     );
     unmount();
   });
@@ -1480,7 +1581,7 @@ describe("useChatSession — environment execution target", () => {
       () =>
         new Promise<Array<{ serverId: string }>>((resolve) => {
           resolvePreflight = resolve;
-        })
+        }),
     );
 
     const { result, rerender, unmount } = renderHook(
@@ -1497,7 +1598,7 @@ describe("useChatSession — environment execution target", () => {
                 ensureServerIds,
               },
         }),
-      { initialProps: { inEnvironment: false } }
+      { initialProps: { inEnvironment: false } },
     );
     mockState.authFetch.mockClear();
 
@@ -1520,7 +1621,7 @@ describe("useChatSession — environment execution target", () => {
     unmount();
   });
 
-  describe("chatbox access recovery", () => {
+  describe("scenario access recovery", () => {
     const TURN_URL = "/api/web/chat-v2";
 
     function turnInit(accessVersion: number) {
@@ -1528,7 +1629,7 @@ describe("useChatSession — environment execution target", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          chatboxId: "cbx_recover",
+          scenarioId: "cbx_recover",
           accessVersion,
           messages: [{ role: "user", content: "hi" }],
         }),
@@ -1542,21 +1643,19 @@ describe("useChatSession — environment execution target", () => {
       });
     }
 
-    function renderChatbox(
-      hostedOverrides: Record<string, unknown>
-    ) {
+    function renderScenario(hostedOverrides: Record<string, unknown>) {
       return renderHook(() =>
         useChatSession({
           selectedServers: ["server-1"],
           hostedContext: {
             projectId: "project-1",
             selectedServerIds: ["server-id-1"],
-            chatboxId: "cbx_recover",
+            scenarioId: "cbx_recover",
             accessVersion: 1,
             requiresWebChatApi: true,
             ...hostedOverrides,
           },
-        })
+        }),
       );
     }
 
@@ -1564,7 +1663,7 @@ describe("useChatSession — environment execution target", () => {
     function chatFetch() {
       return lastTransportOptions.fetch as (
         input: RequestInfo | URL,
-        init?: RequestInit
+        init?: RequestInit,
       ) => Promise<Response>;
     }
 
@@ -1573,13 +1672,15 @@ describe("useChatSession — environment execution target", () => {
         .fn()
         .mockResolvedValue({ ok: true, accessVersion: 12 });
       const onAccessRevoked = vi.fn();
-      const { unmount } = renderChatbox({
+      const { unmount } = renderScenario({
         refreshAccessSession,
         onAccessRevoked,
       });
 
       mockState.authFetch
-        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_STALE", 409))
+        .mockResolvedValueOnce(
+          accessErrorResponse("SCENARIO_ACCESS_STALE", 409),
+        )
         .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
       const response = await chatFetch()(TURN_URL, turnInit(1));
@@ -1591,7 +1692,7 @@ describe("useChatSession — environment execution target", () => {
       // The replay is byte-identical except for the field that went stale.
       const replayInit = mockState.authFetch.mock.calls[1][1] as RequestInit;
       expect(JSON.parse(replayInit.body as string)).toEqual({
-        chatboxId: "cbx_recover",
+        scenarioId: "cbx_recover",
         accessVersion: 12,
         messages: [{ role: "user", content: "hi" }],
       });
@@ -1603,10 +1704,12 @@ describe("useChatSession — environment execution target", () => {
       const refreshAccessSession = vi
         .fn()
         .mockResolvedValue({ ok: true, accessVersion: 3 });
-      const { unmount } = renderChatbox({ refreshAccessSession });
+      const { unmount } = renderScenario({ refreshAccessSession });
 
       mockState.authFetch
-        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_DENIED", 403))
+        .mockResolvedValueOnce(
+          accessErrorResponse("SCENARIO_ACCESS_DENIED", 403),
+        )
         .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
       const response = await chatFetch()(TURN_URL, turnInit(1));
@@ -1621,14 +1724,18 @@ describe("useChatSession — environment execution target", () => {
         .fn()
         .mockResolvedValue({ ok: true, accessVersion: 2 });
       const onAccessRevoked = vi.fn();
-      const { unmount } = renderChatbox({
+      const { unmount } = renderScenario({
         refreshAccessSession,
         onAccessRevoked,
       });
 
       mockState.authFetch
-        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_STALE", 409))
-        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_STALE", 409));
+        .mockResolvedValueOnce(
+          accessErrorResponse("SCENARIO_ACCESS_STALE", 409),
+        )
+        .mockResolvedValueOnce(
+          accessErrorResponse("SCENARIO_ACCESS_STALE", 409),
+        );
 
       const response = await chatFetch()(TURN_URL, turnInit(1));
 
@@ -1645,37 +1752,48 @@ describe("useChatSession — environment execution target", () => {
         .fn()
         .mockResolvedValue({ ok: true, accessVersion: 2 });
       const onAccessRevoked = vi.fn();
-      const { unmount } = renderChatbox({
+      const { unmount } = renderScenario({
         refreshAccessSession,
         onAccessRevoked,
       });
 
       mockState.authFetch
-        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_DENIED", 403))
-        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_DENIED", 403));
+        .mockResolvedValueOnce(
+          accessErrorResponse("SCENARIO_ACCESS_DENIED", 403),
+        )
+        .mockResolvedValueOnce(
+          accessErrorResponse("SCENARIO_ACCESS_DENIED", 403),
+        );
 
       await chatFetch()(TURN_URL, turnInit(1));
 
       expect(onAccessRevoked).toHaveBeenCalledTimes(1);
       expect(onAccessRevoked).toHaveBeenCalledWith(
-        expect.objectContaining({ status: 403, code: "CHATBOX_ACCESS_DENIED" })
+        expect.objectContaining({
+          status: 403,
+          code: "SCENARIO_ACCESS_DENIED",
+        }),
       );
       unmount();
     });
 
     it("revokes when the recovery redeem is itself definitively refused", async () => {
-      const error = { status: 403, code: "CHATBOX_MEMBERS_ONLY", message: "no" };
+      const error = {
+        status: 403,
+        code: "SCENARIO_MEMBERS_ONLY",
+        message: "no",
+      };
       const refreshAccessSession = vi
         .fn()
         .mockResolvedValue({ ok: false, reason: "denied", error });
       const onAccessRevoked = vi.fn();
-      const { unmount } = renderChatbox({
+      const { unmount } = renderScenario({
         refreshAccessSession,
         onAccessRevoked,
       });
 
       mockState.authFetch.mockResolvedValue(
-        accessErrorResponse("CHATBOX_ACCESS_DENIED", 403)
+        accessErrorResponse("SCENARIO_ACCESS_DENIED", 403),
       );
 
       const response = await chatFetch()(TURN_URL, turnInit(1));
@@ -1692,13 +1810,13 @@ describe("useChatSession — environment execution target", () => {
         .fn()
         .mockResolvedValue({ ok: false, reason: "transient" });
       const onAccessRevoked = vi.fn();
-      const { unmount } = renderChatbox({
+      const { unmount } = renderScenario({
         refreshAccessSession,
         onAccessRevoked,
       });
 
       mockState.authFetch.mockResolvedValue(
-        accessErrorResponse("CHATBOX_ACCESS_STALE", 409)
+        accessErrorResponse("SCENARIO_ACCESS_STALE", 409),
       );
 
       const response = await chatFetch()(TURN_URL, turnInit(1));
@@ -1710,7 +1828,7 @@ describe("useChatSession — environment execution target", () => {
       unmount();
     });
 
-    it("skips classification entirely on a non-chatbox turn", async () => {
+    it("skips classification entirely on a non-scenario turn", async () => {
       const refreshAccessSession = vi.fn();
       const { unmount } = renderHook(() =>
         useChatSession({
@@ -1721,11 +1839,11 @@ describe("useChatSession — environment execution target", () => {
             requiresWebChatApi: true,
             refreshAccessSession,
           },
-        })
+        }),
       );
 
       mockState.authFetch.mockResolvedValue(
-        accessErrorResponse("CHATBOX_ACCESS_STALE", 409)
+        accessErrorResponse("SCENARIO_ACCESS_STALE", 409),
       );
 
       await chatFetch()(TURN_URL, turnInit(1));
@@ -1734,4 +1852,32 @@ describe("useChatSession — environment execution target", () => {
       unmount();
     });
   });
+});
+
+it("hands back a browser keyed by an unprovisioned local project", async () => {
+  mockState.appState = {
+    activeProjectId: "local-project",
+    projects: {},
+    servers: {},
+  };
+  const release = vi.fn(async () => false);
+  try {
+    const view = renderHook(() => {
+      const chat = useChatSession({ selectedServers: [] });
+      useBrowserChatHandoff({
+        projectId: "local-project",
+        sessionId: chat.chatSessionId,
+        holding: true,
+        release,
+      });
+      return chat;
+    });
+    await act(async () => {
+      await view.result.current.sendMessage({ text: "continue" });
+    });
+    expect(release).toHaveBeenCalledOnce();
+    view.unmount();
+  } finally {
+    mockState.appState = null;
+  }
 });

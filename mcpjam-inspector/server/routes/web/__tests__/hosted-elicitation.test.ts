@@ -125,7 +125,7 @@ describe("resolveElicitationGate", () => {
     expect(gate.effectiveClientCapabilities).toBe(ON);
   });
 
-  it("ignores the body for a chatbox turn and uses the published host", () => {
+  it("ignores the body for a scenario turn and uses the published host", () => {
     // THE security property: a share-link visitor controls the body. If the
     // published host has elicitation off, no body can switch it on.
     const gate = resolveElicitationGate({
@@ -156,7 +156,7 @@ describe("resolveElicitationGate", () => {
     expect(gate.effectiveClientCapabilities).toBe(OFF);
   });
 
-  it("honors a chatbox host that DOES declare elicitation", () => {
+  it("honors a scenario host that DOES declare elicitation", () => {
     const gate = resolveElicitationGate({
       hostAuthoritative: true,
       hostClientCapabilities: ON,
@@ -167,7 +167,7 @@ describe("resolveElicitationGate", () => {
     expect(gate.effectiveClientCapabilities).toBe(ON);
   });
 
-  it("fails closed for a chatbox when the backend omits clientCapabilities", () => {
+  it("fails closed for a scenario when the backend omits clientCapabilities", () => {
     // Backend predating the runtime-config field → absent → off, never "trust
     // the body instead".
     const gate = resolveElicitationGate({

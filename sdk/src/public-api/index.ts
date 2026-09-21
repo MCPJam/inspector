@@ -106,6 +106,7 @@ export const V1_ERROR_STATUS: Record<V1ErrorCode, number> = {
  * collapse onto their canonical equivalents.
  */
 export const INTERNAL_TO_V1_CODE: Record<string, V1ErrorCode> = {
+  account_suspended: "FORBIDDEN",
   UNAUTHORIZED: "UNAUTHORIZED",
   FORBIDDEN: "FORBIDDEN",
   NOT_FOUND: "NOT_FOUND",
@@ -134,6 +135,42 @@ export const INTERNAL_TO_V1_CODE: Record<string, V1ErrorCode> = {
   // `mapInternalCode`'s default and reaches API callers as a 500, which is
   // exactly the misreport the internal code was introduced to end.
   UPSTREAM_AUTH_FAILED: "FORBIDDEN",
+  // The organization's billing allowance is exhausted — `launch-journey-run`
+  // raises this from an upstream 402, and the reservation ledger's refusals
+  // reach the surface the same way. Publicly FORBIDDEN, for the same reason as
+  // the entry above: the public union has no billing member, and FORBIDDEN
+  // carries the property an API caller needs — the key is valid, this account
+  // may not do this right now, and retrying the same call will not change
+  // that. Without this entry it fell through to a 500, which told a customer
+  // that MCPJam broke when the truth was that their credit ran out, AND paged
+  // the on-call for a state only that customer can resolve.
+  //
+  // Deliberately not RATE_LIMITED: a daily cap that lifts at UTC midnight is a
+  // 429 with a `Retry-After` (see `convex-errors.ts`), and telling a caller to
+  // wait for money to appear would be the same lie in the other direction.
+  BILLING_LIMIT_REACHED: "FORBIDDEN",
+  // Registry / directory install family (mcpjam-backend publicApi contract).
+  // Copied from convex/publicApi/__fixtures__/internal-to-v1-code.json — do
+  // not retype. The inspector fixture keeps BILLING_LIMIT_REACHED (inspector-
+  // only) plus these entries; the backend fixture is the same minus billing.
+  endpoint_url_required: "VALIDATION_ERROR",
+  endpoint_url_invalid: "VALIDATION_ERROR",
+  endpoint_url_not_configurable: "VALIDATION_ERROR",
+  endpoint_url_not_allowed: "VALIDATION_ERROR",
+  already_connected_to_different_endpoint: "CONFLICT",
+  server_name_conflict: "CONFLICT",
+  registry_server_name_conflict: "CONFLICT",
+  catalog_server_removed: "CONFLICT",
+  catalog_server_not_connectable: "CONFLICT",
+  catalog_server_missing_endpoint: "CONFLICT",
+  endpoint_pattern_unusable: "CONFLICT",
+  catalog_server_changed: "CONFLICT",
+  registry_server_changed: "CONFLICT",
+  catalog_server_not_found: "NOT_FOUND",
+  registry_server_not_found: "NOT_FOUND",
+  registry_connection_not_found: "NOT_FOUND",
+  registry_server_not_approved: "FORBIDDEN",
+  registry_project_org_mismatch: "FORBIDDEN",
 };
 
 export function mapInternalCode(code: string | undefined | null): V1ErrorCode {
@@ -156,9 +193,19 @@ export function v1ErrorBody(
   };
 }
 
-/** Build a canonical collection body (omits `nextCursor` when absent). */
+/**
+ * Build a canonical collection body (omits `nextCursor` when absent).
+ *
+ * ABSENCE omits the field, not emptiness. For the MCP-backed routes
+ * (`/v1/.../tools`, `/prompts`, `/resources`) this value is a PASSTHROUGH of
+ * the MCP server's own cursor, and MCP 2026-07-28 `server/utilities/pagination`
+ * makes `""` a valid cursor that MUST NOT be treated as the end of results — a
+ * truthiness test here would strip it and tell the caller the listing ended.
+ * Convex-backed callers already normalize a spent cursor to `undefined`
+ * themselves, so they are unaffected.
+ */
 export function v1Page<T>(items: T[], nextCursor?: string): V1Page<T> {
-  return nextCursor ? { items, nextCursor } : { items };
+  return nextCursor !== undefined ? { items, nextCursor } : { items };
 }
 
 // ── Agent turn ────────────────────────────────────────────────────────

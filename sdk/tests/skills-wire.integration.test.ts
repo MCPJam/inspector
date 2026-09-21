@@ -4,7 +4,7 @@
  * — negotiation, capability declaration, `skills/list` drain, `skills/get`,
  * and `resources/read`-backed verification.
  *
- * PIN: modelcontextprotocol/docs @ d7490ec.
+ * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
  */
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -18,6 +18,7 @@ import {
   MCP_SKILLS_EXTENSION_ID,
   withSkillsExtensionCapability,
   getDefaultClientCapabilities,
+  enumeratedResources,
   isListedResource,
   isMCPSkillsWireError,
   isSkillNotFoundError,
@@ -226,7 +227,13 @@ describe("skills/list", () => {
     );
   });
 
-  it("stops on a repeated cursor rather than looping forever", async () => {
+  // A repeated cursor is FOLLOWED, not treated as an ending: MCP 2026-07-28
+  // `server/utilities/pagination` forbids reading anything off a cursor's
+  // value beyond whether one was provided, and comparing two cursors for
+  // equality is exactly that — a server may legally reissue one constant token
+  // for every page. The page cap is the bound, and it stops the walk loudly
+  // rather than handing back a partial listing as if it were whole.
+  it("bounds a server that reissues one cursor forever with the page cap, not a cycle check", async () => {
     const fixture = await serve({
       pageSize: 1,
       misbehavior: { repeatCursor: true },
@@ -234,7 +241,7 @@ describe("skills/list", () => {
     const manager = await connect(fixture.url);
     await expect(
       listAllServerSkills(manager, { serverId: SERVER_ID })
-    ).rejects.toThrow(/repeated cursor/);
+    ).rejects.toThrow(/Exceeded \d+ pages while draining skills\/list/);
   });
 });
 
@@ -312,6 +319,74 @@ describe("integrity over the real wire", () => {
     await expect(
       verifySkillMarkdown({ entry, markdown })
     ).rejects.toMatchObject({ kind: "digest_mismatch" });
+  });
+
+  it("refuses a skill whose advertised size does not match the bytes served", async () => {
+    // The digest is correct here; only the length is wrong. This is the case
+    // the draft calls out as a verification failure in its own right.
+    const fixture = await serve({
+      misbehavior: { sizeMismatch: "fixture/greeting" },
+    });
+    const manager = await connect(fixture.url);
+    const entry = await manager.getServerSkill(
+      SERVER_ID,
+      fixture.uriFor("fixture/greeting")
+    );
+    const markdown = await fetchMarkdown(manager, entry.uri);
+    await expect(
+      verifySkillMarkdown({ entry, markdown })
+    ).rejects.toMatchObject({ kind: "size_mismatch" });
+  });
+
+  it("still verifies a server that predates the size field", async () => {
+    // `size` is REQUIRED by the draft, but the SEP is unratified and servers
+    // built against the earlier text omit it. Refusing them would make MCPJam
+    // incompatible with every implementation that exists today; the digest
+    // still carries the integrity guarantee.
+    const fixture = await serve({ misbehavior: { omitSizes: true } });
+    const manager = await connect(fixture.url);
+    const entry = await manager.getServerSkill(
+      SERVER_ID,
+      fixture.uriFor("fixture/greeting")
+    );
+    expect(
+      Array.isArray(entry.resources) ? entry.resources[0]?.size : "not-an-array"
+    ).toBeUndefined();
+    const markdown = await fetchMarkdown(manager, entry.uri);
+    const verified = await verifySkillMarkdown({ entry, markdown });
+    expect(verified.frontmatter.name).toBe("greeting");
+  });
+
+  it("PARSES a dynamic manifest instead of failing the whole listing", async () => {
+    // The regression this pins: `resources` used to be typed as an array
+    // only, so a conforming server answering `"dynamic"` produced an
+    // InvalidSkillsPayloadError — a wire error, for a form the draft defines.
+    // MCPJam still refuses to LOAD such a skill, but that refusal belongs to
+    // policy and must be able to name the skill it is refusing.
+    const fixture = await serve({ misbehavior: { dynamicResources: true } });
+    const manager = await connect(fixture.url);
+    const listed = await manager.listServerSkills(SERVER_ID);
+    expect(listed.skills.length).toBeGreaterThan(0);
+    for (const skill of listed.skills) {
+      expect(skill.resources).toBe("dynamic");
+    }
+    const entry = await manager.getServerSkill(
+      SERVER_ID,
+      fixture.uriFor("fixture/greeting")
+    );
+    expect(entry.resources).toBe("dynamic");
+  });
+
+  it("authorizes NO reads for a dynamic skill", async () => {
+    const fixture = await serve({ misbehavior: { dynamicResources: true } });
+    const manager = await connect(fixture.url);
+    const entry = await manager.getServerSkill(
+      SERVER_ID,
+      fixture.uriFor("fixture/greeting")
+    );
+    // "dynamic" must never be read as "every URI is allowed".
+    expect(isListedResource(entry, entry.uri)).toBe(false);
+    expect(enumeratedResources(entry)).toBeUndefined();
   });
 
   it("refuses a skill whose file frontmatter drifted from the listing", async () => {

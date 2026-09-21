@@ -3,9 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   __resetHarnessScopeStepUpForTests,
   harnessScopeStepUpServerMatches,
+  matchHarnessScopeStepUpToolCall,
   normalizeHarnessScopeStepUpCorrelationId,
   publishHarnessScopeStepUp,
   publishHarnessScopeStepUpFromToolError,
+  stableHarnessValue,
   subscribeHarnessScopeStepUp,
 } from "../harness-scope-step-up.js";
 import { inspectorCommandBus } from "../../../services/inspector-command-bus.js";
@@ -201,5 +203,124 @@ describe("harness scope step-up correlation", () => {
     expect(harnessScopeStepUpServerMatches(undefined, "auth-bench")).toBe(
       false,
     );
+  });
+});
+
+/**
+ * Which observed tool call a challenge resumes.
+ *
+ * `runHarnessTurn` suspends exactly one `toolCallId` and resumes THAT call after
+ * the step-up, so picking the wrong one re-runs a call that already succeeded
+ * and abandons the one that actually failed.
+ */
+describe("matchHarnessScopeStepUpToolCall", () => {
+  const first = {
+    toolCallId: "call-1",
+    serverId: "cal",
+    toolName: "create_event",
+    input: { title: "standup" },
+  };
+  const second = {
+    toolCallId: "call-2",
+    serverId: "cal",
+    toolName: "create_event",
+    input: { title: "standup" },
+  };
+
+  it("resumes the call the challenge came from, not the first identical one", () => {
+    // The regression: two byte-identical calls in one turn. The tuple matcher
+    // returns `find`'s FIRST hit, so a challenge raised by the second call
+    // resumed the first. A host-executed call carries the AI SDK `toolCallId`
+    // straight out of `execute()`, so there is no need to guess.
+    expect(
+      matchHarnessScopeStepUpToolCall({
+        observed: [first, second],
+        challenge: {
+          serverId: "cal",
+          toolCallId: "call-2",
+          requiredScope: "calendar.write",
+          toolName: "create_event",
+          toolInput: { title: "standup" },
+        },
+      }),
+    ).toBe(second);
+  });
+
+  it("falls back to the tuple when the publisher had no id (the proxy path)", () => {
+    // The signed proxy only ever saw an HTTP `tools/call`; it has no AI SDK id
+    // to publish, so the tuple stays the correlator for native delivery.
+    expect(
+      matchHarnessScopeStepUpToolCall({
+        observed: [
+          {
+            toolCallId: "call-9",
+            serverId: "cal",
+            toolName: "list_events",
+            input: { range: "week", limit: 5 },
+          },
+        ],
+        challenge: {
+          serverId: "CAL",
+          requiredScope: "calendar.read",
+          toolName: "list_events",
+          // Key ORDER must not matter — the proxy reserializes the arguments.
+          toolInput: { limit: 5, range: "week" },
+        },
+      })?.toolCallId,
+    ).toBe("call-9");
+  });
+
+  it("waits rather than degrading to the tuple when the id is not observed yet", () => {
+    // A challenge can land before its own `tool-call` part is consumed. Falling
+    // back to the tuple here is exactly how the wrong call gets resumed; the
+    // correlator is re-run on every later observed call, so returning nothing
+    // costs only a retry.
+    expect(
+      matchHarnessScopeStepUpToolCall({
+        observed: [first],
+        challenge: {
+          serverId: "cal",
+          toolCallId: "call-2",
+          requiredScope: "calendar.write",
+          toolName: "create_event",
+          toolInput: { title: "standup" },
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("ignores a tuple match on a different server or tool", () => {
+    expect(
+      matchHarnessScopeStepUpToolCall({
+        observed: [first],
+        challenge: {
+          serverId: "other",
+          requiredScope: "x",
+          toolName: "create_event",
+          toolInput: { title: "standup" },
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      matchHarnessScopeStepUpToolCall({
+        observed: [first],
+        challenge: {
+          serverId: "cal",
+          requiredScope: "x",
+          toolName: "delete_event",
+          toolInput: { title: "standup" },
+        },
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("stableHarnessValue", () => {
+  it("is order-independent for objects and order-sensitive for arrays", () => {
+    expect(stableHarnessValue({ a: 1, b: [2, { d: 4, c: 3 }] })).toBe(
+      stableHarnessValue({ b: [2, { c: 3, d: 4 }], a: 1 }),
+    );
+    expect(stableHarnessValue([1, 2])).not.toBe(stableHarnessValue([2, 1]));
+    expect(stableHarnessValue(undefined)).toBe("null");
   });
 });

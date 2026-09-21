@@ -48,6 +48,27 @@ export type CheckRecipe = {
   port: number;
   /** Path the streamable-HTTP MCP endpoint is served on. */
   mcpPath: string;
+  /**
+   * Non-secret configuration literals, injected into the BUILD and the START
+   * commands and nowhere else (`sandbox.ts` passes them as E2B's `envs` command
+   * option, never as shell text).
+   *
+   * ONLY AN AUTHORITATIVE RUNG PRODUCES THIS. Today that means a repository's
+   * committed `mcpjam.yaml` (`resolver/mcpjamYaml.ts`), which is the only real
+   * producer, plus the operator override table above; the backend REJECTS an
+   * `env` on a cacheable `detected` or `agentic` recipe, so detection must never
+   * invent one and a cached recipe is always env-free.
+   *
+   * NEVER PUT A CREDENTIAL HERE. The values are committed to a repository and
+   * persisted verbatim in the backend's durable plan rows — nothing redacts
+   * them and nothing expires them. The clone token is the counter-example of how
+   * a secret IS handled: minted per check, carried on one command, redacted out
+   * of every observable failure, and never an environment variable.
+   *
+   * Absent means absent: an empty map is normalized away at the parser, so
+   * `undefined` is the only shape "no environment" ever takes.
+   */
+  env?: Record<string, string>;
 };
 
 /**

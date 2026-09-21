@@ -32,6 +32,7 @@ import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import { computeIterationResult } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
+import { apiKeyTail, runAgentName } from "@/lib/evals/run-origin";
 import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
 import {
@@ -61,9 +62,33 @@ type RunResultBadgeKind =
   | "passed"
   | "failed"
   | "running"
+  | "grading"
   | "cancelled"
   | "timed_out"
+  | "inconclusive"
   | "pending";
+
+/**
+ * The second line of the "Run by" tooltip: which credential, or which agent.
+ *
+ * `null` when neither is known — a run launched from the app by a signed-in
+ * person has nothing to add, and a backend that predates run provenance sends
+ * neither field.
+ */
+/**
+ * "via claude-code" / "via API key ····3f9a" — WHICH CREDENTIAL made this run.
+ *
+ * The agent name comes from the DECLARED `launcher.kind`, not the resolved
+ * origin: a run made through the Slack or Discord agent resolves to
+ * `slack`/`discord`, so asking the origin whether this was an MCP run hid the
+ * name for exactly the runs that have one.
+ */
+function runCredentialLabel(run: EvalSuiteRun): string | null {
+  const agent = runAgentName(run);
+  if (agent) return `via ${agent}`;
+  const tail = apiKeyTail(run.attribution?.apiKeyId);
+  return tail ? `via API key ${tail}` : null;
+}
 
 function runResultBadge(result: RunResultBadgeKind) {
   switch (result) {
@@ -71,12 +96,22 @@ function runResultBadge(result: RunResultBadgeKind) {
       return { label: "Passed", className: "bg-success/50 text-foreground" };
     case "failed":
       return { label: "Failed", className: "bg-destructive/50 text-foreground" };
+    case "inconclusive":
+      // Amber, never red: the backend refused to call this run either way.
+      return {
+        label: "Inconclusive",
+        className: "bg-warning/50 text-foreground",
+      };
     case "cancelled":
       return { label: "Cancelled", className: "bg-muted text-muted-foreground" };
     case "timed_out":
       return { label: "Timed out", className: "bg-warning/50 text-foreground" };
     case "running":
       return { label: "Running", className: "bg-warning/50 text-foreground" };
+    case "grading":
+      // Amber like `running`: the run is still happening. Green or red would
+      // claim a verdict that does not exist yet.
+      return { label: "Grading", className: "bg-warning/50 text-foreground" };
     default:
       return null;
   }
@@ -106,8 +141,14 @@ interface RunOverviewProps {
   runsViewMode: SuiteOverviewView;
   onViewModeChange: (value: SuiteOverviewView) => void;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
-  /** When false, hides run selection and batch delete (project members without admin). */
+  /** When false, hides run selection and batch delete entirely. */
   canDeleteRuns?: boolean;
+  /**
+   * Per ROW: deleting a run takes the project manage tier OR authorship of
+   * that run, so the answer differs across the list. Omitted means every run
+   * may be deleted — the local/playground case, with no membership to rank.
+   */
+  canDeleteRun?: (run: EvalSuiteRun) => boolean;
   /** Show suite delete using the same toolbar pattern as run batch delete. */
   canDeleteSuite?: boolean;
   onDeleteSuite?: () => void;
@@ -248,6 +289,7 @@ export function RunOverview({
   onViewModeChange,
   userMap,
   canDeleteRuns = true,
+  canDeleteRun,
   canDeleteSuite = false,
   onDeleteSuite,
   deletingSuiteId = null,
@@ -413,6 +455,22 @@ export function RunOverview({
     [runs, selectedRunIds]
   );
 
+  /**
+   * Runs in the selection the caller may not delete. The batch action is
+   * disabled while this is non-empty rather than quietly deleting the subset
+   * it can: a Delete button that removes four of the six rows you ticked is a
+   * worse outcome than one that tells you why it will not run.
+   */
+  const undeletableSelectedRuns = useMemo(
+    () =>
+      canDeleteRun
+        ? runs.filter(
+            (run) => selectedRunIds.has(run._id) && !canDeleteRun(run)
+          )
+        : [],
+    [canDeleteRun, runs, selectedRunIds]
+  );
+
   const canCompareSelected =
     selectedRunsForCompare.length === 2 &&
     selectedRunsForCompare.every((run) => run.status === "completed");
@@ -502,7 +560,14 @@ export function RunOverview({
                   size="sm"
                   className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
                   onClick={() => setShowBatchDeleteModal(true)}
-                  disabled={deletingRunId !== null}
+                  disabled={
+                    deletingRunId !== null || undeletableSelectedRuns.length > 0
+                  }
+                  title={
+                    undeletableSelectedRuns.length > 0
+                      ? `${undeletableSelectedRuns.length} selected run(s) were started by someone else — only a project admin can delete those`
+                      : undefined
+                  }
                 >
                   Delete
                 </Button>
@@ -696,19 +761,25 @@ export function RunOverview({
                       ? formatDuration(Date.now() - run.createdAt)
                       : "—";
 
+                  // Status FIRST for a held run: its `result` is the truthy
+                  // "pending", which would otherwise win the `||` below and
+                  // the "grading" badge arm would never be reached.
                   const runResult =
-                    run.result ||
-                    (run.status === "completed" && passRate !== null
-                      ? passRate >= (run.passCriteria?.minimumPassRate ?? 100)
-                        ? "passed"
-                        : "failed"
-                      : run.status === "cancelled"
-                        ? "cancelled"
-                        : run.status === "timed_out"
-                          ? "timed_out"
-                          : run.status === "running"
-                            ? "running"
-                            : "pending");
+                    run.status === "grading"
+                      ? "grading"
+                      : run.result ||
+                        (run.status === "completed" && passRate !== null
+                          ? passRate >=
+                            (run.passCriteria?.minimumPassRate ?? 100)
+                            ? "passed"
+                            : "failed"
+                          : run.status === "cancelled"
+                            ? "cancelled"
+                            : run.status === "timed_out"
+                              ? "timed_out"
+                              : run.status === "running"
+                                ? "running"
+                                : "pending");
                   const badge = runResultBadge(runResult);
                   const runAccent = evalStatusLeftBorderClasses(runResult);
 
@@ -763,32 +834,59 @@ export function RunOverview({
                           {(() => {
                             const creator =
                               run.createdBy && userMap?.get(run.createdBy);
-                            if (creator) {
+                            /*
+                              WHICH CREDENTIAL, not just which person. A run
+                              made with an API key is attributed to the key's
+                              owner, so an automated launch and that person
+                              clicking Run showed the same avatar and the same
+                              name. The key id is minted by the backend from
+                              the credential the request authenticated with —
+                              a fact, not a claim.
+
+                              Resolved OUTSIDE the creator branch. An
+                              unresolvable creator (a member who left, a
+                              `userMap` that hasn't loaded) is the case where
+                              knowing the credential matters most, and nesting
+                              this under the avatar meant those runs — the
+                              automated ones — were the ones that showed
+                              nothing.
+                            */
+                            const credential = runCredentialLabel(run);
+                            if (!creator && !credential) {
                               return (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Avatar className="size-6">
+                                <Avatar className="size-6">
+                                  <AvatarFallback className="text-[10px]">
+                                    ?
+                                  </AvatarFallback>
+                                </Avatar>
+                              );
+                            }
+                            return (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Avatar className="size-6">
+                                    {creator ? (
                                       <AvatarImage
                                         src={creator.imageUrl}
                                         alt={creator.name}
                                       />
-                                      <AvatarFallback className="text-[10px]">
-                                        {getInitials(creator.name)}
-                                      </AvatarFallback>
-                                    </Avatar>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
+                                    ) : null}
+                                    <AvatarFallback className="text-[10px]">
+                                      {creator ? getInitials(creator.name) : "?"}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {creator ? (
                                     <p className="text-xs">{creator.name}</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              );
-                            }
-                            return (
-                              <Avatar className="size-6">
-                                <AvatarFallback className="text-[10px]">
-                                  ?
-                                </AvatarFallback>
-                              </Avatar>
+                                  ) : null}
+                                  {credential ? (
+                                    <p className="text-[10px] opacity-70">
+                                      {credential}
+                                    </p>
+                                  ) : null}
+                                </TooltipContent>
+                              </Tooltip>
                             );
                           })()}
                         </span>

@@ -4,6 +4,7 @@ interface SectionTabProps {
   label: string;
   isActive: boolean;
   onSelect: () => void;
+  className?: string;
 }
 
 /**
@@ -11,7 +12,12 @@ interface SectionTabProps {
  * organization's sub-sections so both strips keep the same height and rhythm —
  * two nav rows stacked at different metrics read as two unrelated widgets.
  */
-export function SectionTab({ label, isActive, onSelect }: SectionTabProps) {
+export function SectionTab({
+  label,
+  isActive,
+  onSelect,
+  className,
+}: SectionTabProps) {
   return (
     <button
       type="button"
@@ -23,7 +29,8 @@ export function SectionTab({ label, isActive, onSelect }: SectionTabProps) {
         "-mb-px shrink-0 rounded-t-sm border-b-2 px-3 py-2 text-sm font-medium outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring",
         isActive
           ? "border-primary text-foreground"
-          : "border-transparent text-muted-foreground hover:text-foreground"
+          : "border-transparent text-muted-foreground hover:text-foreground",
+        className,
       )}
     >
       {label}

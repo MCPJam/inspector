@@ -25,6 +25,7 @@ export interface EnvironmentRuntimeContext {
 
 /** Convex query names — kept in one place so a rename is one edit. */
 const FN = {
+  computerStatus: "projectComputers:getComputerStatus",
   runtimeContext: "computerEnvironments:getEnvironmentRuntimeContext",
   // Execution-scoped variant (reachable by guests / swarm grants). Keyed on an
   // opaque executionScope the backend re-resolves — never a raw projectId.
@@ -36,11 +37,40 @@ function stripBearer(token: string): string {
   return token.replace(/^Bearer\s+/i, "").trim();
 }
 
+/**
+ * A caller's bearer may only travel over an encrypted connection.
+ *
+ * `setAuth` puts the token on every request this client makes, so a
+ * `CONVEX_URL` of `http://` would put a live user credential on the wire in
+ * cleartext. Loopback is the one exception, and a real one: `convex dev` runs
+ * a local backend on `http://127.0.0.1:3210`, and refusing it would break
+ * every local developer to defend a hop that never leaves the machine.
+ */
+function assertSafeTransport(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("CONVEX_URL is not a valid URL");
+  }
+  if (parsed.protocol === "https:") return;
+  const loopback =
+    parsed.hostname === "localhost" ||
+    parsed.hostname === "127.0.0.1" ||
+    parsed.hostname === "::1" ||
+    parsed.hostname === "[::1]";
+  if (parsed.protocol === "http:" && loopback) return;
+  throw new Error(
+    "CONVEX_URL must use https (or loopback http): refusing to send a user bearer in cleartext",
+  );
+}
+
 function makeClient(bearer: string): ConvexHttpClient {
   const url = process.env.CONVEX_URL;
   if (!url) {
     throw new Error("CONVEX_URL is not configured");
   }
+  assertSafeTransport(url);
   const client = new ConvexHttpClient(url);
   client.setAuth(stripBearer(bearer));
   return client;
@@ -62,4 +92,40 @@ export async function convexGetEnvironmentRuntimeContextForExecution(
   return await makeClient(bearer).query(FN.runtimeContextExecution as any, {
     executionScope,
   });
+}
+
+/**
+ * What the caller's desktop computer is doing, WITHOUT touching it.
+ *
+ * The read that makes a hosted inspector session re-derivable. A request may
+ * land on a replica that has never seen the session; before that replica will
+ * adopt the browser, it asks the control plane — with the caller's own bearer,
+ * so the answer is authoritative about ownership — which computer this project
+ * has and whether it is awake.
+ *
+ * It must stay a QUERY. Reserve wakes a hibernated machine and starts billing
+ * it, and doing that from a `GET` would mean a browser tab left open overnight
+ * silently resurrects a computer the owner deliberately let sleep. An asleep
+ * machine is reported, never woken; waking is what the explicit start does.
+ *
+ * `null` ⇒ this project has no desktop computer at all.
+ */
+export interface DesktopComputerStatus {
+  computerId: string;
+  status: string;
+}
+
+export async function convexGetDesktopComputerStatus(
+  bearer: string,
+  projectId: string,
+): Promise<DesktopComputerStatus | null> {
+  const view = (await makeClient(bearer).query(FN.computerStatus as any, {
+    projectId,
+    runtimeKind: "desktop-browser",
+  })) as { computerId?: unknown; status?: unknown } | null;
+  if (!view || typeof view.computerId !== "string") return null;
+  return {
+    computerId: view.computerId,
+    status: typeof view.status === "string" ? view.status : "unknown",
+  };
 }

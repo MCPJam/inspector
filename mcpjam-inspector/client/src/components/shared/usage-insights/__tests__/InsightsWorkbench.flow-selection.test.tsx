@@ -21,13 +21,13 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InsightsWorkbench } from "../InsightsWorkbench";
-import { withHideSynthetic } from "@/components/chatboxes/user-testing-traffic";
+import { withHideSynthetic } from "@/components/scenarios/user-testing-traffic";
 import {
   chipKey,
   type InsightsSelection,
   type UsageFilterChip,
   type UsageFilterState,
-} from "@/hooks/chatbox-usage-filters";
+} from "@/hooks/scenario-usage-filters";
 import type { GoalFacet, UsageBreakdown } from "@/hooks/useUsageInsights";
 
 const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown } = vi.hoisted(
@@ -154,8 +154,8 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
 vi.mock("@/hooks/usePromoteCapability", () => ({
   usePromoteCapability: () => ({ canPromote: false, isLoading: false }),
 }));
-vi.mock("@/components/chatboxes/chatbox-sessions-metric-strip", () => ({
-  ChatboxSessionsMetricStrip: () => null,
+vi.mock("@/components/scenarios/scenario-sessions-metric-strip", () => ({
+  ScenarioSessionsMetricStrip: () => null,
 }));
 
 function facet(overrides: Partial<GoalFacet> = {}): GoalFacet {
@@ -223,11 +223,11 @@ function lastDrilldownArgs(): {
 function renderInsightsPanel() {
   return render(
     <InsightsWorkbench
-      scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
-      cohortKey="chatbox-1"
+      scope={{ kind: "scenario", scenarioId: "scenario-1" }}
+      cohortKey="scenario-1"
       augmentFilter={withHideSynthetic}
       autoBackfillTopicMap
-      testIdPrefix="chatbox-insights"
+      testIdPrefix="scenario-insights"
     />
   );
 }
@@ -238,7 +238,14 @@ beforeEach(() => {
   mockUseUsageInsights.mockReturnValue({
     threads: undefined,
     breakdown: breakdown(),
-    rebuild: vi.fn(),
+    // Resolves, because the real one is an async function and this scope now
+    // starts its own first analysis on mount (BB-196) — a bare `vi.fn()`
+    // hands that effect `undefined` to await.
+    rebuild: vi.fn().mockResolvedValue({
+      runId: "run-1",
+      status: "queued",
+      alreadyRunning: false,
+    }),
   });
   mockUseGoalOutcomeDrilldown.mockReturnValue({
     drilldown: {

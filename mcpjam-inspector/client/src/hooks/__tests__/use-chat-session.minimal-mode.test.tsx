@@ -3,6 +3,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { useChatSession } from "../use-chat-session";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
+import { GUEST_LOCKED_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 
 const mockGetToolsMetadata = vi.fn();
 const mockCountTextTokens = vi.fn();
@@ -263,7 +264,8 @@ vi.mock("@ai-sdk/react", async () => {
   };
 });
 
-vi.mock("ai", () => ({
+vi.mock("ai", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("ai")>()),
   DefaultChatTransport: class MockTransport {
     options: any;
     sendMessages: ReturnType<typeof vi.fn>;
@@ -311,9 +313,13 @@ describe("useChatSession minimal mode parity", () => {
     mockGetAccessToken.mockResolvedValue(null);
     mockGetGuestBearerToken.mockReset();
     mockGetGuestBearerToken.mockResolvedValue("guest-token");
-    mockAuthFetch.mockResolvedValue(new Response(null, { status: 200 }));
     mockWindowFetch.mockReset();
     mockWindowFetch.mockResolvedValue(new Response(null, { status: 200 }));
+    mockAuthFetch.mockReset();
+    mockAuthFetch.mockImplementation(
+      (input: RequestInfo | URL, init?: RequestInit) =>
+        mockWindowFetch(input, init)
+    );
     vi.stubGlobal("fetch", mockWindowFetch);
     useMCPJamLimitDialogStore.setState({
       authStatus: "guest",
@@ -586,7 +592,7 @@ describe("useChatSession minimal mode parity", () => {
         selectedServers,
         minimalMode: true,
         hostedContext: {
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
         executionConfig: {
@@ -609,7 +615,7 @@ describe("useChatSession minimal mode parity", () => {
     warnSpy.mockRestore();
   });
 
-  it("keeps non-hosted chat off authFetch while using modal-aware fetch", async () => {
+  it("uses request-time authFetch for non-hosted chat", async () => {
     const selectedServers = ["server-1"];
     const { result } = renderHook(() =>
       useChatSession({
@@ -628,9 +634,9 @@ describe("useChatSession minimal mode parity", () => {
     const latestTransport = mockTransportInstances.at(-1)!;
     expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
     expect(latestTransport.options.fetch).toEqual(expect.any(Function));
-    expect(await resolveConfig(latestTransport.options.headers)).toEqual({
-      Authorization: "Bearer guest-token",
-    });
+    expect(
+      await resolveConfig(latestTransport.options.headers)
+    ).toBeUndefined();
 
     act(() => {
       result.current.sendMessage({ text: "hello" });
@@ -644,14 +650,14 @@ describe("useChatSession minimal mode parity", () => {
       ).toBe(true);
     });
     expect(getUsedTransport().options.api).toBe("/api/mcp/chat-v2");
-    expect(mockWindowFetch).toHaveBeenCalledWith(
+    expect(mockAuthFetch).toHaveBeenCalledWith(
       "/api/mcp/chat-v2",
       expect.objectContaining({
         method: "POST",
-        headers: { Authorization: "Bearer guest-token" },
       })
     );
-    expect(mockAuthFetch).not.toHaveBeenCalled();
+    const requestInit = mockAuthFetch.mock.calls.at(-1)?.[1] as RequestInit;
+    expect(new Headers(requestInit.headers).has("Authorization")).toBe(false);
   });
 
   it("attaches widget model context to the next request only", async () => {
@@ -743,7 +749,7 @@ describe("useChatSession minimal mode parity", () => {
     await waitFor(() => {
       expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
     });
-    expect(mockAuthFetch).not.toHaveBeenCalled();
+    expect(mockAuthFetch).toHaveBeenCalledTimes(1);
   });
 
   it("opens the mcpjam-limit dialog for chat-v2 stream limit errors", async () => {
@@ -902,9 +908,9 @@ describe("useChatSession minimal mode parity", () => {
 
     const latestTransport = mockTransportInstances.at(-1)!;
     expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
-    expect(await resolveConfig(latestTransport.options.headers)).toEqual({
-      Authorization: "Bearer guest-token",
-    });
+    expect(
+      await resolveConfig(latestTransport.options.headers)
+    ).toBeUndefined();
     expect(result.current.disableForAuthentication).toBe(false);
     expect(result.current.availableModels.map((model) => model.id)).toEqual([
       "gpt-4",
@@ -918,6 +924,43 @@ describe("useChatSession minimal mode parity", () => {
     }
     expect(result.current.selectedModel.id).toBe("openai/gpt-5-mini");
     expect(mockAuthFetch).not.toHaveBeenCalled();
+  });
+
+  // A caller that pins a model through `executionConfig.modelId` gets it
+  // resolved against the list THIS hook builds. An org-key model is only in
+  // that list when the org config is passed in; otherwise the pinned id is
+  // missing, `createLockedInitialModel` guesses the provider from the bare id
+  // as `ollama`, and that is what the server then asks the org to resolve.
+  it("resolves a pinned org-key model only when the org config is forwarded", async () => {
+    const orgConfig = {
+      providers: [
+        {
+          providerKey: "anthropic",
+          enabled: true,
+          hasSecret: true,
+        },
+      ],
+    };
+    const pinned = {
+      selectedServers: [] as string[],
+      executionConfig: { modelId: orgAnthropicModel.id },
+      hostedContext: { projectId: "project-1", selectedServerIds: [] },
+    };
+
+    const { result: withoutConfig } = renderHook(() =>
+      useChatSession(pinned)
+    );
+    expect(withoutConfig.current.selectedModel).toMatchObject({
+      id: orgAnthropicModel.id,
+      provider: "ollama",
+      disabled: true,
+    });
+
+    const { result: withConfig } = renderHook(() =>
+      useChatSession({ ...pinned, hostedOrgModelConfig: orgConfig })
+    );
+    expect(withConfig.current.selectedModel).toEqual(orgAnthropicModel);
+    expect(withConfig.current.selectedModel.provider).toBe("anthropic");
   });
 
   it("uses org config and the org-aware route for BYOK in non-hosted local dev", async () => {
@@ -972,16 +1015,18 @@ describe("useChatSession minimal mode parity", () => {
       accessScope: "chat_v2",
     });
     expect(transport.requests[0]).not.toHaveProperty("apiKey");
-    expect(mockWindowFetch).toHaveBeenCalledWith(
+    expect(mockAuthFetch).toHaveBeenCalledWith(
       "/api/web/chat-v2",
-      expect.objectContaining({
-        headers: { Authorization: "Bearer guest-token" },
-      })
+      expect.objectContaining({ method: "POST" })
     );
-    expect(mockAuthFetch).not.toHaveBeenCalled();
+    const requestInit = mockAuthFetch.mock.calls.at(-1)?.[1] as RequestInit;
+    expect(new Headers(requestInit.headers).has("Authorization")).toBe(false);
   });
 
   it("uses the local MCP route for org BYOK when a selected server is local-only", async () => {
+    const ensureServerIds = vi.fn(async () => [
+      { serverId: "hosted-server-id" },
+    ]);
     mockModelState.selectedModelId = orgAnthropicModel.id;
     mockGetAccessToken.mockResolvedValue(null);
     mockSharedAppState.servers = {
@@ -1005,6 +1050,7 @@ describe("useChatSession minimal mode parity", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: [],
+          ensureServerIds,
         },
       })
     );
@@ -1029,13 +1075,11 @@ describe("useChatSession minimal mode parity", () => {
     });
     expect(transport.requests[0]).not.toHaveProperty("apiKey");
     expect(transport.requests[0]).not.toHaveProperty("selectedServerIds");
-    expect(mockWindowFetch).toHaveBeenCalledWith(
+    expect(mockAuthFetch).toHaveBeenCalledWith(
       "/api/mcp/chat-v2",
-      expect.objectContaining({
-        headers: { Authorization: "Bearer guest-token" },
-      })
+      expect.objectContaining({ method: "POST" })
     );
-    expect(mockAuthFetch).not.toHaveBeenCalled();
+    expect(ensureServerIds).not.toHaveBeenCalled();
   });
 
   it("fails closed to the local MCP route when a selected server's config is unresolved", async () => {
@@ -1184,10 +1228,82 @@ describe("useChatSession minimal mode parity", () => {
     expect(result.current.disableForAuthentication).toBe(false);
   });
 
+  /**
+   * A RUNTIME-CHOSEN SENTINEL is locked for a different reason than everything
+   * else the placeholder builder produces, and the copy has to say so.
+   *
+   * `cursor/auto` is never in `availableModels` — it is not a selectable entry
+   * — so a Cursor host's pinned model ALWAYS lands on this fallback. Rendering
+   * it the ordinary way got both halves wrong at once: the label showed a raw
+   * id naming a model nothing ran, under a sign-in wall that signing in would
+   * not lift.
+   */
+  it("renders a runtime-chosen sentinel as its display name, locked for the real reason", async () => {
+    mockModelState.availableModels = [baseModel, mcpJamModel];
+    mockModelState.selectedModelId = mcpJamModel.id;
+    mockConvexAuth.isAuthenticated = false;
+    mockGetAccessToken.mockResolvedValue(null);
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: { systemPrompt: "Prompt", modelId: "cursor/auto" },
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.selectedModel.id).toBe("cursor/auto");
+    });
+
+    expect(result.current.selectedModel).toMatchObject({
+      // The id is NEVER rewritten — it is what the trace and eval metadata
+      // record, and the point of the sentinel is that the model is unknown.
+      id: "cursor/auto",
+      name: "Cursor Auto",
+      disabled: true,
+      disabledReason:
+        "This host's runtime chooses its own model on your own account.",
+    });
+  });
+
+  it("keeps the ordinary sign-in copy for a non-sentinel locked model", async () => {
+    // The control: the sentinel branch is an exception, not a replacement. An
+    // ordinary pinned id absent from `availableModels` still gets the raw id as
+    // its label and the guest sign-in reason.
+    mockModelState.availableModels = [baseModel, mcpJamModel];
+    mockModelState.selectedModelId = mcpJamModel.id;
+    mockConvexAuth.isAuthenticated = false;
+    mockGetAccessToken.mockResolvedValue(null);
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: {
+          systemPrompt: "Prompt",
+          modelId: "anthropic/claude-sonnet-4.5",
+        },
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.selectedModel.id).toBe(
+        "anthropic/claude-sonnet-4.5"
+      );
+    });
+
+    expect(result.current.selectedModel).toMatchObject({
+      name: "anthropic/claude-sonnet-4.5",
+      disabled: true,
+      disabledReason: GUEST_LOCKED_MODEL_REASON,
+    });
+  });
+
   // BACK2-628. `setSelectedModel` already refuses to write when a surface
   // pins its model; `setSelectedModelIds` writes the same global lead key
   // (via `saveSelectedModelId`) and used not to. The sanitize effect in
-  // ChatTabV2 calls it on mount, so opening a hosted chatbox / share link
+  // ChatTabV2 calls it on mount, so opening a hosted scenario / share link
   // overwrote the model the user had selected in their own chats. The
   // `isSelectedModelResolved` gate cannot catch this route — it short-circuits
   // to true whenever `initialModelId` is set.

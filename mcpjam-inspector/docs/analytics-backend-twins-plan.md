@@ -1,4 +1,4 @@
-# Backend server-side capture plan (signup + billing + chatbox)
+# Backend server-side capture plan (signup + billing + scenario)
 
 Completes the analytics-capture-resilience project: the events that fire in
 the **Convex backend** (mcpjam-backend), not the inspector. These are the
@@ -73,10 +73,10 @@ with a `ctx.runQuery` (add an internal `getUserExternalId(userId)` in
 | `signup_server` | `runWorkOsFirstLoginSideEffects` (`convex/users.ts:339`), next to the `emitDomainEvent('signup.completed')` at `:364` | mutation → `ctx.scheduler.runAfter`. Thread `externalId` into the helper args (caller `upsertUserFromIdentity:221` has it) | `externalId` (already in scope upstream) |
 | `credit_purchased_server` | after the `[billing.credit_purchased]` log, `convex/billingNode.ts:1658` | already a `'use node'` action → capture **inline** (`ctx.runAction(internal.usage.serverAnalytics.captureServerEvent, …)` or import the client). Resolve externalId from `log.purchasedByUserId` via runQuery; if `unknown`, fall back to org-keyed | resolved externalId; else org id + `orgId` |
 | `subscription_created_server` | `checkout.session.completed` (subscription) convergence `convex/billingNode.ts:2394` | inline (Node action). Org-level — key on the purchasing user's externalId if available, else org | externalId or org |
-| `chatbox_published_server` | `createHost` (`convex/hosts.ts:274`), also `duplicateHost:502` | userMutation → schedule. `requireAdminAccess` returns `user` Doc with `user.externalId` | `user.externalId` |
+| `scenario_published_server` | `createHost` (`convex/hosts.ts:274`), also `duplicateHost:502` | userMutation → schedule. `requireAdminAccess` returns `user` Doc with `user.externalId` | `user.externalId` |
 
 `insertId` suggestions: `signup:<userId>`, `credit_purchased:<stripeSessionId>`,
-`subscription:<stripeSubscriptionId>`, `chatbox_published:<chatboxId>` — stable
+`subscription:<stripeSubscriptionId>`, `scenario_published:<scenarioId>` — stable
 so retries dedupe.
 
 Naming: `_server` suffix matches the inspector's parallel-run policy (the
@@ -84,7 +84,7 @@ client/server pair ratio is the block-rate metric). Mirror these names by hand
 into the inspector's `shared/analytics-events.ts` (the two repos mirror by
 hand) and into the block-rate dashboard.
 
-⚠️ `chatbox_published_server` touches `convex/hosts.ts`, which had uncommitted
+⚠️ `scenario_published_server` touches `convex/hosts.ts`, which had uncommitted
 parallel edits as of 2026-07-10 — coordinate to avoid a conflict, or land it
 in a follow-up.
 

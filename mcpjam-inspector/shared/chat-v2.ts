@@ -26,7 +26,7 @@ export interface ChatV2Request {
    * pointer, ids only; the server re-resolves the authoritative configuration.
    *
    * Mutually exclusive with the legacy top-level `hostId` and with the
-   * access-bearing `chatboxId` — the hosted ingress REJECTS those combinations
+   * access-bearing `scenarioId` — the hosted ingress REJECTS those combinations
    * rather than picking a winner (`shared/execution-target.ts`). Absent ⇒ the
    * legacy behavior is unchanged.
    */
@@ -39,6 +39,8 @@ export interface ChatV2Request {
    */
   environmentOverrides?: EnvironmentOverrides;
   chatSessionId?: string;
+  /** Bind browser discovery and execution to this chatSessionId. */
+  browserScope?: "conversation";
   /** Lineage for a new session created by editing an earlier user message. */
   rewind?: ChatRewind;
   /** Userless retry of a tool call suspended for SEP-2350 authorization. */
@@ -88,13 +90,27 @@ export interface ChatV2Request {
   requireToolApproval?: boolean;
   /**
    * HostConfig v2 built-in tool ids (e.g. `["web_search"]`) the client wants
-   * advertised this turn. For chatbox-bound requests the server re-resolves
+   * advertised this turn. For scenario-bound requests the server re-resolves
    * from the host's pinned config (host wins); for playground/direct chat the
    * body value is used as-is. Billing authorization happens server-side in
    * Convex (bearer + projectId), so a tampered body can't bill a project the
    * caller isn't authorized on.
    */
   builtInToolIds?: string[];
+  /**
+   * What the hosted `browser_*` tools may do in an UNATTENDED run (eval,
+   * swarm, journey). Those runs never pause, so approval — the mechanism
+   * every interactive surface relies on — does not exist for them; a declared
+   * policy is the substitute, and WITHOUT one the browser tools are simply
+   * not advertised (fail-closed, see `built-in-tools/browser.ts`).
+   *
+   * Ignored on interactive surfaces, which gate through approval instead.
+   */
+  browserToolPolicy?: {
+    mode: "allow_all" | "read_only" | "allowlist";
+    originAllowlist?: string[];
+    toolAllowlist?: string[];
+  };
   /**
    * Host-level opt-in for progressive MCP tool discovery
    * (`search_mcp_tools` / `load_mcp_tools` meta-tools instead of sending
@@ -107,7 +123,7 @@ export interface ChatV2Request {
    * SEP-1865 visibility filter switch (see HostConfigInputV2.respectToolVisibility).
    * Optional — `undefined` means "use the spec default" (filter app-only
    * tools). The server re-resolves from the persisted host config when
-   * the request is chatbox-bound, so the host value wins.
+   * the request is scenario-bound, so the host value wins.
    */
   respectToolVisibility?: boolean;
   /** Host-level MCP tool-result content/resource visibility policy. */
@@ -142,6 +158,20 @@ export interface ChatV2Request {
    */
   appTools?: AppToolSnapshotEntry[];
   /**
+   * WebMCP tools registered by a page the WebMCP Inspector has open, snapshotted
+   * per turn from the inspector store.
+   *
+   * Client-fulfilled like `appTools`: the model's call comes back to the browser,
+   * which invokes it through the inspector session and supplies the result. The
+   * server validates the boundary again in `validatePageToolEntries` and gates
+   * EVERY call for approval — these run code on a third-party site, and the only
+   * claims about what they do come from that site.
+   *
+   * Local surfaces only: the inspector session lives in the local server's
+   * process, so a hosted turn has nothing to resolve these against.
+   */
+  pageTools?: PageToolSnapshotEntry[];
+  /**
    * SEP-1865 `ui/update-model-context` snapshots for the next model turn.
    *
    * These are per-request, ephemeral model context: the server appends them
@@ -171,6 +201,24 @@ export interface AppToolSnapshotEntry {
   description?: string;
   inputSchema?: Record<string, unknown>;
   readOnly: boolean;
+}
+
+/**
+ * One WebMCP page tool as the client advertises it for a turn.
+ *
+ * `alias` is what the model sees (page-authored names are arbitrary and would
+ * not survive the provider tool-name charset); `toolKey` is what the inspector
+ * invokes by, and `sessionId` says which open browser it belongs to.
+ */
+export interface PageToolSnapshotEntry {
+  binding?: import("./webmcp-inspector-protocol").WebMcpRegistrationBinding;
+  alias: string;
+  sessionId: string;
+  toolKey: string;
+  rawName: string;
+  origin: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
 }
 
 export interface WidgetModelContextEntry {

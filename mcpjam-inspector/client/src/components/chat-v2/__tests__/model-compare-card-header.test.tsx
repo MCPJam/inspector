@@ -40,6 +40,28 @@ function getMetricRunningSpinnerCount(container: ParentNode): number {
 }
 
 describe("ModelCompareCardHeader", () => {
+  it("omits status from tabs when the drawer header owns it", () => {
+    render(<ModelCompareCardHeader summary={idleSummary} allSummaries={[]} mode="chat" onModeChange={vi.fn()} showTraceTabs showComparisonChrome={false} compactCompareHeader={false} tabsInline result="passed" hideStatus />);
+    expect(screen.queryByLabelText("Passed")).not.toBeInTheDocument();
+    expect(screen.getByTitle("Chat view")).toBeInTheDocument();
+  });
+
+  it("omits the running dot from the run detail tabs", () => {
+    render(
+      <ModelCompareCardHeader
+        summary={{ ...idleSummary, status: "running" }}
+        allSummaries={[]}
+        mode="chat"
+        onModeChange={vi.fn()}
+        showTraceTabs
+        showComparisonChrome={false}
+        tabsInline
+      />,
+    );
+    expect(screen.queryByLabelText("Running")).not.toBeInTheDocument();
+    expect(screen.getByTitle("Chat view")).toBeInTheDocument();
+  });
+
   it("renders nothing when comparison chrome is off, trace tabs are hidden, and identity is off", () => {
     const { container } = render(
       <ModelCompareCardHeader
@@ -183,7 +205,7 @@ describe("ModelCompareCardHeader", () => {
     );
   });
 
-  it("uses the sidebar-selected styling for full-width trace tabs", () => {
+  it("uses segment styling for full-width trace tabs", () => {
     render(
       <ModelCompareCardHeader
         model={model}
@@ -196,9 +218,11 @@ describe("ModelCompareCardHeader", () => {
       />,
     );
 
+    // The full-width header bar now renders the same segment chrome as the
+    // inline preview tabs above, so both surfaces read as one control.
     expect(screen.getByRole("button", { name: "Chat" })).toHaveClass(
-      "bg-sidebar-accent",
-      "text-sidebar-accent-foreground",
+      "bg-background",
+      "ring-inset",
     );
   });
 
@@ -628,5 +652,41 @@ describe("ModelCompareCardHeader", () => {
 
     expect(screen.getByTitle("Trace")).toBeInTheDocument();
     expect(screen.queryByText("Results")).not.toBeInTheDocument();
+  });
+});
+
+describe("ModelCompareCardHeader — the Scorecard tab", () => {
+  const props = {
+    model,
+    summary: idleSummary,
+    allSummaries: [],
+    mode: "chat" as const,
+    showTraceTabs: true,
+    showComparisonChrome: false,
+    // What RunColumn passes; the tabs row only renders inline.
+    tabsInline: true,
+  };
+
+  it("stays absent unless the surface offers one", () => {
+    render(<ModelCompareCardHeader {...props} onModeChange={vi.fn()} />);
+    expect(
+      screen.queryByTestId("trace-viewer-scorecard-tab"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("appears and reports its own selection", () => {
+    const onSelectScorecard = vi.fn();
+    render(
+      <ModelCompareCardHeader
+        {...props}
+        onModeChange={vi.fn()}
+        showScorecardTab
+        onSelectScorecard={onSelectScorecard}
+      />,
+    );
+    const tab = screen.getByTestId("trace-viewer-scorecard-tab");
+    expect(tab).toBeInTheDocument();
+    tab.click();
+    expect(onSelectScorecard).toHaveBeenCalled();
   });
 });

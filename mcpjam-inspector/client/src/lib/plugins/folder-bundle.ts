@@ -37,6 +37,7 @@ import {
   parsePluginBundle,
   PluginBundleError,
 } from "@mcpjam/sdk/plugin-bundle";
+import type { OpenAIArchiveObservations } from "@mcpjam/sdk";
 
 export interface PluginBundleFile {
   /** Bundle-root-relative path with `/` separators (no leading `./`). */
@@ -181,6 +182,33 @@ export function createFolderPluginFileSource(
       }
       return bytes;
     },
+  };
+}
+
+/**
+ * Archive facts an OpenAI readiness run needs, collected from a folder
+ * selection.
+ *
+ * A folder selection is not an archive, so two of the three fields genuinely do
+ * not exist: there is no compressed size and no encryption flags, and the
+ * readiness reader turns each absent field into a `not-evaluated` with a reason
+ * rather than a silent pass.
+ *
+ * The third one DOES exist and matters. `normalizeFolderSelection` rewrites
+ * `\` to `/` before the file source ever sees a path — the right thing for the
+ * bundle parser, and exactly wrong for a preflight, because a backslash
+ * separator is one of the things the portal rejects. So the raw
+ * `webkitRelativePath` is read here, untouched, before that mapping runs.
+ */
+export function collectFolderArchiveObservations(
+  selection: File[],
+): OpenAIArchiveObservations {
+  return {
+    rawEntryNames: selection.map(
+      (file) =>
+        (file as { webkitRelativePath?: string }).webkitRelativePath ||
+        file.name,
+    ),
   };
 }
 

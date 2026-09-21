@@ -104,6 +104,68 @@ describe("collectConnectedHttpServerDoctorState", () => {
     });
     expect(result.errors).toEqual([]);
   });
+
+  // MCP 2026-07-28 `server/utilities/pagination`: "an empty string is a valid
+  // cursor and thus MUST NOT be treated as the end of results".
+  it("follows an empty-string nextCursor and forwards it verbatim", async () => {
+    const cursors: Array<string | undefined> = [];
+    const client = createMockClient({
+      listTools: jest.fn().mockImplementation(async (params?: any) => {
+        cursors.push(params?.cursor);
+        return params?.cursor === undefined
+          ? { tools: [{ name: "echo" }], nextCursor: "" }
+          : { tools: [{ name: "draw" }] };
+      }),
+    });
+
+    const result = await collectConnectedHttpServerDoctorState(client, {
+      timeout: 4_000,
+    });
+
+    expect(result.tools).toEqual([{ name: "echo" }, { name: "draw" }]);
+    expect(cursors).toEqual([undefined, ""]);
+    expect(result.checks.tools.status).toBe("ok");
+  });
+
+  // A repeated cursor is FOLLOWED, not read as an ending. Comparing two
+  // cursors for equality is a determination based on cursor value, which MCP
+  // 2026-07-28 `server/utilities/pagination` forbids — and a server may
+  // legally reissue one constant token, `""` very much included. The page cap
+  // is the bound, and it errors rather than reporting a partial tool list.
+  it("keeps walking a constant cursor and stops at the page cap", async () => {
+    for (const constant of ["", "same-token-forever"]) {
+      const listTools = jest
+        .fn()
+        .mockResolvedValue({ tools: [{ name: "echo" }], nextCursor: constant });
+      const client = createMockClient({ listTools });
+
+      const result = await collectConnectedHttpServerDoctorState(client, {
+        timeout: 4_000,
+      });
+
+      // Not truncated at page two.
+      expect(listTools.mock.calls.length).toBeGreaterThan(2);
+      expect(result.checks.tools.status).toBe("error");
+      expect(result.checks.tools.detail).toContain("exceeded");
+    }
+  });
+
+  it("treats a non-string nextCursor as the end, never as a cursor", async () => {
+    for (const nextCursor of [null, 42, { opaque: true }]) {
+      const listTools = jest
+        .fn()
+        .mockResolvedValue({ tools: [{ name: "echo" }], nextCursor });
+      const client = createMockClient({ listTools });
+
+      const result = await collectConnectedHttpServerDoctorState(client, {
+        timeout: 4_000,
+      });
+
+      expect(listTools).toHaveBeenCalledTimes(1);
+      expect(result.tools).toEqual([{ name: "echo" }]);
+      expect(result.checks.tools.status).toBe("ok");
+    }
+  });
 });
 
 describe("runHttpServerDoctor", () => {

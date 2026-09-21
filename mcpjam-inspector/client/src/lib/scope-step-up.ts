@@ -250,7 +250,7 @@ export function driveChatScopeStepUp(
   challenge: InsufficientScopeChallenge | undefined,
   operation?: ToolCallStepUpOperation,
 ): void {
-  // Apply the same gates the immediate path does, up front: a chatbox /
+  // Apply the same gates the immediate path does, up front: a scenario /
   // share-link turn (no resolvable server) and a challenge with nothing to
   // widen must not hold a slot in the queue.
   if (!server) return;

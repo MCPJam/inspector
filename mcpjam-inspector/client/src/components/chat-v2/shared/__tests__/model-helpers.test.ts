@@ -67,6 +67,7 @@ describe("org model helpers", () => {
       id: "custom:local:llama-3",
       name: "Local / llama-3",
       provider: "custom",
+      hosted: false,
       customProviderName: "local",
     });
   });
@@ -93,11 +94,13 @@ describe("org model helpers", () => {
       id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
       name: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
       provider: "bedrock",
+      hosted: false,
     });
     expect(models).toContainEqual({
       id: "us.amazon.nova-pro-v1:0",
       name: "us.amazon.nova-pro-v1:0",
       provider: "bedrock",
+      hosted: false,
     });
   });
 
@@ -122,6 +125,61 @@ describe("org model helpers", () => {
     ).toBe(false);
   });
 
+  // Many bare BYOK ids (`claude-fable-5`, `gpt-5-nano`, …) canonicalize with
+  // their provider to a hosted twin, and the server reads that pair as hosted
+  // on purpose. The explicit `false` is the only way a request can say "this
+  // row is the user's own key" — so every SUPPORTED_MODELS-derived row must
+  // carry it.
+  it("stamps local BYOK rows from SUPPORTED_MODELS with hosted: false", () => {
+    const models = buildAvailableModels({
+      ...NO_KEYS,
+      hasToken: (provider) => provider === "anthropic",
+      hostedCatalog: [CATALOG_ONLY],
+    });
+    const own = models.filter((m) => m.provider === "anthropic");
+    expect(own.length).toBeGreaterThan(0);
+    expect(own.every((m) => m.hosted === false)).toBe(true);
+    expect(own.map((m) => String(m.id))).toContain("claude-fable-5");
+    // The hosted source is untouched.
+    expect(models).toContainEqual(CATALOG_ONLY);
+  });
+
+  it("stamps org-key rows from SUPPORTED_MODELS with hosted: false", () => {
+    const models = buildAvailableModelsFromOrgConfig(
+      {
+        providers: [{ providerKey: "anthropic", enabled: true, hasSecret: true }],
+      },
+      [CATALOG_ONLY]
+    );
+    const fable = models.find((m) => String(m.id) === "claude-fable-5");
+    expect(fable).toMatchObject({ provider: "anthropic", hosted: false });
+    expect(
+      models
+        .filter((m) => m.provider === "anthropic")
+        .every((m) => m.hosted === false)
+    ).toBe(true);
+  });
+
+  it("isMCPJamProvidedModelMenuItem treats an explicit hosted: false as own-provider", () => {
+    expect(
+      isMCPJamProvidedModelMenuItem({
+        id: "claude-fable-5",
+        name: "Claude Fable 5",
+        provider: "anthropic",
+        hosted: false,
+      })
+    ).toBe(false);
+    // The stamp wins even over a prefixed id the static check would call hosted.
+    expect(
+      isMCPJamProvidedModelMenuItem({
+        id: "anthropic/claude-fable-5",
+        name: "Claude Fable 5",
+        provider: "anthropic",
+        hosted: false,
+      })
+    ).toBe(false);
+  });
+
   it("buildAvailableModels uses the injected hosted catalog as the hosted source", () => {
     const models = buildAvailableModels({ ...NO_KEYS, hostedCatalog: [CATALOG_ONLY] });
     // The catalog-only model surfaces even though it's absent from SUPPORTED_MODELS.
@@ -135,6 +193,26 @@ describe("org model helpers", () => {
     // Non-empty, and every static hosted entry classifies as MCPJam-provided.
     expect(models.length).toBeGreaterThan(0);
     expect(models.some((m) => isMCPJamProvidedModelMenuItem(m))).toBe(true);
+  });
+
+  it("renders the GPT-5.6 rows for an OpenAI key, as BYOK rather than free", () => {
+    // A catalog without these ids, so what surfaces can only be the BYOK path
+    // — the snapshot fallback serves them as hosted rows too.
+    const models = buildAvailableModels({
+      ...NO_KEYS,
+      hasToken: (provider) => provider === "openai",
+      hostedCatalog: [CATALOG_ONLY]
+    });
+    const byId = new Map(models.map((m) => [String(m.id), m]));
+
+    for (const id of ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]) {
+      const row = byId.get(id);
+      expect(row, `${id} missing from the BYOK list`).toBeDefined();
+      expect(row!.contextLength).toBe(1_050_000);
+      // These ids are in the hosted catalog too, so the free/paid split rests
+      // on the classifier being asked without a provider.
+      expect(isMCPJamProvidedModelMenuItem(row!)).toBe(false);
+    }
   });
 
   it("buildAvailableModelsFromOrgConfig uses the injected catalog for the hosted source", () => {
@@ -159,10 +237,14 @@ describe("org model helpers", () => {
   });
 
   it("getProviderDisplayName title-cases unknown catalog providers", () => {
-    expect(getProviderDisplayName("arcee-ai")).toBe("Arcee Ai");
-    expect(getProviderDisplayName("nvidia")).toBe("Nvidia");
+    expect(getProviderDisplayName("sakana")).toBe("Sakana");
+    // No hyphen in the catalog slug (`thinkingmachines/inkling`), and
+    // `titleCaseProviderKey` splits only on [-_] — so this is the real output.
+    // The hyphenated spelling pinned a name the product never generates.
+    expect(getProviderDisplayName("thinkingmachines")).toBe("Thinkingmachines");
     // Known providers keep their curated names.
     expect(getProviderDisplayName("anthropic")).toBe("Anthropic");
+    expect(getProviderDisplayName("nvidia")).toBe("NVIDIA");
   });
 
   it("keeps OpenRouter models with provider-prefixed ids under configured providers", () => {
@@ -271,5 +353,78 @@ describe("getDefaultModel", () => {
     ]);
 
     expect(picked.id).toBe("anthropic/claude-haiku-4.5");
+  });
+});
+
+describe("own-provider model provenance", () => {
+  it("marks all local provider selections even when their ids collide with hosted models", () => {
+    const ollama = {
+      id: "openai/gpt-5-nano",
+      name: "local alias",
+      provider: "ollama",
+    };
+    const models = buildAvailableModels({
+      ...NO_KEYS,
+      hostedCatalog: [],
+      hasToken: () => true,
+      isOllamaRunning: true,
+      ollamaModels: [ollama],
+      getOpenRouterSelectedModels: () => ["openai/gpt-5-nano"],
+      customProviders: [
+        {
+          name: "acme",
+          protocol: "openai-compatible",
+          baseUrl: "https://example.com",
+          modelIds: ["model"],
+        },
+      ],
+    });
+    expect(models.length).toBeGreaterThan(0);
+    for (const model of models) {
+      expect(model.hosted, `${model.provider}/${model.id}`).toBe(false);
+      expect(isMCPJamProvidedModelMenuItem(model)).toBe(false);
+    }
+    expect(ollama).not.toHaveProperty("hosted");
+  });
+
+  it("marks every dynamically configured org provider as BYOK", () => {
+    const models = buildAvailableModelsFromOrgConfig(
+      {
+        providers: [
+          {
+            providerKey: "openrouter",
+            enabled: true,
+            hasSecret: true,
+            selectedModels: ["openai/gpt-5-nano"],
+          },
+          {
+            providerKey: "bedrock",
+            enabled: true,
+            hasSecret: true,
+            selectedModels: ["amazon.nova-pro-v1:0"],
+          },
+          {
+            providerKey: "ollama",
+            enabled: true,
+            hasSecret: false,
+            baseUrl: "http://localhost:11434",
+            modelIds: ["openai/gpt-5-nano"],
+          },
+          {
+            providerKey: "custom:acme",
+            enabled: true,
+            hasSecret: false,
+            baseUrl: "https://example.com",
+            modelIds: ["model"],
+          },
+        ],
+      },
+      [],
+    );
+    expect(models).toHaveLength(4);
+    for (const model of models) {
+      expect(model.hosted, model.provider).toBe(false);
+      expect(isMCPJamProvidedModelMenuItem(model)).toBe(false);
+    }
   });
 });

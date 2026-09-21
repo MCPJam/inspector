@@ -9,6 +9,7 @@ import {
   MAX_ENVIRONMENTS_PER_JOURNEY,
 } from "@/components/swarms/journey-environments";
 import {
+  sameOptionalModel,
   stackFieldsEqual,
   type EnvironmentStack,
 } from "@/components/environment-composer/environment-stack";
@@ -54,7 +55,15 @@ export class SwarmTargetMaterializeError extends Error {
   }
 }
 
-/** Live (non-archived) env matching host + shared stack fields. */
+/**
+ * Live (non-archived) env matching host + shared stack fields.
+ *
+ * A row carrying a model OVERRIDE never matches. The swarm strip has no model
+ * slot, so its composition always means "inherit the client's model" — and
+ * absent is a real choice here, not a wildcard. Reusing an overridden row
+ * because the other slots line up would run the swarm on a model nobody
+ * selected on this screen, under a name that says nothing about it.
+ */
 export function findMatchingLiveEnvironment(
   hostId: string,
   stack: Pick<
@@ -67,6 +76,7 @@ export function findMatchingLiveEnvironment(
     (env) =>
       !env.archivedAt &&
       env.hostId === hostId &&
+      sameOptionalModel(env.modelId, undefined) &&
       stackFieldsEqual(
         {
           serverAttachmentId: env.serverAttachmentId ?? null,

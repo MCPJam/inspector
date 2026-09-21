@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { Button } from "@mcpjam/design-system/button";
+import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
 import {
   Select,
   SelectContent,
@@ -48,6 +49,10 @@ import {
   type ProtocolVersionPin,
   type SuiteState,
 } from "@/hooks/use-conformance-run";
+import {
+  PersistConformanceRun,
+  type ConformancePersistConfig,
+} from "@/components/conformance/PersistConformanceRun";
 
 /** One row in a suite's "what this will run" preview, before any run. */
 interface CatalogEntry {
@@ -144,10 +149,18 @@ function formatDetailValue(value: unknown) {
   }
 }
 
+function pendingIdSet(
+  result: { profile?: { pendingCheckIds?: string[] } } | undefined,
+): Set<string> {
+  return new Set(result?.profile?.pendingCheckIds ?? []);
+}
+
 function CheckRow({
   check,
+  pending = false,
 }: {
   check: MCPCheckResult | MCPAppsCheckResult | MCPTasksCheckResult;
+  pending?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const detailEntries = Object.entries(check.details ?? {});
@@ -162,6 +175,14 @@ function CheckRow({
         aria-expanded={expanded}
       >
         <StatusIcon status={check.status} />
+        {pending ? (
+          <span
+            title="unscored by this run's profile"
+            className="shrink-0 rounded-sm border border-border/60 px-1 py-px text-[10px] leading-none text-muted-foreground"
+          >
+            unscored
+          </span>
+        ) : null}
         <span className="text-xs flex-1 min-w-0 truncate">{check.title}</span>
         {expanded ? (
           <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
@@ -483,10 +504,17 @@ function SuiteSection({
   );
 }
 
-function ConformanceContent({ server }: { server: ServerWithName }) {
+function ConformanceContent({
+  server,
+  persist,
+}: {
+  server: ServerWithName;
+  persist?: ConformancePersistConfig;
+}) {
   // Run state, per-suite scores and the pooled headline all live in the shared
   // hook — score.mcpjam.com runs the same four suites and must pool them the
   // same way. Rendering stays here.
+  const snapshot = useConformanceRun({ server });
   const {
     protocol,
     apps,
@@ -503,19 +531,30 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
     pooledScore,
     oauthNotScored,
     isRunning,
-  } = useConformanceRun({ server });
+  } = snapshot;
 
   const protocolChecks = useMemo(
     () => protocolCatalog(versionPin),
-    [versionPin]
+    [versionPin],
   );
+  const protocolPendingIds = pendingIdSet(protocol.result);
+  const tasksPendingIds = pendingIdSet(tasks.result);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
+      {persist ? (
+        <PersistConformanceRun
+          persist={persist}
+          server={server}
+          snapshot={snapshot}
+        />
+      ) : null}
       <div className="space-y-1 border-b border-border/50 pb-4">
         <h2 className="text-lg font-semibold">Conformance</h2>
         <p className="text-sm text-muted-foreground">
-          Run Protocol, Apps, Tasks, and OAuth checks against {server.name}.
+          Run Protocol, Apps, Tasks, and OAuth checks against {server.name}.{" "}
+          Directory readiness grades it against Anthropic's and OpenAI's
+          published rules.
         </p>
       </div>
 
@@ -607,7 +646,11 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
                 </div>
               )}
               {protocol.result.checks.map((check) => (
-                <CheckRow key={`${runVersion}-${check.id}`} check={check} />
+                <CheckRow
+                  key={`${runVersion}-${check.id}`}
+                  check={check}
+                  pending={protocolPendingIds.has(check.id)}
+                />
               ))}
             </div>
           ) : null}
@@ -647,7 +690,11 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
                 {tasks.result.summary} (wire: {tasks.result.discovery.wire})
               </div>
               {tasks.result.checks.map((check) => (
-                <CheckRow key={`${runVersion}-${check.id}`} check={check} />
+                <CheckRow
+                  key={`${runVersion}-${check.id}`}
+                  check={check}
+                  pending={tasksPendingIds.has(check.id)}
+                />
               ))}
             </div>
           ) : null}
@@ -678,12 +725,29 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
             </div>
           ) : null}
         </SuiteSection>
+
+        {/*
+          DELIBERATELY OUTSIDE `runAll` AND THE POOLED SCORE. A hosted
+          readiness run takes minutes, so joining the shared `isRunning` would
+          hold the Run button and the protocol-version select hostage for its
+          duration — and readiness produces lanes and coverage rather than
+          passed/failed checks, so there is no number to pool. Each section
+          owns its own run control.
+        */}
+        <DirectoryReadinessSection publisher="claude" server={server} />
+        <DirectoryReadinessSection publisher="openai" server={server} />
       </div>
     </div>
   );
 }
 
-export function ConformanceTab({ server }: { server?: ServerWithName | null }) {
+export function ConformanceTab({
+  server,
+  persist,
+}: {
+  server?: ServerWithName | null;
+  persist?: ConformancePersistConfig;
+}) {
   // In hosted mode `selectedMCPConfig` can arrive as a stub with falsy name
   // and/or missing config while the project is still hydrating — treat any
   // non-connected shape as "no server selected" so the panel never runs
@@ -702,7 +766,7 @@ export function ConformanceTab({ server }: { server?: ServerWithName | null }) {
 
   return (
     <div className="h-full overflow-hidden p-4 lg:p-6">
-      <ConformanceContent key={server.name} server={server} />
+      <ConformanceContent key={server.name} server={server} persist={persist} />
     </div>
   );
 }

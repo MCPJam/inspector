@@ -24,6 +24,12 @@ vi.mock("convex/react", () => ({
   useAction: () => saveAction,
 }));
 
+// A settled, fully bootstrapped session: the attachment pickers are live, so
+// the new-suite requirement applies rather than being waived as pending.
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => true,
+}));
+
 vi.mock("@/hooks/useViews", () => ({
   useProjectServerAttachments: () => ({
     serverAttachments: [{ _id: "attachment-1" }],
@@ -34,8 +40,8 @@ vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({ hosts: [{ hostId: "host-first" }] }),
 }));
 
-vi.mock("@/components/evals/server-attachment-picker", () => ({
-  ServerAttachmentPicker: () => <div data-testid="server-attachment-picker" />,
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => <div data-testid="server-picker" />,
 }));
 vi.mock("@/components/evals/client-attachments-editor", () => ({
   ClientAttachmentsEditor: () => (
@@ -45,10 +51,16 @@ vi.mock("@/components/evals/client-attachments-editor", () => ({
 
 vi.mock("@/lib/toast", () => ({ toast: mockToast }));
 
+// Stubs, not reimplementations of the real builders (those are covered in
+// lib/__tests__/eval-route-url.test.ts). The route TYPE is in the stub path
+// on purpose: without it a promote that asked for the wrong kind of eval
+// route would produce the same URL and pass unnoticed.
 vi.mock("@/lib/app-navigation", () => ({
   navigateApp: (...args: unknown[]) => mockNavigateApp(...args),
   buildEvalsPath: (route: Record<string, unknown>) =>
-    `/evals/${route.suiteId}/${route.testId}`,
+    `/evals/${route.type}/${route.suiteId}/${route.testId}`,
+  buildEvaluatePath: (route: Record<string, unknown>) =>
+    `/evaluate/${route.type}/${route.suiteId}/${route.testId}`,
 }));
 
 // Radix Select needs a pointer dance jsdom can't do faithfully; the items
@@ -136,7 +148,7 @@ describe("SaveAsTestCaseAction", () => {
       ),
     );
     await waitFor(() =>
-      expect(mockNavigateApp).toHaveBeenCalledWith("/evals/suite-1/case-1"),
+      expect(mockNavigateApp).toHaveBeenCalledWith("/evaluate/test-edit/suite-1/case-1"),
     );
     // The toast was the old dead end; navigation replaces it.
     expect(mockToast.success).not.toHaveBeenCalled();
@@ -168,6 +180,6 @@ describe("SaveAsTestCaseAction", () => {
         "Saved as test case. Added Excalidraw to the suite.",
       ),
     );
-    expect(mockNavigateApp).toHaveBeenCalledWith("/evals/suite-1/case-1");
+    expect(mockNavigateApp).toHaveBeenCalledWith("/evaluate/test-edit/suite-1/case-1");
   });
 });

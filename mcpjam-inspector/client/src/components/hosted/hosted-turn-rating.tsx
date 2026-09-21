@@ -3,9 +3,9 @@ import { TurnRating } from "@mcpjam/chat-ui";
 
 import type {
   TurnRatingState,
-  UseChatboxTurnRatingResult,
-} from "@/hooks/useChatboxTurnRating";
-import type { ChatboxPerTurnFeedbackPayload } from "@/lib/chatbox-session";
+  UseScenarioTurnRatingResult,
+} from "@/hooks/useScenarioTurnRating";
+import type { ScenarioPerTurnFeedbackPayload } from "@/lib/scenario-session";
 
 interface HostedTurnRatingProps {
   chatSessionId: string;
@@ -15,8 +15,8 @@ interface HostedTurnRatingProps {
    * submit until then.
    */
   turnId: string | null;
-  config: ChatboxPerTurnFeedbackPayload;
-  rating: UseChatboxTurnRatingResult;
+  config: ScenarioPerTurnFeedbackPayload;
+  rating: UseScenarioTurnRatingResult;
 }
 
 /**

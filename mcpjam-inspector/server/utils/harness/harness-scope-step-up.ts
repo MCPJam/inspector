@@ -74,6 +74,73 @@ export function harnessScopeStepUpServerMatches(
   );
 }
 
+/** Order-independent structural key for a tool input, so `{a,b}` and `{b,a}`
+ *  correlate. Lives beside the matcher that is its only consumer. */
+export function stableHarnessValue(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableHarnessValue).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableHarnessValue(record[key])}`)
+    .join(",")}}`;
+}
+
+/** One tool call the turn observed on the harness stream, as the correlator
+ *  needs it. */
+export interface ObservedHarnessToolCall {
+  toolCallId: string;
+  serverId?: string;
+  toolName: string;
+  input: unknown;
+}
+
+/**
+ * Which observed tool call a scope challenge belongs to.
+ *
+ * TWO correlators, and the ID one wins whenever it can:
+ *
+ *  - `toolCallId`. A HOST-EXECUTED call raises its challenge inside `execute()`,
+ *    where the AI SDK hands it the very `toolCallId` the stream reported for
+ *    that call. That id is unique per call, so it is exact.
+ *  - the (serverId, toolName, input) tuple. The NATIVE path's publisher is the
+ *    signed proxy, which only ever saw an HTTP `tools/call` and has no id to
+ *    give — so the tuple is all there is, and it stays the fallback.
+ *
+ * The tuple ALONE is wrong when a turn makes the same call twice with the same
+ * arguments: `find` returns the FIRST match, so a challenge raised by the second
+ * call would suspend and later resume the first, re-running a call that already
+ * succeeded and leaving the failing one unresumed. When the challenge carries a
+ * usable id, an id miss returns `undefined` rather than degrading to the tuple —
+ * the correlator is re-run on every subsequent observed call, so a challenge
+ * that lands before its own `tool-call` part still correlates, and never onto
+ * the wrong call.
+ */
+export function matchHarnessScopeStepUpToolCall(args: {
+  observed: readonly ObservedHarnessToolCall[];
+  challenge: HarnessScopeStepUpEvent;
+}): ObservedHarnessToolCall | undefined {
+  const { observed, challenge } = args;
+  const toolCallId = challenge.toolCallId?.trim();
+  if (toolCallId) {
+    return observed.find((call) => call.toolCallId === toolCallId);
+  }
+  return observed.find(
+    (call) =>
+      harnessScopeStepUpServerMatches(
+        call.serverId ? [call.serverId] : [],
+        challenge.serverId
+      ) &&
+      call.toolName === challenge.toolName &&
+      stableHarnessValue(call.input) ===
+        stableHarnessValue(challenge.toolInput ?? {})
+  );
+}
+
 function notifyListener(
   listener: Listener,
   info: HarnessScopeStepUpEvent

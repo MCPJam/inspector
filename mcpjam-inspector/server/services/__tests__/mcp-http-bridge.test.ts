@@ -150,6 +150,75 @@ describe("handleJsonRpc failure telemetry", () => {
     });
   });
 
+  describe("-32020 HeaderMismatch attribution", () => {
+    /** A manager whose tools/call fails with the modern header-mismatch code. */
+    function headerMismatchManager(config?: Record<string, unknown>) {
+      return failingManager({
+        executeTool: vi.fn().mockRejectedValue(
+          Object.assign(
+            new Error("Header mismatch: Mcp-Name 'a' does not match body 'b'"),
+            { code: -32020 },
+          ),
+        ),
+        ...(config
+          ? { getServerConfig: vi.fn().mockReturnValue(config) }
+          : {}),
+      });
+    }
+
+    async function callTool(manager: any, reporter: any) {
+      return handleJsonRpc(
+        "srv-1",
+        { id: 20, method: "tools/call", params: { name: "t", arguments: {} } },
+        manager,
+        "adapter",
+        { failureReporter: reporter },
+      );
+    }
+
+    it("claims it: the server rejected headers MCPJam built", async () => {
+      const { reporter, calls } = makeReporter();
+      await callTool(headerMismatchManager({}), reporter);
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0].hop).toBe("mcpjam_request_construction");
+      expect(calls[0].context).toMatchObject({ upstreamCode: -32020 });
+    });
+
+    it("does NOT claim it when the user asked for a non-conforming client", async () => {
+      // `toolParamHeaderMirroring: "omit"` exists so a user can check whether
+      // their server answers -32020 instead of silently serving the request.
+      // Claiming this would page the team every time the debugger works.
+      const { reporter, calls } = makeReporter();
+      await callTool(
+        headerMismatchManager({ mirrorToolParamHeaders: false }),
+        reporter,
+      );
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0].hop).toBe("user_server_hop");
+    });
+
+    it("still reports — and keeps the envelope — when the manager has no getServerConfig", async () => {
+      // The refinement runs inside a swallowing try/catch, so a manager
+      // missing the accessor must not take the whole report down with it.
+      const { reporter, calls } = makeReporter();
+      const response = await callTool(headerMismatchManager(), reporter);
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0].hop).toBe("mcpjam_request_construction");
+      expect(response).toMatchObject({ jsonrpc: "2.0", id: 20 });
+    });
+
+    it("leaves every other upstream failure on the user hop", async () => {
+      const { reporter, calls } = makeReporter();
+      await callTool(failingManager({ getServerConfig: vi.fn() }), reporter);
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0].hop).toBe("user_server_hop");
+    });
+  });
+
   it("an UPSTREAM -32601 through the passthrough is a declared outcome — no report", async () => {
     const { reporter, calls } = makeReporter();
     const manager = failingManager({

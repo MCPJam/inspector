@@ -1,15 +1,27 @@
 /**
- * The suite header's "where this runs" bar.
+ * The suite's "where this runs" bar.
  *
- * One strip, two write modes, because a suite can express its target two ways:
+ * Lives on the suite settings sheet (not the overview header): clients,
+ * models, servers, skills, and named environments are configuration, not
+ * a run-time switch. One strip, two write modes, because a suite can
+ * express its target two ways:
  *
  *  - ENVIRONMENT mode (`suite.environmentIds`) — the modern one. Run all fans
  *    out one run per environment and the backend resolves each at launch. Every
  *    slot is live here, and an edit resolves the composition into rows before
  *    writing `setSuiteEnvironments`.
- *  - LEGACY mode (`hostAttachments` + `serverAttachmentId`) — the only option
- *    for a suite with no project, since environments are project-scoped. Two
- *    slots, writing the fields they have always written.
+ *  - LEGACY mode (`hostAttachments` + `serverAttachmentId`) — the fallback for
+ *    a suite with no project (environments are project-scoped) or a backend
+ *    that cannot accept a model on a cell. Two slots, writing the fields they
+ *    have always written.
+ *
+ * WHICH MODE IS NOT A FEATURE FLAG. Composing cells is what the backend calls
+ * launch-path substrate: `ensureAdhocEnvironments`, `setSuiteEnvironments` and
+ * `startTestSuiteRun` are all ungated, and the CLI has always been able to do
+ * this. So the question here is `useEvalComposeCapable` — does this deployment
+ * accept a model on a cell — not `project-environments-enabled`, which gates
+ * NAMED environments and the identity they carry. The composer hides its own
+ * environments picker on that flag; nothing in this file reads it.
  *
  * A legacy suite in an environment-capable project shows the full strip seeded
  * from what it already runs, and the FIRST edit converts it. That conversion is
@@ -23,21 +35,28 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "convex/react";
 import { Globe, Server } from "lucide-react";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
-import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
+import {
+  EnvironmentComposer,
+  EVALS_COMPOSER_SLOTS,
+} from "@/components/environment-composer/environment-composer";
 import { SandboxImagePill } from "@/components/environment-composer/sandbox-image-pill";
 import {
   composerHasTarget,
   composerStateFromEnvironments,
+  environmentsCarryModels,
   environmentsCarryPluginPins,
   environmentsExceedOneStack,
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
-import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
-import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import {
+  useModelMatrixCapability,
+  useProjectEnvironments,
+} from "@/hooks/useProjectEnvironments";
+import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { convexErrMessage } from "@/lib/convex-error";
 import { toast } from "@/lib/toast";
@@ -53,8 +72,14 @@ export interface SuiteEnvironmentComposerBarProps {
   /** Legacy-mode server-group write. */
   onUpdateServerAttachment?: (serverAttachmentId: string) => Promise<void>;
   className?: string;
-  /** `panel` = card surface. `inline` = no chrome, for the header row. */
+  /** `panel` = card surface. `inline` = no chrome, for a tight row. */
   containerVariant?: "panel" | "inline";
+  /**
+   * Hide the computer/sandbox pill when the settings sheet already has
+   * its own Computer environment row, so the two don't sit on the same
+   * page offering the same pin.
+   */
+  omitComputers?: boolean;
 }
 
 export function SuiteEnvironmentComposerBar({
@@ -64,30 +89,36 @@ export function SuiteEnvironmentComposerBar({
   onUpdateServerAttachment,
   className,
   containerVariant = "panel",
+  omitComputers = false,
 }: SuiteEnvironmentComposerBarProps) {
   const projectId = suite.projectId ?? null;
-  const environmentsEnabled = useProjectEnvironmentsEnabled();
-  // Environments are project-scoped, so a suite without a project can only ever
-  // run the legacy axes — no flag makes that untrue.
-  const envCapable = Boolean(projectId) && environmentsEnabled;
+  const { capable: composeCapable, pending: composePending } =
+    useEvalComposeCapable(projectId);
 
   /**
    * A suite that already ATTACHES environments is never legacy-editable, even
-   * when this deployment can't offer the composer (project environments off).
-   * `buildSuiteRunPlans` prefers `environmentIds`, so writing `hostAttachments`
-   * would report success and change nothing about what runs — the exact trap
-   * this bar exists to remove. Show the legacy axes read-only instead.
+   * when this deployment can't offer the composer (a backend without the model
+   * matrix). `buildSuiteRunPlans` prefers `environmentIds`, so writing
+   * `hostAttachments` would report success and change nothing about what runs —
+   * the exact trap this bar exists to remove. Show the legacy axes read-only
+   * instead.
    */
   const attachesEnvironments = (suite.environmentIds?.length ?? 0) > 0;
   const editable =
-    !readOnly && Boolean(onUpdate) && !(attachesEnvironments && !envCapable);
+    !readOnly &&
+    Boolean(onUpdate) &&
+    !(attachesEnvironments && !composeCapable && !composePending);
 
-  return envCapable && projectId ? (
+  // While the probe is in flight the compose strip renders DISABLED rather than
+  // the legacy one: swapping the whole strip a frame later reads as the page
+  // changing its mind about what this suite runs.
+  return (composeCapable || composePending) && projectId ? (
     <BarShell className={className} containerVariant={containerVariant}>
       <EnvironmentModeBar
         suite={suite}
         projectId={projectId}
         disabled={!editable}
+        omitComputers={omitComputers}
       />
     </BarShell>
   ) : (
@@ -97,6 +128,7 @@ export function SuiteEnvironmentComposerBar({
         editable={editable}
         onUpdate={onUpdate}
         onUpdateServerAttachment={onUpdateServerAttachment}
+        omitComputers={omitComputers}
       />
     </BarShell>
   );
@@ -140,10 +172,12 @@ function EnvironmentModeBar({
   suite,
   projectId,
   disabled,
+  omitComputers,
 }: {
   suite: EvalSuite;
   projectId: string;
   disabled: boolean;
+  omitComputers: boolean;
 }) {
   // Ad-hoc rows included: once the composer has been used, the suite's own
   // attachments ARE ad-hoc, and seeding has to see them.
@@ -188,9 +222,17 @@ function EnvironmentModeBar({
   const unresolvedCount = environmentsLoading
     ? 0
     : attachedIds.length - attachedEnvironments.length;
+  const skillsEnabled = useSkillsEnabled();
+  const computersEnabled = useComputersEnabled();
+  const modelMatrix = useModelMatrixCapability(projectId);
+  const modelsEnabled = modelMatrix === true;
   const seeded = useMemo<EnvironmentComposerState>(() => {
     if (attachedIds.length > 0) {
-      return composerStateFromEnvironments(attachedEnvironments);
+      return composerStateFromEnvironments(attachedEnvironments, {
+        skillsEnabled,
+        computersEnabled,
+        modelsEnabled,
+      });
     }
     // Not an environment suite yet: show what it runs today, so converting
     // preserves it rather than starting from blank.
@@ -202,19 +244,20 @@ function EnvironmentModeBar({
         skillSelection: null,
         computerEnvironmentId:
           suite.environment?.computerEnvironmentId ?? null,
+        modelSelection: { includeClientDefaults: true, explicitModelIds: [] },
       },
       customized: false,
     };
   }, [
     attachedEnvironments,
     attachedIds.length,
+    computersEnabled,
+    modelsEnabled,
+    skillsEnabled,
     suite.environment?.computerEnvironmentId,
     suite.hostAttachments,
     suite.serverAttachmentId,
   ]);
-
-  const skillsEnabled = useSkillsEnabled();
-  const computersEnabled = useComputersEnabled();
   /**
    * The ATTACHMENTS cannot be represented as one stack — two on a single client,
    * disagreeing on an enabled shared slot, or (for a seed the composer treats as
@@ -233,8 +276,36 @@ function EnvironmentModeBar({
     environmentsExceedOneStack(attachedEnvironments, {
       skillsEnabled,
       computersEnabled,
+      modelsEnabled,
     }) ||
-    (seeded.customized && environmentsCarryPluginPins(attachedEnvironments));
+    (seeded.customized && environmentsCarryPluginPins(attachedEnvironments)) ||
+    // A model override with no slot to show it in. `environmentsExceedOneStack`
+    // only catches a DISAGREEMENT between attachments, so a suite whose
+    // attachments all pin the SAME model slips past it — and seeding then reads
+    // the slot as "client defaults", so the first pill edit resolves rows
+    // without the override and silently moves the suite to another model.
+    (!modelsEnabled && environmentsCarryModels(attachedEnvironments));
+  /**
+   * The capability probe has not answered yet. Distinct from `collapsesByHost`:
+   * nothing is wrong with the attachments, we just cannot yet tell whether the
+   * models slot exists — and until we can, `modelsEnabled` reads false, which
+   * is the same input that makes a model-bearing attachment look uneditable.
+   * Disabling (rather than declaring a collapse) keeps the hint from flashing
+   * on every load, matching how the environment list is handled above.
+   */
+  const modelCapabilityPending = Boolean(projectId) && modelMatrix === undefined;
+
+  /**
+   * A legacy suite showing the compose strip: nothing is attached yet, so the
+   * next edit is the conversion. Only worth saying while the strip is usable —
+   * a disabled or collapsed strip cannot convert anything.
+   */
+  const willConvert =
+    attachedIds.length === 0 &&
+    !disabled &&
+    !environmentsLoading &&
+    !modelCapabilityPending &&
+    !collapsesByHost;
 
   const [state, setState] = useState<EnvironmentComposerState>(seeded);
   const [saving, setSaving] = useState(false);
@@ -305,6 +376,12 @@ function EnvironmentModeBar({
           value={state}
           onChange={(next) => void commit(next)}
           maxTargets={MAX_SUITE_ENVIRONMENTS}
+          environmentsVocabulary="client"
+          slots={
+            omitComputers
+              ? EVALS_COMPOSER_SLOTS.filter((slot) => slot !== "computers")
+              : EVALS_COMPOSER_SLOTS
+          }
           // Also disabled while the environment list is still loading: resolving
           // against an empty live list would miss a matching NAMED environment
           // and mint an unnamed twin of it.
@@ -312,6 +389,7 @@ function EnvironmentModeBar({
             disabled ||
             saving ||
             environmentsLoading ||
+            modelCapabilityPending ||
             unresolvedCount > 0 ||
             collapsesByHost
           }
@@ -324,19 +402,36 @@ function EnvironmentModeBar({
           data-testid="suite-env-unresolved-hint"
         >
           {unresolvedCount === 1
-            ? "One attached environment is archived or unavailable."
-            : `${unresolvedCount} attached environments are archived or unavailable.`}{" "}
-          Detach it in suite settings before changing where this runs.
+            ? "One attached client is archived or unavailable."
+            : `${unresolvedCount} attached clients are archived or unavailable.`}{" "}
+          Detach it from the Clients pill before changing other slots.
         </p>
       ) : collapsesByHost ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid="suite-env-attachments-collapse-hint"
         >
-          This suite&apos;s environments don&apos;t fit one editable setup —
-          they differ by client, server group, skills or image, or pin plugin
-          versions — so this strip can&apos;t change them without changing what
-          some of them run. Adjust them in suite settings.
+          This suite&apos;s clients don&apos;t fit one editable setup —
+          they differ by client, server group, skills, model or image, or pin
+          plugin versions — so this strip can&apos;t change them without changing
+          what some of them run. Edit them individually on the Environments
+          page.
+        </p>
+      ) : willConvert ? (
+        /**
+         * The suite still runs its legacy axes, and the first edit here writes
+         * `environmentIds` instead — which `buildSuiteRunPlans` then prefers,
+         * and which makes each run execute ONE model per case rather than the
+         * case's own list. That is a change to what runs, so it is said before
+         * it happens rather than discovered afterwards.
+         */
+        <p
+          className="text-[11px] text-muted-foreground"
+          data-testid="suite-env-convert-hint"
+        >
+          Editing this strip converts the suite: Run all then fires one run per
+          setup, and each case runs on that setup&apos;s model instead of its
+          own list.
         </p>
       ) : null}
     </div>
@@ -352,11 +447,13 @@ function LegacyModeBar({
   editable,
   onUpdate,
   onUpdateServerAttachment,
+  omitComputers,
 }: {
   suite: EvalSuite;
   editable: boolean;
   onUpdate?: (attachments: HostAttachmentDraft[]) => Promise<void>;
   onUpdateServerAttachment?: (serverAttachmentId: string) => Promise<void>;
+  omitComputers: boolean;
 }) {
   const initialAttachments = useMemo<HostAttachmentDraft[]>(
     () =>
@@ -449,7 +546,7 @@ function LegacyModeBar({
       {showServers ? (
         <div className="shrink-0">
           {editable && suite.projectId && onUpdateServerAttachment ? (
-            <ServerGroupPicker
+            <ServerPicker
               projectId={suite.projectId}
               value={suite.serverAttachmentId ?? null}
               onChange={onUpdateServerAttachment}
@@ -501,7 +598,7 @@ function LegacyModeBar({
         )}
       </div>
 
-      {computersEnabled && editable && suite.projectId ? (
+      {computersEnabled && !omitComputers && editable && suite.projectId ? (
         <div className="shrink-0">
           <SandboxImagePill
             projectId={suite.projectId}

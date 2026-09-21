@@ -10,9 +10,9 @@ describe("hosted OAuth return paths", () => {
     localStorage.clear();
   });
 
-  it("preserves chatbox slug return paths", () => {
+  it("preserves scenario slug return paths", () => {
     writeHostedOAuthPendingMarker({
-      surface: "chatbox",
+      surface: "scenario",
       serverName: "Asana",
       serverUrl: "https://example.com/mcp",
       returnPath: "/asana",
@@ -21,16 +21,16 @@ describe("hosted OAuth return paths", () => {
     expect(readHostedOAuthPendingMarker()?.returnPath).toBe("/asana");
     expect(
       resolveHostedOAuthReturnPath({
-        surface: "chatbox",
+        surface: "scenario",
         returnPath: "/asana",
       }),
     ).toBe("/asana");
   });
 
-  it("accepts legacy chatbox hash return targets", () => {
+  it("accepts legacy scenario hash return targets", () => {
     expect(
       resolveHostedOAuthReturnPath({
-        surface: "chatbox",
+        surface: "scenario",
         returnPath: "#asana",
       }),
     ).toBe("/asana");

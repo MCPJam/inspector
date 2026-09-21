@@ -1,13 +1,19 @@
 ---
-title: "Claude Code and Codex hosts"
-description: "Run the real Claude Code or Codex agent inside your project's Computer — observe native tools, MCP client, and execution behavior directly"
+title: "Harness hosts: Claude Code, Codex, and Cursor"
+description: "Run a real agent runtime — Claude Code, Codex, or the Cursor CLI — inside your project's Computer, and observe native tools, MCP client, and execution behavior directly"
 icon: "terminal"
 ---
 
-MCPJam supports two harness hosts that run a real agent runtime inside your project's Computer (a cloud Linux sandbox) instead of MCPJam's emulated chat loop. You are observing the actual runtime — its native tools, its own agent loop, its real execution behavior — not a simulation of it.
+A harness host runs a real agent runtime inside your project's Computer (a cloud Linux sandbox) instead of MCPJam's emulated chat loop. You are observing the actual runtime — its native tools, its own agent loop, its real execution behavior — not a simulation of it.
+
+Two of them run on **MCPJam's model access**, and everything below — turn mechanics, host settings, billing, failure modes — describes those two:
 
 - **Claude Code** — runs the real Claude Code agent with Anthropic models. Supports selected MCP servers and native tool approval.
-- **Codex** — runs the real Codex CLI agent with OpenAI gpt-5 family models. Supports skills; does not support selected MCP servers.
+- **Codex** — runs the real Codex CLI agent with OpenAI gpt-5 family models. Supports skills and selected MCP servers (through a host-executed relay — see the caveat below).
+
+The third runs on **your own vendor account**:
+
+- **Cursor CLI** — runs the real Cursor agent, signed in with your own `CURSOR_API_KEY` and billed to that Cursor account. MCPJam mints no model lease for it, so it needs a credential the other two do not. This page documents that credential in [Harness credentials on your own vendor account](#harness-credentials-on-your-own-vendor-account); its turn mechanics and host settings are not covered here yet. The Playground model picker shows **Cursor Auto** locked — the Cursor runtime picks its own model on your account, so the picker has nothing to select.
 
 <Note>
   The Claude Code and Codex hosts are available to organizations where the
@@ -18,10 +24,55 @@ MCPJam supports two harness hosts that run a real agent runtime inside your proj
 ## What happens when you run a turn
 
 1. **Pre-flight check.** Before the stream opens, MCPJam verifies that the host can run: the model is supported by the selected harness, the Computer data plane is configured, and the host settings are ones the runtime can honor. Any failure returns a clear error before the turn starts — a turn never silently falls back to the emulated engine.
-2. **Computer wake.** The host's project Computer is reserved or woken (provisioned on first use). Both harness hosts **require** a Computer — there is no local fallback.
+2. **Where it runs.** By default the host's project Computer is reserved or woken (provisioned on first use). In the desktop app and `npx @mcpjam/inspector`, a Claude Code host can instead run **natively on your own machine** — see [Running Claude Code on your machine](#running-claude-code-on-your-machine) below. A turn never moves between the two on its own: if the target you chose cannot run, you are told why, and you decide.
 3. **Credential delivery.** MCPJam installs a short-lived model credential into the sandbox's egress layer outside the VM. Neither the sandbox nor your browser ever holds a real model key. The agent runs pointed at MCPJam's model proxy, which verifies the credential and meters every generation. There is no raw-key fallback.
-4. **MCP delivery.** For Claude Code hosts, selected MCP servers are written into the session's MCP config, each pointed at MCPJam's per-server proxy tunnel — no upstream credentials enter the sandbox. Codex hosts do not support selected MCP servers.
+4. **MCP delivery.** The two harnesses deliver MCP servers differently:
+   - **Claude Code (native)** — selected MCP servers are written into the session's MCP config, each pointed at MCPJam's per-server proxy tunnel. The runtime's own MCP client connects to them and the model calls the tools through native function calling. No upstream credentials enter the sandbox.
+   - **Codex (host-executed)** — the Codex CLI does not make MCP server tools model-callable in the mode MCPJam drives ([openai/codex#19425](https://github.com/openai/codex/issues/19425)), so MCPJam instead enumerates each selected server's tools at turn start and hands them to the agent as *host-executed* tools. The bridge injects their descriptions into the prompt, the model invokes them through a CLI shim, and **MCPJam executes them on its own server** against the already-authorized connection. Nothing about your servers — no URL, no token — enters the sandbox.
 5. **The turn runs.** The agent's own loop executes; native tools run inside the sandbox; file changes land on the Computer's disk; the transcript and trace persist like any other chat.
+
+## Running Claude Code on your machine
+
+<Note>
+  Available in the MCPJam desktop app and `npx @mcpjam/inspector` — never in the
+  hosted product — and only where MCPJam has enabled it for your account.
+</Note>
+
+A Claude Code host can run the real agent as a process on your own computer
+instead of in a cloud sandbox. Same agent, same tools, same MCP servers, same
+metered model access through MCPJam's proxy — but the files it works on are
+your actual checkout, and the commands it runs happen on your machine.
+
+**This is not a sandbox.** The agent runs as your user account. The folder you
+grant is where it *starts*, not a boundary it cannot leave: anything your user
+can read or change, it can read or change. Edits inside the folder run freely;
+commands still ask for approval in chat. If that is not what you want, run the
+host hosted, which is the default.
+
+Three things happen once, in this order, before your first local turn:
+
+1. **Install the local runtime.** About 200 MB, downloaded once and shared by
+   every project: Claude Code, its supporting runtime, and the Node it runs on.
+   MCPJam verifies the download's signature and then verifies the contents
+   again after extraction, and refuses anything that does not match what this
+   Inspector build expects.
+2. **Choose the project folder.** In the desktop app this opens your OS folder
+   picker. This is the directory the agent starts in.
+3. **Authorize.** The authorization is scoped to this project and this machine,
+   and it expires on its own. Changing the runtime, the folder, or the
+   permission profile means authorizing again — the old authorization does not
+   carry over, by design.
+
+While a local turn runs, MCPJam keeps the model credential in the Inspector
+process and hands the agent only a per-session token that works with nothing
+else. Stopping a session stops the whole process tree it started, including the
+agent binary. **Stop all local sessions** in the local-execution panel ends
+everything immediately.
+
+**When it is not offered.** Your platform is not supported,
+the runtime is not installed, you are signed in as a guest, the session is a
+shared scenario or swarm run, or the feature is not enabled for your account.
+The selector says which.
 
 ## Host settings
 
@@ -31,7 +82,7 @@ MCPJam supports two harness hosts that run a real agent runtime inside your proj
 |---|---|
 | Model | Honored — must be an MCPJam-provided Anthropic model. Bring-your-own-key models are not supported and fail closed. |
 | System prompt | Honored — passed to the runtime. |
-| Require tool approval | The toggle is disabled for Claude Code hosts. A host that already had approval enabled before switching to Claude Code will have approval honored for native tools: side-effecting built-ins (Bash, Write, etc.) pause the turn for your decision; read-only tools run freely. Approval cannot be combined with selected MCP servers — that combination is rejected at pre-flight. |
+| Require tool approval | Honored — the toggle is enabled for Claude Code hosts. When on, the turn pauses for your decision before each side-effecting tool call — the runtime's own write-class built-ins (Bash, Write, Edit, and the like) and the tools of any selected MCP server. Read-only tools run freely. Approval and selected MCP servers can be combined. |
 | Selected MCP servers | Honored — delivered via the session's MCP config through MCPJam's proxy. |
 | Skills | Honored — runtime skills are materialized into the sandbox. |
 | Temperature and other sampling controls | Not honored — the Claude Code runtime owns its own sampling. These controls are grayed out in the UI. |
@@ -44,7 +95,7 @@ MCPJam supports two harness hosts that run a real agent runtime inside your proj
 | Model | Honored — must be an MCPJam-provided OpenAI gpt-5 family model. Other models are not supported and fail closed. |
 | System prompt | Honored — passed to the runtime. |
 | Require tool approval | Not supported — the Codex runtime does not pause for tool approval. The toggle is disabled. |
-| Selected MCP servers | Not supported — Codex does not make MCP server tools model-callable. A Codex host with selected servers is rejected at pre-flight. |
+| Selected MCP servers | Honored, via a host-executed relay rather than a native MCP client. Tools are named identically to Claude Code (`mcp__<server>__<tool>`), so traces and eval assertions match across the two harnesses. See the fidelity caveat below. |
 | Skills | Honored — runtime skills are materialized into the sandbox. |
 | Temperature and other sampling controls | Not honored — the Codex runtime owns its own sampling. These controls are grayed out in the UI. |
 | Progressive tool disclosure | Not applied — the real runtime owns tool discovery. |
@@ -55,19 +106,127 @@ MCPJam supports two harness hosts that run a real agent runtime inside your proj
   rather than silently ignored.
 </Note>
 
+## Codex MCP fidelity caveat
+
+Codex's MCP support is **not** equivalent to Claude Code's, and the difference matters if you are using it to benchmark a connector:
+
+- The model does **not** call your tools through native function calling. The harness bridge injects each tool's name, description, and input schema into the prompt, and the model runs `node <shim> <toolName> '<json>'` through its built-in `bash` tool. Tool-selection behavior therefore reflects how well the model follows those shim instructions, not how a native MCP client would behave.
+- Tools execute **host-side**, in MCPJam's server process, not in the sandbox. For a remote HTTP connector the difference is small (the same outbound request, from a different origin). For a stdio/local server it is larger — the server runs where MCPJam runs, not next to the agent.
+- Tool schemas are enumerated **once, at turn start**. There is no `tools/list_changed` subscription, so a server that changes its tool list mid-turn is only picked up on the next turn.
+- Every projected tool's description is part of the prompt, so a server with many tools inflates each turn of the conversation.
+
+Claude Code hosts are unaffected by all of the above — they use the runtime's real MCP client.
+
 ## Requirements
 
-- A project **Computer** (the E2B data plane must be configured for your deployment).
+- A project **Computer** (the E2B data plane must be configured for your deployment) — **or**, for a Claude Code host in the desktop app or `npx`, the local runtime installed and authorized (see [Running Claude Code on your machine](#running-claude-code-on-your-machine)).
 - For **Claude Code**: an MCPJam-provided Anthropic model selected on the host.
 - For **Codex**: an MCPJam-provided OpenAI gpt-5 family model selected on the host.
 - A **signed-in project member** — guest sessions cannot run harness hosts.
 
-No credential configuration is needed. Broker delivery is on by default and the model proxy is always-on.
+No credential configuration is needed **for Claude Code and Codex**. Broker delivery is on by default and the model proxy is always-on.
+
+## Harness credentials on your own vendor account
+
+Not every harness runs on MCPJam's model access. A harness that authenticates
+against the **customer's own account with the runtime vendor** — the Cursor CLI
+host, which signs in with a `CURSOR_API_KEY` and bills every generation to that
+Cursor account — takes no MCPJam model lease at all. Its credential comes from a
+**project secret**, and the delivery you choose decides which surfaces can run it.
+
+| Delivery | Where the value lives | Works in playground chat | Works in hosted evals and swarms |
+|---|---|---|---|
+| **Brokered** (recommended) | Never leaves MCPJam's backend. The egress proxy injects it as a header on the way out of the sandbox; the sandbox holds a non-secret placeholder. | **No** — playground chat runs on your persistent project Computer, and brokered secrets are composed only onto the disposable boxes an eval, swarm or scenario run provisions | **Yes** |
+| **Materialized** | Resolved by MCPJam's server and exported as an environment variable inside the sandbox. | Yes | **No** |
+
+Hosted eval and swarm launches **refuse** an environment that selects a
+materialized secret. That is deliberate: only the chat path resolves and injects
+materialized values, so on a runner-claimed attempt the credential would simply
+be missing and the run would report a healthy connector as broken. A brokered
+secret has no such problem — the backend composes it into the box's network
+policy and the runner does not participate.
+
+So for a Cursor CLI host that you intend to run in an eval suite or a swarm,
+**create the secret as brokered**, under **Project Settings → Secrets**, bound to:
+
+| Field | Value |
+|---|---|
+| Name | `CURSOR_API_KEY` |
+| Delivery | Brokered |
+| Hosts | `api2.cursor.sh` |
+| Header | `Authorization` |
+| Template | `Bearer {}` |
+
+Then **select it into the environment the host runs in**. That selection is the
+grant, not a formality: brokered secrets are composed onto a box from its
+environment's selection, so a secret the environment does not grant is never
+delivered no matter how it is bound.
+
+Every way that can go wrong is refused **before the sandbox is touched**, with a
+message that names the fix:
+
+| What is wrong | What the turn says |
+|---|---|
+| Neither delivery configured | Names the variable and both deliveries, and points at Project Settings → Secrets |
+| Brokered secret exists but the environment does not select it | Says so, and asks you to select it into that environment — not to create a second one |
+| The host is not running from a Project Environment at all | Says there is no grant boundary, so no brokered secret can reach the box |
+| Brokered secret bound to the wrong host | Names the host it found and the host the runtime needs |
+| The run is a **replay** of an earlier eval run | Says MCPJam cannot confirm the credential for a replay, and that nothing about the secret needs changing — launch the suite directly instead |
+
+<Note>
+  **Replaying** an eval run cannot verify a brokered credential. A replay keeps
+  the original run's environment internally, but MCPJam's runner is not told
+  which environment that was, so it cannot check the grant before the sandbox
+  starts and refuses rather than guess. Launch the suite directly to run a
+  Cursor CLI host; nothing about the secret or the environment needs to change.
+</Note>
+
+<Note>
+  A **persistent project Computer** (the ordinary playground chat box) does not
+  receive brokered secrets today — they are composed onto the disposable boxes
+  that scenario, eval and swarm runs provision. Chat on a project Computer
+  therefore needs a **materialized** `CURSOR_API_KEY`. It is fine for one
+  environment to hold both.
+</Note>
+
+### Project secrets require KMS envelope encryption
+
+Storing **any** project secret requires the deployment to have envelope
+encryption turned on. Without it MCPJam refuses the write outright, with:
+
+> This deployment cannot store project secrets yet: envelope encryption
+> (SECRETS_KMS_WRITE) is not enabled.
+
+This is a deployment prerequisite, not a toggle: without envelope writes the
+stored value is not cryptographically bound to its project and its owner, and a
+credential store whose isolation rests on row checks alone is not the design.
+
+MCPJam Cloud has this configured. A **self-hosted or local development**
+deployment must set, on the Convex backend:
+
+| Variable | Purpose |
+|---|---|
+| `SECRETS_KMS_WRITE=1` | Turns envelope writes on. Nothing stores a project secret without it. |
+| `GCP_KMS_SA_EMAIL` | Service account that can use the key. |
+| `GCP_KMS_SA_PRIVATE_KEY` | That account's PKCS#8 PEM private key. |
+| `GCP_KMS_KEY_RESOURCE` | Full crypto key resource name (`projects/*/locations/*/keyRings/*/cryptoKeys/*`). |
+| `KMS_AAD_ENVIRONMENT` | The environment label bound into the additional authenticated data. |
+
+Set the four key variables **before** turning `SECRETS_KMS_WRITE` on, and prove
+the key actually works first — four correctly spelled variables are not the same
+as a usable key, and every way that can fail (missing IAM permission, wrong
+region, a private key truncated by a dashboard field) looks like success until
+the first real write. Reads are unaffected: a deployment holding older secrets
+keeps opening them.
+
+Until KMS is configured, a self-hosted deployment cannot store a
+`CURSOR_API_KEY` in either delivery, and so cannot run the Cursor CLI host.
+
 
 ## Billing
 
-- **Computer time** — the harness runtime keeps the Computer awake, so it meters into your org's monthly computer-time allowance exactly like terminal use.
-- **Model tokens** — every generation is priced and settled by the model proxy against your org, the same accounting as regular chat. Spend caps and empty-wallet rejections apply before the stream starts.
+- **Computer time** — the harness runtime keeps the Computer awake, so it meters into your org's monthly computer-time allowance exactly like terminal use. A turn that runs **on your own machine** uses no Computer and meters no computer time.
+- **Model tokens** — every generation is priced and settled by the model proxy against your org, the same accounting as regular chat, **whether the turn ran hosted or on your own machine**. Spend caps and empty-wallet rejections apply before the stream starts either way.
 
 ## Failure modes
 
@@ -76,14 +235,33 @@ None of these fall back to the emulated engine — a turn that says it ran the r
 | Condition | What you see |
 |---|---|
 | Enterprise-managed authorization policy on the host | Pre-flight error — the combination is rejected rather than silently bypassed. |
-| Require tool approval + selected MCP servers (Claude Code) | Pre-flight error — turn approval off or remove the MCP servers. |
-| Selected MCP servers on a Codex host | Pre-flight error — Codex does not support MCP server tool delivery. |
+| Require tool approval on a Codex host | Pre-flight error — the Codex runtime doesn't pause for tool approval, so the turn is refused rather than run unapproved, whether or not any MCP server is selected. The toggle is disabled on Codex hosts, so a host that carried approval in from another harness keeps the stored value: clear `requireToolApproval` through the API or CLI, or switch the host off Codex to reach the toggle again. |
 | Computer data plane not configured | Pre-flight error naming the data plane requirement. |
 | Model not supported by the selected harness | Pre-flight error asking you to pick an eligible model. |
+| Cursor CLI host configured with an ordinary model id (e.g. `anthropic/claude-sonnet-4.5`) | Pre-flight error naming the id it found — the Cursor runtime ignores any pinned model and picks its own, so the host must carry `cursor/auto`. Reset the host's model field. |
 | Computer at daily start cap | Start-limit dialog with upgrade option. |
 | Org out of compute allowance and credits | Computer pauses with a billing notice. |
 | Org spending limit reached | Clean rejection before any model call. |
 | Sandbox dies mid-run | Turn errors; the next turn starts a fresh session. |
+
+**Running on your own machine** (Claude Code, desktop app and `npx` only):
+
+| Condition | What you see |
+|---|---|
+| The local runtime is not installed | The Native option is offered but not selectable, with an Install step in the authorization sheet. |
+| The runtime on disk does not match what this Inspector expects | Refused — reinstall it. MCPJam will not launch a runtime it cannot verify. |
+| Your platform cannot prove whole-tree cleanup | Native is not offered, and says why: MCPJam could not guarantee that stopping a session stops everything it started. |
+| The authorization expired, or the runtime, folder or permissions changed | Refused, with the authorization sheet — the old authorization does not cover the new terms. |
+| Guest, shared scenario session, or swarm run | Native is not offered; the turn runs hosted. |
+| The agent's control channel is reachable from your network | The session stops rather than proceeding. A local agent's control channel is never published to the LAN. |
+
+**Eval-specific pre-flight refusals** (harness eval runs only):
+
+| Condition | What you see |
+|---|---|
+| Host grants `bash` but no computer environment is pinned on the suite | Pre-flight error — pin a computer environment in suite settings, or remove the computer-backed built-in from the host config. |
+| Suite is scoped to the organization (no project) | Pre-flight error — the harness provisions and bills the computer against a project; move the suite into a project and retry. |
+| A case pins a short model id (e.g. `claude-sonnet-4-6` instead of `anthropic/claude-sonnet-4-6`) | Pre-flight error naming both spellings — re-save the case with the full canonical id. |
 
 ## Related
 

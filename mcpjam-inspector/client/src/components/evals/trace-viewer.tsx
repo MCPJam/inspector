@@ -1,3 +1,5 @@
+import { readTraceRequestPayloads } from "@/shared/live-chat-trace";
+import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import {
   lazy,
   Suspense,
@@ -5,6 +7,7 @@ import {
   useState,
   useEffect,
   type ReactNode,
+  type ComponentProps,
 } from "react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { Loader2, Minus, Plus, Code2, Columns2 } from "lucide-react";
@@ -15,16 +18,21 @@ import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type {
   EvalTraceBrowserInteractionStepView,
   EvalTraceSpan,
+  EvalTraceVideoMeta,
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
+import { evalTraceVideoMetaZ } from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
-import { Thread } from "@/components/chat-v2/thread";
+import { Thread, TRANSCRIPT_COLUMN_CLASS } from "@/components/chat-v2/thread";
+import { HostStyledShell } from "@/components/chat-v2/host-styled-shell";
+import type { HostSnapshot } from "@/lib/host-snapshot";
 import type { RecorderProps } from "@/components/chat-v2/thread/recorder-types";
 import type { DisplayMode } from "@/stores/ui-playground-store";
 import {
   adaptTraceToUiMessages,
   type TraceEnvelope,
+  type AdaptedTraceResult,
   type TraceMessage,
 } from "./trace-viewer-adapter";
 import {
@@ -40,7 +48,11 @@ import { cn } from "@/lib/utils";
 import { TraceViewModeTabs } from "./trace-view-mode-tabs";
 import { BrowserArtifactsView } from "./browser-artifacts-view";
 import { hasReplayArtifacts } from "./browser-step-replay";
-import { StepReplayView } from "./step-replay-view";
+import {
+  StepReplayView,
+  type StepPresentation,
+} from "./step-replay-view";
+import type { EvalStepReplay } from "@/shared/eval-step-replay";
 import { buildFrozenScreenshotOverrides } from "./frozen-screenshot-overrides";
 import { buildAppToolInvocationsFromBrowserSteps } from "./widget-tool-calls-to-app-invocations";
 import type { TestStep } from "@/shared/steps";
@@ -57,9 +69,8 @@ import type {
   McpToolResultImageRendering,
 } from "@/lib/client-config-v2";
 
-// Default host-style id used when the caller passes `activeHost` but no explicit
-// `hostStyle`. Mirrors the catalog default without importing catalog/client
-// modules into this trace-only surface.
+// Preserve the existing caps seed for activeHost-only callers. Explicit
+// snapshots instead seed their capabilities through HostStyledShell.
 const DEFAULT_TRACE_HOST_STYLE_FALLBACK = "mcpjam";
 
 const TraceTimelineLazy = lazy(() =>
@@ -76,6 +87,12 @@ export type TraceViewerEvalToolCall = {
 interface TraceViewerProps {
   trace: TraceEnvelope | TraceMessage | TraceMessage[] | null;
   model?: ModelDefinition;
+  /** Prepared from the same trace; lets session ratings share the exact rendered IDs. */
+  adaptedTrace?: AdaptedTraceResult;
+  renderAssistantTurnFooter?: ComponentProps<typeof Thread>["renderAssistantTurnFooter"];
+  reasoningDisplayMode?: ComponentProps<typeof Thread>["reasoningDisplayMode"];
+  widgetPolicy?: ComponentProps<typeof Thread>["widgetPolicy"];
+  frame?: "inset" | "none";
   /**
    * Chat: forwarded to the transcript `Thread`. Tools (Results): shows a spinner
    * beside "Actual" while the run is still in progress.
@@ -116,6 +133,12 @@ interface TraceViewerProps {
   syncedStepId?: string | null;
   /** Fired on Steps-row hover/select, to drive the synced highlight. */
   onSyncStep?: (stepId: string | null) => void;
+  /** Steps-tab presentation. Pass-through; see `StepReplayView`. */
+  stepPresentation?: StepPresentation;
+  /** Per-step verdicts WITH reasons, so a failed row can say why. */
+  stepResults?: ReadonlyArray<EvalStepReplay>;
+  /** The verdict word the page already computed, so this tab does not derive a second. */
+  verdictWord?: string;
   /** Force a single mode (used when TraceViewer is embedded into a larger shell).
    *  Chat host shells force only timeline/chat/raw/tools. The eval RunColumn
    *  (quick-run result panel) additionally forces "browser" so it can surface
@@ -173,6 +196,11 @@ interface TraceViewerProps {
    */
   rawGrowWithContent?: boolean;
   /**
+   * Soften the Raw view's scroll edges. Opt-in, and forwarded verbatim — see
+   * {@link TraceRawView}'s own note for why it is not simply on.
+   */
+  rawFadeScrollEdges?: boolean;
+  /**
    * Active host (resolved by `useAppState`) at the time the trace is
    * being viewed — NOT the host that was active when the trace was
    * recorded. When provided, TraceViewer installs an inner
@@ -185,15 +213,8 @@ interface TraceViewerProps {
    * install a scope with no host (template-seed fallback).
    */
   activeHost?: HostConfigDtoV2 | null;
-  /**
-   * Host style fallback used when an inner scope is installed but no
-   * `activeHost` is provided. Like `activeHost`, passing `undefined`
-   * (the default) means "don't install an inner scope" — DO NOT read
-   * the surrounding `ChatboxHostStyleProvider` here, because that
-   * ambient style would synthesize template-seed caps that shadow
-   * outer scope's user-edited caps.
-   */
-  hostStyle?: string;
+  /** undefined inherits the surrounding host; null explicitly uses the generic shell. */
+  hostSnapshot?: HostSnapshot | null;
   /**
    * Human-facing render policy for MCP tool-result images, mirroring the
    * chat surfaces (App.tsx / ChatTabV2). When omitted, the trace `Thread`
@@ -306,8 +327,35 @@ function getBrowserVideoUrl(
   return typeof raw === "string" && raw.length > 0 ? raw : null;
 }
 
+/**
+ * What that recording says about itself, when it says anything.
+ *
+ * Read only ALONGSIDE a resolved URL, by the caller: metadata under an empty
+ * player would render a duration and a frame rate for a recording that is not
+ * there.
+ */
+function getBrowserVideoMeta(
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null
+): EvalTraceVideoMeta | null {
+  if (!trace || Array.isArray(trace) || typeof trace !== "object") return null;
+  const raw = (trace as TraceEnvelope).videoMeta;
+  if (!raw || typeof raw !== "object") return null;
+  // PARSED, not cast. The badge renders on `truncated` and the header formats
+  // `durationMs` and `fps`, so a value of the wrong TYPE does not degrade — a
+  // `truncated: "false"` string is truthy and would claim a recording stopped
+  // at its size limit when it did not. That is the one thing this metadata
+  // exists to say, so it is the one thing worth refusing to guess at.
+  const parsed = evalTraceVideoMetaZ.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
 export function TraceViewer({
   trace,
+  adaptedTrace: preparedTrace,
+  renderAssistantTurnFooter,
+  reasoningDisplayMode = "collapsed",
+  widgetPolicy = "live",
+  frame = "inset",
   model,
   isLoading = false,
   toolsMetadata = {},
@@ -325,6 +373,9 @@ export function TraceViewer({
   iterationResult = null,
   syncedStepId,
   onSyncStep,
+  stepPresentation = "legacy",
+  stepResults,
+  verdictWord,
   forcedViewMode,
   hideToolbar = false,
   fillContent = false,
@@ -348,30 +399,22 @@ export function TraceViewer({
   rawRequestPayloadHistory = null,
   harnessBuiltinTools,
   rawGrowWithContent = false,
+  rawFadeScrollEdges = false,
   activeHost,
-  hostStyle,
+  hostSnapshot,
   mcpToolResultImageRendering,
 }: TraceViewerProps) {
+  const persistedRequestPayloads = useMemo(
+    () => readTraceRequestPayloads(trace),
+    [trace],
+  );
   // Only live chat shells should opt into the interactive widget path.
   const threadInteractive = interactive || sendFollowUpMessage !== NOOP;
 
-  // Decide whether to install an inner ActiveHostCapsResolverScope around
-  // the trace's `<Thread>`. We only install when the caller passed
-  // explicit `activeHost` or `hostStyle` props. When neither is given,
-  // we pass through to any outer scope (e.g. the chat surface's
-  // ClientStyledChatTabV2 / PlaygroundTab wrap) — installing a scope
-  // here unconditionally would shadow that outer scope with
-  // template-seed caps and silently drop the user's saved
-  // `clientCapabilities` edits. See TL feedback on PR #2169.
-  //
-  // `hostStyle` falls back to `DEFAULT_TRACE_HOST_STYLE_FALLBACK` only
-  // when the inner scope IS being installed (caller passed activeHost
-  // but no explicit hostStyle); we don't reach into the ambient
-  // ChatboxHostStyleProvider here, because that ambient style may not
-  // line up with the explicit `activeHost`.
+  // An explicit snapshot owns the full shell. Otherwise preserve the existing
+  // activeHost-only capability scope and ambient presentation (PR #2169).
   const shouldInstallTraceScope =
-    activeHost !== undefined || hostStyle !== undefined;
-  const traceScopeHostStyle = hostStyle ?? DEFAULT_TRACE_HOST_STYLE_FALLBACK;
+    hostSnapshot === undefined && activeHost !== undefined;
 
   const [viewMode, setViewMode] = useState<
     "timeline" | "chat" | "raw" | "tools" | "browser" | "steps"
@@ -419,6 +462,10 @@ export function TraceViewer({
   );
   const browserSteps = useMemo(() => getBrowserSteps(trace), [trace]);
   const browserVideoUrl = useMemo(() => getBrowserVideoUrl(trace), [trace]);
+  const browserVideoMeta = useMemo(
+    () => (browserVideoUrl ? getBrowserVideoMeta(trace) : null),
+    [trace, browserVideoUrl]
+  );
   // Step-aligned replay tab: gated on the run carrying its authored step list.
   const hasSteps = (steps?.length ?? 0) > 0;
   // Replay tab gate — ONE predicate, shared with every other surface that shows
@@ -481,13 +528,14 @@ export function TraceViewer({
 
   const adaptedTrace = useMemo(
     () =>
-      adaptTraceToUiMessages({
+      preparedTrace ?? adaptTraceToUiMessages({
         trace,
         toolsMetadata,
         toolServerMap,
         connectedServerIds,
+        toolResultDisplay: "tool-card",
       }),
-    [trace, toolsMetadata, toolServerMap, connectedServerIds]
+    [preparedTrace, trace, toolsMetadata, toolServerMap, connectedServerIds]
   );
 
   // Frozen replay: when simply VIEWING a completed run, show each widget's
@@ -661,7 +709,7 @@ export function TraceViewer({
     </div>
   );
 
-  return (
+  const content = (
     <div
       className={cn(flexFillChrome && "flex min-h-0 min-w-0 flex-1 flex-col")}
       data-testid="trace-viewer-root"
@@ -816,9 +864,15 @@ export function TraceViewer({
           >
             <TraceRawView
               trace={trace}
-              requestPayloadHistory={rawRequestPayloadHistory}
+              requestPayloadHistory={
+                rawRequestPayloadHistory ??
+                (persistedRequestPayloads.length
+                  ? { entries: persistedRequestPayloads, hasUiMessages: false }
+                  : null)
+              }
               harnessBuiltinTools={harnessBuiltinTools}
               growWithContent={rawGrowWithContent}
+              fadeScrollEdges={rawFadeScrollEdges}
             />
           </div>
         )}
@@ -837,6 +891,7 @@ export function TraceViewer({
               observations={browserObservations}
               steps={browserSteps}
               videoUrl={browserVideoUrl}
+              videoMeta={browserVideoMeta}
               isRunning={isLoading}
               className={flexFillChrome ? "flex-1" : undefined}
             />
@@ -866,6 +921,9 @@ export function TraceViewer({
               hoveredStepId={syncedStepId}
               onHoverStep={onSyncStep}
               onSelectStep={onSyncStep}
+              presentation={stepPresentation}
+              stepResults={stepResults}
+              verdictWord={verdictWord}
             />
           </div>
         )}
@@ -928,27 +986,20 @@ export function TraceViewer({
 
         {effectiveViewMode === "chat" &&
           (traceMessages.length === 0 ? (
-            <div className="text-xs text-muted-foreground">
-              No messages in trace
-            </div>
+            <TranscriptEmptyState {...(isLoading
+              ? { kind: "streaming" as const }
+              : { kind: "unrecorded" as const, execution: hasRecordedSpans ? "observed" as const : "unknown" as const })} />
           ) : (
             <div
               className={cn(
-                "min-w-0 rounded-md border border-border/30 bg-background/50 flex flex-col",
+                "min-w-0 flex flex-col",
+                frame === "inset" && "rounded-md border border-border/30 bg-background/50",
                 fillContent ? "min-h-0 flex-1 overflow-hidden" : "min-h-0"
               )}
               data-testid="trace-viewer-chat"
             >
               {(() => {
-                // Trace `<Thread>` mount. Wrapped in
-                // `ActiveHostCapsResolverScope` ONLY when the caller
-                // passed explicit host inputs (`activeHost` or
-                // `hostStyle`). Otherwise we render Thread directly so
-                // any outer scope from the chat surface
-                // (ClientStyledChatTabV2 / PlaygroundTab) flows through
-                // with the user's saved capability edits intact.
-                // Installing an inner scope unconditionally would
-                // shadow the outer one with template-seed caps.
+                // With no explicit host inputs, inherit the caller's providers.
                 const threadEl = (
                   <Thread
                     chatSessionId={chatSessionId}
@@ -973,16 +1024,18 @@ export function TraceViewer({
                     toolRenderOverrides={toolRenderOverrides}
                     appToolInvocationsOverride={appToolInvocationsOverride}
                     showInlineEdit={false}
-                    minimalMode={true}
+                    minimalMode={false}
                     interactive={threadInteractive}
                     recorder={recorder}
-                    reasoningDisplayMode="collapsed"
+                    reasoningDisplayMode={reasoningDisplayMode}
+                    widgetPolicy={widgetPolicy}
+                    renderAssistantTurnFooter={renderAssistantTurnFooter}
                     focusMessageId={transcriptNavigation.focusMessageId}
                     highlightedMessageIds={
                       transcriptNavigation.highlightedMessageIds
                     }
                     navigationKey={transcriptNavigation.navigationKey}
-                    contentClassName="min-w-0 mx-auto w-full max-w-4xl space-y-8 px-4 pt-2"
+                    contentClassName={cn(TRANSCRIPT_COLUMN_CLASS, "pt-8 pb-8 space-y-8")}
                     getMessageWrapperProps={({ message }) => {
                       const sourceRange =
                         adaptedTrace.uiMessageSourceRanges[message.id];
@@ -997,7 +1050,7 @@ export function TraceViewer({
                 const scoped = shouldInstallTraceScope ? (
                   <ActiveHostCapsResolverScope
                     activeHost={activeHost ?? null}
-                    hostStyle={traceScopeHostStyle}
+                    hostStyle={DEFAULT_TRACE_HOST_STYLE_FALLBACK}
                   >
                     {threadEl}
                   </ActiveHostCapsResolverScope>
@@ -1109,5 +1162,17 @@ export function TraceViewer({
         ) : null}
       </div>
     </div>
+  );
+
+  return hostSnapshot !== undefined ? (
+    <HostStyledShell
+      hostSnapshot={hostSnapshot}
+      activeHost={activeHost ?? null}
+      className={cn(flexFillChrome && "flex min-h-0 min-w-0 flex-1 flex-col")}
+    >
+      {content}
+    </HostStyledShell>
+  ) : (
+    content
   );
 }

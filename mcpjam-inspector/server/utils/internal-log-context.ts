@@ -32,7 +32,7 @@ export type InternalLogContext = {
   accessLevel?: "project_member" | "shared_chat" | null;
   serverId?: string | null;
   serverTransport?: "stdio" | "http" | null;
-  chatboxId?: string | null;
+  scenarioId?: string | null;
   surface?: "preview" | "share_link" | null;
 };
 
@@ -62,7 +62,7 @@ export function mapInternalToRequestContext(
     accessLevel: ctx.accessLevel ?? null,
     serverId: ctx.serverId ?? null,
     serverTransport: ctx.serverTransport ?? null,
-    chatboxId: ctx.chatboxId ?? null,
+    scenarioId: ctx.scenarioId ?? null,
     surface: ctx.surface ?? null,
   };
 }

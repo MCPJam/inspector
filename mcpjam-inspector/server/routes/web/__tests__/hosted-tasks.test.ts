@@ -417,13 +417,13 @@ describe("hosted /api/web/tasks", () => {
       });
     });
 
-    it("skips the registry entirely for chatbox-scoped callers", async () => {
-      // A chatbox visitor is not a project member; the backend's membership
+    it("skips the registry entirely for scenario-scoped callers", async () => {
+      // A scenario visitor is not a project member; the backend's membership
       // check on the forwarded bearer would 403 them anyway.
       setManager({});
 
       await post("/list", { accessScope: "chat_v2" });
-      await post("/list", { chatboxId: "cbx_1" });
+      await post("/list", { scenarioId: "cbx_1" });
 
       expect(mockListRegistryTasks).not.toHaveBeenCalled();
     });
@@ -542,7 +542,7 @@ describe("hosted /api/web/tasks", () => {
       );
     });
 
-    it("/get skips reporting for chatbox-scoped callers", async () => {
+    it("/get skips reporting for scenario-scoped callers", async () => {
       setManager({
         getTaskExt: vi
           .fn()
@@ -556,7 +556,7 @@ describe("hosted /api/web/tasks", () => {
       expect(mockReportTaskStatuses).not.toHaveBeenCalled();
     });
 
-    it("skips reporting for chatbox-scoped callers", async () => {
+    it("skips reporting for scenario-scoped callers", async () => {
       const getTaskExt = vi
         .fn()
         .mockImplementation(async (_s: string, taskId: string) => ({

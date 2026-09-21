@@ -1,0 +1,114 @@
+import { describe, it, expect } from "vitest";
+import { navigationSections } from "../mcp-sidebar";
+
+/**
+ * Guards the Production Redesign nav grouping (BB-127): the sidebar is five
+ * labeled sections in a fixed order, not a flat list. These assertions are the
+ * design's contract — an item quietly moving between sections, or a section
+ * losing its heading, changes the information architecture even though nothing
+ * type-errors.
+ */
+describe("sidebar section grouping", () => {
+  it("ships the five design sections, in order, each with a label", () => {
+    expect(navigationSections.map((section) => section.label)).toEqual([
+      "Explore",
+      "Measure",
+      "Verify",
+      "Inspect",
+      "Educate",
+    ]);
+    expect(navigationSections.every((section) => section.label.length > 0)).toBe(
+      true
+    );
+  });
+
+  it("places every item the design enumerates in its named section", () => {
+    const titlesIn = (label: string) =>
+      navigationSections
+        .find((section) => section.label === label)!
+        .items.map((item) => item.title);
+
+    // The design lists only the always-on items; flag-gated additions
+    // (Registry, Environments, Sessions, Compatibility) are asserted separately
+    // below so this stays readable as "the design's list, in the design's order".
+    expect(titlesIn("Explore")).toEqual(
+      expect.arrayContaining(["Home", "Connect", "Playground"])
+    );
+    expect(titlesIn("Measure")).toEqual(
+      expect.arrayContaining(["User Testing", "Swarms", "Evaluate"])
+    );
+    expect(titlesIn("Verify")).toEqual(
+      expect.arrayContaining([
+        "OAuth Debugger",
+        "XAA Debugger",
+        "Conformance",
+      ])
+    );
+    expect(titlesIn("Inspect")).toEqual([
+      "Tools",
+      "Resources",
+      "Prompts",
+      "Tasks",
+      // Same primitive as Tools, from the other side of the browser boundary:
+      // what a live PAGE registers rather than what a server exposes.
+      "WebMCP",
+    ]);
+    expect(titlesIn("Educate")).toEqual(["Learning"]);
+  });
+
+  it("keeps flag-gated items in the section that matches what they do", () => {
+    const sectionOf = (title: string) =>
+      navigationSections.find((section) =>
+        section.items.some((item) => item.title === title)
+      )?.label;
+
+    expect(sectionOf("Registry")).toBe("Explore");
+    expect(sectionOf("Environments")).toBe("Explore");
+    // The cross-surface run feed belongs with the things it aggregates.
+    expect(sectionOf("Sessions")).toBe("Measure");
+    // Sibling of Conformance — both answer "is this implementation correct?".
+    expect(sectionOf("Compatibility")).toBe("Verify");
+  });
+
+  it("labels the /user-testing item User Testing", () => {
+    const item = navigationSections
+      .flatMap((section) => section.items)
+      .find((entry) => entry.url === "/user-testing");
+
+    expect(item?.title).toBe("User Testing");
+    expect(
+      navigationSections
+        .flatMap((section) => section.items)
+        .map((entry) => entry.title)
+    ).not.toContain("Acceptance Testing");
+  });
+
+  it("points the New pill at exactly the surfaces that are new", () => {
+    // The pill is editorial, not structural: it marks whichever surfaces are
+    // newest, so it has to be moved by hand as tabs age out of being new.
+    // Nothing type-errors when it is left behind on a long-shipped item, or
+    // when a second item quietly picks one up, so assert the whole set.
+    //
+    // Swarms and User Testing joined WebMCP in REEV-6. They are not new
+    // features, but REEV-6 is the first release in which a signed-out visitor
+    // can SEE them: the `sandboxes-enabled` flag used to hide both items
+    // outright, so to most of the people who now get a nav row, the row is
+    // new. The pill replaced a LOG IN / UPGRADE marker that described who the
+    // reader was rather than what the tab is, which is the distinction this
+    // set is guarding.
+    const badged = navigationSections
+      .flatMap((section) => section.items)
+      .filter((item) => item.badge === "New")
+      .map((item) => item.title);
+
+    expect(badged).toEqual(["Swarms", "User Testing", "WebMCP"]);
+  });
+
+  it("never lists the same title twice across sections", () => {
+    const titles = navigationSections.flatMap((section) =>
+      section.items.map((item) => item.title)
+    );
+
+    expect(titles).toHaveLength(new Set(titles).size);
+  });
+});

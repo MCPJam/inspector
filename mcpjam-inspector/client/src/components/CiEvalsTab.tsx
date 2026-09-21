@@ -1,3 +1,5 @@
+import { createElement } from "react";
+import { ModelDisplayNamesContext } from "@/lib/model-display-name";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
@@ -115,9 +117,10 @@ export function CiEvalsTab({
       : null;
 
   const {
+    organizationId,
     connectedServerNames,
     userMap,
-    canDeleteSuite,
+    canDeleteArtifact,
     canDeleteRuns,
     availableModels,
   } = useEvalTabContext({
@@ -176,7 +179,7 @@ export function CiEvalsTab({
     [visibleSuites],
   );
 
-  // CI/CD: suite config and tests are defined in code (SDK); close edit URLs.
+  // Suite settings remain code-owned. Case URLs open the read-only workspace.
   useEffect(() => {
     if (route.type === "suite-edit") {
       navigateToCiEvalsPath(
@@ -184,16 +187,6 @@ export function CiEvalsTab({
         { replace: true },
       );
       return;
-    }
-    if (route.type === "test-edit") {
-      navigateToCiEvalsPath(
-        {
-          type: "test-detail",
-          suiteId: route.suiteId,
-          testId: route.testId,
-        },
-        { replace: true },
-      );
     }
   }, [route]);
 
@@ -319,6 +312,13 @@ export function CiEvalsTab({
     selectedSuiteEntry,
     selectedSuiteId,
     selectedTestId,
+    // Cancel goes through the platform route, which is addressed by project —
+    // without this the Runs lens would be the one surface still cancelling
+    // through the raw Convex mutation.
+    projectId: convexProjectId,
+    // Without this the Runs lens can't open the upgrade wall on a server-side
+    // cap rejection and falls back to the dead-end toast.
+    organizationId,
     connectedServerNames,
     ensureServersReady,
     latestRunBySuiteId,
@@ -529,7 +529,9 @@ export function CiEvalsTab({
       }),
   });
 
-  return (
+  return createElement(
+    ModelDisplayNamesContext.Provider,
+    { value: availableModels },
     <EvalTabGate
       variant="ci"
       isLoading={isLoading}
@@ -627,15 +629,20 @@ export function CiEvalsTab({
                   selectedTestCaseId={route.testCaseId ?? null}
                   onSelectTestCase={(group) => {
                     if (!group.testCaseId) return;
-                    navigateToCiEvalsPath({
-                      type: "run-detail",
-                      suiteId: route.suiteId,
-                      runId: route.runId,
-                      testCaseId: group.testCaseId,
-                    });
+                    ciNavigation.toTestEdit(route.suiteId, group.testCaseId);
                   }}
                   selectedIterationId={route.iteration ?? null}
                   onSelectIteration={(iterationId) => {
+                    const testCaseId = queries.sortedIterations.find(
+                      (iteration) => iteration._id === iterationId,
+                    )?.testCaseId;
+                    if (testCaseId) {
+                      ciNavigation.toTestEdit(route.suiteId, testCaseId, {
+                        openCompare: true,
+                        iteration: iterationId,
+                      });
+                      return;
+                    }
                     navigateToCiEvalsPath({
                       type: "run-detail",
                       suiteId: route.suiteId,
@@ -816,7 +823,7 @@ export function CiEvalsTab({
                     onDeleteRun={handleDeleteRun}
                     onDirectDeleteRun={handlers.directDeleteRun}
                     connectedServerNames={connectedServerNames}
-                    canDeleteSuite={canDeleteSuite}
+                    canDeleteSuite={canDeleteArtifact(selectedSuite?.createdBy)}
                     rerunningSuiteId={handlers.rerunningSuiteId}
                     replayingRunId={handlers.replayingRunId}
                     cancellingRunId={handlers.cancellingRunId}
@@ -827,7 +834,10 @@ export function CiEvalsTab({
                     userMap={userMap}
                     navigation={ciNavigation}
                     canDeleteRuns={canDeleteRuns}
+                    canDeleteRun={(run) => canDeleteArtifact(run.createdBy)}
                     readOnlyConfig
+                    evaluateCaseEditor
+                    projectId={convexProjectId}
                     omitSuiteHeader
                     onRunTestCase={
                       selectedSuite
@@ -884,6 +894,6 @@ export function CiEvalsTab({
           </DialogContent>
         </Dialog>
       </>
-    </EvalTabGate>
+    </EvalTabGate>,
   );
 }

@@ -1,0 +1,36 @@
+{
+  "id": "arguments-undeclared-key-closed-schema",
+  "title": "The same extra key against additionalProperties: false",
+  "rationale": "The `hallucinated-param` classification: only a schema that closes the object turns an undeclared key into a violation.",
+  "transcript": {
+    "toolCalls": [
+      { "toolCallId": "c1", "toolName": "search_issues", "arguments": { "query": "login", "sortBy": "created" } }
+    ],
+    "toolErrors": [],
+    "finalAssistantMessage": "Found 3 issues.",
+    "turnCount": 1,
+    "toolInventory": [
+      {
+        "name": "search_issues",
+        "description": "Search issues.",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "query": { "type": "string" } },
+          "required": ["query"],
+          "additionalProperties": false
+        },
+        "annotations": { "readOnlyHint": true }
+      }
+    ],
+    "toolResults": [
+      { "toolCallId": "c1", "toolName": "search_issues", "text": "3 issues", "isError": false, "size": { "bytes": 8, "basis": "model_visible_output", "complete": true } }
+    ],
+    "toolCallTimings": [
+      { "toolCallId": "c1", "toolName": "search_issues", "durationMs": 110, "provenance": "span" }
+    ],
+    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+  },
+  "expect": [
+    { "predicate": { "type": "argumentsMatchToolSchema" }, "observation": "fail", "relevance": "useful", "note": "classified hallucinated-param" }
+  ]
+}

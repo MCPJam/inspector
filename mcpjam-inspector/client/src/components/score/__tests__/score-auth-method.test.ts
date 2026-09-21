@@ -27,16 +27,16 @@ describe("the score page's server row resolves to the discover ladder", () => {
       resolveEffectiveAuthMethod({
         authMethod: "auto",
         transportType: "http",
-      } as any)
+      } as any),
     ).toBe("discover");
   });
 
   it("resolves an authMethod-less row to 'none' — the bug this guards", () => {
     // The original create call. `none` never escalates, so an auth-required
     // server reports a raw transport error and the visitor is stuck.
-    expect(
-      resolveEffectiveAuthMethod({ transportType: "http" } as any)
-    ).toBe("none");
+    expect(resolveEffectiveAuthMethod({ transportType: "http" } as any)).toBe(
+      "none",
+    );
   });
 
   it("does not select XAA for a plain pasted URL", () => {
@@ -47,7 +47,7 @@ describe("the score page's server row resolves to the discover ladder", () => {
         authMethod: "auto",
         transportType: "http",
         url: "https://mcp.example.com/mcp",
-      } as any)
+      } as any),
     ).toBe("discover");
   });
 });

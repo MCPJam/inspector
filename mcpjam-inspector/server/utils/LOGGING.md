@@ -48,10 +48,12 @@ picked up from `c.var.requestLogContext`, which is populated by:
 | `tunnel.creation_failed` | `routes/mcp/tunnels.ts` | `tunnelKind`, `errorCode` |
 | `tunnel.record_failed` | `routes/mcp/tunnels.ts` | `tunnelKind`, `tunnelDomain?`, `errorCode` |
 | `chat.session.persist.failed` | `utils/chat-ingestion.ts` | `failureKind`, `statusCode?`, `sourceType?` |
+| `chat.secrets.undelivered` | `routes/web/chat-v2.ts` | `secretCount`, `isScenarioSession` |
 | `widget.resource.served` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri`, `cspMode`, `mimeTypeValid?` |
 | `widget.resource.failed` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri?`, `errorCode` |
 | `swarm.generation.upstream_failed` | `routes/web/swarm-generate.ts` | `statusCode`, `errorCode` |
 | `mcp.connection.closed_with_pending_requests` | `index.ts` (system event) | `errorCode` |
+| `process.vitals` | `utils/process-vitals.ts` (system event) | `reason`, `heapUsedBytes`, `heapLimitBytes`, `oldSpaceUsedBytes`, `rpcLogBufferBytes`, `peakHeapUsedBytes` |
 
 All events live in `server/utils/log-events.ts`. Add new events there before emitting them.
 

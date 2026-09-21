@@ -5,6 +5,7 @@ import {
   type JWTVerifyGetKey,
   type KeyLike,
 } from "jose";
+import { resolveWorkosApiBaseUrl } from "./workos-api-base.js";
 
 /**
  * WorkOS AuthKit access-token verification for the `/api/web/api-keys`
@@ -97,7 +98,11 @@ export function authkitIssuerJwks(
   env: NodeJS.ProcessEnv = process.env,
 ): Map<string, string> {
   const map = new Map<string, string>();
-  const workosJwks = `https://api.workos.com/sso/jwks/${clientId}`;
+  // The issuer KEYS below stay literal — they are what WorkOS stamps on a
+  // token and what we agree to trust. Only the URL we fetch keys FROM follows
+  // the base, so an emulator issuing `https://api.workos.com/...` tokens can
+  // still have its JWKS reached.
+  const workosJwks = `${resolveWorkosApiBaseUrl(env).baseUrl}/sso/jwks/${clientId}`;
   const mcpjamJwks = `https://api.mcpjam.com/sso/jwks/${clientId}`;
   const authJwks = `https://auth.mcpjam.com/sso/jwks/${clientId}`;
   map.set("https://api.workos.com/", workosJwks);
@@ -115,6 +120,11 @@ export function authkitIssuerJwks(
 
 // One remote JWKS per URL (jose caches the fetched keys internally per set).
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+
+/** Test-only: drop cached key sets so a new emulator's JWKS is fetched fresh. */
+export function resetAuthKitJwksCacheForTests(): void {
+  jwksCache.clear();
+}
 function remoteJwks(url: string): ReturnType<typeof createRemoteJWKSet> {
   let set = jwksCache.get(url);
   if (!set) {

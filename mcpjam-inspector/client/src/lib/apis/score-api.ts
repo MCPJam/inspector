@@ -18,7 +18,13 @@ import type { OAuthConformanceStartResult } from "@/lib/apis/mcp-conformance-api
 
 export type ScoreSuiteId = "protocol" | "apps" | "tasks" | "oauth";
 
-/** The flat headline stored on a run. Mirrors `ConformanceScore` minus advisories. */
+/**
+ * The flat headline stored on a run. Mirrors `ConformanceScore` minus
+ * advisories and pending. Pending is derived on the results page from
+ * `report[suite].profile.pendingCheckIds` (the share fetch always includes
+ * the report blob). A flat `pending` int is a backend follow-up for
+ * surfaces that list summaries without reports.
+ */
 export interface ScoreSummary {
   score: number | null;
   outcome: "passed" | "failed" | "incomplete";

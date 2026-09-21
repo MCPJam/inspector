@@ -1,5 +1,13 @@
 import { discoverOAuthProtectedResourceMetadata } from "@modelcontextprotocol/client";
 import { buildResourceMetadataUrl } from "./oauth/state-machines/shared/urls.js";
+import {
+  hasBearerChallenge,
+  parseBearerAuthenticateParameters,
+} from "./oauth/state-machines/shared/challenges.js";
+import {
+  assertOutboundOAuthUrlAllowed,
+  isLoopbackOAuthUrl,
+} from "./oauth/ssrf-guard.js";
 import { resolveRegistrationStrategies } from "./oauth/authorization-plan.js";
 import {
   type RetryPolicy,
@@ -19,6 +27,13 @@ export interface ProbeMcpServerConfig {
   clientName?: string;
   clientVersion?: string;
   retryPolicy?: RetryPolicy;
+  /**
+   * Permit private destinations (loopback, RFC 1918, CGNAT, unique-local) for
+   * the metadata pointers this probe follows. The LOCAL inspector and CLI set
+   * it; hosted callers leave it unset. Link-local and cloud-metadata
+   * destinations stay refused either way.
+   */
+  allowPrivateNetwork?: boolean;
 }
 
 export interface ProbeHttpAttempt {
@@ -54,6 +69,13 @@ export interface ProbeOAuthDetails {
   authorizationServerMetadata?: Record<string, unknown>;
   registrationStrategies: Array<"preregistered" | "dcr" | "cimd">;
   discoveryError?: string;
+  /**
+   * The status the challenge arrived on, when MCP does not allow it there.
+   * Absent for a compliant 401 — set means the probe accepted a challenge the
+   * spec says should not have been delivered this way, so callers reporting
+   * conformance can say so rather than presenting the server as clean.
+   */
+  nonCompliantChallengeStatus?: number;
 }
 
 export interface ProbeInitializeInfo {
@@ -212,6 +234,51 @@ function buildAuthServerMetadataUrls(
   return urls;
 }
 
+/**
+ * Refuse a metadata destination the probed server chose for us. Both the RFC
+ * 9728 `resource_metadata` pointer and the authorization server it advertises
+ * come from upstream, so without this a hostile challenge steers the probe —
+ * which runs in MCPJam's hosted backend, reachable on a guest-allowed doctor
+ * route — at cloud metadata or a service on the private network.
+ *
+ * Same origin as the configured server URL is always allowed: that is the
+ * origin the caller already asked the probe to contact, so a loopback or LAN
+ * MCP server keeps discovering its own metadata. Everything else goes through
+ * the shared guard, with the loopback opt-in derived from the server URL so
+ * local dev can host its authorization server on another loopback port while a
+ * public server can never reach the user's.
+ */
+function assertMetadataDestinationAllowed(
+  candidate: string,
+  serverUrl: string,
+  allowPrivateNetwork = false
+): void {
+  try {
+    const target = new URL(candidate);
+    const server = new URL(serverUrl);
+    // Compare scheme and host rather than `origin`. Every non-special scheme
+    // reports the origin `"null"`, and `blob:https://host/…` reports the origin
+    // of the URL it wraps with no host of its own — so an `origin` comparison
+    // lets a `blob:` pointer at the configured server's origin skip the guard
+    // entirely. Restricting the shortcut to the schemes the probe can actually
+    // dial keeps it to what it is for: the origin the caller already named.
+    if (
+      (target.protocol === "http:" || target.protocol === "https:") &&
+      target.protocol === server.protocol &&
+      target.host === server.host
+    ) {
+      return;
+    }
+  } catch {
+    // Unparseable: leave the rejection to the guard, which reports it uniformly.
+  }
+
+  assertOutboundOAuthUrlAllowed(candidate, {
+    allowLoopback: isLoopbackOAuthUrl(serverUrl),
+    allowPrivateNetwork,
+  });
+}
+
 function parseJsonBody(text: string): unknown {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -291,6 +358,33 @@ function createTimeoutError(
   return error;
 }
 
+/**
+ * MCP requires 401 + `WWW-Authenticate` to signal that OAuth is needed, but a
+ * server fronted by a CDN or WAF — and one treating anonymous access as a scope
+ * failure (RFC 6750 §3.1 pairs 403 with `insufficient_scope`) — answers 403
+ * instead. A 403 that still carries a Bearer challenge names everything
+ * discovery needs, so the probe reads it as "OAuth required" rather than
+ * reporting the server as broken. A bare 403 carries nothing to discover from
+ * and stays an error.
+ */
+function isOAuthChallenge(response: ParsedHttpResponse): boolean {
+  return (
+    response.status === 401 ||
+    (response.status === 403 &&
+      hasBearerChallenge(response.headers["www-authenticate"]))
+  );
+}
+
+/** Record a challenge status MCP does not allow, so acceptance is never silent. */
+function withChallengeStatus(
+  oauth: ProbeOAuthDetails,
+  status: number
+): ProbeOAuthDetails {
+  return status === 401
+    ? oauth
+    : { ...oauth, nonCompliantChallengeStatus: status };
+}
+
 function isRetryableProbeStatus(status: number): boolean {
   return (
     status === 408 ||
@@ -303,7 +397,8 @@ function isRetryableProbeStatus(status: number): boolean {
 async function performRequest(
   fetchFn: typeof fetch,
   attempt: ProbeHttpAttempt,
-  timeoutMs: number | undefined
+  timeoutMs: number | undefined,
+  validateLandingUrl?: (url: string) => void
 ): Promise<ParsedHttpResponse> {
   const startedAt = Date.now();
   const { signal, cleanup, didTimeout } = withTimeoutSignal(timeoutMs);
@@ -319,6 +414,16 @@ async function performRequest(
       redirect: "follow",
       signal,
     });
+
+    // Where the response landed, checked before anything is read from it.
+    // Refusing to *use* a body fetched from a blocked host is not enough: this
+    // attempt is already in the array returned as `transport.attempts`, so
+    // recording the response would hand the caller the internal document the
+    // guard just rejected. Best-effort — a `fetchFn` that reports no URL leaves
+    // nothing to check, which is why the hosted path guards the dial itself.
+    if (validateLandingUrl && response.url) {
+      validateLandingUrl(response.url);
+    }
 
     const parsedBody = await readResponseBody(response);
     const normalizedHeaders = normalizeHeaders(response.headers);
@@ -459,9 +564,14 @@ async function discoverOAuthDetails(
   const metadataHeaders = removeAuthorizationHeader(
     normalizeHeaders(config.headers)
   );
-  const resourceMetadataUrlFromHeader = wwwAuthenticateHeader?.match(
-    /resource_metadata="([^"]+)"/
-  )?.[1];
+  // Read the pointer off the Bearer challenge rather than the raw header. A
+  // bare `resource_metadata="…"` match takes the value wherever it sits —
+  // including inside another scheme's challenge, or inside a quoted realm that
+  // only looks like one — which points discovery at a PRM URL the server never
+  // advertised for Bearer.
+  const resourceMetadataUrlFromHeader =
+    parseBearerAuthenticateParameters(wwwAuthenticateHeader)
+      .resource_metadata || undefined;
   const resourceMetadataUrl =
     resourceMetadataUrlFromHeader ?? buildResourceMetadataUrl(config.url);
 
@@ -474,9 +584,19 @@ async function discoverOAuthDetails(
     },
     durationMs: 0,
   };
-  attempts.push(resourceMetadataAttempt);
 
   try {
+    // Guard before recording the attempt: a refused pointer produces no request,
+    // so an attempt entry with no response would misreport what happened.
+    if (resourceMetadataUrlFromHeader) {
+      assertMetadataDestinationAllowed(
+        resourceMetadataUrlFromHeader,
+        config.url,
+        config.allowPrivateNetwork
+      );
+    }
+    attempts.push(resourceMetadataAttempt);
+
     const loggingFetch: typeof fetch = async (input, init = {}) => {
       const url = typeof input === "string" ? input : input.toString();
       const mergedHeaders = {
@@ -505,7 +625,13 @@ async function discoverOAuthDetails(
       const response = await performRequest(
         config.fetchFn ?? fetch,
         attempt,
-        config.timeoutMs
+        config.timeoutMs,
+        (landingUrl) =>
+          assertMetadataDestinationAllowed(
+            landingUrl,
+            config.url,
+            config.allowPrivateNetwork
+          )
       );
 
       return new Response(
@@ -526,15 +652,34 @@ async function discoverOAuthDetails(
       loggingFetch
     );
 
-    const authorizationServerUrl =
-      metadata.authorization_servers?.[0] ?? config.url;
-    const authMetadataUrls = buildAuthServerMetadataUrls(
-      protocolVersion,
-      authorizationServerUrl
-    );
+    const advertisedAuthServer = metadata.authorization_servers?.[0];
+    const authorizationServerUrl = advertisedAuthServer ?? config.url;
     let authorizationServerMetadata: Record<string, unknown> | undefined;
     let authorizationServerMetadataUrl: string | undefined;
     let lastAuthError: string | undefined;
+    let authMetadataUrls: string[] = [];
+
+    try {
+      // Second hop, same problem: the PRM document that named this origin came
+      // from a pointer the server chose. Guard the origin once rather than each
+      // candidate — they share it by construction — and only when the document
+      // advertised one, so the `?? config.url` fallback never blocks a LAN or
+      // loopback server discovering its own metadata. This also keeps a
+      // malformed entry from aborting discovery inside `new URL()` below.
+      if (advertisedAuthServer) {
+        assertMetadataDestinationAllowed(
+          advertisedAuthServer,
+          config.url,
+          config.allowPrivateNetwork
+        );
+      }
+      authMetadataUrls = buildAuthServerMetadataUrls(
+        protocolVersion,
+        authorizationServerUrl
+      );
+    } catch (error) {
+      lastAuthError = error instanceof Error ? error.message : String(error);
+    }
 
     for (const authMetadataUrl of authMetadataUrls) {
       const authAttempt: ProbeHttpAttempt = {
@@ -552,7 +697,13 @@ async function discoverOAuthDetails(
         const response = await performRequest(
           config.fetchFn ?? fetch,
           authAttempt,
-          config.timeoutMs
+          config.timeoutMs,
+          (landingUrl) =>
+            assertMetadataDestinationAllowed(
+              landingUrl,
+              config.url,
+              config.allowPrivateNetwork
+            )
         );
 
         if (
@@ -666,7 +817,7 @@ async function probeMcpServerOnce(
     );
     const wwwAuthenticate = initializeResponse.headers["www-authenticate"];
 
-    if (initializeResponse.status === 401) {
+    if (isOAuthChallenge(initializeResponse)) {
       return {
         result: {
           url: config.url,
@@ -675,11 +826,14 @@ async function probeMcpServerOnce(
           transport: {
             attempts,
           },
-          oauth: await discoverOAuthDetails(
-            config,
-            attempts,
-            false,
-            wwwAuthenticate
+          oauth: withChallengeStatus(
+            await discoverOAuthDetails(
+              config,
+              attempts,
+              false,
+              wwwAuthenticate
+            ),
+            initializeResponse.status
           ),
         },
         retryable: false,
@@ -752,7 +906,7 @@ async function probeMcpServerOnce(
       );
       const wwwAuthenticateSse = sseResponse.headers["www-authenticate"];
 
-      if (sseResponse.status === 401) {
+      if (isOAuthChallenge(sseResponse)) {
         return {
           result: {
             url: config.url,
@@ -761,11 +915,14 @@ async function probeMcpServerOnce(
             transport: {
               attempts,
             },
-            oauth: await discoverOAuthDetails(
-              config,
-              attempts,
-              false,
-              wwwAuthenticateSse
+            oauth: withChallengeStatus(
+              await discoverOAuthDetails(
+                config,
+                attempts,
+                false,
+                wwwAuthenticateSse
+              ),
+              sseResponse.status
             ),
           },
           retryable: false,

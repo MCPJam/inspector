@@ -4,14 +4,11 @@ import https from "node:https";
 import type { LookupFunction } from "node:net";
 import type { IncomingMessage } from "node:http";
 
-export class OAuthProxyError extends Error {
-  status: number;
-
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
+// Defined in its own module so `oauth/pinned-dns.ts` can throw it without an
+// import cycle; re-exported here so the public symbol and every existing
+// `instanceof` check are unchanged.
+export { OAuthProxyError } from "./oauth-proxy-error.js";
+import { OAuthProxyError } from "./oauth-proxy-error.js";
 
 export interface OAuthProxyRequest {
   url: string;
@@ -19,6 +16,13 @@ export interface OAuthProxyRequest {
   body?: unknown;
   headers?: Record<string, string>;
   httpsOnly?: boolean;
+  /**
+   * Permit private destinations (loopback, RFC 1918, CGNAT, unique-local, and
+   * any hostname resolving to one). The LOCAL inspector sets this; hosted
+   * callers never do, and `httpsOnly` overrides it if both are set.
+   * Link-local and cloud-metadata addresses stay refused either way.
+   */
+  allowPrivateNetwork?: boolean;
   /** Redirect handling. httpsOnly always forces "manual" (cannot be
    * weakened); otherwise an explicit value is honored and omission preserves
    * the historical "follow". */
@@ -36,6 +40,17 @@ export interface OAuthProxyResponse {
   headers: Record<string, string>;
   body: unknown;
   finalUrl: string;
+  /**
+   * Whether the hop this call dialed landed on a private address.
+   *
+   * Reported because a caller that drives redirects ITSELF — one
+   * `redirect: "manual"` call per hop, which is how the inspector's pinned
+   * fetch bounds each hop's scheme — cannot otherwise apply the chain rule.
+   * Every such call looks like a first hop from in here, so the caller has to
+   * carry "did this chain start private" across them, and the only honest
+   * answer comes from the resolver that already looked.
+   */
+  targetIsPrivate: boolean;
 }
 
 // SSRF IP classifier + host check moved to the browser-safe `oauth/ssrf-guard`
@@ -43,9 +58,17 @@ export interface OAuthProxyResponse {
 // stays here. Re-exported to preserve the public `isDisallowedIpAddress` symbol.
 import {
   isDisallowedIpAddress,
-  isLoopbackOAuthUrl,
   isPrivateHost,
 } from "./oauth/ssrf-guard.js";
+// The DNS half — resolve once, classify, pin — lives in its own node-only
+// module so the streaming transport in `oauth/pinned-stream-fetch.ts` shares
+// this exact implementation rather than forking a second one.
+import {
+  createPinnedLookup,
+  resolveEgressPolicy,
+  resolvePinnedAddresses,
+} from "./oauth/pinned-dns.js";
+import type { EgressPolicy } from "./oauth/pinned-dns.js";
 export { isDisallowedIpAddress };
 
 interface ValidatedUrl {
@@ -83,19 +106,35 @@ function parseAndValidateUrl(url: string, httpsOnly = false): URL {
   return targetUrl;
 }
 
+/**
+ * Options for the destination checks. The boolean form is the historical
+ * `httpsOnly` positional and stays supported so existing callers (including
+ * consumers of the published package) need no change.
+ */
+export interface ValidateUrlOptions {
+  httpsOnly?: boolean;
+  allowPrivateNetwork?: boolean;
+}
+
+function toValidateOptions(
+  options: boolean | ValidateUrlOptions | undefined,
+): ValidateUrlOptions {
+  if (typeof options === "boolean") return { httpsOnly: options };
+  return options ?? {};
+}
+
 export async function validateUrl(
   url: string,
-  httpsOnly = false,
+  options: boolean | ValidateUrlOptions = false,
 ): Promise<ValidatedUrl> {
+  const { httpsOnly = false, allowPrivateNetwork } = toValidateOptions(options);
   const targetUrl = parseAndValidateUrl(url, httpsOnly);
-  const allowLoopbackFlow =
-    !httpsOnly && isLoopbackOAuthUrl(targetUrl.toString());
-  await resolvePinnedAddresses(
-    targetUrl,
-    allowLoopbackFlow,
-    undefined,
-    "OAuth target",
-  );
+  const policy = resolveEgressPolicy({
+    httpsOnly,
+    allowPrivateNetwork,
+    startUrl: targetUrl.toString(),
+  });
+  await resolvePinnedAddresses(targetUrl, policy, undefined, "OAuth target");
 
   return { url: targetUrl };
 }
@@ -308,6 +347,9 @@ export async function fetchPinnedPublicDocument(
             headers,
             body,
             finalUrl: url.toString(),
+            // `fetchPinnedPublicDocument` refuses every private destination by
+            // construction, so the document it returns came from a public one.
+            targetIsPrivate: false,
           });
         });
         res.on("error", reject);
@@ -343,6 +385,7 @@ interface RawPinnedOAuthResponse {
   statusText: string;
   headers: Record<string, string>;
   finalUrl: string;
+  targetIsPrivate: boolean;
   stream?: IncomingMessage;
 }
 
@@ -450,15 +493,18 @@ function updateRequestForRedirect(
 async function requestPinnedOAuthHop(
   targetUrl: URL,
   requestInit: PreparedOAuthRequest,
-  allowLoopbackFlow: boolean,
-  signal: AbortSignal | undefined
+  policy: EgressPolicy,
+  signal: AbortSignal | undefined,
+  onResolved?: (targetIsPrivate: boolean) => void
 ): Promise<RawPinnedOAuthResponse> {
-  const pinnedAddresses = await resolvePinnedAddresses(
-    targetUrl,
-    allowLoopbackFlow,
-    signal,
-    "OAuth proxy target"
-  );
+  const { addresses: pinnedAddresses, targetIsPrivate } =
+    await resolvePinnedAddresses(
+      targetUrl,
+      policy,
+      signal,
+      "OAuth proxy target"
+    );
+  onResolved?.(targetIsPrivate);
   const transport = targetUrl.protocol === "https:" ? https : http;
 
   return await new Promise<RawPinnedOAuthResponse>((resolve, reject) => {
@@ -483,6 +529,7 @@ async function requestPinnedOAuthHop(
           statusText: response.statusMessage ?? "",
           headers: normalizeResponseHeaders(response),
           finalUrl: targetUrl.toString(),
+          targetIsPrivate,
           stream: response,
         });
       }
@@ -500,20 +547,37 @@ async function executePinnedOAuthRequest(req: OAuthProxyRequest): Promise<{
   signal: AbortSignal | undefined;
 }> {
   const initialUrl = parseAndValidateUrl(req.url, req.httpsOnly);
-  const allowLoopbackFlow =
-    !req.httpsOnly && isLoopbackOAuthUrl(initialUrl.toString());
+  const policy = resolveEgressPolicy({
+    httpsOnly: req.httpsOnly,
+    allowPrivateNetwork: req.allowPrivateNetwork,
+    startUrl: initialUrl.toString(),
+  });
   const redirectMode = req.httpsOnly ? "manual" : req.redirect ?? "follow";
   const signal = requestTimeoutSignal(req.timeoutMs, req.signal);
   let currentUrl = initialUrl;
   let requestInit = prepareOAuthRequest(req);
+  // THE PRIVATE ALLOWANCE BELONGS TO THE CHAIN, and the chain's character is
+  // decided by where its FIRST hop actually landed — not by how the hostname
+  // looked, because a name that looks public and answers 127.0.0.1 is the case
+  // this allowance exists to serve. So: hop 1 may go anywhere the policy
+  // permits; a later hop may be private only if hop 1 was. Without this a
+  // public authorization server could answer `302 Location: http://192.168…`
+  // and have the local inspector fetch it.
+  let hopPolicy = policy;
+  const narrowAfterFirstHop = (targetIsPrivate: boolean) => {
+    hopPolicy = targetIsPrivate
+      ? hopPolicy
+      : { ...hopPolicy, allowPrivateNetwork: false };
+  };
 
   try {
     for (let redirectCount = 0; ; redirectCount += 1) {
       const response = await requestPinnedOAuthHop(
         currentUrl,
         requestInit,
-        allowLoopbackFlow,
-        signal
+        hopPolicy,
+        signal,
+        redirectCount === 0 ? narrowAfterFirstHop : undefined
       );
 
       if (!isFetchRedirectStatus(response.status)) {
@@ -746,6 +810,7 @@ export async function executeOAuthProxy(
       headers: response.headers,
       body: parseBufferedResponseBody(body),
       finalUrl: response.finalUrl,
+      targetIsPrivate: response.targetIsPrivate,
     };
   } catch (error) {
     if (signal?.aborted) {
@@ -811,16 +876,12 @@ export async function executeDebugOAuthProxy(
     headers: response.headers,
     body: responseBody,
     finalUrl: response.finalUrl,
+    targetIsPrivate: response.targetIsPrivate,
   };
 }
 
 const MAX_OAUTH_METADATA_REDIRECTS = 5;
 const MAX_OAUTH_METADATA_BYTES = 1024 * 1024;
-
-interface PinnedAddress {
-  address: string;
-  family: number;
-}
 
 interface RawOAuthMetadataResponse {
   status: number;
@@ -829,121 +890,15 @@ interface RawOAuthMetadataResponse {
   body: string;
 }
 
-function isLoopbackAddress(address: string): boolean {
-  const host = address.includes(":") ? `[${address}]` : address;
-  return isLoopbackOAuthUrl(`http://${host}`);
-}
-
-async function resolvePinnedAddresses(
-  targetUrl: URL,
-  allowLoopbackFlow: boolean,
-  signal: AbortSignal | undefined,
-  targetLabel = "OAuth metadata target"
-): Promise<PinnedAddress[] | null> {
-  const targetIsLoopback = isLoopbackOAuthUrl(targetUrl.toString());
-
-  if (isPrivateHost(targetUrl.hostname)) {
-    if (!(allowLoopbackFlow && targetIsLoopback)) {
-      throw new OAuthProxyError(
-        400,
-        `${targetLabel} is a private/reserved host (${targetUrl.hostname})`
-      );
-    }
-  }
-
-  // Numeric IPs are already the exact socket destination, so there is no DNS
-  // lookup to pin. The literal-host check above has classified them.
-  if (
-    /^\d+\.\d+\.\d+\.\d+$/.test(targetUrl.hostname) ||
-    targetUrl.hostname.includes(":")
-  ) {
-    return null;
-  }
-
-  const addresses = await new Promise<PinnedAddress[]>((resolve, reject) => {
-    const cleanup = () => signal?.removeEventListener("abort", onAbort);
-    const onAbort = () => {
-      cleanup();
-      reject(signal?.reason ?? new Error(`${targetLabel} request aborted`));
-    };
-
-    if (signal?.aborted) {
-      onAbort();
-      return;
-    }
-    signal?.addEventListener("abort", onAbort, { once: true });
-
-    dnsLookupCb(
-      targetUrl.hostname,
-      { all: true, verbatim: true },
-      (error, resolved) => {
-        cleanup();
-        if (error) {
-          reject(
-            new OAuthProxyError(
-              400,
-              `Could not resolve ${targetLabel.toLowerCase()} ${
-                targetUrl.hostname
-              }`
-            )
-          );
-          return;
-        }
-        resolve(Array.isArray(resolved) ? resolved : [resolved]);
-      }
-    );
-  });
-
-  if (addresses.length === 0) {
-    throw new OAuthProxyError(
-      400,
-      `Could not resolve ${targetLabel.toLowerCase()} ${targetUrl.hostname}`
-    );
-  }
-
-  for (const { address } of addresses) {
-    if (targetIsLoopback) {
-      if (!isLoopbackAddress(address)) {
-        throw new OAuthProxyError(
-          400,
-          `Loopback ${targetLabel.toLowerCase()} resolved outside loopback (${address})`
-        );
-      }
-    } else if (isDisallowedIpAddress(address)) {
-      throw new OAuthProxyError(
-        400,
-        `${targetLabel} resolves to a private/reserved IP address (${address})`
-      );
-    }
-  }
-
-  return addresses;
-}
-
-function createPinnedLookup(addresses: PinnedAddress[]): LookupFunction {
-  return (_hostname, options, callback) => {
-    if (typeof options === "object" && options?.all) {
-      return (
-        callback as unknown as (
-          err: NodeJS.ErrnoException | null,
-          resolved: PinnedAddress[]
-        ) => void
-      )(null, addresses);
-    }
-    callback(null, addresses[0].address, addresses[0].family);
-  };
-}
-
 async function requestPinnedOAuthMetadata(
   targetUrl: URL,
-  allowLoopbackFlow: boolean,
-  signal: AbortSignal | undefined
+  policy: EgressPolicy,
+  signal: AbortSignal | undefined,
+  onResolved?: (targetIsPrivate: boolean) => void
 ): Promise<RawOAuthMetadataResponse> {
-  const pinnedAddresses = await resolvePinnedAddresses(
-    targetUrl,
-    allowLoopbackFlow,
-    signal
-  );
+  const { addresses: pinnedAddresses, targetIsPrivate } =
+    await resolvePinnedAddresses(targetUrl, policy, signal);
+  onResolved?.(targetIsPrivate);
   const transport = targetUrl.protocol === "https:" ? https : http;
 
   return await new Promise<RawOAuthMetadataResponse>((resolve, reject) => {
@@ -1017,7 +972,7 @@ async function requestPinnedOAuthMetadata(
 
 export async function fetchOAuthMetadata(
   url: string,
-  httpsOnly = false,
+  options: boolean | ValidateUrlOptions = false,
   timeoutMs?: number
 ): Promise<
   | {
@@ -1027,12 +982,29 @@ export async function fetchOAuthMetadata(
     }
   | { status: number; statusText: string }
 > {
+  const { httpsOnly = false, allowPrivateNetwork } = toValidateOptions(options);
   const metadataUrl = parseAndValidateUrl(url, httpsOnly);
-  const allowLoopbackFlow =
-    !httpsOnly && isLoopbackOAuthUrl(metadataUrl.toString());
+  const policy = resolveEgressPolicy({
+    httpsOnly,
+    allowPrivateNetwork,
+    startUrl: metadataUrl.toString(),
+  });
   const signal = requestTimeoutSignal(timeoutMs);
   let currentUrl = metadataUrl;
   let response: RawOAuthMetadataResponse | undefined;
+  // THE PRIVATE ALLOWANCE BELONGS TO THE CHAIN, and the chain's character is
+  // decided by where its FIRST hop actually landed — not by how the hostname
+  // looked, because a name that looks public and answers 127.0.0.1 is the case
+  // this allowance exists to serve. So: hop 1 may go anywhere the policy
+  // permits; a later hop may be private only if hop 1 was. Without this a
+  // public authorization server could answer `302 Location: http://192.168…`
+  // and have the local inspector fetch it.
+  let hopPolicy = policy;
+  const narrowAfterFirstHop = (targetIsPrivate: boolean) => {
+    hopPolicy = targetIsPrivate
+      ? hopPolicy
+      : { ...hopPolicy, allowPrivateNetwork: false };
+  };
 
   for (let redirectCount = 0; ; redirectCount += 1) {
     if (currentUrl.protocol !== "https:" && currentUrl.protocol !== "http:") {
@@ -1051,8 +1023,9 @@ export async function fetchOAuthMetadata(
     try {
       response = await requestPinnedOAuthMetadata(
         currentUrl,
-        allowLoopbackFlow,
-        signal
+        hopPolicy,
+        signal,
+        redirectCount === 0 ? narrowAfterFirstHop : undefined
       );
     } catch (error) {
       if (signal?.aborted) {

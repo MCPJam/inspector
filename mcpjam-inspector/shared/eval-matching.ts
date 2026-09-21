@@ -1,3 +1,4 @@
+import { filterSuppressedSuiteAssertions } from "@mcpjam/sdk/contract";
 /**
  * Shared tool call matching for the inspector.
  *
@@ -31,10 +32,12 @@ export type ArgumentMismatch = EvalArgumentMismatch;
 export type OutOfOrderToolCall = EvalOutOfOrderToolCall;
 
 /**
- * The emulated skill tool names, across BOTH delivery paths:
- *   - cloud / pinned: `listSkills`, `loadSkill` (`cloud-skill-tools.ts`)
- *   - local FS:       `loadSkill`, `listSkillFiles`, `readSkillFile`
- *     (`skill-tools.ts`; the local path lists skills in the prompt, not a tool)
+ * The emulated skill tool names.
+ *
+ * Static paths (live cloud, pinned, effective, local FS) list the catalog in
+ * the system prompt and advertise `loadSkill` (+ file tools where wired).
+ * `listSkills` remains only on the SEP-2640 wrapper (MCP-server skills) and
+ * is kept in this set so stored/old traces still match.
  *
  * The matcher exempts calls to these from tool-call expectations (a skill LOAD
  * is agent housekeeping, not a task action), so a `maxExtraToolCalls: 0` case
@@ -61,8 +64,9 @@ export function isSkillToolName(name: string): boolean {
  * Whether skill tools are active in a prepared tool set — true when ANY skill
  * tool is advertised. Runners pass the result as `skillToolsActive` so the
  * matcher only filters skill calls when skills were genuinely in play (never for
- * a suite that happens to have no skills). Robust across both paths: cloud
- * advertises `listSkills`, local FS advertises `loadSkill`.
+ * a suite that happens to have no skills). Robust across paths: static
+ * surfaces advertise `loadSkill`; the SEP-2640 wrapper may also advertise
+ * `listSkills`.
  */
 export function hasSkillTools(toolNames: Iterable<string>): boolean {
   for (const name of toolNames) {
@@ -249,6 +253,7 @@ export {
   extractFinalAssistantMessage,
   extractToolErrors,
   predicateSchema,
+  predicateUnion,
   predicateArraySchema,
   argMatcherSchema,
   casePredicatesSchema,
@@ -256,6 +261,10 @@ export {
   PREDICATE_PLACEHOLDER_STRINGS,
   TURN_SCOPABLE_PREDICATE_KINDS,
   isTurnScopablePredicateKind,
+  CHECK_POLICY_KEYS,
+  stripCheckPolicy,
+  checkRole,
+  checkSeverity,
 } from "@mcpjam/sdk/predicates";
 export type {
   Predicate,
@@ -275,6 +284,9 @@ export type {
   PredicatePlaceholder,
   TurnChecksInput,
   TurnTranscriptInput,
+  CheckPolicy,
+  CheckRole,
+  CheckSeverity,
 } from "@mcpjam/sdk/predicates";
 
 import type {
@@ -460,8 +472,12 @@ export function resolveExtrasCap(
 export function resolveCasePredicates(
   suiteDefaults: PredicateType[] | undefined,
   caseOverride: CasePredicatesType | undefined,
+  suppressedSuiteStandardCheckIds?: readonly string[],
 ): PredicateType[] | undefined {
-  const defaults = suiteDefaults ?? [];
+  const defaults = filterSuppressedSuiteAssertions(
+    suiteDefaults ?? [],
+    suppressedSuiteStandardCheckIds,
+  );
   const overrideList = (caseOverride?.list ?? []) as PredicateType[];
   let resolved: PredicateType[];
   if (!caseOverride) {
@@ -511,13 +527,22 @@ export function resolveCaseSuccessPredicates(args: {
   runOverride?: PredicateType[] | undefined;
   envelope?: CasePredicatesType | undefined;
   legacyCase?: PredicateType[] | undefined;
+  suppressedSuiteStandardCheckIds?: readonly string[];
 }): PredicateType[] | undefined {
   if (args.runOverride !== undefined) return args.runOverride;
   if (args.envelope !== undefined) {
-    return resolveCasePredicates(args.suiteDefaults, args.envelope);
+    return resolveCasePredicates(
+      args.suiteDefaults,
+      args.envelope,
+      args.suppressedSuiteStandardCheckIds,
+    );
   }
   if (Array.isArray(args.legacyCase) && args.legacyCase.length > 0) {
     return args.legacyCase;
   }
-  return args.suiteDefaults;
+  return resolveCasePredicates(
+    args.suiteDefaults,
+    undefined,
+    args.suppressedSuiteStandardCheckIds,
+  );
 }

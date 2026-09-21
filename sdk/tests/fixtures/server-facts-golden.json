@@ -1,0 +1,189 @@
+{
+  "__readme": "Golden documents for `evalRunServerFactsSchema` (plan step F1a). The backend builder (mcpjam-backend convex/lib/evalServerFacts.ts) is hand-mirrored from the contract and produces documents of exactly these shapes; the SDK parses them here. Four cases, each covering a distinction the shape exists to keep: a ready document, a partial capture that still lists the servers it did get, a run with no snapshot at all, and the two payload bases side by side.",
+  "ready": {
+    "schemaVersion": 1,
+    "sourceVersion": 1,
+    "runId": "run_01",
+    "suiteId": "suite_01",
+    "computedAt": 1788000000000,
+    "state": "ready",
+    "protocolVersion": "2026-07-28",
+    "tokenEstimate": {
+      "method": "json_chars_div_4",
+      "referenceWindowTokens": 200000,
+      "note": "estimate of a reference window, not measured context consumption"
+    },
+    "setup": {
+      "connection": {
+        "outcome": "ok",
+        "egressVerified": true,
+        "durationMs": 412,
+        "basis": "setup_phase_wall"
+      },
+      "discovery": {
+        "outcome": "ok",
+        "durationMs": 118,
+        "basis": "setup_phase_wall"
+      }
+    },
+    "servers": [
+      {
+        "serverId": "srv_linear",
+        "capture": "complete",
+        "toolCount": 57,
+        "payload": {
+          "bytes": 79200,
+          "basis": "aggregated_catalog_json",
+          "complete": true
+        },
+        "estimatedTokens": 19800,
+        "referenceWindowShare": 0.099,
+        "annotations": {
+          "total": 57,
+          "withReadOnlyHint": 41,
+          "withDestructiveHint": 3
+        },
+        "outputSchema": { "total": 57, "present": 12 },
+        "prechecks": [
+          {
+            "toolName": "create_issue",
+            "code": "object_property_descriptions_missing",
+            "class": "spec_recommended",
+            "detail": { "missing": 4, "total": 9 }
+          },
+          {
+            "toolName": "delete_issue",
+            "code": "destructive_without_confirmation",
+            "class": "quality_signal"
+          },
+          {
+            "toolName": "list_issues",
+            "code": "output_schema_present_but_not_object",
+            "class": "spec_recommended",
+            "protocolDependent": true
+          }
+        ],
+        "relatedAssessments": [
+          {
+            "kind": "conformance",
+            "runId": "conf_9",
+            "createdAt": 1787900000000,
+            "protocolVersion": "2026-07-28",
+            "comparability": "sameServerId"
+          },
+          {
+            "kind": "readiness",
+            "createdAt": 1787800000000,
+            "comparability": "sameServerId"
+          }
+        ]
+      }
+    ]
+  },
+  "partialCapture": {
+    "schemaVersion": 1,
+    "sourceVersion": 1,
+    "runId": "run_02",
+    "suiteId": "suite_01",
+    "computedAt": 1788000000000,
+    "state": "unavailable",
+    "reason": "snapshotPartial",
+    "tokenEstimate": {
+      "method": "json_chars_div_4",
+      "referenceWindowTokens": 200000,
+      "note": "estimate of a reference window, not measured context consumption"
+    },
+    "setup": {
+      "connection": {
+        "outcome": "failed",
+        "attribution": "theirs",
+        "egressVerified": true,
+        "durationMs": 30000,
+        "basis": "setup_phase_wall"
+      }
+    },
+    "servers": [
+      {
+        "serverId": "srv_ok",
+        "capture": "complete",
+        "toolCount": 4,
+        "payload": {
+          "bytes": 2100,
+          "basis": "normalized_snapshot",
+          "complete": false
+        },
+        "estimatedTokens": 525,
+        "referenceWindowShare": 0.002625,
+        "annotations": { "total": 4, "withReadOnlyHint": 4, "withDestructiveHint": 0 },
+        "outputSchema": { "total": 4, "present": 4 },
+        "prechecks": [],
+        "relatedAssessments": []
+      },
+      {
+        "serverId": "srv_unreachable",
+        "capture": "failed",
+        "toolCount": 0,
+        "payload": {
+          "bytes": 0,
+          "basis": "normalized_snapshot",
+          "complete": false
+        },
+        "estimatedTokens": 0,
+        "referenceWindowShare": 0,
+        "annotations": { "total": 0, "withReadOnlyHint": 0, "withDestructiveHint": 0 },
+        "outputSchema": { "total": 0, "present": 0 },
+        "prechecks": [],
+        "relatedAssessments": []
+      }
+    ]
+  },
+  "snapshotMissing": {
+    "schemaVersion": 1,
+    "sourceVersion": 1,
+    "runId": "run_03",
+    "suiteId": "suite_02",
+    "computedAt": 1788000000000,
+    "state": "unavailable",
+    "reason": "snapshotMissing",
+    "tokenEstimate": {
+      "method": "json_chars_div_4",
+      "referenceWindowTokens": 200000,
+      "note": "estimate of a reference window, not measured context consumption"
+    },
+    "setup": {},
+    "servers": []
+  },
+  "setupNotObserved": {
+    "schemaVersion": 1,
+    "sourceVersion": 1,
+    "runId": "run_04",
+    "suiteId": "suite_02",
+    "computedAt": 1788000000000,
+    "state": "unavailable",
+    "reason": "setupNotObserved",
+    "tokenEstimate": {
+      "method": "json_chars_div_4",
+      "referenceWindowTokens": 200000,
+      "note": "estimate of a reference window, not measured context consumption"
+    },
+    "setup": {},
+    "servers": [
+      {
+        "serverId": "srv_linear",
+        "capture": "complete",
+        "toolCount": 2,
+        "payload": {
+          "bytes": 900,
+          "basis": "aggregated_catalog_json",
+          "complete": true
+        },
+        "estimatedTokens": 225,
+        "referenceWindowShare": 0.001125,
+        "annotations": { "total": 2, "withReadOnlyHint": 1, "withDestructiveHint": 0 },
+        "outputSchema": { "total": 2, "present": 0 },
+        "prechecks": [],
+        "relatedAssessments": []
+      }
+    ]
+  }
+}

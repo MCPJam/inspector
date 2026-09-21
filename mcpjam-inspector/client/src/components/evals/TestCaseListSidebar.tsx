@@ -24,9 +24,10 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
-import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
+import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 import type { EvalCase, EvalSuite } from "./types";
 import { getEffectiveSuiteServers } from "./helpers";
+import { ImportClaimBadge } from "./import-claim-badge";
 import { isModelFree } from "@/shared/steps";
 import {
   getDefaultTestCaseModelValue,
@@ -152,7 +153,7 @@ export function TestCaseListSidebar({
         onNavigateToOverview(suiteId);
         return;
       }
-      navigateApp(buildEvalsPath({ type: "suite-overview", suiteId }));
+      navigateApp(buildEvaluatePath({ type: "suite-overview", suiteId }));
     }
   };
 
@@ -409,7 +410,7 @@ export function TestCaseListSidebar({
                               onSelectTestCase(suiteId, testCase._id);
                               return;
                             }
-                            navigateApp(buildEvalsPath({
+                            navigateApp(buildEvaluatePath({
                               type: "test-edit",
                               suiteId: suiteId,
                               testId: testCase._id,
@@ -454,6 +455,7 @@ export function TestCaseListSidebar({
                             >
                               {line1}
                             </span>
+                            <ImportClaimBadge claim={testCase.import} />
                           </div>
                           {line2 ? (
                             <span

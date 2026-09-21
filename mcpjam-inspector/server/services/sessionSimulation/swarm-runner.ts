@@ -1,4 +1,18 @@
+import {
+  isTransientSpendRefusal,
+  humanizeSwarmAttemptError,
+} from "../../../shared/swarm-attempt-error.js";
+import type { SpendRefusal } from "./admission-retry.js";
+import { prepareTargetGrounding } from "./target-grounding";
+import { SwarmSetupError } from "./swarm-setup-turn";
+import { isCreditExhaustion } from "../../../shared/credit-exhaustion.js";
+import { composeAbortSignals } from "@mcpjam/sdk";
 import { logger } from "../../utils/logger.js";
+import { withDeadline } from "../../utils/run-supervisor/deadline.js";
+import {
+  resolveExecutionBudgetsForSurface,
+  type ResolvedExecutionBudgets,
+} from "@mcpjam/sdk/contract";
 import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
 import {
   captureAndPersistWidgetSnapshotsForSession,
@@ -18,22 +32,28 @@ import {
 } from "../swarm-agent.js";
 import { runSwarmChecks } from "../checks/run-swarm-checks.js";
 import { createBrowserArtifactOutbox } from "../browser-artifact-outbox.js";
+import { collectHostedRecordingBeforeRelease } from "../browserd/hosted-recording.js";
 import {
   canProvisionSwarmSandboxes,
   provisionAttemptSandbox,
   releaseAttemptSandbox,
   sandboxIntentFor,
   targetWantsBash,
+  targetWantsBrowser,
   targetWantsHarnessBox,
   type ProvisionedAttemptSandbox,
   type SandboxIntent,
 } from "./swarm-sandbox.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import { hostedBrowserAdvertisable } from "../../utils/computers/runtime-config.js";
+import { hasSelectedMcpServersForAdmission } from "../evals/harness-admission.js";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
 import { swarmAttemptChatSessionId } from "../../../shared/swarm-session-id.js";
 import {
+  accountLimitCode,
   humanizeSwarmAttemptErrorMessage,
+  isAccountLimit,
   MAX_ATTEMPT_ERROR_CHARS,
 } from "../../../shared/swarm-attempt-error.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
@@ -52,7 +72,7 @@ import type {
  * persona-driven sessions SEQUENTIALLY (one active session per host); at most
  * {@link MAX_CONCURRENT_HOSTS} hosts are active concurrently. The per-session
  * host-turn machinery is the shared {@link runSyntheticHostSession} core
- * (identical to chatbox session-simulation); this file owns the swarm surface:
+ * (identical to scenario session-simulation); this file owns the swarm surface:
  * the claim→run→persist→terminal attempt ordering, the swarm persona driver,
  * swarm transcript attribution, an independent heartbeat, graceful shutdown
  * registration, and the two run-level short-circuits below.
@@ -77,11 +97,76 @@ import type {
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
+
+/**
+ * The swarm platform defaults, taken from the contract's own resolver rather
+ * than written out here. A second copy of these numbers is a second thing to
+ * keep in step with the ceilings and the settings surface.
+ */
+function defaultSwarmExecutionBudgets(): ResolvedExecutionBudgets {
+  const resolution = resolveExecutionBudgetsForSurface({ surface: "swarms" });
+  if (!resolution.ok) {
+    // Unreachable: the platform defaults are the thing ceilings are defined
+    // against. Thrown rather than silently patched, because a violation here
+    // means the two tables have drifted and every run is mis-bounded.
+    throw new Error(
+      `platform swarm budgets must resolve: ${JSON.stringify(resolution.violations)}`,
+    );
+  }
+  return resolution.resolved;
+}
+
+/**
+ * Deadline on the attempt-terminal artifact flush that carries a hosted
+ * recording. Matches the session core's own terminal flush budget.
+ *
+ * `ConvexHttpClient.mutation` has no timeout of its own, and this one sits
+ * inside the `finally` that must reach `releaseAttemptSandbox`: a hung attach
+ * would hold a paid box open for as long as it hangs. Whatever does not land
+ * stays unattached — the screenshots are still the record.
+ */
+const ATTEMPT_ARTIFACT_FLUSH_TIMEOUT_MS = 30_000;
+
+/**
+ * Resolve `work`, or give up at the deadline. The abandoned promise keeps
+ * running (nothing here can cancel a Convex mutation) — it just stops holding
+ * the release. Rejections are swallowed for the same reason: this is a
+ * terminal path observing an outcome, never deciding one.
+ */
+async function withArtifactFlushDeadline(
+  work: Promise<unknown>,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      work.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ATTEMPT_ARTIFACT_FLUSH_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 /** Bounded target-worker pool: at most this many execution targets run
  * concurrently. A target is one `snapshot.hosts[]` entry — a legacy host OR a
  * project environment (two environments may share a host and still count as
  * two targets). */
 export const MAX_CONCURRENT_TARGETS = 3;
+
+/**
+ * Tool-step cap for one persona turn, pinned by the swarm runner rather than
+ * inherited from the engine's Playground default of 30.
+ *
+ * Every step of a turn resends every tool result the turn has produced, so
+ * steps multiply context, wall clock and cost together. Measured on dev
+ * (2026-09-17): persona turns against the MCPJam server reached 677k to 881k
+ * tokens and 2 to 5 minutes each under the default, and then tripped the
+ * 6-minute turn budget. Ten steps still lets a persona chain several tool
+ * calls per turn while bounding the worst turn to roughly a third of that.
+ * A journey-level knob is deliberately not added yet; this is the default.
+ */
+export const SWARM_PERSONA_TURN_MAX_STEPS = 10;
 /** @deprecated Renamed {@link MAX_CONCURRENT_TARGETS} (targets ≠ hosts once
  * environments land). Kept for existing tests/imports. */
 export const MAX_CONCURRENT_HOSTS = MAX_CONCURRENT_TARGETS;
@@ -103,7 +188,7 @@ function targetSessionIdentity(target: PinnedHostExecutionSpec): {
 
 /**
  * Builds a fresh, fully-connected manager scoped to one pinned host's
- * `serverIds`. Host-aware (unlike the chatbox {@link SimulationManagerFactory})
+ * `serverIds`. Host-aware (unlike the scenario {@link SimulationManagerFactory})
  * so a single fan-out run can connect different servers per host.
  */
 export type JourneyManagerFactory = (host: PinnedHostExecutionSpec) => Promise<{
@@ -114,6 +199,8 @@ export type JourneyManagerFactory = (host: PinnedHostExecutionSpec) => Promise<{
 }>;
 
 export interface StartJourneyRunOptions {
+  setupWrites?: boolean;
+  goal?: string;
   runId: string;
   projectId: string;
   /** Every pinned host this run fans out across (`snapshot.hosts`). */
@@ -138,10 +225,9 @@ export interface StartJourneyRunOptions {
    * the run left looking half-finished. `getConvexBearerForDelegation`
    * caches and re-mints near expiry, so calling this repeatedly is cheap.
    *
-   * Session-JWT callers pass a constant thunk: their token's lifetime is the
-   * browser session's and nothing here can extend it. The stale-run sweep
-   * covers a run whose launching tab closed. Precedent for the shape:
-   * `github-checks-worker.ts`.
+   * Browser launches also exchange their verified identity for renewable,
+   * organization-scoped delegation before creating the run. The browser
+   * access token must not be captured for detached work.
    *
    * RESOLVED PER UNIT OF WORK — once per target, once per session attempt,
    * once per finalizer — not per outbound call. That bounds a run's staleness
@@ -153,6 +239,13 @@ export interface StartJourneyRunOptions {
   managerFactory: JourneyManagerFactory;
   /** Aborts the run mid-fan-out on inspector shutdown / user cancel. */
   abortSignal?: AbortSignal;
+  /**
+   * The run's FROZEN execution budgets. Absent ⇒ the platform defaults, which
+   * is every run until the backend writes authored budgets into the launch
+   * snapshot. Resolved through the real resolver either way, so a defaulted
+   * run and a frozen one take the same code path.
+   */
+  budgets?: ResolvedExecutionBudgets;
 }
 
 interface RunningJourneyHandle {
@@ -171,7 +264,7 @@ export function getRunningJourneyRunCount(): number {
 
 /** Active run stream hub, if the runner is still in-process. */
 export function getRunningJourneyStreamHub(
-  runId: string
+  runId: string,
 ): JourneyRunStreamHub | undefined {
   return runningJourneyRuns.get(runId)?.hub;
 }
@@ -182,36 +275,19 @@ export function getRunningJourneyStreamHub(
  * best-effort finalizes remaining pending attempts) up to `timeoutMs`.
  */
 export async function shutdownRunningJourneyRuns(
-  timeoutMs: number = DEFAULT_SHUTDOWN_TIMEOUT_MS
+  timeoutMs: number = DEFAULT_SHUTDOWN_TIMEOUT_MS,
 ): Promise<void> {
   const handles = Array.from(runningJourneyRuns.values());
   for (const handle of handles) {
     handle.abort();
   }
   const timeoutPromise = new Promise<void>((resolve) =>
-    setTimeout(resolve, timeoutMs)
+    setTimeout(resolve, timeoutMs),
   );
   await Promise.race([
     Promise.allSettled(handles.map((h) => h.done)),
     timeoutPromise,
   ]);
-}
-
-function composeAbortSignals(
-  ...signals: Array<AbortSignal | undefined>
-): AbortSignal {
-  const controller = new AbortController();
-  for (const signal of signals) {
-    if (!signal) continue;
-    if (signal.aborted) {
-      controller.abort(signal.reason);
-      return controller.signal;
-    }
-    signal.addEventListener("abort", () => controller.abort(signal.reason), {
-      once: true,
-    });
-  }
-  return controller.signal;
 }
 
 /**
@@ -220,10 +296,13 @@ function composeAbortSignals(
  * `setImmediate`) — the HTTP 202 already returned.
  */
 export async function startJourneyRun(
-  opts: StartJourneyRunOptions
+  opts: StartJourneyRunOptions,
 ): Promise<void> {
   const controller = new AbortController();
-  const composed = composeAbortSignals(opts.abortSignal, controller.signal);
+  const composed = composeAbortSignals([
+    ...(opts.abortSignal ? [opts.abortSignal] : []),
+    controller.signal,
+  ]);
   let resolveDone!: () => void;
   const done = new Promise<void>((resolve) => {
     resolveDone = resolve;
@@ -235,7 +314,7 @@ export async function startJourneyRun(
     hub,
   });
   try {
-    await runJourneyFanOut({ ...opts, abortSignal: composed, hub });
+    await runJourneyFanOut({ ...opts, abortSignal: composed.signal, hub });
   } finally {
     // Terminal multiplex event before unregistering so late SSE clients see it.
     hub.emit({
@@ -245,6 +324,7 @@ export async function startJourneyRun(
       chatSessionId: "",
       sessionIndex: -1,
     });
+    composed.dispose();
     runningJourneyRuns.delete(opts.runId);
     resolveDone();
   }
@@ -261,7 +341,7 @@ export async function startJourneyRun(
 function terminalForOutcome(
   outcome: "succeeded" | "failed" | "rate_limited",
   errorMessage: string | undefined,
-  errorReason?: string
+  errorReason?: string,
 ): { status: SwarmAttemptStatus; errorCode?: string; errorMessage?: string } {
   if (outcome === "succeeded") {
     return { status: "succeeded" };
@@ -270,13 +350,18 @@ function terminalForOutcome(
   // JSON body — unreadable, and it embeds the deployment URL. The stored field
   // is specified as a human string that is never a raw provider payload, so
   // the humanizer runs HERE, at the producer, not at every render site.
-  const safeMessage = errorMessage
-    ? humanizeSwarmAttemptErrorMessage(errorMessage)
+  const info = errorMessage
+    ? humanizeSwarmAttemptError(errorMessage)
     : undefined;
+  const safeMessage = info?.message;
   if (outcome === "rate_limited") {
     return {
       status: "rate_limited",
-      errorCode: "rate_limited",
+      // Keep MCPJam's own denial code (`user_rate_limit`, …) when the raw
+      // message carries one. The humanized sentence has dropped it, and a bare
+      // `rate_limited` reads to the run screen as the user's PROVIDER
+      // throttling their key — naming Anthropic for MCPJam's daily limit.
+      errorCode: accountLimitCode(errorMessage) ?? "rate_limited",
       ...(safeMessage ? { errorMessage: safeMessage } : {}),
     };
   }
@@ -288,28 +373,42 @@ function terminalForOutcome(
   // `succeeded` terminal, which must carry the claim's chatSessionId).
   return {
     status: "failed",
-    errorCode: errorReason ?? "session_failed",
+    errorCode: errorReason ?? info?.code ?? "session_failed",
     ...(safeMessage ? { errorMessage: safeMessage } : {}),
   };
 }
 
 /**
- * Distinguish an ORG spend-cap breach from a PROVIDER rate-limit within the
- * shared core's `rate_limited` bucket (both fold there via `classifyTurnFailure`).
- * A spend/cap/quota/budget message is the org cap (WHOLE-RUN stop); anything
- * else (a provider 429 / rate limit) is a per-HOST stop. A missing message
- * defaults to the narrower per-host stop — never escalate to a whole-run halt
- * on ambiguous signal.
+ * Distinguish an ORG spend-cap breach from a PROVIDER rate-limit — across the
+ * shared core's `rate_limited` bucket and the `failed` attempts whose message
+ * carries an account denial code.
+ * An account-wide limit is the org cap (WHOLE-RUN stop); a provider 429 on one
+ * host's own key is a per-HOST stop. A missing message defaults to the narrower
+ * per-host stop — never escalate to a whole-run halt on ambiguous signal.
  *
- * `cap`/`quota`/`budget` are word-anchored so only genuine spend-cap wording
- * matches: "spend cap exceeded" / "quota exceeded" / "budget exhausted" →
- * org cap, but "capacity" / "rate capacity exceeded" / "recap" / "escape" →
- * NOT a spend cap (they stay a per-host provider rate-limit).
+ * The backend's denial code decides it, via the shared {@link isAccountLimit}
+ * the run screen also renders from. `runner.ts` concatenates that code into the
+ * message ("<sentence> (<code>, HTTP <status>)"), and it is the only reliable
+ * signal: no MCPJam limit sentence — "Daily credit limit reached.", "Daily
+ * MCPJam model limit reached." — contains spend/cap/quota/budget wording.
+ *
+ * The prose check is kept as a second signal for a backend that words a cap
+ * without a code. `cap`/`quota`/`budget`/`spend` stay word-anchored so
+ * "capacity" / "recap" / "escape" — and "su`spend`ed", which is an account
+ * SUSPENSION and not a cap — remain a per-host provider rate-limit.
+ * `spend_budget_reached` still escalates: `isAccountLimit` matches its code.
  */
-function classifyRateLimit(
-  message: string | undefined
-): "org_spend_cap" | "provider_rate_limit" {
-  if (message && /spend|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
+export function classifyRateLimit(
+  message: string | undefined,
+  hint?: SpendRefusal,
+): "org_spend_cap" | "provider_rate_limit" | "transient_capacity" {
+  const refusal = hint ?? humanizeSwarmAttemptError(message);
+  if (isTransientSpendRefusal(refusal.code, refusal.refusalReason))
+    return "transient_capacity";
+  if (!message) return "provider_rate_limit";
+  if (isCreditExhaustion(message)) return "org_spend_cap";
+  if (isAccountLimit(message)) return "org_spend_cap";
+  if (/\bspend\b|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
     return "org_spend_cap";
   }
   return "provider_rate_limit";
@@ -318,22 +417,67 @@ function classifyRateLimit(
 /** Concise structured log — ids + status only; NEVER prompts/transcripts/keys. */
 function logEvent(
   event: string,
-  fields: Record<string, string | number | boolean | undefined>
+  fields: Record<string, string | number | boolean | undefined>,
 ): void {
   logger.info(`[swarm.runner] ${event}`, fields);
 }
 
 function bindSessionEmit(
   hub: JourneyRunStreamHub,
-  envelope: SwarmStreamEnvelope
+  envelope: SwarmStreamEnvelope,
 ): (payload: SwarmStreamPayload) => void {
   return (payload) => {
     hub.emit({ ...envelope, ...payload } as SwarmStreamEvent);
   };
 }
 
+/**
+ * WHAT this target needs the box FOR, in operator-facing words plus the
+ * `toolId` the UI keys its notice on.
+ *
+ * Until phase 6 the answer was always `bash`, so the copy could hardcode
+ * "shell". A harness-only target reached the same branches next, and a
+ * BROWSER-only target after that — which the two-branch version described as
+ * "the undefined harness", because it fell through to the harness arm with no
+ * harness to name.
+ *
+ * Built from what the target ACTUALLY declares rather than from a first
+ * matching branch, because the combinations are not exclusive: `bash` and
+ * `browser` may coexist, and a harness can accompany either. A target that lost its box lost every one of them, so the
+ * sentence names every one of them.
+ *
+ * The `toolId` is the capability that DECIDED the image, because that is the
+ * one the failure is about: a browser forces the desktop image, and the
+ * refusals that reach here (`desktop_pin_conflict`, desktop capacity) are
+ * desktop refusals. Without a browser it stays what it has always been.
+ */
+function describeSandboxConsumer(
+  target: PinnedHostExecutionSpec,
+  hostedBrowserAvailable: boolean,
+): {
+  label: string;
+  toolId: string;
+} {
+  const wantsBash = targetWantsBash(target);
+  const wantsBrowser = targetWantsBrowser(target, hostedBrowserAvailable);
+  const parts: string[] = [];
+  if (wantsBash) parts.push("the shell");
+  if (wantsBrowser) parts.push("the browser");
+  if (target.harness) parts.push(`the ${target.harness} harness`);
+  const label =
+    parts.length === 0
+      ? "the disposable computer"
+      : parts.length === 1
+        ? parts[0]!
+        : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)!}`;
+  return {
+    label,
+    toolId: wantsBrowser ? "browser" : wantsBash ? "bash" : "harness",
+  };
+}
+
 async function runJourneyFanOut(
-  opts: StartJourneyRunOptions & { hub: JourneyRunStreamHub }
+  opts: StartJourneyRunOptions & { hub: JourneyRunStreamHub },
 ): Promise<void> {
   const {
     runId,
@@ -354,30 +498,60 @@ async function runJourneyFanOut(
 
   // Run-level stop controller. Aborting it cancels every in-flight session's
   // turns; composed with the incoming abort so a shutdown/cancel does the same.
+  const budgets = opts.budgets ?? defaultSwarmExecutionBudgets();
+
+  // The RUN's clock. Nested under the caller's abort (shutdown / cancel) and
+  // composed with `runStop`, the spend-cap short-circuit — so every session's
+  // turns are cancelled by whichever of the three trips first.
+  //
+  // A swarm run had no wall-clock bound at all before this: `maxTurns` bounds
+  // how many turns a session takes, never how long they take, so a fan-out
+  // against a wedged host could sit open indefinitely, holding its sandboxes
+  // and its spend.
+  const runDeadline = withDeadline(abortSignal, budgets.runTimeoutMs, "run");
   const runStop = new AbortController();
-  const sessionSignal = composeAbortSignals(abortSignal, runStop.signal);
+  const sessionSignals = composeAbortSignals([
+    runDeadline.signal,
+    runStop.signal,
+  ]);
+  const sessionSignal = sessionSignals.signal;
   // Set on an org spend-cap breach — halts scheduling across ALL hosts.
   let spendCapTripped = false;
   let spendCapMessage: string | undefined;
+  let stoppedByBackend = false;
 
-  const stopScheduling = () => spendCapTripped || abortSignal?.aborted === true;
+  // Reads the RUN deadline's signal, not the raw abort: a run that spent its
+  // budget must stop handing out new sessions, and the raw signal knows
+  // nothing about that bound.
+  const stopScheduling = () =>
+    runStop.signal.aborted || runDeadline.signal.aborted === true;
 
   // Independent heartbeat: an interval timer (NOT gated on turn/attempt
   // completion) started before the first attempt and stopped in `finally`.
   // Single-flight so a slow heartbeat can't stack. One per run.
   let heartbeatInFlight = false;
+  let heartbeatActive = true;
   const heartbeat = setInterval(() => {
-    if (abortSignal?.aborted) return;
+    if (abortSignal?.aborted || stoppedByBackend) return;
     if (heartbeatInFlight) return;
     heartbeatInFlight = true;
-    // Re-resolved on every beat. Cheap (the mint is cached) and it makes the
-    // heartbeat the one thing that CANNOT go stale — which matters, because a
-    // silent heartbeat is what the backend's stale sweep reads as a dead
-    // runner.
+    // Re-resolved on every beat, including browser-launched runs, so
+    // heartbeat authorization survives expiration of the launch credential.
     getBearer()
       .then((bearer) =>
-        heartbeatJourneyRun(convexHttpUrl, bearer, { projectId, runId })
+        heartbeatJourneyRun(convexHttpUrl, bearer, { projectId, runId }),
       )
+      .then((status) => {
+        if (!heartbeatActive || status === undefined || status === "running") {
+          return;
+        }
+        stoppedByBackend = true;
+        logger.info("[swarm.runner] backend ended run; stopping execution", {
+          runId,
+          status,
+        });
+        runStop.abort();
+      })
       .catch((err) => {
         logger.warn("[swarm.runner] heartbeat failed", {
           runId,
@@ -461,7 +635,9 @@ async function runJourneyFanOut(
       // refetch the live host config — everything comes from the immutable
       // snapshot. A model-less / unresolvable pinned spec throws HERE, before any
       // attempt is claimed — the catch finalizes this target's pending attempts.
-      const modelDefinition = buildSyntheticModelDefinition(modelId);
+      const modelDefinition = buildSyntheticModelDefinition(modelId, {
+        hosted: target.hosted,
+      });
 
       // B-isolation F4/phase 6 — a harness target runs on ITS OWN disposable box
       // or it does not run at all.
@@ -502,7 +678,7 @@ async function runJourneyFanOut(
         // box — no computer attached, or the environment pins no usable image. That
         // is knowable before the first attempt, so say it once, precisely.
         harnessTargetIntent = harnessNeedsBox
-          ? sandboxIntentFor(target)
+          ? sandboxIntentFor(target, hostedBrowserAdvertisable())
           : undefined;
         //
         // AND the same preflight interactive chat runs. Until phase 6 the swarm
@@ -523,10 +699,11 @@ async function runJourneyFanOut(
         //     carries `mcpProfile` verbatim and `swarm-runs.ts` already reads the
         //     policy out of it for the MCP manager — this feeds the same value to
         //     the harness gate.
-        //   - APPROVAL vs MCP TOOLS. Claude Code can gate its native and
-        //     host-executed tools but NOT tools delivered through `.mcp.json`, so
-        //     `requireToolApproval` + selected servers is a hole the adapter
-        //     declares it cannot close (`supportsMcpToolApproval: false`).
+        //   - APPROVAL vs MCP TOOLS. Whether a harness can pause on the surface
+        //     its MCP tools actually run on. Claude Code now can, on all three
+        //     (`supportsMcpToolApproval: true`, via the bridge's `canUseTool`
+        //     under "allow-reads"); Codex cannot pause at all, so
+        //     `requireToolApproval` still refuses a Codex target outright.
         //
         // Deliberately NOT re-derived as a local subset: a rule added to the chat
         // preflight later must apply here too, and the only way to guarantee that
@@ -545,9 +722,12 @@ async function runJourneyFanOut(
                 // this is an admission decision, and over-counting refuses a host
                 // that advertises an approval gate it cannot enforce — the
                 // fail-closed direction.
-                hasSelectedMcpServers:
-                  (target.serverIds ?? []).length > 0 ||
-                  (target.pluginServerIds ?? []).length > 0,
+                hasSelectedMcpServers: hasSelectedMcpServersForAdmission({
+                  ...(target.serverIds ? { serverIds: target.serverIds } : {}),
+                  ...(target.pluginServerIds
+                    ? { pluginServerIds: target.pluginServerIds }
+                    : {}),
+                }),
                 // The RESOLVED definition — the SAME one the turn runs on. The
                 // gate derives eligibility and the canonical id from it, so this
                 // cannot disagree with what `resolveTurnRuntime` decides. Passing
@@ -558,7 +738,13 @@ async function runJourneyFanOut(
                 model: {
                   id: String(modelDefinition.id),
                   provider: modelDefinition.provider,
+                  hosted: modelDefinition.hosted,
                 },
+                // The same pinned id under the name the external-account rule
+                // reads. Identical to `model.id` here — a swarm target has no
+                // request body to override it — and passed explicitly so it
+                // STAYS identical if that ever stops being true.
+                hostModelId: modelId,
                 // TRI-STATE, read without throwing, and INVALID counts as ON —
                 // the same call `mcp/chat-v2.ts` makes. `xaaPolicyFromMcpProfile`
                 // (the web route's variant) THROWS a 409 on a malformed profile,
@@ -577,27 +763,27 @@ async function runJourneyFanOut(
         harnessTargetBlockedReason = !harnessNeedsBox
           ? undefined
           : !targetWantsHarnessBox(target)
-          ? "This target runs the " +
-            target.harness +
-            " harness but has no computer attached, so there is nothing to run " +
-            "it on. Attach a computer to this host."
-          : harnessAvailability && !harnessAvailability.ok
-          ? "This target runs the " +
-            target.harness +
-            " harness, which isn't available: " +
-            harnessAvailability.reason +
-            "."
-          : harnessTargetIntent?.kind === "skip"
-          ? "This target runs the " +
-            target.harness +
-            " harness, which needs a disposable sandbox per session. " +
-            // An intent with no reason is a pre-B-isolation run snapshot: the
-            // backend never resolved an image because it did not know how to.
-            // Silent is right for bash (it simply goes missing); a harness
-            // cannot run at all, so the session must say something true.
-            (harnessTargetIntent.reason ??
-              "This run pinned no computer image, so one cannot be created.")
-          : undefined;
+            ? "This target runs the " +
+              target.harness +
+              " harness but has no computer attached, so there is nothing to run " +
+              "it on. Attach a computer to this host."
+            : harnessAvailability && !harnessAvailability.ok
+              ? "This target runs the " +
+                target.harness +
+                " harness, which isn't available: " +
+                harnessAvailability.reason +
+                "."
+              : harnessTargetIntent?.kind === "skip"
+                ? "This target runs the " +
+                  target.harness +
+                  " harness, which needs a disposable sandbox per session. " +
+                  // An intent with no reason is a pre-B-isolation run snapshot: the
+                  // backend never resolved an image because it did not know how to.
+                  // Silent is right for bash (it simply goes missing); a harness
+                  // cannot run at all, so the session must say something true.
+                  (harnessTargetIntent.reason ??
+                    "This run pinned no computer image, so one cannot be created.")
+                : undefined;
       } catch (err) {
         // Fail CLOSED and name what happened. We do not know WHICH rule threw,
         // so the message stays honest about that rather than guessing.
@@ -613,7 +799,7 @@ async function runJourneyFanOut(
             hostId,
             targetId,
             error: err instanceof Error ? err.message : String(err),
-          }
+          },
         );
       }
 
@@ -632,6 +818,22 @@ async function runJourneyFanOut(
         signal: sessionSignal,
       });
 
+      if (!harnessTargetBlockedReason && !stopScheduling()) {
+        await prepareTargetGrounding({
+          runId,
+          projectId,
+          target,
+          persona: personaSnapshot,
+          goal: opts.goal,
+          setupWrites: opts.setupWrites,
+          modelDefinition,
+          managerFactory,
+          convexHttpUrl,
+          bearer,
+          signal: sessionSignal,
+        });
+      }
+
       for (sessionIdx = 0; sessionIdx < sessionsPerTarget; sessionIdx++) {
         // Run-level stop (spend cap or shutdown/cancel) halts THIS target too.
         if (stopScheduling()) return;
@@ -643,6 +845,7 @@ async function runJourneyFanOut(
         // persona-next-turn calls. Re-reading here means the worst case is one
         // long session outliving its token, not the whole run.
         bearer = await getBearer();
+        if (stoppedByBackend) return;
         // The same value, as a `const`, for the callbacks below. `bearer` is a
         // reassigned `let` (and now starts undefined until the first mint), so
         // TypeScript drops its narrowing the moment it is read inside a
@@ -650,6 +853,11 @@ async function runJourneyFanOut(
         // callback fired later in the session uses the token this session began
         // with — which is the intended semantics, not an accident.
         const sessionBearer = bearer;
+        // Same reason, for the loop counter: `sessionIdx` is hoisted to the
+        // worker scope so the catch can finalize the attempts this target left
+        // behind, so a closure reads wherever the loop has since advanced to —
+        // not the session it was created for.
+        const attemptSessionIdx = sessionIdx;
 
         // Deterministic claim key — the immutable chatSessionId the attempt is
         // claimed with and every persist + terminal reuse (shared mint, D1: env
@@ -658,7 +866,7 @@ async function runJourneyFanOut(
         const chatSessionId = swarmAttemptChatSessionId(
           runId,
           targetSessionIdentity(target),
-          sessionIdx
+          sessionIdx,
         );
         // Attempt-scoped: per-turn widget capture walks the FULL accumulated
         // transcript, so without this an early widget is re-fetched and
@@ -668,7 +876,7 @@ async function runJourneyFanOut(
         // (render observations, Computer Use steps, the replay `.webm`). Swarms
         // are the ONE surface that opts into Computer Use, so they generate the
         // richest interaction record — and until this existed they kept none of
-        // it. No chatboxId/accessVersion: the write authorizes through the
+        // it. No scenarioId/accessVersion: the write authorizes through the
         // mutation's direct-session branch, where this runner IS the launcher
         // who owns every session row the run mints.
         const browserArtifacts = createBrowserArtifactOutbox({
@@ -701,10 +909,13 @@ async function runJourneyFanOut(
               targetId,
               sessionIdx,
               error: err instanceof Error ? err.message : String(err),
-            }
+            },
           );
           continue;
         }
+
+        // A heartbeat may have ended the run while the claim was in flight.
+        if (stoppedByBackend) return;
 
         // Duplicate-launch guard: a duplicate-delivered launchKey dedupes to the
         // SAME runId, so two runners can iterate the SAME (run, host, sessionIdx)
@@ -718,7 +929,7 @@ async function runJourneyFanOut(
         if (!claim.applied) {
           logger.warn(
             "[swarm.runner] attempt already claimed by another runner; skipping session",
-            { runId, hostId, sessionIdx }
+            { runId, hostId, sessionIdx },
           );
           continue;
         }
@@ -757,20 +968,20 @@ async function runJourneyFanOut(
         // operator to look at a tool they never configured sends them the wrong
         // way. `toolId` matters too — the UI keys the notice on it, and
         // "bash was suppressed" is not what happened.
-        const sandboxConsumer = targetWantsBash(target)
-          ? target.harness
-            ? {
-                label: `the shell and the ${target.harness} harness`,
-                toolId: "bash",
-              }
-            : { label: "the shell", toolId: "bash" }
-          : { label: `the ${target.harness} harness`, toolId: "harness" };
+        // Resolved ONCE and shared with `sandboxIntentFor` below: the two
+        // must agree about whether a browser is in play, or the notice
+        // describes a consumer the intent never provisioned for.
+        const hostedBrowserAvailable = hostedBrowserAdvertisable();
+        const sandboxConsumer = describeSandboxConsumer(
+          target,
+          hostedBrowserAvailable,
+        );
         // A target already known to be unrunnable (harness, no box possible)
         // gets refused by the shared core before any tool runs, so provisioning
         // would boot a paid box purely to release it unused — once per
         // configured session.
         if (!harnessTargetBlockedReason) {
-          const intent = sandboxIntentFor(target);
+          const intent = sandboxIntentFor(target, hostedBrowserAvailable);
           if (intent.kind === "skip" && intent.reason) {
             // The target ASKED for a shell and the environment can't give it
             // one. Hand the launch-time reason to the shared core, which emits
@@ -795,7 +1006,7 @@ async function runJourneyFanOut(
                 runId,
                 targetId,
                 sessionIdx,
-              }
+              },
             );
             emit({
               type: "session_notice",
@@ -806,7 +1017,7 @@ async function runJourneyFanOut(
             emit({
               type: "attempt_status",
               status: "failed",
-              errorMessage: message.slice(0, MAX_ATTEMPT_ERROR_CHARS),
+              errorMessage: humanizeSwarmAttemptErrorMessage(message),
             });
             await reportAttempt(convexHttpUrl, bearer, {
               projectId,
@@ -817,7 +1028,7 @@ async function runJourneyFanOut(
               status: "failed",
               chatSessionId,
               errorCode: "sandbox_unavailable",
-              errorMessage: message.slice(0, MAX_ATTEMPT_ERROR_CHARS),
+              errorMessage: humanizeSwarmAttemptErrorMessage(message),
             }).catch((err) => {
               logger.error(
                 "[swarm.runner] failed to report sandbox-unavailable terminal",
@@ -826,7 +1037,7 @@ async function runJourneyFanOut(
                   targetId,
                   sessionIdx,
                   error: err instanceof Error ? err.message : String(err),
-                }
+                },
               );
             });
             logEvent("attempt.finish", {
@@ -846,6 +1057,12 @@ async function runJourneyFanOut(
               runId,
               targetId: targetId ?? hostId,
               sessionIdx,
+              // WHICH IMAGE this attempt needs — a browser target boots the
+              // stock desktop one. Absent for everything else, so a terminal
+              // request stays byte-identical on the wire.
+              ...(intent.runtimeKind === "desktop-browser"
+                ? { runtimeKind: "desktop-browser" as const }
+                : {}),
               signal: sessionSignal,
             });
             if (provisioned.ok) {
@@ -885,9 +1102,8 @@ async function runJourneyFanOut(
               const failure = {
                 status: "failed" as SwarmAttemptStatus,
                 errorCode: provisioned.code,
-                errorMessage: provisioned.message.slice(
-                  0,
-                  MAX_ATTEMPT_ERROR_CHARS
+                errorMessage: humanizeSwarmAttemptErrorMessage(
+                  provisioned.message,
                 ),
               };
               emit({
@@ -919,7 +1135,7 @@ async function runJourneyFanOut(
                     targetId,
                     sessionIdx,
                     error: err instanceof Error ? err.message : String(err),
-                  }
+                  },
                 );
               });
               // Same terminal accounting as every other exit, so attempts that
@@ -961,6 +1177,7 @@ async function runJourneyFanOut(
           // failure classification, and NEVER throws (returns a SessionResult).
           // Because it persists per-turn and returns only after the last persist,
           // the transcript is durable before we report the terminal below.
+          if (stoppedByBackend) return;
           const sessionResult = await runSyntheticHostSession({
             runId,
             projectId,
@@ -970,10 +1187,21 @@ async function runJourneyFanOut(
               modelDefinition,
               systemPrompt: target.systemPrompt,
               temperature: target.temperature,
+              maxSteps: SWARM_PERSONA_TURN_MAX_STEPS,
               requireToolApproval: target.requireToolApproval,
               respectToolVisibility: target.respectToolVisibility,
               progressiveToolDiscovery: target.progressiveToolDiscovery,
               builtInToolIds: target.builtInToolIds,
+              // The unattended browser's only authorization. Threading it is
+              // what makes `browser` reachable on a swarm target at all: the
+              // runner parses it into an approval delivery, and without one
+              // `buildBrowserTools` advertises nothing.
+              browserToolPolicy: target.browserToolPolicy,
+              browserProfileId: target.browserProfileId,
+              browserSessionScope: {
+                kind: "swarm_attempt",
+                sessionId: chatSessionId,
+              },
               modelVisibleMcpToolResults: target.modelVisibleMcpToolResults,
               mcpToolResultImageRendering: target.mcpToolResultImageRendering,
               computer: target.computer,
@@ -1006,8 +1234,18 @@ async function runJourneyFanOut(
               // legacy live-pool). The shared core routes them to prepareChatV2
               // (`skillsSource`) or the harness pinned path — never a live query.
               ...(pinnedSkills !== undefined ? { pinnedSkills } : {}),
-              // Swarm authorizes via project membership — no chatbox access
-              // version, no chatbox id.
+              // The target's Project Environment — the GRANT BOUNDARY for its
+              // project secrets, and the same id `resolveGrantForSandbox`
+              // derives for this attempt's box from the run snapshot. Threaded
+              // so a harness turn's BROKERED external-account credential is
+              // checked against what THIS environment selects rather than
+              // against the whole project. Absent for a legacy host target,
+              // which has no environment and so no grant.
+              ...(target.environmentRef?.environmentId
+                ? { environmentId: target.environmentRef.environmentId }
+                : {}),
+              // Swarm authorizes via project membership — no scenario access
+              // version, no scenario id.
             },
             authHeader: `Bearer ${bearer}`,
             // Each attempt gets a fresh manager + browser context, scoped to THIS
@@ -1016,11 +1254,14 @@ async function runJourneyFanOut(
             // Thread the run-level stop signal (composed with shutdown/cancel) so a
             // spend-cap short-circuit cancels this host's in-flight turns.
             abortSignal: sessionSignal,
+            budgets,
             nextPersonaTurn: (transcriptSoFar) =>
               swarmPersonaNextTurn(convexHttpUrl, sessionBearer, {
                 projectId,
                 runId,
                 hostId,
+                ...(targetId ? { targetId } : {}),
+                sessionIdx: attemptSessionIdx,
                 transcriptSoFar,
                 // Forward the run-level stop (composed shutdown/cancel + spend-cap
                 // runStop) so a short-circuit aborts a parked persona fetch
@@ -1043,9 +1284,9 @@ async function runJourneyFanOut(
             // capture-before-teardown so the replay video is collected while
             // Chromium is still alive and uploaded once it isn't.
             browserArtifacts,
-            // Per-turn MCP App widget-snapshot capture, same as the chatbox
+            // Per-turn MCP App widget-snapshot capture, same as the scenario
             // surface but through `createWidgetSnapshot`'s direct-session auth
-            // branch (no chatboxId/accessVersion): the runner authenticates as
+            // branch (no scenarioId/accessVersion): the runner authenticates as
             // the run launcher, who owns every swarm session row, and each
             // snapshot carries its originating `serverId`. Without this the
             // Swarms session viewers have no `sharedChatWidgetSnapshots` rows
@@ -1061,7 +1302,13 @@ async function runJourneyFanOut(
               });
             },
           });
-          const { outcome, errorMessage, errorReason } = sessionResult;
+          const { outcome, errorMessage, errorReason, errorRefusal } =
+            sessionResult;
+
+          // The core has persisted its partial transcript before returning.
+          // Convex already settled the attempts; do not replace that outcome
+          // in the live stream with an artifact of aborting this session.
+          if (stoppedByBackend) return;
 
           // Report the terminal with the SAME chatSessionId ONLY after the
           // transcript is persisted. Best-effort: a terminal write failure is
@@ -1079,6 +1326,22 @@ async function runJourneyFanOut(
           // run-stop (`sessionSignal.aborted`).
           const abortedBySpendCap =
             spendCapTripped && outcome === "failed" && sessionSignal.aborted;
+          // The run clock is the same kind of abort artifact as the spend cap,
+          // and needs the same reclassification here rather than only at the
+          // run-level finalize.
+          //
+          // `runDeadline` aborts `sessionSignal`, the in-flight session unwinds
+          // and returns `outcome: "failed"`, and `terminalForOutcome` maps that
+          // to a generic `session_failed` BEFORE `reportAttempt` writes it. The
+          // finalizer added alongside this can only reach attempts that are
+          // still `pending` or `running` — it cannot rewrite one that already
+          // reached a terminal. So without this arm, the very sessions the run
+          // budget stopped are the ones recorded as ordinary failures, and a
+          // run that ran out of clock looks like a run whose sessions broke.
+          const abortedByRunDeadline =
+            outcome === "failed" &&
+            sessionSignal.aborted &&
+            runDeadline.firedClock() === "run";
           const terminal = abortedBySpendCap
             ? {
                 status: "rate_limited" as SwarmAttemptStatus,
@@ -1087,12 +1350,22 @@ async function runJourneyFanOut(
                   ? {
                       errorMessage: spendCapMessage.slice(
                         0,
-                        MAX_ATTEMPT_ERROR_CHARS
+                        MAX_ATTEMPT_ERROR_CHARS,
                       ),
                     }
                   : {}),
               }
-            : terminalForOutcome(outcome, errorMessage, errorReason);
+            : abortedByRunDeadline
+              ? {
+                  status: "failed" as SwarmAttemptStatus,
+                  errorCode: "run_timeout",
+                  errorMessage:
+                    `Run exceeded its ${budgets.runTimeoutMs}ms budget`.slice(
+                      0,
+                      MAX_ATTEMPT_ERROR_CHARS,
+                    ),
+                }
+              : terminalForOutcome(outcome, errorMessage, errorReason);
           emit({
             type: "attempt_status",
             status: terminal.status,
@@ -1145,8 +1418,8 @@ async function runJourneyFanOut(
           // their keep; grading only the happy path would blind the scorecard
           // to the sessions worth looking at. Skipped only when the run has no
           // rubric or when there is no session to read a transcript from —
-          // a `rate_limited` attempt never produced one.
-          if (hasRubric && terminal.status !== "rate_limited") {
+          // The claim refuses empty transcripts; mid-conversation rate limits still grade.
+          if (hasRubric) {
             try {
               const graded = await runSwarmChecks({
                 convexHttpUrl,
@@ -1200,8 +1473,17 @@ async function runJourneyFanOut(
             modelSource: modelId,
           });
 
-          if (outcome === "rate_limited") {
-            const cause = classifyRateLimit(errorMessage);
+          // An account-wide denial arrives under EITHER terminal: only the
+          // `*_rate_limit` codes carry wording `classifyTurnFailure` folds into
+          // `rate_limited`, so `wallet_locked` and the billing codes land in
+          // `failed` and would never reach the whole-run stop below.
+          const accountLimitFailure =
+            outcome === "failed" &&
+            !abortedBySpendCap &&
+            (isAccountLimit(errorMessage, errorReason) ||
+              isCreditExhaustion({ message: errorMessage, code: errorReason }));
+          if (outcome === "rate_limited" || accountLimitFailure) {
+            const cause = classifyRateLimit(errorMessage, errorRefusal);
             if (cause === "org_spend_cap") {
               // WHOLE-RUN stop: halt all hosts + cancel in-flight turns. The
               // finalize sweep runs once the pool drains.
@@ -1214,6 +1496,7 @@ async function runJourneyFanOut(
                 : undefined;
               runStop.abort();
               logEvent("run.spend_cap_short_circuit", {
+                stopReason: isCreditExhaustion({ message: errorMessage, code: errorReason }) ? "credits_exhausted" : "organization_usage_limit",
                 runId,
                 hostId,
                 targetId,
@@ -1233,7 +1516,10 @@ async function runJourneyFanOut(
             await markRemainingTargetAttemptsRateLimited(
               { convexHttpUrl, bearer, projectId, runId, target },
               sessionIdx + 1,
-              sessionsPerTarget
+              sessionsPerTarget,
+              cause === "transient_capacity"
+                ? humanizeSwarmAttemptErrorMessage(errorMessage)
+                : undefined,
             );
             return;
           }
@@ -1243,6 +1529,58 @@ async function runJourneyFanOut(
           // abort. A leaked box costs money until the GC cron reaps it, so
           // this must not be conditional on how the session ended.
           if (attemptSandbox) {
+            // The recording FIRST: it lives on that box, and after the release
+            // there is nothing left to read. Bounded and total — a daemon that
+            // has gone away, a read that hangs, an SDK that throws all answer
+            // `null` inside the deadline. A no-op (and no network at all) for
+            // an attempt that never touched a browser.
+            //
+            // WRAPPED ANYWAY. Both the collector and the outbox promise never
+            // to throw, and the release must not DEPEND on either promise: a
+            // box that outlives its attempt costs money until the GC cron
+            // reaps it, and no video is ever worth that.
+            try {
+              const recording = await collectHostedRecordingBeforeRelease(
+                attemptSandbox.sandboxRowId,
+              );
+              if (recording) {
+                // Through the SAME outbox the local harness's replay uses:
+                // `stageVideo` uploads and holds the blob id, and the flush
+                // below attaches it — riding an artifact write if one is left,
+                // or going as a video-only write if not.
+                //
+                // PRECEDENCE, and it is the same one evals state explicitly:
+                // the local harness wins. `stageVideo` is first-write-wins and
+                // the session core has already staged its `.webm` by the time
+                // this `finally` runs, so an attempt that produced both keeps
+                // the local recording and this call no-ops. That ordering is
+                // load-bearing rather than incidental — `videoBlobId` is
+                // first-write-wins on the backend too, so two videos racing
+                // would otherwise be decided by network timing.
+                await browserArtifacts.stageVideo(recording.bytes, {
+                  mime: recording.mime,
+                  meta: {
+                    source: "hosted",
+                    fps: recording.fps,
+                    durationMs: recording.durationMs,
+                    distinctFrames: recording.distinctFrames,
+                    truncated: recording.truncated,
+                  },
+                });
+                // BOUNDED, like the session core's own terminal flush.
+                // `ConvexHttpClient.mutation` carries no timeout, and this sits
+                // in the `finally` that must reach `releaseAttemptSandbox` — a
+                // hung attach would hold a paid box open indefinitely, which is
+                // exactly the cost the release exists to avoid.
+                await withArtifactFlushDeadline(browserArtifacts.flush());
+              }
+            } catch (err) {
+              logger.warn("[swarm.runner] hosted recording not collected", {
+                runId,
+                sandboxRowId: attemptSandbox.sandboxRowId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
             await releaseAttemptSandbox(attemptSandbox.sandboxRowId);
           }
         }
@@ -1279,7 +1617,7 @@ async function runJourneyFanOut(
             targetId,
             sessionIdx,
             error: err instanceof Error ? err.message : String(err),
-          }
+          },
         );
         return;
       }
@@ -1292,7 +1630,7 @@ async function runJourneyFanOut(
           targetId,
           sessionIdx,
           error: err instanceof Error ? err.message : String(err),
-        }
+        },
       );
       // Finalize this target's not-yet-terminal attempts `[sessionIdx..N)`: the
       // sweep re-claims the in-flight attempt (if the throw landed after a
@@ -1305,18 +1643,22 @@ async function runJourneyFanOut(
       // rather than throwing out of the catch, which would take the worker (and
       // with it the other targets and the run-level finalize) down. The
       // stale-run cron is the backstop for what stays pending.
-      const cleanupBearer = bearer ?? (await getBearer().catch(() => undefined));
+      const cleanupBearer =
+        bearer ?? (await getBearer().catch(() => undefined));
       if (!cleanupBearer) {
         logger.error(
           "[swarm.runner] no credential to finalize this target's attempts; leaving them for the stale-run sweep",
-          { runId, hostId, targetId, sessionIdx }
+          { runId, hostId, targetId, sessionIdx },
         );
         return;
       }
       await markRemainingTargetAttemptsFailed(
         { convexHttpUrl, bearer: cleanupBearer, projectId, runId, target },
         sessionIdx,
-        sessionsPerTarget
+        sessionsPerTarget,
+        err instanceof SwarmSetupError
+          ? "prerequisites_unavailable"
+          : "host_worker_failed",
       );
     }
   };
@@ -1357,8 +1699,19 @@ async function runJourneyFanOut(
         }
       : abortSignal?.aborted
         ? { errorCode: "runner_shutdown" }
-        : undefined;
-    if (finalizeTerminal) {
+        : // The run's own clock is a run TERMINAL, exactly like the other two.
+          // Without this arm a deadline-only stop finalizes nothing: every
+          // attempt that never started stays `pending` until the backend's
+          // stale-run cron, and the ones the deadline aborted are recorded as
+          // ordinary session failures — a run that ran out of budget looking
+          // like a run whose sessions went wrong.
+          runDeadline.firedClock() === "run"
+          ? {
+              errorCode: "run_timeout",
+              errorMessage: `Run exceeded its ${budgets.runTimeoutMs}ms budget`,
+            }
+          : undefined;
+    if (finalizeTerminal && !stoppedByBackend) {
       const finalizeBearer = await getBearer().catch((error: unknown) => {
         logger.error(
           "[swarm.runner] could not mint a credential for the run-level finalize; attempts stay pending for the stale-run sweep",
@@ -1366,14 +1719,14 @@ async function runJourneyFanOut(
             runId,
             reason: finalizeTerminal.errorCode,
             error: error instanceof Error ? error.message : String(error),
-          }
+          },
         );
         return undefined;
       });
       if (finalizeBearer) {
         await finalizeRun(
           { convexHttpUrl, bearer: finalizeBearer, projectId, runId },
-          finalizeTerminal
+          finalizeTerminal,
         );
       }
     }
@@ -1385,7 +1738,14 @@ async function runJourneyFanOut(
       error: error instanceof Error ? error.message : String(error),
     });
   } finally {
+    heartbeatActive = false;
     clearInterval(heartbeat);
+    sessionSignals.dispose();
+    // `sessionSignals.dispose()` releases the COMPOSITION; the deadline owns
+    // its own timer and its own listener on the caller's signal, and those
+    // stay armed until the (possibly two-hour) budget expires unless it is
+    // disposed too.
+    runDeadline.dispose();
     logEvent("run.finish", {
       runId,
       targetCount: hosts.length,
@@ -1443,13 +1803,13 @@ async function resolveTargetPinnedSkills(args: {
     Array.isArray(hostSelection.skillIds) &&
     hostSelection.skillIds.length > 0;
   const unionIsAuthoritative = meta.some(
-    (m) => Array.isArray(m.channels) && m.channels.length > 0
+    (m) => Array.isArray(m.channels) && m.channels.length > 0,
   );
   if (hostWantsSkills && !unionIsAuthoritative) {
     throw new Error(
       "Snapshot target carries a host skillSelection but its pinnedSkills " +
         "union has no channel provenance (pre-P0.2 backend) — refusing to run " +
-        "with a silently dropped host skill channel"
+        "with a silently dropped host skill channel",
     );
   }
   // Provenance EXISTING is not the same as the host channel being present: a
@@ -1459,7 +1819,7 @@ async function resolveTargetPinnedSkills(args: {
     throw new Error(
       "Snapshot target carries a host skillSelection but no pinned entry is " +
         "tagged with the `host` channel — refusing to run with a silently " +
-        "dropped host skill channel"
+        "dropped host skill channel",
     );
   }
   // Stronger check when the union is fully identified: every host-selected id
@@ -1471,14 +1831,14 @@ async function resolveTargetPinnedSkills(args: {
   if (hostWantsSkills && meta.length > 0 && meta.every((m) => !!m.skillId)) {
     const pinnedSkillIds = new Set(meta.map((m) => m.skillId));
     const missing = hostSelection!.skillIds.filter(
-      (id) => !pinnedSkillIds.has(id)
+      (id) => !pinnedSkillIds.has(id),
     );
     if (missing.length > 0) {
       throw new Error(
         `Snapshot target's host skillSelection is not represented in its ` +
           `pinnedSkills union (missing ${missing.length} of ${
             hostSelection!.skillIds.length
-          }) — refusing to run with a partially dropped host skill channel`
+          }) — refusing to run with a partially dropped host skill channel`,
       );
     }
   }
@@ -1491,7 +1851,7 @@ async function resolveTargetPinnedSkills(args: {
   if (isEnvTarget && !target.targetId) {
     throw new Error(
       "Environment snapshot target has no targetId — refusing to run with " +
-        "host-only identity (per-target attribution would be lost)"
+        "host-only identity (per-target attribution would be lost)",
     );
   }
 
@@ -1499,7 +1859,7 @@ async function resolveTargetPinnedSkills(args: {
   const targetId = target.targetId;
   if (!targetId) {
     throw new Error(
-      "Snapshot target has pinned skills but no targetId — cannot fetch pinned bodies"
+      "Snapshot target has pinned skills but no targetId — cannot fetch pinned bodies",
     );
   }
 
@@ -1549,7 +1909,8 @@ async function markRemainingTargetAttemptsRateLimited(
     target: PinnedHostExecutionSpec;
   },
   fromIdx: number,
-  toIdx: number
+  toIdx: number,
+  transientMessage?: string,
 ): Promise<void> {
   const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
   const { hostId, targetId } = target;
@@ -1557,7 +1918,7 @@ async function markRemainingTargetAttemptsRateLimited(
     const chatSessionId = swarmAttemptChatSessionId(
       runId,
       targetSessionIdentity(target),
-      sessionIdx
+      sessionIdx,
     );
     try {
       await reportAttempt(convexHttpUrl, bearer, {
@@ -1577,7 +1938,8 @@ async function markRemainingTargetAttemptsRateLimited(
         sessionIdx,
         status: "rate_limited",
         chatSessionId,
-        errorCode: "rate_limited",
+        errorCode: transientMessage ? "user_rate_limit" : "rate_limited",
+        ...(transientMessage ? { errorMessage: transientMessage } : {}),
       });
     } catch (err) {
       logger.warn(
@@ -1588,7 +1950,7 @@ async function markRemainingTargetAttemptsRateLimited(
           targetId,
           sessionIdx,
           error: err instanceof Error ? err.message : String(err),
-        }
+        },
       );
     }
   }
@@ -1614,7 +1976,8 @@ async function markRemainingTargetAttemptsFailed(
     target: PinnedHostExecutionSpec;
   },
   fromIdx: number,
-  toIdx: number
+  toIdx: number,
+  errorCode = "host_worker_failed",
 ): Promise<void> {
   const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
   const { hostId, targetId } = target;
@@ -1622,7 +1985,7 @@ async function markRemainingTargetAttemptsFailed(
     const chatSessionId = swarmAttemptChatSessionId(
       runId,
       targetSessionIdentity(target),
-      sessionIdx
+      sessionIdx,
     );
     try {
       await reportAttempt(convexHttpUrl, bearer, {
@@ -1642,7 +2005,7 @@ async function markRemainingTargetAttemptsFailed(
         sessionIdx,
         status: "failed",
         chatSessionId,
-        errorCode: "host_worker_failed",
+        errorCode,
       });
     } catch (err) {
       logger.warn(
@@ -1653,7 +2016,7 @@ async function markRemainingTargetAttemptsFailed(
           targetId,
           sessionIdx,
           error: err instanceof Error ? err.message : String(err),
-        }
+        },
       );
     }
   }
@@ -1671,7 +2034,7 @@ async function finalizeRun(
     terminalStatus?: Exclude<SwarmAttemptStatus, "pending" | "running">;
     errorCode?: string;
     errorMessage?: string;
-  }
+  },
 ): Promise<void> {
   try {
     await finalizePendingAttempts(ctx.convexHttpUrl, ctx.bearer, {

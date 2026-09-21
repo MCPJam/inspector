@@ -1,6 +1,6 @@
 /**
- * `mcpjam personas` / `mcpjam swarms` / the authoring and insight halves of
- * `mcpjam journeys` — the rest of the Swarms product on the command line.
+ * `mcpjam cloud personas` / `mcpjam cloud swarms` / the authoring and insight halves of
+ * `mcpjam cloud journeys` — the rest of the Swarms product on the command line.
  *
  * `commands/journeys.ts` already covers the run loop (list, run, status,
  * sessions, cancel). What it could not do is AUTHOR anything: a journey needs a
@@ -17,7 +17,7 @@
  * BETA. Authoring is behind a per-organization flag. The commands exist
  * regardless and the server says plainly when the flag is off for yours: a
  * command that answers "not currently available for your organization" is a
- * better answer than a command that does not exist. `mcpjam capabilities` asks
+ * better answer than a command that does not exist. `mcpjam cloud projects capabilities` asks
  * the question directly.
  */
 import type { Command } from "commander";
@@ -32,7 +32,6 @@ import {
   dismissSwarmFindingOperation,
   generateJourneysOperation,
   generatePersonasOperation,
-  getCapabilitiesOperation,
   getJourneyOperation,
   getJourneyRunScorecardOperation,
   getPersonaOperation,
@@ -135,23 +134,6 @@ export function registerSwarmAuthoringCommands(
   program: Command,
   journeys: Command
 ): void {
-  // ── capabilities ────────────────────────────────────────────────────────
-  //
-  // A top-level command rather than a subcommand of anything: the answer spans
-  // Swarms, user testing and the plan, and burying it under one of them would
-  // suggest it only describes that one.
-  bindOperation(
-    addProjectOption(
-      program
-        .command("capabilities")
-        .description(
-          "Show what you may do in a project: your role, which betas the organization has, your plan's limits, and a can-block of booleans. Ask this before scripting anything that authors, launches or publishes."
-        )
-    ),
-    getCapabilitiesOperation,
-    (options: ProjectOptions) => ({ project: options.project })
-  );
-
   // ── personas ────────────────────────────────────────────────────────────
   const personas = program
     .command("personas")
@@ -269,7 +251,7 @@ export function registerSwarmAuthoringCommands(
         personas
           .command("generate")
           .description(
-            "Draft candidate personas with a model, grounded in what the project's servers do. SAVES NOTHING — pipe what you want into `personas create`. Spends."
+            "Draft candidate personas with a model, grounded in what the project's servers do. SAVES NOTHING — pipe what you want into `personas create`. Included with MCPJam; no customer credits consumed; counts against the organization's daily generation quota."
           )
           .option("--persona-count <n>", "Draft a slate of N personas.")
       )
@@ -480,7 +462,7 @@ export function registerSwarmAuthoringCommands(
         journeys
           .command("generate")
           .description(
-            "Draft candidate journeys for a persona with a model. The persona is passed BY VALUE and does not have to exist yet, because the create flow drafts both before saving either. SAVES NOTHING; spends."
+            "Draft candidate journeys for a persona with a model. The persona is passed BY VALUE and does not have to exist yet, because the create flow drafts both before saving either. SAVES NOTHING; included with MCPJam (no customer credits consumed) and counts against the organization's daily generation quota."
           )
           .requiredOption("--persona-name <name>")
           .requiredOption("--persona-role <role>")
@@ -602,12 +584,12 @@ export function registerSwarmAuthoringCommands(
       journeys
         .command("request-insights")
         .description(
-          "Ask a model to analyze a whole wave. Returns immediately as pending; poll `journeys insights`. SPENDS against a daily budget shared with user-testing insights. Read the scorecards first — they are free and usually explain the failure."
+          "Ask a model to analyze a whole wave. Returns immediately as pending; poll `journeys insights`. Included with MCPJam — no credits are consumed; it counts against a daily insight quota shared with user-testing insights. Read the scorecards first — they cost no quota and usually explain the failure."
         )
         .requiredOption("--wave <id>", "Wave ID")
         .option(
           "--force",
-          "Regenerate over a wave that already has insights. Spends again."
+          "Regenerate over a wave that already has insights. Takes another slice of the daily insight quota."
         )
     ),
     requestWaveInsightsOperation,
@@ -623,7 +605,7 @@ export function registerSwarmAuthoringCommands(
       journeys
         .command("cancel-insights")
         .description(
-          "Stop an in-flight insights generation. The recovery path for a wave stuck pending — without it the only way forward is --force, which spends again."
+          "Stop an in-flight insights generation. The recovery path for a wave stuck pending — without it the only way forward is --force, which takes another slice of the daily insight quota."
         )
         .requiredOption("--wave <id>", "Wave ID")
     ),

@@ -16,7 +16,7 @@ describe("isStaleHostedAccessError", () => {
     expect(
       isStaleHostedAccessError(
         new ConvexError({
-          code: "chatbox_access_stale",
+          code: "scenario_access_stale",
           message: "stale",
           currentAccessVersion: 3,
         })
@@ -26,7 +26,7 @@ describe("isStaleHostedAccessError", () => {
 
   it("recognizes the bare payload shape without the ConvexError wrapper", () => {
     expect(
-      isStaleHostedAccessError({ data: { code: "chatbox_access_stale" } })
+      isStaleHostedAccessError({ data: { code: "scenario_access_stale" } })
     ).toBe(true);
   });
 
@@ -41,11 +41,11 @@ describe("isStaleHostedAccessError", () => {
   it.each([
     ["null", null],
     ["undefined", undefined],
-    ["a plain string", "chatbox_access_stale"],
-    ["a plain Error", new Error("chatbox_access_stale")],
+    ["a plain string", "scenario_access_stale"],
+    ["a plain Error", new Error("scenario_access_stale")],
     ["an empty object", {}],
     ["a null data payload", { data: null }],
-    ["a string data payload", { data: "chatbox_access_stale" }],
+    ["a string data payload", { data: "scenario_access_stale" }],
     ["a payload with no code", { data: {} }],
   ])("rejects %s", (_label, input) => {
     expect(isStaleHostedAccessError(input)).toBe(false);

@@ -18,6 +18,15 @@ const CONVEX_WRITE_CONFLICT_MESSAGE =
   "changed while this mutation was being run";
 const ENSURE_USER_RETRY_DELAYS_MS = [50, 150];
 
+// Spaced retries for a run that failed outright (anything the fast
+// write-conflict retries above don't cover: a backend throw, an auth edge, a
+// conflict that outlived them). Without these a single failure is terminal for
+// the session — nothing re-runs the effect, so `isUserReady` stays false while
+// Convex stays authenticated, and every readiness-gated query behind it stays
+// skipped until the user reloads the tab. Bounded: a backend that is genuinely
+// down should not collect one mutation per tab forever.
+const ENSURE_USER_RECOVERY_DELAYS_MS = [1_000, 5_000, 15_000];
+
 type EnsureUserArgs = {
   guestProofJwt?: string;
   /**
@@ -164,6 +173,15 @@ export function useEnsureDbUser() {
   const [ensuredIdentityKey, setEnsuredIdentityKey] = useState<string | null>(
     null
   );
+  // Bumping this token re-runs the effect below after a failed attempt.
+  // `recoveryStateRef` counts attempts per identity so a new identity starts
+  // with a fresh budget rather than inheriting an exhausted one.
+  const [ensureRecoveryToken, setEnsureRecoveryToken] = useState(0);
+  const recoveryStateRef = useRef<{
+    identityKey: string;
+    attempts: number;
+  } | null>(null);
+  const recoveryTimerRef = useRef<number | null>(null);
   const identityKey =
     !isLoading && isAuthenticated
       ? workosUserId
@@ -247,6 +265,25 @@ export function useEnsureDbUser() {
     activeEnsureIdentityRef.current = identityKey;
     setIsEnsuringUser(true);
     let cancelled = false;
+
+    // Re-arm the effect after a failed run, spacing attempts out and stopping
+    // once the budget for this identity is spent. Nothing else re-triggers it:
+    // the deps are all stable once auth settles. Returns whether a retry is
+    // now queued, which is what keeps `isEnsuringUser` honest below.
+    const scheduleRecovery = () => {
+      const attempts =
+        recoveryStateRef.current?.identityKey === identityKey
+          ? recoveryStateRef.current.attempts
+          : 0;
+      const delayMs = ENSURE_USER_RECOVERY_DELAYS_MS[attempts];
+      if (delayMs === undefined) return false;
+      recoveryStateRef.current = { identityKey, attempts: attempts + 1 };
+      recoveryTimerRef.current = window.setTimeout(() => {
+        recoveryTimerRef.current = null;
+        setEnsureRecoveryToken((token) => token + 1);
+      }, delayMs);
+      return true;
+    };
 
     const run = async () => {
       // Only the WorkOS branch can promote a guest. Skip the proof mint
@@ -348,7 +385,13 @@ export function useEnsureDbUser() {
           console.error("[auth] ensureUser failed", err);
           lastEnsuredIdentityRef.current = null;
           setEnsuredIdentityKey(null);
-          setIsEnsuringUser(false);
+          // Setup is only FINISHED once no retry is left. A user with no row
+          // yet is shown `UserSetupError` the moment `isEnsuringUser` clears,
+          // so dropping it here flashes "Could not finish setup" in the gap
+          // between attempts, for a session that goes on to recover.
+          if (!scheduleRecovery()) {
+            setIsEnsuringUser(false);
+          }
         }
         return;
       }
@@ -357,6 +400,7 @@ export function useEnsureDbUser() {
 
       lastEnsuredIdentityRef.current = identityKey;
       setEnsuredIdentityKey(identityKey);
+      recoveryStateRef.current = null;
 
       // If we just authenticated as a WorkOS user and a guest cookie was
       // in play, retire it. Safe to call unconditionally — if no cookie
@@ -380,6 +424,12 @@ export function useEnsureDbUser() {
       if (activeEnsureIdentityRef.current === identityKey) {
         activeEnsureIdentityRef.current = null;
       }
+      // A pending retry is redundant once the effect re-runs for any other
+      // reason — that re-run already retries — and must not outlive unmount.
+      if (recoveryTimerRef.current !== null) {
+        window.clearTimeout(recoveryTimerRef.current);
+        recoveryTimerRef.current = null;
+      }
     };
   }, [
     identityKey,
@@ -388,6 +438,7 @@ export function useEnsureDbUser() {
     workosUserId,
     ensureUser,
     posthog,
+    ensureRecoveryToken,
   ]);
 
   return { isEnsuringUser, isUserReady };

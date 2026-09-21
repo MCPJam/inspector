@@ -57,6 +57,7 @@ import {
   type RawHttpResult,
 } from "../raw-http.js";
 import { scanXMcpHeaderDeclarations } from "../../mcp-client-manager/mcp-header-mirror.js";
+import { DialectAwareJsonSchemaValidator } from "../../mcp-client-manager/dialect-aware-json-schema-validator.js";
 import {
   filterRequests,
   isSubscriptionNotificationMethod,
@@ -98,6 +99,72 @@ const REMOVED_MODERN_METHODS = [
 
 /** Result members every cacheable modern result must carry (SEP-2549). */
 const CACHE_HINT_FIELDS = ["ttlMs", "cacheScope"] as const;
+
+/**
+ * The SIX operations whose `resultType: "complete"` results MUST carry caching
+ * hints, per the 2026-07-28 caching utility. SEP-2549 originally named five;
+ * the shipped revision adds `server/discover`, and `resources/templates/list`
+ * and `resources/read` were never probed by the original check at all.
+ *
+ * `capability` is the advertisement that has to be present before the
+ * operation is probed — asking a server for a primitive family it never
+ * declared produces an error, not an uncached result.
+ */
+const CACHEABLE_OPERATIONS = [
+  { method: "server/discover", capability: undefined, paginated: false },
+  { method: "tools/list", capability: "tools", paginated: true },
+  { method: "prompts/list", capability: "prompts", paginated: true },
+  { method: "resources/list", capability: "resources", paginated: true },
+  {
+    method: "resources/templates/list",
+    capability: "resources",
+    paginated: true,
+  },
+  { method: "resources/read", capability: "resources", paginated: false },
+] as const satisfies ReadonlyArray<{
+  method: string;
+  capability: string | undefined;
+  paginated: boolean;
+}>;
+
+/**
+ * The cacheable operations that PAGINATE, gated on advertised capabilities.
+ *
+ * Derived from {@link CACHEABLE_OPERATIONS} rather than listed again: the
+ * page-consistency check used to keep its own three-method list, so
+ * `resources/templates/list` — added to the cacheable set by this very work,
+ * paginated (`PaginatedRequestParams`, `nextCursor`) and carrying `cacheScope`
+ * — was never walked. A server could flip scope across template pages and pass.
+ * One list, one truth.
+ */
+function paginatedCacheableMethods(
+  capabilities: Record<string, unknown>
+): string[] {
+  return CACHEABLE_OPERATIONS.filter(
+    (operation) =>
+      operation.paginated &&
+      (operation.capability === undefined ||
+        capabilities[operation.capability] !== undefined)
+  ).map((operation) => operation.method);
+}
+
+/**
+ * Pages walked when checking cacheScope consistency. Small on purpose: this
+ * asserts that the scope does not CHANGE, which two pages already establish,
+ * and a run must not walk a large catalogue to say so.
+ */
+const MAX_CACHE_SCOPE_PAGES = 4;
+
+/** The only two values `cacheScope` may take. */
+const CACHE_SCOPES = ["public", "private"] as const;
+
+/**
+ * Hints are required on COMPLETE results only. An `input_required` interim
+ * result is explicitly "not cacheable and carries no caching hints", and a
+ * `task` result belongs to the tasks extension rather than this list — so
+ * grading either against the hint requirement would invent one.
+ */
+const COMPLETE_RESULT_TYPE = "complete";
 
 export type ModernCheckId = keyof typeof MODERN_CHECK_METADATA;
 
@@ -147,6 +214,20 @@ const MODERN_CHECK_METADATA = {
     description:
       "An Mcp-Name header disagreeing with the body target is rejected with HTTP 400 and JSON-RPC -32020.",
   },
+  "modern-missing-method-header-rejected": {
+    id: "modern-missing-method-header-rejected",
+    category: "protocol",
+    title: "Missing Mcp-Method Header Rejected",
+    description:
+      "A request that omits the required Mcp-Method header is rejected with HTTP 400 and JSON-RPC -32020.",
+  },
+  "modern-header-names-case-insensitive": {
+    id: "modern-header-names-case-insensitive",
+    category: "protocol",
+    title: "Header Names Are Case-Insensitive",
+    description:
+      "The SEP-2243 standard headers are accepted under any case, as RFC 9110 field names require.",
+  },
   "modern-unsupported-version-error": {
     id: "modern-unsupported-version-error",
     category: "protocol",
@@ -160,6 +241,41 @@ const MODERN_CHECK_METADATA = {
     title: "Undeclared Client Capability",
     description:
       "A server that needs an undeclared client capability for input_required answers JSON-RPC -32021.",
+  },
+  "modern-cache-hint-coverage": {
+    id: "modern-cache-hint-coverage",
+    category: "protocol",
+    title: "Cache Hints On Every Cacheable Operation",
+    description:
+      "All six operations the caching utility names — server/discover, tools/list, prompts/list, resources/list, resources/templates/list, resources/read — carry ttlMs and cacheScope on a complete result.",
+  },
+  "modern-cache-hint-values-valid": {
+    id: "modern-cache-hint-values-valid",
+    category: "protocol",
+    title: "Cache Hint Values Valid",
+    description:
+      'ttlMs is an integer >= 0 and cacheScope is exactly "public" or "private".',
+  },
+  "modern-cache-scope-stable-across-pages": {
+    id: "modern-cache-scope-stable-across-pages",
+    category: "protocol",
+    title: "Cache Scope Stable Across Pages",
+    description:
+      "Every page of a paginated list response carries the same cacheScope as the first.",
+  },
+  "modern-resource-read-no-empty-contents": {
+    id: "modern-resource-read-no-empty-contents",
+    category: "resources",
+    title: "No Empty Contents For A Missing Resource",
+    description:
+      "Reading a non-existent resource never answers with an empty contents array, which cannot be told apart from an existing but empty resource.",
+  },
+  "modern-tool-output-schema-conformant": {
+    id: "modern-tool-output-schema-conformant",
+    category: "tools",
+    title: "Tool Output Schema Honored",
+    description:
+      "For every operator-supplied fixture call whose tool declares an outputSchema, the result's structuredContent validates against that schema.",
   },
   "modern-removed-methods-not-found": {
     id: "modern-removed-methods-not-found",
@@ -259,17 +375,40 @@ async function modernProbe(
     clientCapabilities?: Record<string, unknown>;
     logLevel?: string;
     headerOverrides?: Record<string, string>;
+    /**
+     * SEP-2243 standard headers to leave OFF the request entirely. A header
+     * cannot be omitted through `headerOverrides` — there is no value that
+     * means absent — and "missing" is a distinct validation-failure condition
+     * from "present and wrong".
+     */
+    omitHeaders?: readonly string[];
+    /**
+     * Rewrite the standard header NAMES before sending. Node's fetch preserves
+     * the casing it is handed on the wire (only `Headers` iteration lowercases
+     * it), so this genuinely changes the bytes — which is what makes the
+     * case-insensitivity MUST testable through the one guarded transport.
+     */
+    headerNameTransform?: (name: string) => string;
     envelopeVersion?: string;
   }
 ): Promise<RawHttpResult> {
   const version = protocolVersion(ctx);
+  const standard = modernHeaders({
+    protocolVersion: version,
+    method: options.method,
+    name: options.name,
+  });
+  const omitted = new Set(
+    (options.omitHeaders ?? []).map((name) => name.toLowerCase())
+  );
+  const framed: Record<string, string> = {};
+  for (const [name, value] of Object.entries(standard)) {
+    if (omitted.has(name.toLowerCase())) continue;
+    framed[options.headerNameTransform?.(name) ?? name] = value;
+  }
   return await rawRequest(ctx, {
     headers: {
-      ...modernHeaders({
-        protocolVersion: version,
-        method: options.method,
-        name: options.name,
-      }),
+      ...framed,
       ...(options.headerOverrides ?? {}),
     },
     body: modernRequestBody({
@@ -334,6 +473,11 @@ interface ModernRunState {
    * the server did, since each stream is a fresh subscription.
    */
   subscription?: Promise<SubscriptionProbe>;
+  /**
+   * The single read of a non-existent resource the two SEP-2164 checks share.
+   * Two probes would use two uris and could disagree about the answer.
+   */
+  missingResource?: Promise<{ uri: string; result: RawHttpResult }>;
 }
 
 async function discoverOnce(
@@ -371,6 +515,13 @@ function advertisedCapabilities(
  * Cacheable list methods to probe, gated on advertised capabilities.
  * Capability advertisements OMIT empty `{}` objects on the wire, so presence of
  * the KEY is the only signal — never assert an empty capability object exists.
+ *
+ * DELIBERATELY NARROWER than {@link CACHEABLE_OPERATIONS}, and must stay that
+ * way. This feeds the pre-existing SCORED checks (`modern-result-type-present`,
+ * `modern-cacheable-result-hints`); widening it to the six would silently
+ * re-grade every server already judged under the narrower reading — the
+ * profile's own failure mode at a finer grain. The six-operation depth ships as
+ * NEW pending checks instead. Use {@link paginatedCacheableMethods} for those.
  */
 function cacheableListMethods(capabilities: Record<string, unknown>): string[] {
   const methods: string[] = [];
@@ -589,6 +740,390 @@ function runCacheHintsCheck(
         { cacheHints: observed }
       )
     : passedResult(meta, Date.now() - startedAt, { cacheHints: observed });
+}
+
+/**
+ * Probe every cacheable operation the server can actually serve, once, and
+ * share the frames with the three caching checks.
+ *
+ * SEPARATE from `collectCacheableResults`, which the two ALREADY-SCORED checks
+ * (`modern-result-type-present`, `modern-cacheable-result-hints`) read. Reusing
+ * that one would have widened those checks' coverage from four operations to
+ * six as a side effect — silently re-grading every server that was green under
+ * the narrower reading, which is exactly what the conformance profile exists to
+ * prevent. The old probe keeps its old shape; the new depth is new checks.
+ *
+ * `resources/read` needs a SUBJECT, and it must be a resource that exists: a
+ * missing one answers an error, and grading that against the hint requirement
+ * would report every server as defective. A run with no listed resource simply
+ * has no `resources/read` frame, which the checks report rather than assume.
+ */
+async function collectCacheableOperations(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<{
+  probes: Array<{ method: string; result: RawHttpResult }>;
+  unprobed: Array<{ method: string; reason: string }>;
+  /**
+   * Operations this server does not HAVE, because the capability behind them is
+   * optional and unadvertised. Not a coverage gap: the caching MUST binds the
+   * operations a server supports, so there is nothing here left unverified.
+   * Kept separate from {@link unprobed}, which is the real gap — a capability
+   * the server DOES advertise that this run could not exercise.
+   */
+  notApplicable: Array<{ method: string; reason: string }>;
+}> {
+  const discover = await discoverOnce(ctx, state);
+  const capabilities = advertisedCapabilities(discover);
+  const probes: Array<{ method: string; result: RawHttpResult }> = [
+    { method: "server/discover", result: discover },
+  ];
+  const unprobed: Array<{ method: string; reason: string }> = [];
+  const notApplicable: Array<{ method: string; reason: string }> = [];
+  // Seeded from the client phase when there was one, but PREFERRED from this
+  // walk's own `resources/list` frame below: a raw-only selection never opens a
+  // client session, and a check that could only run as part of a full suite
+  // would be untestable in isolation.
+  let resourceUri = ctx.surface?.resourceUris[0];
+
+  let id = 7150;
+  for (const operation of CACHEABLE_OPERATIONS) {
+    if (operation.method === "server/discover") continue;
+    if (
+      operation.capability !== undefined &&
+      capabilities[operation.capability] === undefined
+    ) {
+      // NOT a gap. `prompts`, `resources` and `tools` are optional
+      // capabilities; a server that advertises none of them has no
+      // `prompts/list` to return hints on, so there is no requirement here left
+      // untested. Counting it as unprobed forced the whole check to
+      // could-not-run and made a tools-only server look unverified for
+      // declining to implement features it never claimed.
+      notApplicable.push({
+        method: operation.method,
+        reason: `server does not advertise the ${operation.capability} capability`,
+      });
+      continue;
+    }
+    if (operation.method === "resources/read") {
+      // Listed after `resources/list` in CACHEABLE_OPERATIONS precisely so the
+      // uri discovered there is available here.
+      if (!resourceUri) {
+        unprobed.push({
+          method: operation.method,
+          reason:
+            "server lists no resource to read, and probing a missing uri would grade an error response",
+        });
+        continue;
+      }
+      probes.push({
+        method: operation.method,
+        result: await track(
+          state,
+          modernProbe(ctx, {
+            id: id++,
+            method: "resources/read",
+            params: { uri: resourceUri },
+            name: resourceUri,
+          })
+        ),
+      });
+      continue;
+    }
+    const result = await track(
+      state,
+      modernProbe(ctx, { id: id++, method: operation.method })
+    );
+    probes.push({ method: operation.method, result });
+
+    if (operation.method === "resources/list") {
+      const listed = jsonRpcResult(result)?.resources;
+      const first = Array.isArray(listed) ? listed[0] : undefined;
+      const uri = (first as { uri?: unknown } | undefined)?.uri;
+      if (typeof uri === "string" && uri.length > 0) {
+        resourceUri = uri;
+      }
+    }
+  }
+
+  return { probes, unprobed, notApplicable };
+}
+
+/** A cacheable payload, or `undefined` when the frame carried none to grade. */
+/**
+ * Why a cacheable operation produced no hints to grade.
+ *
+ * `cacheablePayload` returns `undefined` for two unrelated reasons, and
+ * collapsing them cost a conforming server its pass: a result the server never
+ * sent is a GAP in coverage, while a non-complete result is the extension
+ * explicitly saying hints do not apply. Callers that report coverage have to
+ * tell them apart.
+ */
+type UngradedReason = "no-result" | "not-complete";
+
+function whyNotCacheable(
+  result: RawHttpResult
+): UngradedReason | undefined {
+  const payload = jsonRpcResult(result);
+  if (!payload) return "no-result";
+  return cacheablePayload(result) ? undefined : "not-complete";
+}
+
+function cacheablePayload(
+  result: RawHttpResult
+): Record<string, unknown> | undefined {
+  const payload = jsonRpcResult(result);
+  if (!payload) return undefined;
+  // Hints are required on COMPLETE results only. A server that answered
+  // `input_required` was explicitly told not to carry them.
+  const resultType = payload.resultType;
+  if (
+    typeof resultType === "string" &&
+    resultType !== COMPLETE_RESULT_TYPE &&
+    resultType !== "" &&
+    !resultType.includes("/")
+  ) {
+    return undefined;
+  }
+  return payload;
+}
+
+async function runCacheHintCoverageCheck(
+  operations: () => Promise<
+    Awaited<ReturnType<typeof collectCacheableOperations>>
+  >
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["modern-cache-hint-coverage"];
+  const startedAt = Date.now();
+  const { probes, unprobed, notApplicable } = await operations();
+
+  const missing: Array<{ method: string; fields: string[] }> = [];
+  const observed: Record<string, unknown> = {};
+
+  const unreadable: string[] = [];
+  const notComplete: string[] = [];
+  for (const { method, result } of probes) {
+    const payload = cacheablePayload(result);
+    if (!payload) {
+      // An operation the server never answered with a result has no hints to
+      // read, and skipping it silently shrank the denominator without saying
+      // so — the denominator IS this check's product: "5 of 6 cacheable
+      // operations carry hints" and "5 of 5, one unreadable" are different
+      // claims about the same server.
+      //
+      // A NON-COMPLETE result is a different fact entirely: the extension says
+      // hints do not apply to it, so an `input_required` answer is the server
+      // behaving correctly. Counting it as a gap would hold a conforming
+      // server at could-not-run for an answer this check already knew not to
+      // grade. Recorded, never counted against.
+      if (whyNotCacheable(result) === "not-complete") notComplete.push(method);
+      else unreadable.push(method);
+      continue;
+    }
+    observed[method] = { ttlMs: payload.ttlMs, cacheScope: payload.cacheScope };
+    const absent = CACHE_HINT_FIELDS.filter(
+      (field) => payload[field] === undefined
+    );
+    if (absent.length > 0) {
+      missing.push({ method, fields: [...absent] });
+    }
+  }
+
+  const details = {
+    cacheHints: observed,
+    unprobed,
+    ...(notApplicable.length > 0 ? { notApplicable } : {}),
+    ...(unreadable.length > 0 ? { unreadable } : {}),
+    ...(notComplete.length > 0 ? { notCacheable: notComplete } : {}),
+  };
+
+  if (Object.keys(observed).length === 0) {
+    return couldNotRunResult(
+      meta,
+      "No cacheable result could be obtained to inspect",
+      details
+    );
+  }
+
+  if (missing.length > 0) {
+    return failedResult(
+      meta,
+      Date.now() - startedAt,
+      `Cacheable results are missing required caching hints: ${missing
+        .map((entry) => `${entry.method} (${entry.fields.join(", ")})`)
+        .join("; ")}`,
+      details
+    );
+  }
+
+  // A pass over four of six operations is not a pass over six, and saying so is
+  // the difference between "this server is clean" and "this server did not
+  // expose the rest".
+  //
+  // `notApplicable` is deliberately NOT a gap here: an operation behind an
+  // optional capability the server never advertised does not exist on this
+  // server, so nothing about it went unverified. Only an advertised capability
+  // this run failed to exercise leaves the requirement untested.
+  if (unprobed.length > 0 || unreadable.length > 0) {
+    const gaps = [
+      ...unprobed.map((entry) => `${entry.method} (${entry.reason})`),
+      ...unreadable.map(
+        (method) => `${method} (answered with no readable result)`
+      ),
+    ];
+    const graded = probes.length + unreadable.length;
+    return couldNotRunResult(
+      meta,
+      `Hints are present on every cacheable operation this run could read, but ${gaps.length} of the ${graded + unprobed.length} this server supports went ungraded: ${gaps.join("; ")}`,
+      details
+    );
+  }
+
+  return passedResult(meta, Date.now() - startedAt, details);
+}
+
+async function runCacheHintValuesCheck(
+  operations: () => Promise<
+    Awaited<ReturnType<typeof collectCacheableOperations>>
+  >
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["modern-cache-hint-values-valid"];
+  const startedAt = Date.now();
+  const { probes } = await operations();
+
+  const problems: string[] = [];
+  const observed: Record<string, unknown> = {};
+
+  for (const { method, result } of probes) {
+    const payload = cacheablePayload(result);
+    if (!payload) continue;
+    const { ttlMs, cacheScope } = payload;
+    observed[method] = { ttlMs, cacheScope };
+
+    if (ttlMs !== undefined) {
+      if (typeof ttlMs !== "number") {
+        problems.push(`${method} ttlMs is ${typeof ttlMs}, not a number`);
+      } else if (!Number.isInteger(ttlMs)) {
+        // "an integer value in milliseconds" — a fractional TTL has no
+        // meaning and a client rounding it would disagree with the server.
+        problems.push(`${method} ttlMs is ${ttlMs}, which is not an integer`);
+      } else if (ttlMs < 0) {
+        // "Servers MUST provide a ttlMs value that is >= 0." Clients are told
+        // to ignore a negative value, so a server sending one has silently
+        // published a different policy than it thinks.
+        problems.push(`${method} ttlMs is ${ttlMs}, which is negative`);
+      }
+    }
+
+    if (
+      cacheScope !== undefined &&
+      !CACHE_SCOPES.includes(cacheScope as (typeof CACHE_SCOPES)[number])
+    ) {
+      problems.push(
+        `${method} cacheScope is ${JSON.stringify(cacheScope)}, not one of ${CACHE_SCOPES.join(" | ")}`
+      );
+    }
+  }
+
+  if (Object.keys(observed).length === 0) {
+    return couldNotRunResult(
+      meta,
+      "No cacheable result could be obtained to inspect",
+      { cacheHints: observed }
+    );
+  }
+
+  return problems.length > 0
+    ? failedResult(
+        meta,
+        Date.now() - startedAt,
+        `Caching hints carry values the caching utility does not allow: ${problems.join("; ")}`,
+        { cacheHints: observed }
+      )
+    : passedResult(meta, Date.now() - startedAt, { cacheHints: observed });
+}
+
+/**
+ * "Servers **MUST** apply the same `cacheScope` to all response pages for a
+ * given list request." A list that flips from `public` to `private` mid-walk
+ * would have a client caching some pages of one result under sharing rules the
+ * server did not intend for the rest.
+ *
+ * Only observable where a server actually paginates, so the absence of a second
+ * page is a SKIP rather than a pass: certifying page consistency over one page
+ * would be certifying nothing.
+ */
+async function runCacheScopePaginationCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["modern-cache-scope-stable-across-pages"];
+  const startedAt = Date.now();
+  const capabilities = advertisedCapabilities(await discoverOnce(ctx, state));
+
+  const paginated: Array<{ method: string; scopes: unknown[] }> = [];
+  const problems: string[] = [];
+  let id = 7180;
+
+  for (const method of paginatedCacheableMethods(capabilities)) {
+    const scopes: unknown[] = [];
+    let cursor: string | undefined;
+    // Every cursor already issued, not just the previous one: an `A → B → A`
+    // alternation never repeats back-to-back, and `""` needs to be caught on
+    // its second appearance now that it no longer ends the walk.
+    const seenCursors = new Set<string>();
+
+    // Bounded to a handful of pages: this asserts consistency, not coverage,
+    // and a server handing out cursors forever must not hang the run.
+    for (let page = 0; page < MAX_CACHE_SCOPE_PAGES; page += 1) {
+      const result = await track(
+        state,
+        modernProbe(ctx, {
+          id: id++,
+          method,
+          ...(cursor !== undefined ? { params: { cursor } } : {}),
+        })
+      );
+      const payload = jsonRpcResult(result);
+      if (!payload) break;
+      scopes.push(payload.cacheScope);
+      const next = payload.nextCursor;
+      // `""` is a valid continuation cursor (MCP 2026-07-28
+      // `server/utilities/pagination`), so only a non-string ends the walk.
+      // The cycle guard catches a server that reissues any token — `""`
+      // included — instead of making progress.
+      if (typeof next !== "string" || seenCursors.has(next)) break;
+      seenCursors.add(next);
+      cursor = next;
+    }
+
+    if (scopes.length < 2) continue;
+    paginated.push({ method, scopes });
+    const distinct = new Set(scopes.map((scope) => JSON.stringify(scope)));
+    if (distinct.size > 1) {
+      problems.push(
+        `${method} returned pages with differing cacheScope values: ${scopes
+          .map((scope) => JSON.stringify(scope))
+          .join(" → ")}`
+      );
+    }
+  }
+
+  if (paginated.length === 0) {
+    return notApplicableResult(
+      meta,
+      "No listing returned a second page, so page-to-page cacheScope consistency has nothing to compare"
+    );
+  }
+
+  return problems.length > 0
+    ? failedResult(
+        meta,
+        Date.now() - startedAt,
+        `cacheScope changed between pages of the same list request: ${problems.join("; ")}`,
+        { paginated }
+      )
+    : passedResult(meta, Date.now() - startedAt, { paginated });
 }
 
 async function runProtocolVersionHeaderMismatchCheck(
@@ -877,6 +1412,419 @@ async function runUndeclaredCapabilityCheck(
     : passedResult(meta, Date.now() - startedAt, details);
 }
 
+/**
+ * SEP-2243 lists a MISSING required standard header as a validation-failure
+ * condition alongside a mismatched one, and states the same remedy for both:
+ * "servers **MUST** return HTTP status `400 Bad Request` and **MUST** include a
+ * JSON-RPC error response" with code `-32020`. So this asserts both halves at
+ * MUST strength, exactly like its `*-header-mismatch` siblings.
+ *
+ * `Mcp-Method` and NOT `MCP-Protocol-Version`, deliberately. The
+ * protocol-version header carries a documented escape hatch — a server "**MAY**
+ * treat a request that omits the header as protocol version `2025-03-26`" for
+ * pre-2025-06-18 clients — so tolerating its absence is spec-LEGAL and cannot
+ * be a failing check. That case is reported on the readiness channel instead
+ * (`readiness-protocol-version-header-required`). `Mcp-Method` has no such
+ * carve-out: the spec calls the standard headers "REQUIRED for compliance"
+ * flatly, and the reference server rejects a request without it.
+ *
+ * The probe targets `server/discover`, which is read-only: a NON-conforming
+ * server processes whatever it was sent, and a conformance run must never fire
+ * a side-effecting tool to find that out.
+ */
+async function runMissingMethodHeaderCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["modern-missing-method-header-rejected"];
+  const startedAt = Date.now();
+  const result = await track(
+    state,
+    modernProbe(ctx, {
+      id: 7250,
+      method: "server/discover",
+      omitHeaders: ["Mcp-Method"],
+    })
+  );
+
+  const { problems, error } = checkRejection(result, {
+    status: 400,
+    code: HEADER_MISMATCH,
+  });
+
+  return problems.length > 0
+    ? failedResult(
+        meta,
+        Date.now() - startedAt,
+        `A request omitting the required Mcp-Method header was not rejected as required: ${problems.join(
+          "; "
+        )}`,
+        rejectionDetails(result, error)
+      )
+    : passedResult(
+        meta,
+        Date.now() - startedAt,
+        rejectionDetails(result, error)
+      );
+}
+
+/**
+ * RFC 9110 field names are case-insensitive, and SEP-2243 restates it as a MUST
+ * for both sides. This is an ACCEPTANCE check: the server has to answer the
+ * same request normally when the header names arrive in a different case.
+ *
+ * It is testable through the ordinary guarded transport because Node's fetch
+ * preserves the header-name casing it is handed on the wire — only `Headers`
+ * ITERATION lowercases, which is a red herring. The probe sends deliberately
+ * mixed case, so a server doing exact-string matching on `MCP-Protocol-Version`
+ * fails while a conforming one is unaffected.
+ *
+ * NOT TESTED HERE: optional whitespace around header VALUES (RFC 9110
+ * `field-line = field-name ":" OWS field-value OWS`), which servers must also
+ * accept. `Headers.set` normalizes the value before it reaches the socket, so
+ * sending OWS would require a raw-socket transport — and that would bypass
+ * `config.fetchFn`, the SSRF guard every probe in this suite deliberately dials
+ * through. Trading a hosted-mode network guard for one acceptance assertion is
+ * the wrong trade; the gap is recorded here rather than closed unsafely.
+ */
+async function runHeaderCaseInsensitivityCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["modern-header-names-case-insensitive"];
+  const startedAt = Date.now();
+
+  const result = await track(
+    state,
+    modernProbe(ctx, {
+      id: 7270,
+      method: "server/discover",
+      headerNameTransform: alternatingCase,
+    })
+  );
+
+  const payload = jsonRpcResult(result);
+  const error = jsonRpcError(result);
+  const sentHeaderNames = Object.keys(
+    modernHeaders({
+      protocolVersion: protocolVersion(ctx),
+      method: "server/discover",
+    })
+  ).map(alternatingCase);
+
+  const details = {
+    httpStatus: result.status,
+    jsonRpcCode: error?.code,
+    jsonRpcMessage: error?.message,
+    sentHeaderNames,
+  };
+
+  if (result.status === 200 && payload) {
+    return passedResult(meta, Date.now() - startedAt, details);
+  }
+
+  return failedResult(
+    meta,
+    Date.now() - startedAt,
+    `Server rejected a well-formed request whose standard header names differ only in case (HTTP ${result.status}${
+      error ? `, JSON-RPC ${error.code}` : ""
+    }); RFC 9110 field names are case-insensitive and SEP-2243 requires case-insensitive comparison`,
+    details
+  );
+}
+
+/**
+ * `mCp-PrOtOcOl-VeRsIoN` — neither the canonical spelling nor all-lower, so a
+ * server matching either exact string is caught. Deterministic, so a failure
+ * report names the exact bytes that were sent.
+ */
+function alternatingCase(name: string): string {
+  let letterIndex = 0;
+  return [...name]
+    .map((character) => {
+      if (!/[a-z]/i.test(character)) return character;
+      const upper = letterIndex % 2 === 1;
+      letterIndex += 1;
+      return upper ? character.toUpperCase() : character.toLowerCase();
+    })
+    .join("");
+}
+
+/**
+ * "If an output schema is provided: Servers **MUST** provide structured results
+ * that conform to this schema."
+ *
+ * FIXTURE-GATED, and unavoidably so. The obligation binds a value the server
+ * only produces by EXECUTING the tool, and nothing in a tool's advertised
+ * metadata says whether executing it is safe — a run that guessed would
+ * eventually charge a card or delete a row on somebody's production server. So
+ * the operator names the calls that are safe, and without them the check
+ * reports a skip that says exactly what it needs.
+ *
+ * The declared schema is validated with the same dialect-aware validator the
+ * MCP client uses for tool inputs, so a tool declaring draft-07 (which
+ * `zod-to-json-schema` emits by default) is judged under draft-07 rather than
+ * rejected for not being 2020-12.
+ */
+async function runToolOutputSchemaCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["modern-tool-output-schema-conformant"];
+  const startedAt = Date.now();
+  const fixtures = ctx.config.fixtures.toolCalls;
+
+  if (fixtures.length === 0) {
+    return couldNotRunResult(
+      meta,
+      "No tools/call fixtures configured: set fixtures.toolCalls to tools that are safe to execute so the declared outputSchema can be checked against a real result"
+    );
+  }
+
+  const capabilities = advertisedCapabilities(await discoverOnce(ctx, state));
+  if (capabilities.tools === undefined) {
+    return notApplicableResult(
+      meta,
+      "Server does not advertise the tools capability"
+    );
+  }
+
+  const declared = await toolOutputSchemas(ctx, state);
+  const validator = new DialectAwareJsonSchemaValidator({
+    // The default handler console.warns per unknown dialect. A conformance run
+    // reports, it does not print.
+    onUnknownDialect: () => undefined,
+  });
+
+  const problems: string[] = [];
+  // `schemaBound` is the load-bearing field, not the prose: it records whether
+  // an output schema actually GRADED this result. Deriving that from the
+  // outcome text would make a reworded message silently change the verdict.
+  const graded: Array<{
+    tool: string;
+    outcome: string;
+    schemaBound: boolean;
+  }> = [];
+  /**
+   * Fixtures that never produced a gradeable result. These are reported as an
+   * UNEXERCISED requirement, not as a server violation — see the JSON-RPC-error
+   * branch below.
+   */
+  const unexercised: string[] = [];
+  let id = 7950;
+
+  for (const fixture of fixtures) {
+    const outputSchema = declared.get(fixture.toolName);
+    const result = await track(
+      state,
+      modernProbe(ctx, {
+        id: id++,
+        method: "tools/call",
+        params: {
+          name: fixture.toolName,
+          arguments: fixture.arguments ?? {},
+        },
+        name: fixture.toolName,
+      })
+    );
+
+    if (outputSchema === undefined) {
+      // Still worth calling: the frame reaches the run-wide wire record, so
+      // `wire-schema-valid` grades it against `CallToolResult` — a result shape
+      // an unfixtured run never observes at all.
+      graded.push({
+        tool: fixture.toolName,
+        outcome: "no outputSchema declared; nothing to validate against",
+        schemaBound: false,
+      });
+      continue;
+    }
+
+    const payload = jsonRpcResult(result);
+    if (!payload) {
+      const error = jsonRpcError(result);
+      // NOT a server violation. A JSON-RPC error here means the call never
+      // produced a result to grade — and the likeliest cause is the FIXTURE:
+      // arguments the operator supplied that the tool's inputSchema rejects
+      // (`-32602`), a tool name that does not resolve (`-32601`), an auth
+      // scope the run lacks. Counting it as a `problem` would fail the check —
+      // "tool results do not honor their declared output schemas" — and brand
+      // the server nonconformant for correctly refusing a request this suite
+      // built badly. The requirement simply went untested, which is what
+      // `unexercised` reports; the `isError: true` branch below draws the same
+      // line for the tool-level case.
+      unexercised.push(
+        `${fixture.toolName} produced no result to validate (HTTP ${result.status}${
+          error ? `, JSON-RPC ${error.code}: ${error.message}` : ""
+        }); check the fixture's tool name and arguments against the tool's inputSchema`
+      );
+      continue;
+    }
+    // An `isError: true` result reports a TOOL failure, which is a normal
+    // outcome the server is entitled to return — and the spec's own example of
+    // one carries no `structuredContent`. Grading it against the output schema
+    // would fail servers for correctly reporting that the weather API was down.
+    if (payload.isError === true) {
+      graded.push({
+        tool: fixture.toolName,
+        outcome: "tool reported isError: true; output schema does not bind",
+        schemaBound: false,
+      });
+      continue;
+    }
+
+    const structured = payload.structuredContent;
+    if (structured === undefined) {
+      problems.push(
+        `${fixture.toolName} declares an outputSchema but returned no structuredContent`
+      );
+      continue;
+    }
+
+    const validate = validator.getValidator(
+      outputSchema as Parameters<typeof validator.getValidator>[0]
+    );
+    const outcome = validate(structured);
+    if (!outcome.valid) {
+      problems.push(
+        `${fixture.toolName} structuredContent does not conform to its declared outputSchema: ${
+          outcome.errorMessage ?? "validation failed"
+        }`
+      );
+      continue;
+    }
+    graded.push({
+      tool: fixture.toolName,
+      outcome: "structuredContent conforms",
+      schemaBound: true,
+    });
+  }
+
+  const withSchema = graded.filter((entry) => entry.schemaBound).length;
+  const details = {
+    graded,
+    problems,
+    fixtureCount: fixtures.length,
+    ...(unexercised.length > 0 ? { unexercised } : {}),
+  };
+
+  if (problems.length > 0) {
+    return failedResult(
+      meta,
+      Date.now() - startedAt,
+      `Tool results do not honor their declared output schemas: ${problems.join("; ")}`,
+      details
+    );
+  }
+
+  // Nothing was gradeable AND at least one fixture failed to execute: the
+  // requirement went untested for a reason that points at the fixture, so say
+  // so rather than reporting the generic never-bound message.
+  if (withSchema === 0 && unexercised.length > 0) {
+    return couldNotRunResult(
+      meta,
+      `No tool fixture produced a gradeable result: ${unexercised.join("; ")}`,
+      details
+    );
+  }
+
+  if (withSchema === 0) {
+    // Every fixture ran and nothing was ever BOUND by an output schema —
+    // because none declared one, or because the ones that did reported
+    // `isError: true`, which the schema does not bind. A pass would claim the
+    // MUST was established when it was never exercised.
+    return couldNotRunResult(
+      meta,
+      `None of the ${fixtures.length} configured tool fixture(s) produced a result bound by a declared outputSchema, so the requirement was never exercised (${graded
+        .map((entry) => `${entry.tool}: ${entry.outcome}`)
+        .join("; ")}). Their results still widened the wire-schema coverage.`,
+      details
+    );
+  }
+
+  return passedResult(meta, Date.now() - startedAt, details);
+}
+
+/**
+ * Tool name → declared `outputSchema`, read from the client phase's snapshot
+ * when there was one and otherwise from a raw `tools/list` walk. The raw
+ * fallback matters: a raw-only check selection opens no client session, and a
+ * check that only worked inside a full run would be untestable on its own.
+ */
+async function toolOutputSchemas(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<Map<string, unknown>> {
+  const schemas = new Map<string, unknown>();
+  for (const tool of ctx.surface?.tools ?? []) {
+    const outputSchema = (tool as { outputSchema?: unknown }).outputSchema;
+    if (outputSchema !== undefined) schemas.set(tool.name, outputSchema);
+  }
+  if (schemas.size > 0 || (ctx.surface?.tools.length ?? 0) > 0) {
+    return schemas;
+  }
+
+  const walk = await walkToolsList({
+    startId: 7960,
+    request: ({ id, cursor }) =>
+      track(
+        state,
+        modernProbe(ctx, {
+          id,
+          method: "tools/list",
+          ...(cursor !== undefined ? { params: { cursor } } : {}),
+        })
+      ),
+  });
+  for (const entry of walk.tools) {
+    if (typeof entry.name === "string" && entry.outputSchema !== undefined) {
+      schemas.set(entry.name, entry.outputSchema);
+    }
+  }
+  return schemas;
+}
+
+/**
+ * Render the operator's `prompts/get` fixtures. This asserts nothing on its
+ * own — every structural requirement on a `GetPromptResult` is stated by the
+ * revision's JSON Schema, and `wire-schema-valid` already grades that. What it
+ * does is make the frame EXIST: an unfixtured run never issues a `prompts/get`
+ * with real arguments, so `GetPromptResult` is a shape our conformance path has
+ * never once looked at. Driving it through the raw harness puts it in the
+ * run-wide wire record, where the schema check picks it up.
+ */
+export async function drivePromptFixtures(
+  ctx: RawHttpCheckContext
+): Promise<number> {
+  const fixtures = ctx.config.fixtures.promptGets;
+  if (fixtures.length === 0 || ctx.config.era !== "modern") return 0;
+
+  // Its own discover rather than the modern track's shared one: this is driven
+  // by the wire-schema check, which runs after the modern track has finished
+  // (and may not have run at all — a run can select the schema check alone).
+  const discover = await modernProbe(ctx, {
+    id: 7969,
+    method: "server/discover",
+  });
+  if (advertisedCapabilities(discover).prompts === undefined) return 0;
+
+  let id = 7970;
+  let driven = 0;
+  for (const fixture of fixtures) {
+    await modernProbe(ctx, {
+      id: id++,
+      method: "prompts/get",
+      params: {
+        name: fixture.promptName,
+        ...(fixture.arguments ? { arguments: fixture.arguments } : {}),
+      },
+      name: fixture.promptName,
+    });
+    driven += 1;
+  }
+  return driven;
+}
+
 async function runRemovedMethodsCheck(
   ctx: RawHttpCheckContext,
   state: ModernRunState
@@ -914,6 +1862,84 @@ async function runRemovedMethodsCheck(
     : passedResult(meta, Date.now() - startedAt, { removedMethods: observed });
 }
 
+/**
+ * One read of a resource that does not exist, shared by the two checks that
+ * grade the answer. Probing twice would ask the server the same question with
+ * two different uris and let the checks disagree about what it said.
+ */
+async function missingResourceProbe(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<{ uri: string; result: RawHttpResult } | undefined> {
+  if (!state.missingResource) {
+    const uri = `mcpjam-conformance://missing/${Date.now()}`;
+    state.missingResource = track(
+      state,
+      modernProbe(ctx, {
+        id: 7800,
+        method: "resources/read",
+        params: { uri },
+        name: uri,
+      })
+    ).then((result) => ({ uri, result }));
+  }
+  return await state.missingResource;
+}
+
+/**
+ * "Servers **MUST NOT** return an empty `contents` array for a non-existent
+ * resource. An empty array is ambiguous — it could mean the resource exists but
+ * has no content, or that it doesn't exist at all."
+ *
+ * Distinct from the -32602 check beside it, and not implied by it: a server can
+ * answer the right ERROR code on one path and still answer `{ contents: [] }`
+ * on another, and a client cannot tell that second answer from a legitimately
+ * empty resource. That ambiguity is the whole reason the sentence exists.
+ */
+async function runResourceEmptyContentsCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<MCPCheckResult> {
+  const meta =
+    MODERN_CHECK_METADATA["modern-resource-read-no-empty-contents"];
+  const startedAt = Date.now();
+  const capabilities = advertisedCapabilities(await discoverOnce(ctx, state));
+
+  if (capabilities.resources === undefined) {
+    return notApplicableResult(
+      meta,
+      "Server does not advertise the resources capability"
+    );
+  }
+
+  const probe = await missingResourceProbe(ctx, state);
+  if (!probe) {
+    return couldNotRunResult(
+      meta,
+      "The missing-resource read produced no response to inspect"
+    );
+  }
+
+  const payload = jsonRpcResult(probe.result);
+  const contents = payload?.contents;
+  const details = {
+    httpStatus: probe.result.status,
+    probedUri: probe.uri,
+    contents,
+  };
+
+  if (Array.isArray(contents) && contents.length === 0) {
+    return failedResult(
+      meta,
+      Date.now() - startedAt,
+      `Reading the non-existent resource ${probe.uri} returned an empty contents array; a client cannot tell that from a resource that exists and is empty, so the spec requires a JSON-RPC error instead`,
+      details
+    );
+  }
+
+  return passedResult(meta, Date.now() - startedAt, details);
+}
+
 async function runResourceNotFoundCheck(
   ctx: RawHttpCheckContext,
   state: ModernRunState
@@ -930,16 +1956,14 @@ async function runResourceNotFoundCheck(
     );
   }
 
-  const missingUri = `mcpjam-conformance://missing/${Date.now()}`;
-  const result = await track(
-    state,
-    modernProbe(ctx, {
-      id: 7800,
-      method: "resources/read",
-      params: { uri: missingUri },
-      name: missingUri,
-    })
-  );
+  const probe = await missingResourceProbe(ctx, state);
+  if (!probe) {
+    return couldNotRunResult(
+      meta,
+      "The missing-resource read produced no response to inspect"
+    );
+  }
+  const { uri: missingUri, result } = probe;
 
   const error = jsonRpcError(result);
   const problems: string[] = [];
@@ -1009,12 +2033,30 @@ async function runLogLevelCheck(
     );
   }
 
+  // NOT a pass. Without a probe the request above is an ordinary
+  // `server/discover`, which no server logs about in the first place, so its
+  // silence is the absence of an observation rather than the observation of an
+  // absence — the same silence a server that ignores the opt-in gate entirely
+  // would produce. Passing on it credited every unprobed run with a MUST it
+  // never exercised, and this check is scored, so that credit landed in
+  // published numbers.
+  //
+  // `could-not-run` and deliberately NOT `not-applicable`: the requirement
+  // applies to every modern server, and only our ability to observe it is
+  // missing. `not-applicable` would drop the check from the denominator
+  // (`conformance-outcome.ts`), which turns one unearned pass into a smaller
+  // total and leaves the percentage just as flattering. This way the run
+  // reports `incomplete`, which is what an unexercised MUST actually means.
+  //
+  // The failing branch above still stands without a probe: log records on a
+  // request that carried no level are a violation no matter what provoked
+  // them. Only the silent branch is unprovable, and only it skips.
   if (!probe) {
-    return passedResult(meta, Date.now() - startedAt, {
-      logNotificationCount: 0,
-      evidence:
-        "No logProbe configured: asserted against an ordinary request, which cannot show the server logs at all",
-    });
+    return couldNotRunResult(
+      meta,
+      "No logProbe configured, so the run had no request the server is known to log about: the silence above cannot distinguish a working opt-in gate from a server that never logs. Configure `logProbe` with a tool that emits log records to assert this.",
+      { logNotificationCount: 0 }
+    );
   }
 
   // Positive control: the SAME call carrying a log level. Records here prove
@@ -1064,16 +2106,54 @@ async function runNoSessionIdCheck(
       sessionId: result.headers["mcp-session-id"],
     }));
 
-  return offenders.length > 0
-    ? failedResult(
-        meta,
-        Date.now() - startedAt,
-        "Server minted an Mcp-Session-Id on a modern response; the 2026 era is sessionless",
-        { offenders, inspectedResponses: state.observed.length }
-      )
-    : passedResult(meta, Date.now() - startedAt, {
-        inspectedResponses: state.observed.length,
-      });
+  if (offenders.length > 0) {
+    return failedResult(
+      meta,
+      Date.now() - startedAt,
+      "Server minted an Mcp-Session-Id on a modern response; the 2026 era is sessionless",
+      { offenders, inspectedResponses: state.observed.length }
+    );
+  }
+
+  // A header this run never gave the server a chance to send is not evidence
+  // the server declines to send it.
+  //
+  // Every response here can be a 401 or a rejected handshake — a server that
+  // never completes `server/discover` cannot mint a session id whether or not
+  // it would — and the empty offender list above is then a fact about our
+  // access, not about the server. Passing on it handed a free credit to
+  // exactly the servers that answered nothing, and this check is scored, so
+  // the servers doing worst were the ones it flattered most.
+  //
+  // The bar is one response that actually carried a JSON-RPC result: at that
+  // point the server has completed an exchange it could have attached a
+  // session to, and its silence is a choice. The failing branch above is
+  // deliberately NOT gated on this — a session id on a 401 is still a session
+  // id, and still a violation.
+  // Any 2xx carrying a JSON-RPC `result` member, not `status === 200` alone:
+  // the question here is only "did an exchange complete", and a server that
+  // answers a result on some other 2xx has still processed the call and could
+  // have attached a session header to it. `jsonRpcResult` reads SSE frames as
+  // well as a JSON body, so a streaming server is not mistaken for a dead one.
+  const succeeded = state.observed.filter(
+    (result) =>
+      result.status >= 200 &&
+      result.status < 300 &&
+      jsonRpcResult(result) !== undefined
+  ).length;
+
+  if (succeeded === 0) {
+    return couldNotRunResult(
+      meta,
+      `No modern exchange succeeded (${state.observed.length} response(s), none carrying a JSON-RPC result), so the server was never in a position to mint a session id and its absence asserts nothing`,
+      { inspectedResponses: state.observed.length, succeededResponses: 0 }
+    );
+  }
+
+  return passedResult(meta, Date.now() - startedAt, {
+    inspectedResponses: state.observed.length,
+    succeededResponses: succeeded,
+  });
 }
 
 /**
@@ -1199,6 +2279,17 @@ async function probeSubscription(
       details: { httpStatus: observation.status },
     };
   }
+
+  // Stream frames reach the run-wide record here rather than at the
+  // `rawRequest` seam: the listen body is read INCREMENTALLY and legitimately
+  // never ends, so the buffering capture that feeds every other raw probe
+  // cannot see it. Without this the schema check would silently skip every
+  // subscription notification a run observed.
+  ctx.recorder?.recordStreamMessages(observation.messages, {
+    origin: `${LISTEN_METHOD} stream`,
+    requestMethod: LISTEN_METHOD,
+    requestId: observation.subscriptionId,
+  });
 
   return { kind: "observed", observation };
 }
@@ -1422,6 +2513,9 @@ async function runModernCheck(
   state: ModernRunState,
   cacheableProbes: () => Promise<
     Array<{ method: string; result: RawHttpResult }>
+  >,
+  cacheableOperations: () => Promise<
+    Awaited<ReturnType<typeof collectCacheableOperations>>
   >
 ): Promise<MCPCheckResult> {
   const startedAt = Date.now();
@@ -1432,12 +2526,22 @@ async function runModernCheck(
       return runResultTypeCheck(await cacheableProbes(), startedAt);
     case "modern-cacheable-result-hints":
       return runCacheHintsCheck(await cacheableProbes(), startedAt);
+    case "modern-cache-hint-coverage":
+      return await runCacheHintCoverageCheck(cacheableOperations);
+    case "modern-cache-hint-values-valid":
+      return await runCacheHintValuesCheck(cacheableOperations);
+    case "modern-cache-scope-stable-across-pages":
+      return await runCacheScopePaginationCheck(ctx, state);
     case "modern-protocol-version-header-mismatch":
       return await runProtocolVersionHeaderMismatchCheck(ctx, state);
     case "modern-method-header-mismatch":
       return await runMethodHeaderMismatchCheck(ctx, state);
     case "modern-name-header-mismatch":
       return await runNameHeaderMismatchCheck(ctx, state);
+    case "modern-missing-method-header-rejected":
+      return await runMissingMethodHeaderCheck(ctx, state);
+    case "modern-header-names-case-insensitive":
+      return await runHeaderCaseInsensitivityCheck(ctx, state);
     case "modern-unsupported-version-error":
       return await runUnsupportedVersionCheck(ctx, state);
     case "modern-undeclared-capability-error":
@@ -1446,6 +2550,10 @@ async function runModernCheck(
       return await runRemovedMethodsCheck(ctx, state);
     case "modern-resource-not-found-invalid-params":
       return await runResourceNotFoundCheck(ctx, state);
+    case "modern-resource-read-no-empty-contents":
+      return await runResourceEmptyContentsCheck(ctx, state);
+    case "modern-tool-output-schema-conformant":
+      return await runToolOutputSchemaCheck(ctx, state);
     case "modern-logs-require-log-level":
       return await runLogLevelCheck(ctx, state);
     case "modern-no-session-id":
@@ -1620,6 +2728,13 @@ export async function runModernChecks(
     cacheable ??= await collectCacheableResults(ctx, state);
     return cacheable;
   };
+  let cacheableOps:
+    | Awaited<ReturnType<typeof collectCacheableOperations>>
+    | undefined;
+  const cacheableOperations = async () => {
+    cacheableOps ??= await collectCacheableOperations(ctx, state);
+    return cacheableOps;
+  };
 
   // `modern-no-session-id` inspects the responses every other modern check
   // already collected, so it runs last regardless of selection order.
@@ -1631,7 +2746,15 @@ export async function runModernChecks(
   for (const id of ordered) {
     const startedAt = Date.now();
     try {
-      results.push(await runModernCheck(id, ctx, state, cacheableProbes));
+      results.push(
+        await runModernCheck(
+          id,
+          ctx,
+          state,
+          cacheableProbes,
+          cacheableOperations
+        )
+      );
     } catch (error) {
       results.push(
         failedResult(

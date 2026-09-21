@@ -48,10 +48,13 @@ export interface ApiContext {
    */
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   /**
    * The active host's enterprise-managed authorization policy (validated
    * `on` value only). Rides ad-hoc chat/eval bodies; ignored server-side
-   * whenever a backend host config exists (chatbox/host-bound turns read
+   * whenever a backend host config exists (scenario/host-bound turns read
    * the policy server-authoritatively instead).
    */
   xaaPolicy?: XaaEnterprisePolicy;
@@ -59,12 +62,12 @@ export interface ApiContext {
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
   /**
-   * Resolved chatbox identity. After /api/web/chatboxes/redeem resolves,
-   * the host clones these onto every chatbox-aware API call. The URL link
+   * Resolved scenario identity. After /api/web/scenarios/redeem resolves,
+   * the host clones these onto every scenario-aware API call. The URL link
    * token is consumed only at redemption time and never threaded onto the
    * read path.
    */
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   isAuthenticated?: boolean;
   /** True when a WorkOS session exists (user signed in), even if token hasn't resolved yet. */
@@ -80,7 +83,12 @@ const EMPTY_CONTEXT: ApiContext = {
 };
 
 let apiContext: ApiContext = EMPTY_CONTEXT;
-let cachedBearerToken: { token: string; expiresAt: number } | null = null;
+type BearerCacheKind = "guest" | "session";
+let cachedBearerToken: {
+  token: string;
+  expiresAt: number;
+  kind: BearerCacheKind;
+} | null = null;
 let apiContextRevision = 0;
 const apiContextListeners = new Set<() => void>();
 
@@ -238,7 +246,7 @@ export function injectHostedServerMapping(
 
 export function getHostedProjectId(): string {
   // Context-gated, not mode-gated: local builds populate the same API
-  // context (unified bootstrap, chatbox runtime), and the null check below
+  // context (unified bootstrap, scenario runtime), and the null check below
   // is the real guard. Callers that are genuinely hosted-only stay behind
   // their own HOSTED_MODE forks.
   const projectId = apiContext.projectId;
@@ -416,16 +424,16 @@ export function getHostedOAuthToken(serverId: string): string | undefined {
   return apiContext.oauthTokensByServerId?.[serverId];
 }
 
-export function getHostedChatboxId(): string | undefined {
-  return apiContext.chatboxId;
+export function getHostedScenarioId(): string | undefined {
+  return apiContext.scenarioId;
 }
 
-export function getHostedChatboxAccessVersion(): number | undefined {
+export function getHostedScenarioAccessVersion(): number | undefined {
   return apiContext.accessVersion;
 }
 
 function getHostedAccessScope(): HostedAccessScope | undefined {
-  return getHostedChatboxId() ? "chat_v2" : undefined;
+  return getHostedScenarioId() ? "chat_v2" : undefined;
 }
 
 /**
@@ -444,6 +452,9 @@ function conformanceWireFields(apiContext: ApiContext): {
   mirrorToolParamHeaders?: false;
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
 } {
   return {
     ...(apiContext.mirrorToolParamHeaders === false
@@ -451,6 +462,15 @@ function conformanceWireFields(apiContext: ApiContext): {
       : {}),
     ...(apiContext.firstPageOnly === true
       ? { firstPageOnly: true as const }
+      : {}),
+    ...(apiContext.suppressListenChannel === true
+      ? { suppressListenChannel: true as const }
+      : {}),
+    ...(apiContext.dropToolListChanged === true
+      ? { dropToolListChanged: true as const }
+      : {}),
+    ...(apiContext.toolCallCancellation
+      ? { toolCallCancellation: apiContext.toolCallCancellation }
       : {}),
     ...(apiContext.supportsMrtr === false
       ? { supportsMrtr: false as const }
@@ -474,8 +494,8 @@ export function buildServerRequest(
   const projectId = getHostedProjectId();
   const serverId = resolveHostedServerId(serverNameOrId);
   const oauthToken = getHostedOAuthToken(serverId);
-  const chatboxId = getHostedChatboxId();
-  const accessVersion = getHostedChatboxAccessVersion();
+  const scenarioId = getHostedScenarioId();
+  const accessVersion = getHostedScenarioAccessVersion();
   const accessScope = getHostedAccessScope();
   return {
     projectId,
@@ -501,13 +521,13 @@ export function buildServerRequest(
     // Single-server flows (tools/resources/prompts, validate) enforce the
     // same host policy as batch connects — omitting it here would let these
     // ephemeral connections bypass enterprise-managed auth. Ignored
-    // server-side for chatbox-scoped calls (server-authoritative fetch wins).
+    // server-side for scenario-scoped calls (server-authoritative fetch wins).
     // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
     ...conformanceWireFields(apiContext),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(accessScope ? { accessScope } : {}),
-    ...(chatboxId ? { chatboxId } : {}),
-    ...(chatboxId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
+    ...(scenarioId ? { scenarioId } : {}),
+    ...(scenarioId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
   };
 }
 
@@ -522,10 +542,13 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   mirrorToolParamHeaders?: boolean;
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
 } {
   assertClientConfigSynced();
@@ -535,8 +558,8 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   const serverNames = serverEntries.map((entry) => entry.serverName);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
   const protocolVersions = buildBatchProtocolVersionMap(serverIds);
-  const chatboxId = getHostedChatboxId();
-  const accessVersion = getHostedChatboxAccessVersion();
+  const scenarioId = getHostedScenarioId();
+  const accessVersion = getHostedScenarioAccessVersion();
   const accessScope = getHostedAccessScope();
   return {
     projectId,
@@ -557,8 +580,8 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
-    ...(chatboxId ? { chatboxId } : {}),
-    ...(chatboxId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
+    ...(scenarioId ? { scenarioId } : {}),
+    ...(scenarioId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
   };
 }
 
@@ -586,7 +609,7 @@ export function buildResolvedServerBatchRequest(input: {
   serverNames: string[];
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
 }): {
   projectId: string;
@@ -599,10 +622,13 @@ export function buildResolvedServerBatchRequest(input: {
   mirrorToolParamHeaders?: boolean;
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
 } {
   assertClientConfigSynced();
@@ -626,8 +652,8 @@ export function buildResolvedServerBatchRequest(input: {
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(input.oauthTokens ? { oauthTokens: input.oauthTokens } : {}),
     ...(input.accessScope ? { accessScope: input.accessScope } : {}),
-    ...(input.chatboxId ? { chatboxId: input.chatboxId } : {}),
-    ...(input.chatboxId && Number.isFinite(input.accessVersion)
+    ...(input.scenarioId ? { scenarioId: input.scenarioId } : {}),
+    ...(input.scenarioId && Number.isFinite(input.accessVersion)
       ? { accessVersion: input.accessVersion }
       : {}),
   };
@@ -644,10 +670,13 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   mirrorToolParamHeaders?: boolean;
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
 } {
   assertClientConfigSynced();
@@ -657,8 +686,8 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   const serverNames = serverEntries.map((entry) => entry.serverName);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
   const protocolVersions = buildBatchProtocolVersionMap(serverIds);
-  const chatboxId = getHostedChatboxId();
-  const accessVersion = getHostedChatboxAccessVersion();
+  const scenarioId = getHostedScenarioId();
+  const accessVersion = getHostedScenarioAccessVersion();
   const accessScope = getHostedAccessScope();
 
   return {
@@ -680,8 +709,8 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
-    ...(chatboxId ? { chatboxId } : {}),
-    ...(chatboxId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
+    ...(scenarioId ? { scenarioId } : {}),
+    ...(scenarioId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
   };
 }
 
@@ -726,13 +755,46 @@ async function pollForSessionBearerToken(): Promise<string | null> {
   return null;
 }
 
-export async function getApiAuthorizationHeader(): Promise<string | null> {
+export async function getApiAuthorizationHeader(
+  /** Guards the re-resolution below from looping on a flapping actor. */
+  retriesLeft = 1
+): Promise<string | null> {
+  // The actor can change while a token lookup is in flight (sign-in,
+  // sign-out, or one signed-in user swapped for another). Every cache write
+  // and return below happens after an await, so each one re-checks the actor
+  // it resolved under and re-resolves rather than handing back — or caching —
+  // the previous actor's token.
+  //
+  // The guest-mode flag alone cannot see a user→user swap: both actors are
+  // non-guest, so it never flips. `apiContextRevision` does, because
+  // `setApiContext` bumps it (and clears the cache) on every actor change —
+  // and a write landing here after that reset is exactly the stale token this
+  // guard exists to catch.
+  const contextRevisionAtStart = apiContextRevision;
+  const guestModeAtStart = shouldPreferGuestBearer();
+  const authChanged = () =>
+    apiContextRevision !== contextRevisionAtStart ||
+    shouldPreferGuestBearer() !== guestModeAtStart;
+  const reresolve = () =>
+    retriesLeft > 0 ? getApiAuthorizationHeader(retriesLeft - 1) : null;
+
   // Single bearer-resolution path for hosted and local. authFetch decides
   // whether to attach the result based on the request's loopback/origin and
   // whether a token is available; this function never short-circuits on mode.
   const now = Date.now();
   if (cachedBearerToken && cachedBearerToken.expiresAt > now) {
-    return `Bearer ${cachedBearerToken.token}`;
+    // A guest bearer minted before sign-in can stay cached for up to 30s.
+    // Never reuse it once the actor has a WorkOS session — Convex rejects
+    // MCPJam-model generation for guest JWTs even when the sidebar shows the
+    // signed-in user.
+    if (
+      cachedBearerToken.kind === "guest" &&
+      !shouldPreferGuestBearer()
+    ) {
+      cachedBearerToken = null;
+    } else {
+      return `Bearer ${cachedBearerToken.token}`;
+    }
   }
 
   // In guest mode, bypass WorkOS token bootstrap entirely and use a guest
@@ -740,10 +802,12 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
   // masking valid guest sessions.
   if (shouldPreferGuestBearer()) {
     const guestToken = await getGuestBearerToken();
+    if (authChanged()) return reresolve();
     if (guestToken) {
       cachedBearerToken = {
         token: guestToken,
         expiresAt: now + TOKEN_CACHE_TTL_MS,
+        kind: "guest",
       };
       return `Bearer ${guestToken}`;
     }
@@ -754,8 +818,13 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
   if (getAccessToken) {
     try {
       const token = await getAccessToken();
+      if (authChanged()) return reresolve();
       if (token) {
-        cachedBearerToken = { token, expiresAt: now + TOKEN_CACHE_TTL_MS };
+        cachedBearerToken = {
+          token,
+          expiresAt: now + TOKEN_CACHE_TTL_MS,
+          kind: "session",
+        };
         return `Bearer ${token}`;
       }
     } catch {
@@ -772,10 +841,12 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
     // `shouldRetryApiAuth401` deliberately refuses to swap a resolving session
     // for a guest bearer. Wait for the token rather than firing and failing.
     const sessionToken = await awaitSessionBearerToken();
+    if (authChanged()) return reresolve();
     if (sessionToken) {
       cachedBearerToken = {
         token: sessionToken,
         expiresAt: Date.now() + TOKEN_CACHE_TTL_MS,
+        kind: "session",
       };
       return `Bearer ${sessionToken}`;
     }
@@ -784,10 +855,12 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
 
   // Fall back to guest token for explicit guest-capable surfaces only.
   const guestToken = await getGuestBearerToken();
+  if (authChanged()) return reresolve();
   if (guestToken) {
     cachedBearerToken = {
       token: guestToken,
       expiresAt: now + TOKEN_CACHE_TTL_MS,
+      kind: "guest",
     };
     return `Bearer ${guestToken}`;
   }

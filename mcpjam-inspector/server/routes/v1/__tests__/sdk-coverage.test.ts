@@ -48,11 +48,70 @@ function appInventory(): Set<string> {
 
 /** Route -> the `PlatformApiClient` method that calls it. */
 const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
+  "post /chat-sessions/browser": "createChatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/open": "chatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/command": "chatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/note": "chatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/trace": "chatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/artifact": "chatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/close": "chatSessionBrowser",
+  // The browser operation transport is shared by all agent-session routes.
+  "post /browser-sessions/session": "browserSession",
+  "post /browser-sessions/sessions": "browserSession",
+  "post /browser-sessions/command": "browserSession",
+  "post /browser-sessions/trace": "browserSession",
+  "post /browser-sessions/note": "browserSession",
+  "post /browser-sessions/artifact": "browserSession",
+  "post /browser-sessions/close": "browserSession",
+
+  "get /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}":
+    "generateEvalCases",
+  "post /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}/commit":
+    "generateEvalCases",
+
   // Identity and catalogs
+  // Spend budget — the organization's ceiling on MCPJam-billed spend.
+  "get /organizations/{organizationId}/spend-budget": "getSpendBudget",
+  "put /organizations/{organizationId}/spend-budget": "setSpendBudget",
+  "delete /organizations/{organizationId}/spend-budget": "clearSpendBudget",
+
+  // Trace destinations — where an organization's traces are streamed.
+  "get /organizations/{organizationId}/trace-destinations":
+    "listTraceDestinations",
+  "post /organizations/{organizationId}/trace-destinations":
+    "createTraceDestination",
+  "get /organizations/{organizationId}/trace-destinations/{destinationId}":
+    "getTraceDestination",
+  "patch /organizations/{organizationId}/trace-destinations/{destinationId}":
+    "updateTraceDestination",
+  "delete /organizations/{organizationId}/trace-destinations/{destinationId}":
+    "deleteTraceDestination",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/test":
+    "testTraceDestination",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/pause":
+    "pauseTraceDestination",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/resume":
+    "resumeTraceDestination",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/backfills":
+    "backfillTraceDestination",
+  "get /organizations/{organizationId}/trace-destinations/{destinationId}/backfills":
+    "listTraceDestinationBackfills",
   "get /me": "getMe",
   "get /models": "listModels",
   "get /organizations": "listOrganizations",
   "get /chat-sessions": "listChatSessions",
+
+  // Registry (directory + curated cards)
+  "get /registry/directory-servers": "searchRegistryDirectory",
+  "get /registry/directory-servers/{idOrName}": "getRegistryDirectoryServer",
+  "get /registry/directory-sources": "listRegistryDirectorySources",
+  "get /projects/{projectId}/registry/servers": "listRegistryServers",
+  "get /projects/{projectId}/registry/connections": "listRegistryConnections",
+  "post /projects/{projectId}/registry/directory-installs":
+    "installRegistryDirectoryServer",
+  "post /projects/{projectId}/registry/installs": "installRegistryServer",
+  "delete /projects/{projectId}/registry/installs/{registryServerId}":
+    "uninstallRegistryServer",
 
   // Server connections
   "post /server-connections": "createServerConnection",
@@ -70,6 +129,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Project servers
   "get /projects/{projectId}/servers": "listProjectServers",
   "post /projects/{projectId}/servers": "createProjectServer",
+  "get /projects/{projectId}/server-groups": "listServerGroups",
+  "post /projects/{projectId}/server-groups": "createServerGroup",
   "get /projects/{projectId}/servers/{serverId}": "getProjectServer",
   "patch /projects/{projectId}/servers/{serverId}": "updateProjectServer",
   "delete /projects/{projectId}/servers/{serverId}": "deleteProjectServer",
@@ -87,21 +148,49 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "listServerResources",
   "post /projects/{projectId}/servers/{serverId}/resources/read":
     "readServerResource",
+  "post /projects/{projectId}/servers/{serverId}/skills": "listServerSkills",
+  "post /projects/{projectId}/servers/{serverId}/skills/get": "getServerSkill",
+  "post /projects/{projectId}/servers/{serverId}/skills/read-file":
+    "readServerSkillFile",
 
-  // Hosts
-  "get /projects/{projectId}/hosts": "listHosts",
-  "post /projects/{projectId}/hosts": "createHost",
-  "get /projects/{projectId}/hosts/{hostId}": "getHost",
-  "patch /projects/{projectId}/hosts/{hostId}": "updateHost",
-  "delete /projects/{projectId}/hosts/{hostId}": "deleteHost",
-  "post /projects/{projectId}/hosts/{hostId}/servers": "setHostServers",
-  "post /projects/{projectId}/hosts/{hostId}/duplicate": "duplicateHost",
+  // Directory readiness
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/claude":
+    "startClaudeReadinessRun",
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/openai":
+    "startOpenAIReadinessRun",
+  "get /projects/{projectId}/readiness-runs": "listReadinessRuns",
+  "get /projects/{projectId}/readiness-runs/{runId}": "getReadinessRun",
+  "get /projects/{projectId}/readiness-runs/{runId}/report":
+    "getReadinessReport",
+  "post /projects/{projectId}/readiness-runs/{runId}/cancel":
+    "cancelReadinessRun",
+
+  // Persisted conformance runs
+  "post /projects/{projectId}/servers/{serverId}/conformance-runs":
+    "startConformanceRun",
+  "get /projects/{projectId}/conformance-runs": "listConformanceRuns",
+  "get /projects/{projectId}/conformance-runs/{runId}": "getConformanceRun",
+  "get /projects/{projectId}/conformance-runs/{runId}/report":
+    "getConformanceReport",
+
+  // Clients
+  "get /projects/{projectId}/clients": "listClients",
+  "post /projects/{projectId}/clients": "createClient",
+  "get /projects/{projectId}/clients/{client}": "getClient",
+  "patch /projects/{projectId}/clients/{client}": "updateClient",
+  "delete /projects/{projectId}/clients/{client}": "deleteClient",
+  "post /projects/{projectId}/clients/{client}/servers": "setClientServers",
+  "post /projects/{projectId}/clients/{client}/duplicate": "duplicateClient",
 
   // Project environments
   "get /projects/{projectId}/environments": "listEnvironments",
   "get /projects/{projectId}/environments/capabilities":
     "getEnvironmentCapabilities",
   "post /projects/{projectId}/environments": "createEnvironment",
+  "post /projects/{projectId}/environments/ensure-adhoc":
+    "ensureAdhocEnvironment",
+  "post /projects/{projectId}/environments/{environmentId}/name":
+    "nameEnvironment",
   "get /projects/{projectId}/environments/{environmentId}": "getEnvironment",
   "patch /projects/{projectId}/environments/{environmentId}":
     "updateEnvironment",
@@ -115,6 +204,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Agent Plugins (read-only)
   "get /projects/{projectId}/plugins": "listProjectPlugins",
   "get /plugin-versions/{pluginVersionId}": "getPluginVersion",
+
+  // Cloud Skills (read-only)
+  "get /projects/{projectId}/skills": "listProjectSkills",
+  "get /projects/{projectId}/skills/{skillId}": "getProjectSkill",
 
   // Sandbox images
   "get /projects/{projectId}/images": "listImages",
@@ -130,16 +223,41 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/computer/reset": "resetComputer",
 
   // Eval suites and cases
+  "get /projects/{projectId}/sessions": "listSessions",
   "get /projects/{projectId}/eval-suites": "listEvalSuites",
   "post /projects/{projectId}/eval-suites": "createEvalSuite",
+  "post /projects/{projectId}/eval-suites/from-file": "syncFileOwnedEvalSuite",
   "get /projects/{projectId}/eval-suites/{suiteId}": "getEvalSuite",
+  "get /projects/{projectId}/eval-suites/{suiteId}/run-disclosure":
+    "getEvalRunDisclosure",
   "patch /projects/{projectId}/eval-suites/{suiteId}": "updateEvalSuite",
   "delete /projects/{projectId}/eval-suites/{suiteId}": "deleteEvalSuite",
   "patch /projects/{projectId}/eval-suites/{suiteId}/schedule":
     "setEvalSuiteSchedule",
   "get /projects/{projectId}/eval-suites/{suiteId}/runs": "listEvalSuiteRuns",
+  "get /projects/{projectId}/eval-suites/{suiteId}/revisions":
+    "listEvalSuiteRevisions",
+  "get /projects/{projectId}/eval-suites/{suiteId}/stage-analytics":
+    "listEvalSuiteStageAnalytics",
+  "get /projects/{projectId}/eval-runs/{runId}/stage-analytics":
+    "getEvalRunStageAnalytics",
+  "get /projects/{projectId}/eval-runs/{runId}/gate": "getEvalRunGate",
+  "get /projects/{projectId}/eval-runs/{runId}/route-facts":
+    "getEvalRunRouteFacts",
+  "get /projects/{projectId}/eval-runs/{runId}/server-facts":
+    "getEvalRunServerFacts",
+  "post /projects/{projectId}/eval-runs/{runId}/description-experiments":
+    "proposeEvalDescriptionRewrite",
+  "get /projects/{projectId}/eval-runs/{runId}/description-experiments":
+    "listEvalDescriptionExperimentsForRun",
+  "post /projects/{projectId}/eval-description-experiments/{experimentId}/start":
+    "startEvalDescriptionExperiment",
+  "get /projects/{projectId}/eval-description-experiments/{experimentId}":
+    "getEvalDescriptionExperiment",
   "get /projects/{projectId}/eval-suites/{suiteId}/cases": "listEvalCases",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases": "createEvalCase",
+  "post /projects/{projectId}/eval-suites/{suiteId}/cases/batch":
+    "createEvalCases",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases/generate":
     "generateEvalCases",
   "get /projects/{projectId}/eval-suites/{suiteId}/cases/{caseId}":
@@ -151,8 +269,19 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
 
   // Eval runs
   "post /projects/{projectId}/eval-runs": "createEvalRun",
+  "post /projects/{projectId}/eval-run-groups": "createEvalRunGroup",
+  "post /projects/{projectId}/eval-suites/{suiteId}/environments":
+    "attachEvalSuiteEnvironment",
   "get /projects/{projectId}/eval-runs/{runId}": "getEvalRun",
+  "get /projects/{projectId}/eval-runs/{runId}/decision-summary":
+    "getEvalRunDecisionSummary",
+  "get /projects/{projectId}/eval-runs/{runId}/compare": "compareEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/cancel": "cancelEvalRun",
+  "post /projects/{projectId}/eval-runs/{runId}/gate-waivers":
+    "createGateWaiver",
+  "get /projects/{projectId}/eval-runs/{runId}/gate-waivers": "getGateWaiver",
+  "delete /projects/{projectId}/eval-runs/{runId}/gate-waivers/{waiverId}":
+    "revokeGateWaiver",
   "get /projects/{projectId}/eval-runs/{runId}/iterations":
     "listEvalRunIterations",
   "get /projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/trace":
@@ -160,9 +289,9 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/steps":
     "getEvalRunSteps",
 
-  // Chatboxes (deprecated publicly; superseded by scenarios at GA)
-  "get /projects/{projectId}/chatboxes": "listChatboxes",
-  "get /projects/{projectId}/chatboxes/{chatboxId}": "getChatbox",
+  // Scenarios (deprecated publicly; superseded by scenarios at GA)
+  "get /projects/{projectId}/scenarios": "listScenarios",
+  "get /projects/{projectId}/scenarios/{scenarioId}": "getScenario",
 
   // Journeys (Swarms). Flag-gated beta, but the SDK carries them.
   "get /projects/{projectId}/journeys": "listJourneys",
@@ -184,6 +313,15 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "patch /projects/{projectId}/personas/{personaId}": "updatePersona",
   "delete /projects/{projectId}/personas/{personaId}": "deletePersona",
   "post /projects/{projectId}/personas/generate": "generatePersonas",
+
+  // Project secrets. Write-only end to end: the two reads return metadata and
+  // the three writes return metadata; no method on either side can produce a
+  // value.
+  "get /projects/{projectId}/secrets": "listSecrets",
+  "get /projects/{projectId}/secrets/{secretId}": "getSecret",
+  "post /projects/{projectId}/secrets": "createSecret",
+  "patch /projects/{projectId}/secrets/{secretId}": "updateSecret",
+  "delete /projects/{projectId}/secrets/{secretId}": "deleteSecret",
   "get /projects/{projectId}/swarms": "listSwarms",
   "get /projects/{projectId}/swarms/{swarmId}": "getSwarm",
   "post /projects/{projectId}/swarms": "createSwarm",
@@ -200,6 +338,13 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "undismissSwarmFinding",
   "post /projects/{projectId}/eval-runs/{runId}/insights":
     "requestEvalRunInsights",
+  "post /projects/{projectId}/eval-runs/{runId}/backtest": "backtestEvalRun",
+  "post /projects/{projectId}/eval-runs/{runId}/judge/backtest":
+    "backtestEvalRunJudge",
+  "post /projects/{projectId}/eval-runs/{runId}/judge": "requestEvalRunJudge",
+  "get /organizations/{organizationId}/eval-check-repos": "listEvalCheckRepos",
+  "post /organizations/{organizationId}/eval-check-repos":
+    "connectEvalCheckRepo",
   "get /projects/{projectId}/waves/{waveId}/insights": "getWaveInsights",
   "post /projects/{projectId}/waves/{waveId}/insights": "requestWaveInsights",
   "delete /projects/{projectId}/waves/{waveId}/insights": "cancelWaveInsights",
@@ -236,6 +381,12 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "setUserTestingGuestExecution",
   "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link":
     "rotateUserTestingLink",
+  "get /projects/{projectId}/shares/{resourceType}/{resourceId}":
+    "getShareSettings",
+  "patch /projects/{projectId}/shares/{resourceType}/{resourceId}":
+    "setShareMode",
+  "post /projects/{projectId}/shares/{resourceType}/{resourceId}/rotate-link":
+    "rotateShareLink",
   "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/members":
     "upsertUserTestingMember",
   "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}":
@@ -248,6 +399,15 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "publishScenario",
   "delete /projects/{projectId}/environments/{environmentId}/scenario":
     "unpublishScenario",
+
+  // MCP App widget render
+  "post /projects/{projectId}/servers/{serverId}/widgets/render":
+    "renderServerWidget",
+
+  // Agent Playground
+  "post /chat-sessions/messages": "sendChatMessage",
+  "get /chat-sessions/{sessionId}": "getChatSession",
+  "get /chat-sessions/{sessionId}/trace": "getChatSessionTrace",
 
   // Tunnels
   "post /projects/{projectId}/tunnels": "createTunnel",
@@ -262,12 +422,46 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
  * and it belongs in the map above with a method written for it.
  */
 const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
+  "get /projects/{projectId}/agent/jobs/{jobId}":
+    "Durable headless-agent transport used by surface-core for Slack/Discord; the SDK does not expose the service-credential-only agent entry point.",
+  "post /projects/{projectId}/agent/jobs/{jobId}/cancel":
+    "Durable headless-agent cancellation companion to the service-credential-only agent endpoint; surface clients own its job lifecycle.",
+  // The DEPRECATED `/hosts` aliases. Their canonical `/clients` twins are in
+  // the map above and are what the SDK's contract covers. The SDK does still
+  // reach these paths — `listHosts`…`duplicateHost` remain as executable
+  // compatibility delegates on their old DTOs — but those methods are not the
+  // client's coverage of a route, they are the client's memory of one. Mapping
+  // the alias here to the deprecated method would make the deprecated surface
+  // look like an equal second way in, which is the thing the rename is meant to
+  // end.
+  "get /projects/{projectId}/hosts":
+    "Deprecated alias of `GET /clients`; the SDK's `listHosts` is a compatibility delegate, not this route's contract.",
+  "post /projects/{projectId}/hosts":
+    "Deprecated alias of `POST /clients`; see `GET /projects/{projectId}/hosts`.",
+  "get /projects/{projectId}/hosts/{hostId}":
+    "Deprecated alias of `GET /clients/{client}`; see `GET /projects/{projectId}/hosts`.",
+  "patch /projects/{projectId}/hosts/{hostId}":
+    "Deprecated alias of `PATCH /clients/{client}`, and deliberately weaker: it keeps the pre-rename tokenless contract, so it cannot express the compare-and-set write the canonical route requires.",
+  "delete /projects/{projectId}/hosts/{hostId}":
+    "Deprecated alias of `DELETE /clients/{client}`; see `GET /projects/{projectId}/hosts`.",
+  "post /projects/{projectId}/hosts/{hostId}/servers":
+    "Deprecated alias of `POST /clients/{client}/servers`, without the required config token.",
+  "post /projects/{projectId}/hosts/{hostId}/duplicate":
+    "Deprecated alias of `POST /clients/{client}/duplicate`; see `GET /projects/{projectId}/hosts`.",
   "post /projects/{projectId}/agent":
     "The headless agent turn. Reachable only with a chat-surface service credential (Slack/Discord), and it spends hosted-model credits per call — an SDK method would advertise a capability an sk_ key does not have.",
+  "post /projects/{projectId}/model-leases":
+    "Transport plumbing for the SDK's `mcpjam/*` model provider, which mints, renews and revokes leases inside its own `fetch`. The SDK DOES call this route — but a lease is only usable by something that then speaks the vendor wire protocol to `proxyBaseUrl`, tracks `expiresAt`, and re-mints on a budget denial, which is exactly what the provider exists to do. A client method would hand a caller a raw credential and no way to spend it.",
+  "post /projects/{projectId}/model-leases/revoke":
+    "The teardown half of the above; `releaseMcpjamModelLeases()` calls it. See `POST /projects/{projectId}/model-leases`.",
   "get /agent-ops":
     "The agent's own operation registry, serialized for the org-settings Capabilities page. It describes the tools THIS build offers its agent — an implementation detail whose shape changes with every tool added, not a contract to program against.",
   "get /harness/{harnessId}/builtin-tools":
     "Static published-package metadata about a harness's NATIVE tools, which are not callable through MCPJam. Display-only for the UI; an SDK method would imply they can be invoked.",
+  "get /built-in-tools/{builtInToolId}/definitions":
+    "The `browser_*` tool definitions as the MODEL is shown them, read by the Tools pane and the Raw request preview so neither has to keep a hand-written copy of schemas that are built at turn time. They describe an in-turn capability rather than anything an SDK caller can invoke, and their wording changes with the prompt engineering — an SDK method would publish that as a contract.",
+  "get /harness/{harnessId}/capabilities":
+    "Which runtime surfaces THIS build's harness adapter can pause on, read by the host editor so the approval switch reflects the transport actually installed. It moves with a server flag rather than a release, so an SDK method would publish a value no caller could pin.",
   "get /host-catalog":
     "Unauthenticated static host-compat metadata. The SDK already fetches it through `fetchHostCompatCatalog`, which needs no client and no credential — routing it through the authenticated client would be a step backwards.",
   "get /trace-exports/otlp":
@@ -278,6 +472,10 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "An interactive OAuth probe for the Inspector UI's connect flow, whose result only makes sense to something that can then open a browser.",
   "post /projects/{projectId}/servers/{serverId}/oauth/import-tokens":
     "Imports an OAuth grant obtained out of band. Deliberately hard to reach: an SDK method would make bulk credential injection the easy path.",
+  "post /projects/{projectId}/eval-ingest/capabilities":
+    "Authenticated SDK reporting capability negotiation is owned by the reporter.",
+  "post /projects/{projectId}/eval-ingest/runs/evaluations":
+    "Advisory case-run persistence is owned by the SDK reporter, alongside report terminalization.",
   "post /projects/{projectId}/eval-ingest/report":
     "SDK eval-result INGESTION. Already covered by the SDK's reporter, which owns the payload shape end to end; a second, lower-level way to post the same body would let the two drift.",
   "post /projects/{projectId}/eval-ingest/runs/start":
@@ -288,6 +486,20 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "Incremental-ingestion transport; the reporter closes the run it opened.",
   "post /projects/{projectId}/eval-ingest/artifacts/upload-url":
     "Mints a short-lived artifact upload URL as part of the ingestion handshake. Useless outside it, and a standalone method would hand out signed URLs on request.",
+  "post /projects/{projectId}/conformance-ingest/report":
+    "SDK conformance-run INGESTION. Already covered by `reportConformanceRun`; a second, lower-level client method would let the two drift.",
+  "post /projects/{projectId}/conformance-ingest/runs/start":
+    "Incremental conformance ingestion, driven by the SDK reporter.",
+  "post /projects/{projectId}/conformance-ingest/runs/reports":
+    "Incremental conformance ingestion; one suite report per call.",
+  "post /projects/{projectId}/conformance-ingest/runs/heartbeat":
+    "Keeps a long-running uploaded conformance run from looking stale.",
+  "post /projects/{projectId}/conformance-ingest/runs/finalize":
+    "Closes the incremental conformance ingest the reporter opened.",
+  "put /projects/{projectId}/shares/{resourceType}/{resourceId}/members":
+    "Share member upsert stays REST-only for now.",
+  "delete /projects/{projectId}/shares/{resourceType}/{resourceId}/members/{memberIdOrEmail}":
+    "Share member removal stays REST-only for now.",
 };
 
 describe("/api/v1 -> SDK coverage", () => {
@@ -302,16 +514,16 @@ describe("/api/v1 -> SDK coverage", () => {
     expect(
       unmapped,
       `/api/v1 routes with no SDK client method — add one, or an EXCLUDED_FROM_SDK reason:\n  ${unmapped.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
 
     const both = [...mapped].filter((route) => excluded.has(route)).sort();
     expect(
       both,
       `Routes claimed by BOTH maps — the partition must be disjoint:\n  ${both.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -322,8 +534,8 @@ describe("/api/v1 -> SDK coverage", () => {
     expect(
       stale,
       `Map entries for routes that no longer exist (renamed? removed?):\n  ${stale.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -348,8 +560,8 @@ describe("/api/v1 -> SDK coverage", () => {
     expect(
       missing,
       `ROUTE_TO_SDK names PlatformApiClient methods that do not exist:\n  ${missing.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -362,4 +574,45 @@ describe("/api/v1 -> SDK coverage", () => {
     const reasons = Object.values(EXCLUDED_FROM_SDK);
     expect(new Set(reasons).size).toBeGreaterThan(reasons.length / 2);
   });
+});
+
+describe("authoring SDK requests", () => {
+  it.each(["completed", "failed", "cancelled"])(
+    "handles %s without committing unsuccessful jobs",
+    async (status) => {
+      const requests: Array<{ url: string; method: string }> = [];
+      const client = new PlatformApiClient({
+        baseUrl: "https://example.test/api/v1",
+        getAuth: async () => "test-token",
+        fetch: async (url, init) => {
+          requests.push({ url: String(url), method: init?.method ?? "GET" });
+          const data =
+            requests.length === 1
+              ? { jobId: "job" }
+              : requests.length === 2
+              ? { status, error: "Declared job error" }
+              : { created: [] };
+          return Response.json(data);
+        },
+      });
+      const result = client.generateEvalCases({
+        projectId: "p",
+        suiteId: "s",
+        body: {},
+      });
+      if (status === "completed")
+        await expect(result).resolves.toEqual({ created: [] });
+      else await expect(result).rejects.toThrow("Declared job error");
+      expect(requests[1]).toEqual({
+        method: "GET",
+        url: "https://example.test/api/v1/projects/p/eval-suites/s/authoring/job",
+      });
+      if (status === "completed")
+        expect(requests[2]).toEqual({
+          method: "POST",
+          url: "https://example.test/api/v1/projects/p/eval-suites/s/authoring/job/commit",
+        });
+      else expect(requests).toHaveLength(2);
+    },
+  );
 });

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { routePaths } from "../lib/app-navigation";
 
@@ -22,6 +22,8 @@ const {
   mockNavigate,
   mockParams,
   mockHostList,
+  mockCreateHost,
+  mockFeatureFlags,
   mockPreviewed,
   mockSetPreviewedHostId,
   mockSetHostsTabSelectedHostId,
@@ -39,8 +41,15 @@ const {
   // — an empty loaded list means "deleted", which is the other route guard's
   // subject (see `HostsRoute.deleted-host-permalink.test.tsx`).
   mockHostList: {
-    hosts: [] as Array<{ hostId: string }>,
+    hosts: [] as Array<{ hostId: string; name?: string }>,
     isLoading: false,
+  },
+  mockCreateHost: vi.fn(),
+  // Tri-state, like PostHog: `undefined` is what every first render sees, and
+  // the deep-link guard must WAIT there rather than read it as off.
+  mockFeatureFlags: {
+    claudeCode: undefined as boolean | undefined,
+    codex: undefined as boolean | undefined,
   },
   mockPreviewed: { value: null as string | null },
   mockSetPreviewedHostId: vi.fn(),
@@ -78,13 +87,26 @@ vi.mock("../hooks/useClients", async (importOriginal) => {
     ...actual,
     useHostList: () => mockHostList,
     useHostMutations: () => ({
-      createHost: vi.fn(),
+      createHost: mockCreateHost,
       updateHostServers: vi.fn(),
       deleteHost: vi.fn(),
       duplicateHost: vi.fn(),
     }),
   };
 });
+
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (flag: string) =>
+    flag === "claude-code-host-enabled"
+      ? mockFeatureFlags.claudeCode
+      : flag === "codex-host-enabled"
+      ? mockFeatureFlags.codex
+      : false,
+}));
+
+vi.mock("../lib/toast", () => ({
+  toast: { error: vi.fn(), success: vi.fn(), message: vi.fn() },
+}));
 
 vi.mock("../lib/app-navigation", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/app-navigation")>();
@@ -136,7 +158,9 @@ vi.mock("@codemirror/lint", () => ({
   lintGutter: () => ({}),
 }));
 
-import { HostsRoute } from "../App";
+import { HOST_TEMPLATE_FLAG_WAIT_MS, HostsRoute } from "../App";
+import { buildHostsPath } from "../lib/app-navigation";
+import { toast } from "../lib/toast";
 
 beforeEach(() => {
   mockRouteContext.convexProjectId = "project-1";
@@ -145,9 +169,13 @@ beforeEach(() => {
   mockRouteContext.setHostsTabSelectedHostId = mockSetHostsTabSelectedHostId;
   mockPreviewed.value = null;
   mockParams.hostId = undefined;
+  window.history.replaceState({}, "", routePaths.hosts);
   // Loaded, and the id this suite opens is a live client of the project.
   mockHostList.hosts = [{ hostId: CONVEX_HOST_ID }];
   mockHostList.isLoading = false;
+  mockCreateHost.mockReset();
+  mockFeatureFlags.claudeCode = undefined;
+  mockFeatureFlags.codex = undefined;
 });
 
 afterEach(() => {
@@ -155,6 +183,165 @@ afterEach(() => {
 });
 
 describe("HostsRoute — a URL segment that is not a Convex host id", () => {
+  it("does not create a gated host from a direct verify URL", async () => {
+    mockHostList.hosts = [];
+    mockFeatureFlags.codex = false;
+    window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
+
+    render(<HostsRoute />);
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith(routePaths.hosts, {
+        replace: true,
+      });
+    });
+    expect(mockCreateHost).not.toHaveBeenCalled();
+    // The bounce lands on a list that looks unchanged, so the toast is the only
+    // thing telling the user why their link did nothing.
+    expect(toast.error).toHaveBeenCalledWith("Codex is not available yet.");
+  });
+
+  it("opens a gated host the account already has", async () => {
+    mockHostList.hosts = [{ hostId: CONVEX_HOST_ID, name: "Codex" }];
+    window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
+
+    render(<HostsRoute />);
+
+    // Reuse is matched by name and runs ahead of the rollout gate — an account
+    // that already has the host keeps reaching it, flag or no flag.
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith(buildHostsPath(CONVEX_HOST_ID), {
+        replace: true,
+      });
+    });
+    expect(mockCreateHost).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("does not create again after a failed create", async () => {
+    mockHostList.hosts = [];
+    mockFeatureFlags.codex = true;
+    mockCreateHost.mockRejectedValue(new Error("host limit reached"));
+    window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
+
+    const { rerender } = render(<HostsRoute />);
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("host limit reached")
+    );
+    // A later render (the other flag settling, a host-list update) must not
+    // retry a create that may have committed before it failed.
+    mockFeatureFlags.claudeCode = false;
+    rerender(<HostsRoute />);
+    await waitFor(() => expect(mockCreateHost).toHaveBeenCalledTimes(1));
+  });
+
+  it("waits for an unresolved flag instead of bouncing the verify URL", async () => {
+    mockHostList.hosts = [];
+    window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
+
+    render(<HostsRoute />);
+
+    // The whole point of the tri-state: a user who IS in the rollout must not
+    // be bounced during the cold load, before their flag arrives.
+    await Promise.resolve();
+    expect(mockNavigate).not.toHaveBeenCalledWith(routePaths.hosts, {
+      replace: true,
+    });
+    expect(mockCreateHost).not.toHaveBeenCalled();
+  });
+
+  it("stops waiting for a flag that never resolves", async () => {
+    vi.useFakeTimers();
+    try {
+      mockHostList.hosts = [];
+      window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
+
+      render(<HostsRoute />);
+      expect(mockNavigate).not.toHaveBeenCalledWith(routePaths.hosts, {
+        replace: true,
+      });
+
+      // A blocked PostHog relay leaves the flag `undefined` forever. Up to the
+      // deadline the link must keep waiting — a shorter wait would bounce the
+      // rollout cohort mid-load, which is what the tri-state exists to prevent.
+      await act(async () => {
+        vi.advanceTimersByTime(HOST_TEMPLATE_FLAG_WAIT_MS - 1);
+      });
+      expect(mockNavigate).not.toHaveBeenCalledWith(routePaths.hosts, {
+        replace: true,
+      });
+
+      // Past it, the link must fail visibly rather than sit there doing nothing.
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+      });
+
+      expect(mockNavigate).toHaveBeenCalledWith(routePaths.hosts, {
+        replace: true,
+      });
+      expect(mockCreateHost).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("abandons the link when the URL switches templates mid-wait", async () => {
+    mockHostList.hosts = [];
+    window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
+
+    const { rerender } = render(<HostsRoute />);
+
+    // The captured id is read once at mount, so a URL that now asks for a
+    // different template (or none at all) must abandon the link rather than
+    // resolve it to the host the user is no longer asking for.
+    window.history.replaceState({}, "", `${routePaths.hosts}?template=claude`);
+    mockFeatureFlags.codex = true;
+    rerender(<HostsRoute />);
+
+    await act(async () => {});
+    expect(mockCreateHost).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalledWith(routePaths.hosts, {
+      replace: true,
+    });
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("abandons the link when the template param is emptied mid-wait", async () => {
+    mockHostList.hosts = [];
+    window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
+
+    const { rerender } = render(<HostsRoute />);
+
+    window.history.replaceState({}, "", `${routePaths.hosts}?template=`);
+    mockFeatureFlags.codex = false;
+    rerender(<HostsRoute />);
+
+    await act(async () => {});
+    expect(mockCreateHost).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalledWith(routePaths.hosts, {
+      replace: true,
+    });
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("creates the host exactly once when the flag resolves to on", async () => {
+    mockHostList.hosts = [];
+    mockCreateHost.mockResolvedValue({ hostId: CONVEX_HOST_ID });
+    window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
+
+    const { rerender } = render(<HostsRoute />);
+    expect(mockCreateHost).not.toHaveBeenCalled();
+
+    mockFeatureFlags.codex = true;
+    rerender(<HostsRoute />);
+
+    await waitFor(() => expect(mockCreateHost).toHaveBeenCalledTimes(1));
+    // The flag settling re-runs the effect; the latch must hold across it.
+    rerender(<HostsRoute />);
+    await waitFor(() => expect(mockCreateHost).toHaveBeenCalledTimes(1));
+  });
+
   it("sends a catalog slug to the clients list instead of opening it", () => {
     mockParams.hostId = "chatgpt";
 

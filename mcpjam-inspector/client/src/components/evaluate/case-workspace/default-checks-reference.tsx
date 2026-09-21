@@ -1,0 +1,23 @@
+import { Button } from "@mcpjam/design-system/button";
+import { ListChecks } from "lucide-react";
+
+export function DefaultChecksReference({
+  onOverride,
+  onConfigureSuite,
+}: {
+  onConfigureSuite?: () => void;
+  onOverride?: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      data-testid="default-checks-reference"
+      onClick={onOverride ?? onConfigureSuite}
+    >
+      <ListChecks className="size-3.5" />
+      Configure test case evaluators
+    </Button>
+  );
+}

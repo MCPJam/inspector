@@ -4,7 +4,7 @@
  * The reported bug: a brand-new project showed four or five "scenarios" nobody
  * created — the three clients the Playground seeds into an empty project, the
  * "MCPJam" one the host bar seeds, and one per client set up in Servers. They
- * were there because a chatbox row is minted 1:1 with every host, and the list
+ * were there because a scenario row is minted 1:1 with every host, and the list
  * rendered every row.
  *
  * The filter runs only where environments exist (the flag), because a project
@@ -14,15 +14,15 @@
  */
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ChatboxListItem } from "@/hooks/useChatboxes";
+import type { ScenarioListItem } from "@/hooks/useScenarios";
 
-const { navigateMock, listState, chatboxState, flagState } = vi.hoisted(() => ({
+const { navigateMock, listState, scenarioState, flagState } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
   listState: {
-    chatboxes: [] as ChatboxListItem[] | undefined,
+    scenarios: [] as ScenarioListItem[] | undefined,
     isLoading: false,
   },
-  chatboxState: { chatbox: null as unknown, isLoading: false },
+  scenarioState: { scenario: null as unknown, isLoading: false },
   flagState: { enabled: true },
 }));
 
@@ -31,9 +31,19 @@ vi.mock("convex/react", () => ({
   useMutation: () => vi.fn(),
 }));
 
-vi.mock("react-router", () => ({
-  useNavigate: () => navigateMock,
+vi.mock("react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-router")>()),
   useSearchParams: () => [new URLSearchParams(), vi.fn()],
+}));
+
+// `useAppNavigate`, not react-router's `useNavigate`: app navigation goes
+// through the scoped helper now, which carries the active project into
+// project-owned paths (`/p/<projectId>/hosts/<id>`). The rest of
+// `app-navigation` is the real module — these suites assert against its
+// path builders.
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  useAppNavigate: () => navigateMock,
 }));
 
 vi.mock("@/hooks/useClients", () => ({
@@ -41,12 +51,12 @@ vi.mock("@/hooks/useClients", () => ({
   useHostMutations: () => ({ createHost: vi.fn() }),
 }));
 
-vi.mock("@/hooks/useChatboxes", () => ({
-  useChatbox: () => chatboxState,
-  useChatboxList: () => listState,
-  useChatboxMutations: () => ({ deleteChatbox: vi.fn() }),
-  useEnvironmentChatboxMutations: () => ({
-    publishEnvironmentChatbox: vi.fn(),
+vi.mock("@/hooks/useScenarios", () => ({
+  useScenario: () => scenarioState,
+  useScenarioList: () => listState,
+  useScenarioMutations: () => ({ deleteScenario: vi.fn() }),
+  useEnvironmentScenarioMutations: () => ({
+    publishEnvironmentScenario: vi.fn(),
   }),
 }));
 
@@ -76,14 +86,14 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: () => "light",
 }));
 
-vi.mock("@/components/chatboxes/UserTestingScenarioDetail", () => ({
+vi.mock("@/components/scenarios/UserTestingScenarioDetail", () => ({
   UserTestingScenarioDetail: () => <div data-testid="scenario-detail" />,
 }));
 
 import { UserTestingTab } from "../UserTestingTab";
 
-const row = (over: Partial<ChatboxListItem>): ChatboxListItem => ({
-  chatboxId: "cb-seed",
+const row = (over: Partial<ScenarioListItem>): ScenarioListItem => ({
+  scenarioId: "cb-seed",
   projectId: "proj-1",
   name: "Claude Code",
   hostStyle: "claude",
@@ -100,12 +110,12 @@ const row = (over: Partial<ChatboxListItem>): ChatboxListItem => ({
 });
 
 /** The exact lineup a fresh project reported: seeds + one real scenario. */
-const SEEDED_PROJECT: ChatboxListItem[] = [
-  row({ chatboxId: "cb-seed-1", name: "Claude Code", namedHostId: "h1" }),
-  row({ chatboxId: "cb-seed-2", name: "ChatGPT", namedHostId: "h2" }),
-  row({ chatboxId: "cb-seed-3", name: "MCPJam", namedHostId: "h3" }),
+const SEEDED_PROJECT: ScenarioListItem[] = [
+  row({ scenarioId: "cb-seed-1", name: "Claude Code", namedHostId: "h1" }),
+  row({ scenarioId: "cb-seed-2", name: "ChatGPT", namedHostId: "h2" }),
+  row({ scenarioId: "cb-seed-3", name: "MCPJam", namedHostId: "h3" }),
   row({
-    chatboxId: "cb-real",
+    scenarioId: "cb-real",
     name: "Checkout flow",
     namedHostId: "h4",
     environmentId: "env-1",
@@ -115,15 +125,15 @@ const SEEDED_PROJECT: ChatboxListItem[] = [
 
 afterEach(() => {
   navigateMock.mockClear();
-  listState.chatboxes = [];
+  listState.scenarios = [];
   listState.isLoading = false;
-  chatboxState.chatbox = null;
+  scenarioState.scenario = null;
   flagState.enabled = true;
 });
 
 describe("UserTestingTab — which scenarios the list advertises", () => {
   it("hides auto-minted client rows and keeps the published environment", async () => {
-    listState.chatboxes = SEEDED_PROJECT;
+    listState.scenarios = SEEDED_PROJECT;
 
     render(<UserTestingTab projectId="proj-1" isAuthenticated />);
 
@@ -134,7 +144,7 @@ describe("UserTestingTab — which scenarios the list advertises", () => {
   });
 
   it("shows the empty state for a project that only has seeded clients", async () => {
-    listState.chatboxes = SEEDED_PROJECT.filter((r) => !r.environmentId);
+    listState.scenarios = SEEDED_PROJECT.filter((r) => !r.environmentId);
 
     render(<UserTestingTab projectId="proj-1" isAuthenticated />);
 
@@ -145,9 +155,9 @@ describe("UserTestingTab — which scenarios the list advertises", () => {
   });
 
   it("keeps a legacy client row that real testers actually used", async () => {
-    listState.chatboxes = [
-      row({ chatboxId: "cb-used", name: "Cursor", uniqueTesterCount: 3 }),
-      row({ chatboxId: "cb-idle", name: "Copilot" }),
+    listState.scenarios = [
+      row({ scenarioId: "cb-used", name: "Cursor", uniqueTesterCount: 3 }),
+      row({ scenarioId: "cb-idle", name: "Copilot" }),
     ];
 
     render(<UserTestingTab projectId="proj-1" isAuthenticated />);
@@ -159,8 +169,8 @@ describe("UserTestingTab — which scenarios the list advertises", () => {
 
   it("still opens a filtered-out row by direct link", async () => {
     // Hiding a row from the list says "not worth advertising", never "gone".
-    listState.chatboxes = SEEDED_PROJECT;
-    chatboxState.chatbox = { chatboxId: "cb-seed-1", name: "Claude Code" };
+    listState.scenarios = SEEDED_PROJECT;
+    scenarioState.scenario = { scenarioId: "cb-seed-1", name: "Claude Code" };
 
     render(
       <UserTestingTab
@@ -178,7 +188,7 @@ describe("UserTestingTab — which scenarios the list advertises", () => {
     // Such a project has no environment-backed scenarios, so filtering would
     // leave it with a surface it cannot use.
     flagState.enabled = false;
-    listState.chatboxes = SEEDED_PROJECT;
+    listState.scenarios = SEEDED_PROJECT;
 
     render(<UserTestingTab projectId="proj-1" isAuthenticated />);
 

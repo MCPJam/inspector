@@ -3,21 +3,15 @@ import { ShieldQuestion } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { track } from "@/lib/analytics";
 
-/**
- * First-run consent for the local computer engine. Allowing it grants the
- * device capability (see `useLocalComputerConsent`) that lets agents run bash
- * — and, once the terminal ships, a shell — on THIS machine as the user's own
- * account. Deliberately blunt about that: it is not a sandbox.
- *
- * `onUseCloud` is shown only when a cloud computer is also available, so a
- * pure-local inspector doesn't offer a fallback that doesn't exist.
- */
+/** Shell-only device consent; Browser permission is independent. */
 export function LocalComputerConsentGate({
   onAllow,
   onUseCloud,
+  location = "computer_tab_local",
 }: {
   onAllow: () => Promise<boolean> | boolean;
   onUseCloud?: () => void;
+  location?: "computer_tab_local" | "playground_browser";
 }) {
   const [granting, setGranting] = useState(false);
   const [error, setError] = useState(false);
@@ -29,10 +23,10 @@ export function LocalComputerConsentGate({
   const cloudOffered = !!onUseCloud;
   useEffect(() => {
     track("local_computer_consent_gate_shown", {
-      location: "computer_tab_local",
+      location,
       cloud_offered: cloudOffered,
     });
-  }, [cloudOffered]);
+  }, [cloudOffered, location]);
 
   const handleAllow = async () => {
     setGranting(true);
@@ -41,13 +35,13 @@ export function LocalComputerConsentGate({
       const ok = await onAllow();
       if (!ok) setError(true);
       track("local_computer_consent_granted", {
-        location: "computer_tab_local",
+        location,
         outcome: ok ? "stored" : "failed",
       });
     } catch {
       setError(true);
       track("local_computer_consent_granted", {
-        location: "computer_tab_local",
+        location,
         outcome: "failed",
       });
     } finally {
@@ -56,7 +50,7 @@ export function LocalComputerConsentGate({
   };
 
   const handleUseCloud = () => {
-    track("local_computer_consent_denied", { location: "computer_tab_local" });
+    track("local_computer_consent_denied", { location });
     onUseCloud?.();
   };
 
@@ -70,14 +64,18 @@ export function LocalComputerConsentGate({
         Allow agents to run commands on this machine?
       </h2>
       <p className="text-sm leading-relaxed text-muted-foreground">
-        The bash tool runs real commands on this computer, as your user
-        account. The project folder is only a starting directory, not a
-        sandbox — commands can read or change any files and credentials your
-        user can access. Each agent command still asks for approval in chat
-        before it runs.
+        Enabled tools can run commands as your user account. This permission
+        authorizes shell commands; it does not enable the Bash tool on this
+        host. The project folder is not a sandbox — commands can read or change
+        files and credentials your user can access. Chat approval settings still
+        apply.
       </p>
       <div className="mt-1 flex items-center gap-2">
-        <Button size="sm" onClick={() => void handleAllow()} disabled={granting}>
+        <Button
+          size="sm"
+          onClick={() => void handleAllow()}
+          disabled={granting}
+        >
           {granting ? "Allowing…" : "Allow"}
         </Button>
         {onUseCloud ? (
@@ -93,8 +91,8 @@ export function LocalComputerConsentGate({
       </div>
       {error ? (
         <p className="text-xs text-destructive" data-testid="consent-error">
-          Couldn't enable the local computer. Check that you're signed in and
-          try again.
+          Couldn't authorize this machine. Check that you're signed in and try
+          again.
         </p>
       ) : null}
     </div>

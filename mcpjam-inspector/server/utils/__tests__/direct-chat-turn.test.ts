@@ -22,6 +22,7 @@
  * These tests are wire shape tests, not behavior tests — they assert
  * that the helper's contract matches what PR 4b's eval call site needs.
  */
+import { buildPageTools } from "../chat-v2-orchestration";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const streamTextMock = vi.hoisted(() => vi.fn());
@@ -67,6 +68,42 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
       mcpjam: { serverId: "srv-1" },
     });
   });
+
+  it.each(["tool-input-start", "tool-input-available", "tool-input-error"])(
+    "preserves inspector tool names in %s metadata",
+    (type) => {
+      const tools = buildPageTools([
+        {
+          alias: "page_1a2b3c4d",
+          sessionId: "s",
+          toolKey: "add_topping",
+          rawName: "add_topping",
+          origin: "https://pizza.test",
+        },
+      ]);
+      const chunk = withMcpToolOriginChunkMetadata(
+        { type, toolName: "page_1a2b3c4d" },
+        tools,
+      ) as any;
+      expect(chunk.providerMetadata.mcpjam.pageTool).toEqual({
+        rawName: "add_topping",
+        origin: "https://pizza.test",
+      });
+      const resumed = withMcpToolOriginChunkMetadata(
+        chunk,
+        buildPageTools([
+          {
+            alias: "page_1a2b3c4d",
+            sessionId: "s",
+            toolKey: "changed",
+            rawName: "changed",
+            origin: "https://other.test",
+          },
+        ]),
+      ) as any;
+      expect(resumed.providerMetadata).toEqual(chunk.providerMetadata);
+    },
+  );
 
   function defaultStreamTextReturn(
     overrides: Partial<{
@@ -427,7 +464,10 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
   });
 
   it("narrows the request_payload trace tools via prepareAdvertisedTools (step 0)", () => {
-    streamTextMock.mockReturnValueOnce(defaultStreamTextReturn());
+    streamTextMock.mockImplementationOnce((options) => {
+      options.prepareStep({ stepNumber: 0 });
+      return defaultStreamTextReturn();
+    });
     let payloadTools: Record<string, unknown> | undefined;
     runDirectChatTurn({
       llmModel: { id: "mock" } as any,
@@ -453,6 +493,51 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     // The request_payload trace must reflect the narrowed step-0 advertised set
     // (regression: previously it emitted the full tools map).
     expect(payloadTools && Object.keys(payloadTools)).toEqual(["search"]);
+  });
+
+  it("records every prepared request identically for streaming persistence and headless callers", async () => {
+    let options: any;
+    streamTextMock.mockImplementationOnce((value) => {
+      options = value;
+      return defaultStreamTextReturn();
+    });
+    const onPersist = vi.fn();
+    const onRequestPayload = vi.fn();
+    const initial = [{ role: "user", content: "hi" }];
+    const handle = runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: initial as any,
+      systemPrompt: "original",
+      tools: {
+        search: { description: "Search" },
+        computer: { description: "Computer" },
+      } as any,
+      prepareAdvertisedTools: ({ stepIndex }) =>
+        stepIndex === 0 ? ["search"] : ["computer"],
+      traceEvents: { onRequestPayload },
+      onPersist,
+    });
+    options.prepareStep({ stepNumber: 0, messages: initial });
+    const next = [...initial, { role: "assistant", content: "search result" }];
+    options.prepareStep({ stepNumber: 1, messages: next });
+    next.push({ role: "assistant", content: "after request" });
+    await options.onFinish({ steps: [], totalUsage: {}, finishReason: "stop" });
+    const result = await consumeDirectChatTurnHeadless(handle);
+    expect(onRequestPayload).toHaveBeenCalledTimes(2);
+    expect(result.turnTrace.requestPayloads).toEqual(
+      onPersist.mock.calls[0][0].turnTrace.requestPayloads,
+    );
+    expect(result.turnTrace.requestPayloads).toHaveLength(2);
+    expect(
+      Object.keys(result.turnTrace.requestPayloads![0].payload.tools!),
+    ).toEqual(["search"]);
+    expect(
+      Object.keys(result.turnTrace.requestPayloads![1].payload.tools!),
+    ).toEqual(["computer"]);
+    expect(result.turnTrace.requestPayloads![1].payload.messages).toHaveLength(
+      2,
+    );
   });
 
   it("flips `isAborted` true when the abort signal fires", async () => {
@@ -834,5 +919,77 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
       maxSteps: 0, // invalid → falls back to 20
     });
     expect(stepCountIsMock).toHaveBeenLastCalledWith(20);
+  });
+
+  it("throws the stream's own error, not the SDK's no-output wrapper", async () => {
+    // Measured against ai@6.0.160 and a 429 provider: the error reaches ONLY
+    // `streamText`'s `onError`, `consumeStream` reports nothing, and every
+    // awaited accessor rejects with `NoOutputGeneratedError` — a sentence
+    // naming no provider, which is all `classifyTurnFailure` would see.
+    const providerError = new Error(
+      "Failed after 3 attempts. Last error: Too Many Requests",
+    );
+    // Pre-handled so the accessors the consumer never reaches don't surface as
+    // unhandled rejections.
+    const noOutput = () => {
+      const rejected = Promise.reject(
+        new Error("No output generated. Check the stream for errors."),
+      );
+      rejected.catch(() => {});
+      return rejected;
+    };
+
+    // Play the SDK: hand the error to the `onError` the engine wired, leave
+    // `consumeStream` silent, then reject what the consumer awaits.
+    streamTextMock.mockImplementationOnce((options: any) => ({
+      ...defaultStreamTextReturn(),
+      consumeStream: async () => {
+        await options.onError({ error: providerError });
+      },
+      response: noOutput(),
+      steps: noOutput(),
+      totalUsage: noOutput(),
+      finishReason: noOutput(),
+    }));
+
+    const handle = runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+    });
+
+    await expect(consumeDirectChatTurnHeadless(handle)).rejects.toThrow(
+      "Failed after 3 attempts. Last error: Too Many Requests",
+    );
+  });
+
+  it("leaves an abort as the abort, with no stream error to prefer", async () => {
+    // The engine's `onError` returns early on an abort, so an aborted turn must
+    // not start reporting a stream error the caller would classify as failure.
+    const abortError = Object.assign(new Error("Aborted"), {
+      name: "AbortError",
+    });
+    streamTextMock.mockImplementationOnce((options: any) => ({
+      ...defaultStreamTextReturn(),
+      consumeStream: async () => {
+        await options.onError({ error: abortError });
+      },
+    }));
+
+    const handle = runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+    });
+
+    const result = await consumeDirectChatTurnHeadless(handle);
+    expect(result.aborted).toBe(true);
+    // The accessors resolve here, so `aborted` alone would still pass if
+    // `onError` started recording the abort — assert the store stayed empty.
+    expect(handle.lastStreamError()).toBeUndefined();
   });
 });

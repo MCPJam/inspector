@@ -1,8 +1,5 @@
 export type SuiteOverviewView =
-  | "runs"
-  | "test-cases"
-  | "executions"
-  | "cross-host";
+  "runs" | "test-cases" | "executions" | "cross-host";
 
 /**
  * Unified eval routes for both Evaluate modes: Suites (`/evals`) and Runs
@@ -13,6 +10,8 @@ export type SuiteOverviewView =
 export type EvalRoute =
   | { type: "list" }
   | { type: "create" }
+  /** Frontend-first preview of suites we'd generate from a connected server. */
+  | { type: "eval-server"; serverId: string }
   | {
       type: "suite-overview";
       suiteId: string;
@@ -29,6 +28,7 @@ export type EvalRoute =
       testCaseId?: string;
       insightsFocus?: boolean;
       compareToRunId?: string;
+      comparison?: boolean;
     }
   | { type: "test-detail"; suiteId: string; testId: string; iteration?: string }
   | {
@@ -37,10 +37,13 @@ export type EvalRoute =
       testId: string;
       /** Deep-link: open compare run surface (same as View results) when iterations exist. */
       openCompare?: boolean;
+      checks?: boolean;
       /** Deep-link: prefer the clicked iteration/session when hydrating compare results. */
       iteration?: string;
+      /** Return to the Eval my server first-run preview after editing. */
+      fromEvalServer?: string;
     }
-  | { type: "suite-edit"; suiteId: string }
+  | { type: "suite-edit"; suiteId: string; fromCaseChecks?: string }
   | {
       type: "commit-detail";
       commitSha: string;

@@ -233,8 +233,25 @@ export type TraceRevealSelection = {
   highlightSourceIndices: number[];
 };
 
+/**
+ * Compile-time exhaustiveness with a runtime fallback.
+ *
+ * Every known category must be handled above, or `never` stops the build.
+ * A category this build has never heard of still renders: the backend's
+ * primary eval-trace writer accepts spans as `v.any()`, so a newer producer
+ * reaches an older client, and dropping the row would hide real evidence.
+ */
+function assertExhaustiveCategory<T>(category: never, fallback: T): T {
+  void category;
+  return fallback;
+}
+
 function categoryRank(category: EvalTraceSpanCategory): number {
   switch (category) {
+    case "connection":
+      return -2;
+    case "discovery":
+      return -1;
     case "step":
       return 0;
     case "llm":
@@ -244,7 +261,10 @@ function categoryRank(category: EvalTraceSpanCategory): number {
     case "error":
       return 3;
     default:
-      return 9;
+      // A category this build does not know still has to sort. The backend
+      // primary trace writer takes spans as `v.any()`, so a newer producer
+      // can reach an older client.
+      return assertExhaustiveCategory(category, 9);
   }
 }
 
@@ -583,17 +603,20 @@ function getWaterfallBarClass(
     return "trace-waterfall-bar-error";
   }
   if (row.kind !== "span") return "trace-waterfall-bar-step";
-  switch (row.span.category) {
+  const spanCategory = row.span.category;
+  switch (spanCategory) {
     case "llm":
       return "trace-waterfall-bar-llm";
     case "tool":
       return "trace-waterfall-bar-tool";
     case "step":
+    case "connection":
+    case "discovery":
       return "trace-waterfall-bar-step";
     case "error":
       return "trace-waterfall-bar-error";
     default:
-      return "trace-waterfall-bar-step";
+      return assertExhaustiveCategory(spanCategory, "trace-waterfall-bar-step");
   }
 }
 
@@ -612,8 +635,11 @@ function getCategoryIconClass(
       return "trace-waterfall-glyph-tool";
     case "error":
       return "trace-waterfall-glyph-error";
+    case "connection":
+    case "discovery":
+      return "trace-waterfall-glyph-step";
     default:
-      return "text-muted-foreground";
+      return assertExhaustiveCategory(category, "text-muted-foreground");
   }
 }
 
@@ -638,9 +664,11 @@ function getRowBorderAccentClass(
     case "error":
       return "trace-waterfall-row-accent-error";
     case "step":
+    case "connection":
+    case "discovery":
       return "trace-waterfall-row-accent-step";
     default:
-      return "border-l-muted-foreground";
+      return assertExhaustiveCategory(cat, "border-l-muted-foreground");
   }
 }
 
@@ -704,6 +732,8 @@ export function buildPromptGroups(spans: EvalTraceSpan[]): PromptGroup[] {
         llm: 0,
         tool: 0,
         error: 0,
+        connection: 0,
+        discovery: 0,
       };
       for (const span of promptSpans) {
         if (span.category in counts) {
@@ -1103,8 +1133,12 @@ function CategoryGlyph({
       return <MousePointerClick className={iconClass} aria-hidden />;
     case "error":
       return <AlertCircle className={iconClass} aria-hidden />;
+    case "connection":
+    case "discovery":
     case "step":
+      return <ListTree className={iconClass} aria-hidden />;
     default:
+      // Unknown category: still draw a row rather than rendering nothing.
       return <ListTree className={iconClass} aria-hidden />;
   }
 }
@@ -2433,6 +2467,8 @@ export function TraceTimeline({
             {(
               [
                 { label: "User", cls: "trace-waterfall-bar-prompt" },
+                { label: "Connect", cls: "trace-waterfall-bar-step" },
+                { label: "Discovery", cls: "trace-waterfall-bar-step" },
                 { label: "LLM",  cls: "trace-waterfall-bar-llm" },
                 { label: "Tool", cls: "trace-waterfall-bar-tool" },
                 { label: "Step", cls: "trace-waterfall-bar-step" },

@@ -87,7 +87,7 @@ describe("authorizeBatch — request log context attribution", () => {
                 ...projectCtx,
                 serverId: "srv-alpha",
                 serverTransport: "http",
-                chatboxId: "cb-1",
+                scenarioId: "cb-1",
               },
             },
           },
@@ -101,7 +101,7 @@ describe("authorizeBatch — request log context attribution", () => {
     const merged = vars.requestLogContext as RequestLogContext;
     expect(merged.serverId).toBe("srv-alpha");
     expect(merged.serverTransport).toBe("http");
-    expect(merged.chatboxId).toBe("cb-1");
+    expect(merged.scenarioId).toBe("cb-1");
     expect(merged.projectId).toBe("ws-1");
     expect(merged.userId).toBe("user-1");
     expect(merged.authType).toBe("signedIn");
@@ -123,7 +123,7 @@ describe("authorizeBatch — request log context attribution", () => {
                 ...projectCtx,
                 serverId: "srv-alpha",
                 serverTransport: "http",
-                chatboxId: "cb-alpha",
+                scenarioId: "cb-alpha",
               },
             },
             "srv-beta": {
@@ -136,7 +136,7 @@ describe("authorizeBatch — request log context attribution", () => {
                 ...projectCtx,
                 serverId: "srv-beta",
                 serverTransport: "stdio",
-                chatboxId: "cb-beta",
+                scenarioId: "cb-beta",
               },
             },
           },
@@ -150,7 +150,7 @@ describe("authorizeBatch — request log context attribution", () => {
     const merged = vars.requestLogContext as RequestLogContext;
     expect(merged.serverId).toBeNull();
     expect(merged.serverTransport).toBeNull();
-    expect(merged.chatboxId).toBeNull();
+    expect(merged.scenarioId).toBeNull();
     // Project-level fields still attributed.
     expect(merged.projectId).toBe("ws-1");
     expect(merged.userId).toBe("user-1");

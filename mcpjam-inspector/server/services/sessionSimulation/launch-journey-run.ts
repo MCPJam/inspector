@@ -25,8 +25,7 @@
  * re-resolved per unit of work rather than per outbound call — see
  * `swarm-runner.ts`.
  */
-import type { McpProtocolVersion } from "@mcpjam/sdk";
-import { isKnownProtocolVersion } from "@mcpjam/sdk";
+import { environmentModelRequiredError } from "../environments/resolve.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import {
   createAuthorizedManager,
@@ -34,15 +33,44 @@ import {
 } from "../../routes/web/auth.js";
 import { xaaPolicyFromMcpProfile } from "../../utils/effective-auth.js";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
-import {
-  createJourneyRun,
-  SwarmAgentError,
-  type PinnedHostExecutionSpec,
-} from "../swarm-agent.js";
+import { createJourneyRun, SwarmAgentError } from "../swarm-agent.js";
 import { startJourneyRun } from "./swarm-runner.js";
 import { resolveTargetPluginServerIds } from "../journeys/plugin-servers.js";
 import { createConvexClient } from "../evals/route-helpers.js";
+import { buildHostConnectionPins } from "../host-connection-pins.js";
 import { logger } from "../../utils/logger.js";
+import { rolloutEnabled } from "../../utils/computers/browser-rollout.js";
+import type { PinnedHostExecutionSpec } from "../swarm-agent.js";
+
+const BROWSER_TOOL_ID = "browser";
+
+/**
+ * Drop `browser` from every pinned host unless the launching member is in the
+ * `hosted-browser-enabled` rollout — the same server-side check chat makes
+ * before advertising it. The flag used to be read only by the client, so a
+ * member outside the rollout whose client still had `browser` saved got a
+ * swarm that either provisioned a desktop for it or told them, on every
+ * session, why a tool they cannot see was not advertised.
+ */
+export async function withoutBrowserOutsideRollout(
+  hosts: PinnedHostExecutionSpec[],
+  workosUserId: string | undefined,
+): Promise<PinnedHostExecutionSpec[]> {
+  const wantsBrowser = (host: PinnedHostExecutionSpec) =>
+    (host.builtInToolIds ?? []).includes(BROWSER_TOOL_ID);
+  if (!hosts.some(wantsBrowser)) return hosts;
+  if (workosUserId && (await rolloutEnabled(false, workosUserId))) return hosts;
+  return hosts.map((host) =>
+    wantsBrowser(host)
+      ? {
+          ...host,
+          builtInToolIds: (host.builtInToolIds ?? []).filter(
+            (id) => id !== BROWSER_TOOL_ID,
+          ),
+        }
+      : host,
+  );
+}
 
 /** The request-derived values a launch needs, resolved by the calling route. */
 export interface LaunchJourneyRunDeps {
@@ -81,6 +109,8 @@ export interface LaunchJourneyRunInput {
   waveId?: string;
   /** Per-run environment fan-out; the backend does the real validation. */
   environmentIds?: string[];
+  /** Iterations for THIS run; leaves the journey's own config untouched. */
+  sessionsPerTarget?: number;
 }
 
 export interface LaunchJourneyRunResult {
@@ -138,7 +168,7 @@ export function launchFailureMessage(err: SwarmAgentError): string {
       const envelope = parsed.error;
       if (envelope && typeof envelope === "object") {
         const unwrapped = showableReason(
-          (envelope as { message?: unknown }).message
+          (envelope as { message?: unknown }).message,
         );
         if (unwrapped) return unwrapped;
       }
@@ -179,7 +209,7 @@ function showableReason(value: unknown): string | null {
 
 /** Preserve structured billing/environment metadata across the WebRouteError boundary. */
 function launchFailureDetails(
-  err: SwarmAgentError
+  err: SwarmAgentError,
 ): Record<string, unknown> | undefined {
   const raw = err.bodyText?.trim();
   if (!raw?.startsWith("{")) return undefined;
@@ -222,141 +252,10 @@ function requireConvexHttpUrl(): string {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
+      "Server missing CONVEX_HTTP_URL configuration",
     );
   }
   return url;
-}
-
-/**
- * Non-secret connection settings threaded into the manager for a pinned host
- * so a swarm run reconnects with the SAME transport behavior the snapshot
- * captured (per-request timeout + MCP protocol pins) rather than whatever the
- * host's CURRENT live config negotiates. Headers / credentials are deliberately
- * EXCLUDED — those stay live-resolved by the authorize batch (a run must use
- * fresh secrets, not a stale snapshot). Every field is read defensively: the
- * pinned `connectionDefaults` / `serverConnectionOverrides` are opaque
- * (`Record<string, unknown>`) snapshot blobs, so a malformed or absent value
- * simply falls back to the live default and never breaks the launch.
- */
-interface PinnedConnectionSettings {
-  timeoutMs: number;
-  initializePins?: {
-    clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
-    supportedProtocolVersions?: string[];
-    mcpProtocolVersion?: McpProtocolVersion;
-  };
-  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
-  /**
-   * Per-server request-timeout pins (ms) from the snapshot's
-   * `serverConnectionOverrides[serverId].requestTimeoutOverride`. A server
-   * absent from this map uses the host-level `timeoutMs`.
-   */
-  requestTimeoutByServerId?: Record<string, number>;
-}
-
-function coerceTimeoutMs(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? value
-    : undefined;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function coerceProtocolVersion(value: unknown): McpProtocolVersion | undefined {
-  return typeof value === "string" && isKnownProtocolVersion(value)
-    ? value
-    : undefined;
-}
-
-function buildPinnedConnectionSettings(
-  host: PinnedHostExecutionSpec,
-  fallbackTimeoutMs: number
-): PinnedConnectionSettings {
-  const defaults = asRecord(host.connectionDefaults);
-
-  // Timeout: read from the (scrubbed) `connectionDefaults` — the ONLY field the
-  // backend retains there is `requestTimeout` (header values are stripped).
-  // Accept either wire spelling defensively; require a positive finite number,
-  // else fall back to the live default.
-  const timeoutMs =
-    coerceTimeoutMs(defaults?.timeoutMs ?? defaults?.requestTimeout) ??
-    fallbackTimeoutMs;
-
-  // INITIALIZE pins come from the pinned `mcpProfile`, NOT `connectionDefaults`.
-  // The backend's `materializeHostSpec` copies the host's `mcpProfile` verbatim
-  // (`mcpProtocolVersion` + `initialize.{clientInfo,supportedProtocolVersions}`)
-  // and scrubs `connectionDefaults` down to just `{ requestTimeout }`, so reading
-  // the pins from `connectionDefaults` (the old behavior) always found nothing.
-  const initializePins: NonNullable<
-    PinnedConnectionSettings["initializePins"]
-  > = {};
-  const initialize = asRecord(host.mcpProfile?.initialize);
-  const clientInfo = asRecord(initialize?.clientInfo);
-  if (clientInfo) {
-    initializePins.clientInfo = clientInfo as {
-      name?: string;
-      version?: string;
-    } & Record<string, unknown>;
-  }
-  if (Array.isArray(initialize?.supportedProtocolVersions)) {
-    const versions = initialize.supportedProtocolVersions.filter(
-      (v): v is string => typeof v === "string"
-    );
-    if (versions.length > 0) {
-      initializePins.supportedProtocolVersions = versions;
-    }
-  }
-  const batchProtocol = coerceProtocolVersion(
-    host.mcpProfile?.mcpProtocolVersion
-  );
-  if (batchProtocol) {
-    initializePins.mcpProtocolVersion = batchProtocol;
-  }
-
-  // Per-server protocol pins from the pinned overrides. Accept both the
-  // resolver key (`mcpProtocolVersion`) and the project-config key
-  // (`mcpProtocolVersionOverride`); createAuthorizedManager re-validates.
-  const overrides = asRecord(host.serverConnectionOverrides);
-  let mcpProtocolVersionsByServerId:
-    | Record<string, McpProtocolVersion>
-    | undefined;
-  let requestTimeoutByServerId: Record<string, number> | undefined;
-  if (overrides) {
-    for (const [serverId, rawOverride] of Object.entries(overrides)) {
-      const override = asRecord(rawOverride);
-      if (!override) continue;
-      const pin = coerceProtocolVersion(
-        override.mcpProtocolVersion ?? override.mcpProtocolVersionOverride
-      );
-      if (pin) {
-        mcpProtocolVersionsByServerId ??= {};
-        mcpProtocolVersionsByServerId[serverId] = pin;
-      }
-      // Per-server request-timeout pin. Accept both the resolver spelling
-      // (`requestTimeout`) and the project-config override spelling
-      // (`requestTimeoutOverride`); a malformed value is simply skipped so the
-      // server falls back to the host-level timeout.
-      const perServerTimeout = coerceTimeoutMs(
-        override.requestTimeoutOverride ?? override.requestTimeout
-      );
-      if (perServerTimeout !== undefined) {
-        requestTimeoutByServerId ??= {};
-        requestTimeoutByServerId[serverId] = perServerTimeout;
-      }
-    }
-  }
-
-  return {
-    timeoutMs,
-    ...(Object.keys(initializePins).length > 0 ? { initializePins } : {}),
-    ...(mcpProtocolVersionsByServerId ? { mcpProtocolVersionsByServerId } : {}),
-    ...(requestTimeoutByServerId ? { requestTimeoutByServerId } : {}),
-  };
 }
 
 /**
@@ -369,7 +268,7 @@ function buildPinnedConnectionSettings(
  */
 export async function launchJourneyRun(
   deps: LaunchJourneyRunDeps,
-  input: LaunchJourneyRunInput
+  input: LaunchJourneyRunInput,
 ): Promise<LaunchJourneyRunResult> {
   const convexHttpUrl = requireConvexHttpUrl();
 
@@ -383,7 +282,11 @@ export async function launchJourneyRun(
       projectId: input.projectId,
       journeyRefId: input.journeyRefId,
       launchKey: input.launchKey,
+      kind: input.waveId ? "swarm" : "user_testing",
       ...(input.waveId ? { swarmRunGroupId: input.waveId } : {}),
+      ...(input.sessionsPerTarget !== undefined
+        ? { sessionsPerTarget: input.sessionsPerTarget }
+        : {}),
       ...(input.environmentIds?.length
         ? { environmentIds: input.environmentIds }
         : {}),
@@ -419,12 +322,24 @@ export async function launchJourneyRun(
         429: ErrorCode.RATE_LIMITED,
       };
       const code = CODE_BY_STATUS[err.status] ?? ErrorCode.VALIDATION_ERROR;
-      throw new WebRouteError(
-        err.status,
-        code,
-        launchFailureMessage(err),
-        launchFailureDetails(err)
-      );
+      const details = launchFailureDetails(err);
+      const modelError = environmentModelRequiredError({
+        data: {
+          code: details?.code,
+          message: launchFailureMessage(err),
+          details,
+        },
+      });
+      const routeError =
+        modelError ??
+        new WebRouteError(err.status, code, launchFailureMessage(err), details);
+      // The wave fan-out and every generic client read `Retry-After` to decide
+      // WHEN to come back; the 429 alone only says "not now". The backend's
+      // daily launch cap sends the UTC roll and its burst brake sends the
+      // bucket refill, so this is the one number nobody downstream can derive.
+      throw err.retryAfter
+        ? routeError.withHeaders({ "Retry-After": err.retryAfter })
+        : routeError;
     }
     throw err;
   }
@@ -457,7 +372,7 @@ export async function launchJourneyRun(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "This journey has no pinned hosts to run"
+      "This journey has no pinned hosts to run",
     );
   }
   const hosts = snapshot.hosts;
@@ -475,19 +390,28 @@ export async function launchJourneyRun(
   const getPluginRegateClient = async () =>
     createConvexClient(await deps.getRunBearer());
 
-  setImmediate(() => {
+  setImmediate(async () => {
+    // Never rejects: the rollout read treats every failure as "not enrolled".
+    const runHosts = await withoutBrowserOutsideRollout(
+      hosts,
+      deps.callerContext.workosUserId,
+    );
     startJourneyRun({
       runId,
       projectId,
-      hosts,
+      hosts: runHosts,
       personaSnapshot: snapshot.personaSnapshot,
       sessionsPerTarget: snapshot.sessionsPerTarget,
       maxTurns: snapshot.maxTurns,
+      setupWrites: snapshot.setupWrites,
+      goal: snapshot.goal,
       // Whether this run is rubric-graded at all. The runner only needs
       // the yes/no — the criteria themselves come back from the claim, so
       // the authoritative list is always the backend's pinned copy and
       // never a value that rode along in process memory.
-      hasRubric: (snapshot.rubric?.length ?? 0) > 0,
+      hasRubric:
+        ((snapshot.standardCheckProfile?.criteria ?? snapshot.rubric)?.length ??
+          0) > 0,
       convexHttpUrl,
       getBearer: deps.getRunBearer,
       // Host-aware: each host connects ONLY its own pinned required servers
@@ -514,13 +438,13 @@ export async function launchJourneyRun(
             runId,
             targetId: host.targetId,
             snapshotPluginServerIds: host.pluginServerIds,
-          }
+          },
         );
         // Deduped union: the backend keeps plugin ids out of `serverIds`,
         // but an overlap would double-connect rather than fail, so guard it.
         const hostServerIds = new Set(host.serverIds);
         const pluginOnlyServerIds = pluginServerIds.filter(
-          (id) => !hostServerIds.has(id)
+          (id) => !hostServerIds.has(id),
         );
         const serverIds =
           pluginOnlyServerIds.length > 0
@@ -530,10 +454,7 @@ export async function launchJourneyRun(
         // (per-request timeout + MCP protocol pins) so the run reproduces
         // the pinned snapshot rather than the host's current live config.
         // Secrets/headers stay live-resolved by the authorize batch.
-        const connection = buildPinnedConnectionSettings(
-          host,
-          WEB_STREAM_TIMEOUT_MS
-        );
+        const connection = buildHostConnectionPins(host, WEB_STREAM_TIMEOUT_MS);
         const { manager } = await createAuthorizedManager(
           deps.callerContext,
           // Per-SESSION: `managerFactory` runs once per session attempt,
@@ -546,7 +467,7 @@ export async function launchJourneyRun(
           undefined,
           // Pinned MCP client capabilities from the snapshot — negotiate
           // INITIALIZE with the SAME capabilities the host declared at
-          // run-create time (mirrors the chatbox path), not the current
+          // run-create time (mirrors the scenario path), not the current
           // live config's.
           host.clientCapabilities,
           {
@@ -574,8 +495,31 @@ export async function launchJourneyRun(
                   requestTimeoutByServerId: connection.requestTimeoutByServerId,
                 }
               : {}),
-          }
+          },
         );
+        // `MCPClientManager` starts eager connections in the background. Do
+        // not hand that manager to a session while its servers are still only
+        // "registered": the first model turn can otherwise race initialization
+        // and report that an MCP server is not connected (or give the model no
+        // tools, which looks like the server is unavailable).
+        //
+        // `listTools` is deliberately used as the readiness barrier instead
+        // of reaching into the manager's private connection state. It waits
+        // for the initial connection, exercises the same retry/reconnect path
+        // used by normal requests, and populates the SDK's tool cache before
+        // `prepareChatV2` runs. The manager remains owned by this session and
+        // is disposed only after the session finishes.
+        try {
+          await Promise.all(
+            serverIds.map((serverId) => manager.listTools(serverId)),
+          );
+        } catch (error) {
+          // The factory has not returned yet, so the runner cannot call its
+          // dispose hook. Clean up any sibling connections before propagating
+          // the failure and letting the session classify it.
+          await manager.disconnectAllServers().catch(() => {});
+          throw error;
+        }
         return {
           manager,
           connectedServerIds: serverIds,

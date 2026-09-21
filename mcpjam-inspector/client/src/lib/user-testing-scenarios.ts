@@ -1,10 +1,10 @@
-import type { ChatboxListItem } from "@/hooks/useChatboxes";
+import type { ScenarioListItem } from "@/hooks/useScenarios";
 
 /**
- * Is this chatbox row a SCENARIO someone deliberately made, rather than the
+ * Is this scenario row a SCENARIO someone deliberately made, rather than the
  * publish surface every client is born with?
  *
- * `chatboxes` rows are minted 1:1 with hosts by `hosts.createHost`, so a
+ * `scenarios` rows are minted 1:1 with hosts by `hosts.createHost`, so a
  * project accumulates one per client whether or not anyone intended to test
  * with it — including the three the Playground seeds into an empty project and
  * the "MCPJam" one the host bar seeds. Listing them all made a brand-new
@@ -27,7 +27,7 @@ import type { ChatboxListItem } from "@/hooks/useChatboxes";
  * sessions all predate the counters. It stays reachable by its link and by the
  * public API — the alternative is showing every client forever.
  */
-export function isDeliberateScenario(row: ChatboxListItem): boolean {
+export function isDeliberateScenario(row: ScenarioListItem): boolean {
   if (row.environmentId) return true;
   if (row.mode !== "project_members") return true;
   return (

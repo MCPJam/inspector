@@ -14,15 +14,21 @@ const here = dirname(fileURLToPath(import.meta.url));
 const spec = JSON.parse(
   readFileSync(
     resolve(here, "../../../../../docs/reference/openapi.json"),
-    "utf8"
-  )
+    "utf8",
+  ),
 ) as {
   security?: unknown[];
+  components?: { parameters?: Record<string, { name?: string; in?: string }> };
   paths: Record<
     string,
     Record<
       string,
-      { operationId?: string; requestBody?: unknown; security?: unknown[] }
+      {
+        operationId?: string;
+        requestBody?: unknown;
+        security?: unknown[];
+        parameters?: Array<{ $ref?: string; name?: string; in?: string }>;
+      }
     >
   >;
 };
@@ -35,25 +41,49 @@ const BODYLESS_WRITES = new Set([
   "post /projects/{projectId}/tunnels/{serverId}/close",
   // Cancel is addressed entirely by the path runId; the body is empty.
   "post /projects/{projectId}/eval-runs/{runId}/cancel",
+  // Same shape on the swarm side, for the same reason.
+  "post /projects/{projectId}/journey-runs/{runId}/cancel",
+  // And the same on readiness. There is nothing to say about a cancellation
+  // beyond which run — the executing node learns about it on its next
+  // heartbeat, and a body could only be a place to pass options a cancellation
+  // does not have.
+  "post /projects/{projectId}/readiness-runs/{runId}/cancel",
+  // Dismissal is addressed entirely by the path findingId — there is nothing
+  // to say about it beyond which finding.
+  "post /projects/{projectId}/journey-findings/{findingId}/dismiss",
+  "post /projects/{projectId}/journey-findings/{findingId}/undismiss",
+  // Rotating a share link takes no options: the path scenarioId names what to
+  // rotate, and the new secret is minted server-side by definition. A body
+  // here could only be a place to pass the next secret in, which is exactly
+  // what a rotation must not accept.
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link",
+  // Scenario-side dismissal, same shape as the swarm-side pair above.
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss",
+  // Test, pause and resume are addressed entirely by the path destinationId.
+  // A body here could only carry options none of the three has: a test span is
+  // synthetic and fixed, and a pause has nothing to configure.
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/test",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/pause",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/resume",
 ]);
 
 // Routes the v1 router serves that openapi.json deliberately does NOT describe.
 //
 // This started as a backlog — fifteen eval-suite/case and eval-ingest routes
-// that the hand-authored spec had simply not caught up with. Those are now
-// documented, and what remains is the real thing this list is for: endpoints
-// that exist but are not part of the public contract, each with the reason
-// written down. An entry without a reason is a backlog item wearing a
-// decision's clothes.
+// the hand-authored spec had not caught up with, then the whole swarms and
+// user-testing surface behind the `sandboxes-enabled` beta. All of those are
+// documented now, with the gate's behaviour stated on the page rather than the
+// routes hidden: a caller who cannot use a route yet is better served by a
+// documented refusal than by an endpoint that appears not to exist.
+//
+// What remains is the real thing this list is for: endpoints that exist but
+// are not part of the public contract, each with the reason written down. An
+// entry without a reason is a backlog item wearing a decision's clothes.
 //
 // The test enforces both directions — a new undocumented route fails, and a
 // baselined route that gets documented (or deleted) must lose its entry here.
 const KNOWN_UNDOCUMENTED = new Set([
-  // Insights envelope surfaces (actionable-insights program, pre-GA): the
-  // scenario detail + eval-run insights retry ship behind the staged rollout
-  // and get documented at GA together with the envelope schema.
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}",
-  "post /projects/{projectId}/eval-runs/{runId}/insights",
   // Deliberately internal: executing an action a human approved in Slack. The
   // route is reachable ONLY with the bot's `slk_` service credential (see
   // SLACK_ALLOWED_PATHS), its `actionId` is minted server-side per proposal,
@@ -67,79 +97,89 @@ const KNOWN_UNDOCUMENTED = new Set([
   // contract — documenting it would invite external callers to depend on the
   // shape of an internal list that changes with every tool we add.
   "get /agent-ops",
-  // Flag-gated beta (`sandboxes-enabled`); document at GA. The public docs are
-  // the one surface a flag CANNOT gate — a Mintlify page is visible to
-  // everyone regardless of who the flag is on for — so a beta surface that is
-  // enforced server-side per organization must stay out of the spec until the
-  // flag comes off. Reads are ungated at the API (an empty list leaks
-  // nothing); the WRITES these support are enforced in
-  // `mcpjam-backend/convex/lib/sandboxesGate.ts`.
-  "get /projects/{projectId}/journeys",
-  "get /projects/{projectId}/journeys/{journeyId}/runs",
-  "get /projects/{projectId}/journey-runs/{runId}",
-  "get /projects/{projectId}/journey-runs/{runId}/sessions",
-  "post /projects/{projectId}/journeys/{journeyId}/runs",
-  "post /projects/{projectId}/journey-runs/{runId}/cancel",
-  // Authoring — personas, journeys, swarm containers — and the generation that
-  // drafts them. Same flag, same reason: these are the WRITES the gate exists
-  // for, so they cannot be advertised in a document the flag cannot reach.
-  "get /projects/{projectId}/personas",
-  "post /projects/{projectId}/personas",
-  "get /projects/{projectId}/personas/{personaId}",
-  "patch /projects/{projectId}/personas/{personaId}",
-  "delete /projects/{projectId}/personas/{personaId}",
-  "post /projects/{projectId}/personas/generate",
-  "get /projects/{projectId}/journeys/{journeyId}",
-  "post /projects/{projectId}/journeys",
-  "patch /projects/{projectId}/journeys/{journeyId}",
-  "delete /projects/{projectId}/journeys/{journeyId}",
-  "post /projects/{projectId}/journeys/generate",
-  "get /projects/{projectId}/swarms",
-  "post /projects/{projectId}/swarms",
-  "get /projects/{projectId}/swarms/{swarmId}",
-  "patch /projects/{projectId}/swarms/{swarmId}",
-  "delete /projects/{projectId}/swarms/{swarmId}",
-  // The insights layer. Reads are ungated at the API like every other swarm
-  // read, but they describe a beta product and belong with it in the spec.
-  "get /projects/{projectId}/journeys-overview",
-  "get /projects/{projectId}/journey-runs/{runId}/scorecard",
-  "get /projects/{projectId}/journey-findings",
-  "post /projects/{projectId}/journey-findings/{findingId}/dismiss",
-  "post /projects/{projectId}/journey-findings/{findingId}/undismiss",
-  "get /projects/{projectId}/waves/{waveId}/insights",
-  "post /projects/{projectId}/waves/{waveId}/insights",
-  "delete /projects/{projectId}/waves/{waveId}/insights",
-  // Same flag, same reason (`sandboxes-enabled` gates both products).
-  "put /projects/{projectId}/environments/{environmentId}/scenario",
-  "delete /projects/{projectId}/environments/{environmentId}/scenario",
-  // The rest of user testing: what a published scenario produced, and who may
-  // reach it. Same beta, and the exposure controls want their own security
-  // review in the docs before they are advertised publicly.
-  "patch /projects/{projectId}/user-testing/scenarios/{scenarioId}",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions/{sessionId}",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/metrics",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/usage",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/signals",
-  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/windows/{windowId}/insights",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights",
-  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss",
-  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/guest-execution",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link",
-  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/members",
-  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rebind",
-
-  // A PLANNING read, not a product surface: it reports the caller's own role,
-  // the beta gate's state and their plan limits so an agent on a static
-  // surface can check before it acts. Undocumented for now because half of
-  // what it describes is the beta above — documenting the shape would
-  // advertise the flag-gated capability names to everyone. Moves into the spec
-  // with the rest of this surface at GA.
-  "get /projects/{projectId}/capabilities",
+  // The harness capability probe. Served unconditionally, but everything it
+  // reports that a caller could not already infer is a property of a transport
+  // that is still enforced per organization — so publishing its shape would
+  // publish the gated feature, which `docs/README.md` forbids ("a feature that
+  // is enforced per organization must not be documented until the flag comes
+  // off", and its routes are "kept out of reference/openapi.json and listed in
+  // the Inspector's KNOWN_UNDOCUMENTED baseline"). Document it there when the
+  // flag comes off.
+  "get /harness/{harnessId}/capabilities",
+  // The `browser_*` definitions the Tools pane and the Raw preview render. The
+  // hosted browser itself is still enforced per deployment
+  // (`HOSTED_BROWSER_TOOLS_ENABLED` plus the backend's exposure verdict), and
+  // `docs/README.md` is explicit that a feature enforced that way must not be
+  // documented until the flag comes off — publishing the schemas would publish
+  // the gated capability. Same posture as the harness capability probe above.
+  // Document it when the browser exposure gate opens.
+  "get /built-in-tools/{builtInToolId}/definitions",
+  // Unified share control plane — REST ships in I2; OpenAPI + SDK in I5.
+  "get /projects/{projectId}/shares/{resourceType}/{resourceId}",
+  "patch /projects/{projectId}/shares/{resourceType}/{resourceId}",
+  "post /projects/{projectId}/shares/{resourceType}/{resourceId}/rotate-link",
+  "put /projects/{projectId}/shares/{resourceType}/{resourceId}/members",
+  "delete /projects/{projectId}/shares/{resourceType}/{resourceId}/members/{memberIdOrEmail}",
+  // Trace destinations — continuous OTLP export to an observability vendor.
+  // Availability is decided per organization, and `docs/README.md` is explicit
+  // that such a feature is not documented until the flag comes off ("a feature
+  // that is enforced per organization must not be documented until the flag
+  // comes off", and its routes are "kept out of reference/openapi.json and
+  // listed in the Inspector's KNOWN_UNDOCUMENTED baseline"). Same posture the
+  // harness capability probe above takes, for the same reason. Document the
+  // whole surface — ten routes and six schemas — when the flag comes off; the
+  // SDK and CLI carry it in the meantime, because a caller who HAS been
+  // flagged in needs a client.
+  "get /organizations/{organizationId}/trace-destinations",
+  "post /organizations/{organizationId}/trace-destinations",
+  "get /organizations/{organizationId}/trace-destinations/{destinationId}",
+  "patch /organizations/{organizationId}/trace-destinations/{destinationId}",
+  "delete /organizations/{organizationId}/trace-destinations/{destinationId}",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/test",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/pause",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/resume",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/backfills",
+  "get /organizations/{organizationId}/trace-destinations/{destinationId}/backfills",
+  // The DEPRECATED `/hosts` aliases of the `/clients` surface. Every one is
+  // the same handler as its documented `/clients` twin with the pre-rename DTO
+  // and the pre-rename (tokenless) write contract, and every response carries
+  // `Deprecation: true`. Not documented on purpose: the spec is what a NEW
+  // integration reads, and publishing both spellings would present a choice
+  // where there is none. Existing callers keep working; the tag's description
+  // says so in prose, which is where a compatibility note belongs.
+  "get /projects/{projectId}/hosts",
+  "post /projects/{projectId}/hosts",
+  "get /projects/{projectId}/hosts/{hostId}",
+  "patch /projects/{projectId}/hosts/{hostId}",
+  "delete /projects/{projectId}/hosts/{hostId}",
+  "post /projects/{projectId}/hosts/{hostId}/servers",
+  "post /projects/{projectId}/hosts/{hostId}/duplicate",
+  // Description-experiment HTTP (PR-E3). The SDK client, CLI, and MCP
+  // catalog advertise these; the hand-authored OpenAPI page follows so a
+  // spec edit does not block the inspector landing. Document them with
+  // the public evals reference update.
+  "post /projects/{projectId}/eval-runs/{runId}/description-experiments",
+  "get /projects/{projectId}/eval-runs/{runId}/description-experiments",
+  "post /projects/{projectId}/eval-description-experiments/{experimentId}/start",
+  "get /projects/{projectId}/eval-description-experiments/{experimentId}",
+  // Route-facts GET landed with the contract; the hand-authored spec
+  // has not caught up. Same follow-up as the description-experiment trio.
+  "get /projects/{projectId}/eval-runs/{runId}/route-facts",
+  // Server-facts GET landed with the contract; same follow-up.
+  "get /projects/{projectId}/eval-runs/{runId}/server-facts",
+  // Durable agent turns. The pair is inert unless DURABLE_AGENT_TURNS_ENABLED
+  // is set — both answer FEATURE_NOT_SUPPORTED otherwise — so this is a
+  // feature enforced per deployment, which `docs/README.md` says must stay out
+  // of openapi.json until the flag comes off. Same posture as the harness
+  // capability probe above. Document them when durable turns ship on.
+  "get /projects/{projectId}/agent/jobs/{jobId}",
+  "post /projects/{projectId}/agent/jobs/{jobId}/cancel",
+  // Shared eval authoring jobs, reachable only through surfaces gated by the
+  // `eval-authoring-import-v1` flag (and, for generation,
+  // EVAL_AUTHORING_GENERATION_V1_ENABLED). Same rule and the same follow-up:
+  // document the pair when the flag comes off.
+  "get /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}",
+  "post /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}/commit",
 ]);
 
 /**
@@ -164,6 +204,9 @@ const KNOWN_UNDOCUMENTED = new Set([
  * catalog default, share-link previews — work at all.
  */
 const PUBLIC_OPERATIONS = new Set(["get /host-catalog", "get /models"]);
+// Registry directory reads are guest-allowed (minted guest bearer) but stay
+// OUT of this set: they declare bearerAuth. Anonymous MCP callers arrive
+// with a guest token, not with no token. Do not add them here.
 
 /** Hono `:param` + the `/api/v1` mount prefix -> OpenAPI `{param}`, unprefixed. */
 function normalizePath(path: string): string {
@@ -207,8 +250,8 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     expect(
       newlyUndocumented,
       `New /api/v1 routes missing from openapi.json — document them (or, if intentionally internal, add to KNOWN_UNDOCUMENTED with a reason):\n  ${newlyUndocumented.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
 
     // Keep the baseline honest: a baselined route that is now documented or
@@ -219,8 +262,8 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     expect(
       staleBaseline,
       `Stale KNOWN_UNDOCUMENTED entries (now documented or gone) — remove them:\n  ${staleBaseline.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -229,8 +272,8 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     expect(
       phantom,
       `openapi.json documents paths/methods with no matching route:\n  ${phantom.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -241,7 +284,7 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
         (entry) =>
           !!entry &&
           typeof entry === "object" &&
-          "bearerAuth" in (entry as Record<string, unknown>)
+          "bearerAuth" in (entry as Record<string, unknown>),
       );
     const globalBearer = hasBearer(spec.security);
     const missing: string[] = [];
@@ -282,20 +325,20 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     expect(
       missing.sort(),
       `Operations without a bearerAuth security requirement:\n  ${missing.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
     expect(
       undeclaredPublic.sort(),
       `Operations declaring \`security: []\` (NO AUTH) that are not in PUBLIC_OPERATIONS. Every unauthenticated endpoint is a deliberate decision — add it there with a reason, or give it bearerAuth:\n  ${undeclaredPublic.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
     expect(
       notActuallyPublic.sort(),
       `PUBLIC_OPERATIONS entries that no longer declare \`security: []\` — remove them from the list:\n  ${notActuallyPublic.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
     const goneFromSpec = [...PUBLIC_OPERATIONS]
       .filter((key) => !specKeys.has(key))
@@ -303,8 +346,8 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     expect(
       goneFromSpec,
       `PUBLIC_OPERATIONS entries for operations the spec no longer describes — remove them, or the list stops meaning "the unauthenticated endpoints":\n  ${goneFromSpec.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -318,7 +361,7 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     }
     expect(
       missing,
-      `Operations missing operationId:\n  ${missing.join("\n  ")}`
+      `Operations missing operationId:\n  ${missing.join("\n  ")}`,
     ).toEqual([]);
   });
 
@@ -336,8 +379,59 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     expect(
       missing,
       `Write operations missing a requestBody (add one, or allowlist a genuinely bodyless action):\n  ${missing.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
+  });
+
+  it("declares a path parameter for every placeholder, and no phantoms", () => {
+    // A path item can name a parameter its URL does not contain, or contain one
+    // it never names, and nothing else notices: the route still serves, the
+    // drift check above still matches on path+method, and the playground just
+    // renders the wrong field. `requestEvalRunInsights` shipped with a phantom
+    // `scenarioId` and no `runId` — a copy-paste from the surrounding
+    // user-testing operations — and was found by a person reading, which is not
+    // a mechanism.
+    //
+    // Both directions, because they are different bugs: a MISSING parameter
+    // makes the operation uncallable from a generated client, and a PHANTOM one
+    // asks the caller for an id the route will never read.
+    const shared = spec.components?.parameters ?? {};
+    const resolve = (p: { $ref?: string; name?: string; in?: string }) =>
+      p.$ref ? (shared[p.$ref.split("/").pop() ?? ""] ?? {}) : p;
+
+    const problems: string[] = [];
+    for (const [path, item] of Object.entries(spec.paths)) {
+      const placeholders = new Set(
+        [...path.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]!),
+      );
+      const itemLevel = (
+        (item as { parameters?: Array<{ $ref?: string }> }).parameters ?? []
+      ).map(resolve);
+
+      for (const [method, op] of Object.entries(item)) {
+        if (!HTTP_METHODS.has(method.toUpperCase())) continue;
+        const declared = [...itemLevel, ...(op.parameters ?? []).map(resolve)];
+        const named = new Set(
+          declared.filter((p) => p.in === "path").map((p) => p.name),
+        );
+        for (const placeholder of placeholders) {
+          if (!named.has(placeholder)) {
+            problems.push(
+              `${method} ${path}: no parameter for {${placeholder}}`,
+            );
+          }
+        }
+        for (const name of named) {
+          if (name && !placeholders.has(name)) {
+            problems.push(
+              `${method} ${path}: declares {${name}}, not in the path`,
+            );
+          }
+        }
+      }
+    }
+
+    expect(problems.sort(), problems.sort().join("\n")).toEqual([]);
   });
 });

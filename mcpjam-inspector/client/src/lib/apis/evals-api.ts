@@ -1,4 +1,5 @@
 import { API_ENDPOINTS } from "@/components/evals/constants";
+import type { TestStep } from "@/shared/steps";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { getSessionToken } from "@/lib/session-token";
 import { attachToolMetadata } from "@/lib/apis/tool-metadata";
@@ -56,6 +57,7 @@ type ToolListResponse = {
 };
 
 type RunEvalsRequest = EvalRequestWithServers & {
+  idempotencyKey?: string;
   suiteId?: string;
   suiteName?: string;
   suiteDescription?: string;
@@ -75,11 +77,23 @@ type RunEvalsRequest = EvalRequestWithServers & {
    */
   suiteRerun?: boolean;
   /**
+   * Narrow the run to these cases. The server filters the snapshot and the
+   * cap-math to them, so a one-case run of a large suite is not rejected by
+   * the suite's total cap.
+   *
+   * This is what "Run test" on one case uses. A quick run cannot be judged —
+   * every judge surface is keyed by `suiteRunId`, which a quick run has none
+   * of — so the only way to ask "did it accomplish the goal?" is to run the
+   * case as a suite run narrowed to it.
+   */
+  caseIds?: string[];
+  /**
    * Transient per-run iteration count (1-10). Server overlays `runs` on
    * every test case in the run snapshot; persisted `EvalCase.runs`
    * default is not mutated.
    */
   iterationOverride?: number;
+  ephemeralEnvironment?: boolean;
   /**
    * One-off match-option override applied to every iteration of this run
    * (layered on top of suite default + case override). Does not mutate
@@ -203,8 +217,12 @@ export type CaseMixInput = {
 
 /** Optional generation knobs forwarded to the backend generate endpoint. */
 export type GenerationOptions = {
+  testSet?: "quick" | "comprehensive";
+  toolCoverage?: "read-only" | "read-write";
   caseMix?: CaseMixInput;
   varyUserStyles?: boolean;
+  /** User-authored direction for a follow-up generation pass. */
+  refinement?: string;
 };
 
 type GenerateTestsRequest = EvalRequestWithServers & {
@@ -225,6 +243,12 @@ export type GeneratedEvalTestCase = {
   scenario?: string;
   expectedOutput?: string;
   promptTurns?: PromptTurn[];
+  /**
+   * Authored steps, present when the backend produced the Wave-0 case shape.
+   * They are the case, not a projection of it — persist them verbatim rather
+   * than rebuilding from the legacy fields beside them.
+   */
+  steps?: TestStep[];
 };
 
 export type GenerateEvalTestsResponse = {
@@ -282,8 +306,14 @@ function mergeHostedServerBatch<
  * by the buffered (`postEvalRequest`) and streamed (`streamEvalTestCase`) eval
  * paths so single-case compare runs surface the same billing UX. No-op unless
  * the payload is a billing cap.
+ *
+ * Exported because the replay endpoint is called with a hand-rolled fetch
+ * rather than `postEvalRequest`: without this the raw response body is thrown
+ * whole, and the billing parser reads the outer envelope (`BILLING_LIMIT_
+ * REACHED`) instead of the payload nested under `details` — so a cap there
+ * looked like an ordinary failure.
  */
-function rethrowIfBillingError(errorBody: unknown): void {
+export function rethrowIfBillingError(errorBody: unknown): void {
   const billingPayload = (
     errorBody as { details?: { code?: unknown } } | null | undefined
   )?.details;
@@ -328,10 +358,8 @@ async function postEvalRequest<TResponse>(
       typeof errorBody?.message === "string"
         ? errorBody.message
         : typeof errorBody?.error === "string"
-        ? errorBody.error
-        : `Request failed (${response.status})`;
-
-    rethrowIfBillingError(errorBody);
+          ? errorBody.error
+          : `Request failed (${response.status})`;
 
     const limitKind = (errorBody as { limitKind?: unknown } | null | undefined)
       ?.limitKind;
@@ -344,6 +372,7 @@ async function postEvalRequest<TResponse>(
           ? limitKind
           : undefined,
     });
+    rethrowIfBillingError(errorBody);
     // Carry the route's machine-readable `code` onto the Error. The message
     // alone can't be branched on (it's prose the server may reword), and the
     // eval fan-out summarises failures per plan — without this, a launch
@@ -547,10 +576,6 @@ export async function streamEvalTestCase(
         errorBody = errorText;
       }
     }
-    // Billing caps (402) take precedence over the rate-limit dialog: rebuild
-    // the ConvexError so streamed single-case runs get the same eval-iteration
-    // upgrade UX the buffered path renders, instead of a generic failure.
-    rethrowIfBillingError(errorBody);
     const limitKindRaw =
       errorBody && typeof errorBody === "object"
         ? (errorBody as { limitKind?: unknown }).limitKind
@@ -569,6 +594,9 @@ export async function streamEvalTestCase(
           ? limitKindRaw
           : undefined,
     });
+    // Plan quotas are excluded by the credit classifier and retain their
+    // existing eval-iteration upgrade flow.
+    rethrowIfBillingError(errorBody);
     throw new Error(errorMessage);
   }
 
@@ -579,6 +607,7 @@ export async function streamEvalTestCase(
 
   const decoder = new TextDecoder();
   let buffer = "";
+  const limitRunId = crypto.randomUUID();
   const emitSseLine = (line: string) => {
     const trimmedLine = line.trim();
     if (!trimmedLine.startsWith("data: ")) {
@@ -609,6 +638,7 @@ export async function streamEvalTestCase(
           }
         }
         notifyMCPJamLimitError({
+          runId: limitRunId,
           details: event.details,
           message: event.message,
           limitKind,

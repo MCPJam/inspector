@@ -29,6 +29,7 @@ export interface AiTriageCardProps {
   error: string | null;
   onRetry: () => void;
   source?: "ui" | "sdk";
+  hostNamesById?: Map<string, string | null>;
   /** Flush layout inside the run-detail split (no nested card chrome). */
   embedded?: boolean;
 }
@@ -98,6 +99,7 @@ export function AiTriageCard({
   error,
   onRetry,
   source,
+  hostNamesById,
   embedded = false,
 }: AiTriageCardProps) {
   const rows = useMemo(
@@ -132,7 +134,10 @@ export function AiTriageCard({
   const host = serverQuality?.host;
   const hostLabel = (() => {
     if (!host || host.source === "unknown") return null;
-    const name = host.name ?? "Client";
+    const name =
+      (host.namedHostId ? hostNamesById?.get(host.namedHostId) : null) ??
+      host.name ??
+      "Client";
     return host.modelId ? `${name} · ${host.modelId}` : name;
   })();
 

@@ -42,7 +42,14 @@ export async function listTasks(
   return client.requestWithSchema(
     {
       method: "tasks/list",
-      params: cursor ? { cursor } : {},
+      // Presence, not truthiness: `""` is a valid continuation cursor. MCP
+      // 2026-07-28 `server/utilities/pagination` states that a client "MUST
+      // NOT" decide anything from a cursor's value beyond whether a non-null
+      // one was provided, and that "an empty string is a valid cursor and thus
+      // MUST NOT be treated as the end of results". A truthiness test here
+      // dropped a `""` handed back by the previous page, which does not end a
+      // caller's walk so much as silently restart it at page one.
+      params: cursor !== undefined ? { cursor } : {},
     },
     LEGACY_TASKS_RESULT_SCHEMA,
     options

@@ -15,11 +15,11 @@ import type { HarnessResetReason } from "@/shared/harness-session";
 
 export type HarnessOwnerType =
   | "direct-chat"
-  | "chatbox-chat"
+  | "scenario-chat"
   | "eval-case"
   // Journey-runner multi-turn continuity (swarm). Keyed on the journey run +
   // pinned host + chatSessionId server-side (see backend `resolveHarnessOwner
-  // Scope`), so a swarm harness session never collides with a Direct/Chatbox
+  // Scope`), so a swarm harness session never collides with a Direct/Scenario
   // lane. Distinct from the reserved guest-execution `swarm-worker` owner.
   | "swarm-chat"
   | "swarm-worker";
@@ -34,7 +34,7 @@ export type HarnessOwnerRef = {
   harnessId: Harness;
   ownerType: HarnessOwnerType;
   chatSessionId?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   /** Swarm (`swarm-chat`) owner key dimensions: the journey run + pinned host.
    *  REQUIRED alongside `chatSessionId` when `ownerType === "swarm-chat"` — the
    *  backend `resolveHarnessOwnerScope` throws without them. Spread into every
@@ -69,9 +69,9 @@ export type HarnessSessionCommitPayload = {
   // `swarm-chat` = journey-runner continuity. The backend derives the lane's
   // journeyRunId/hostId from the ingest payload's top-level swarm attribution,
   // so they are NOT carried on the commit object itself.
-  ownerType: "direct-chat" | "chatbox-chat" | "swarm-chat";
+  ownerType: "direct-chat" | "scenario-chat" | "swarm-chat";
   chatSessionId: string;
-  chatboxId?: string;
+  scenarioId?: string;
   leaseId: string;
   expectedStateVersion: number;
   harnessId: Harness;

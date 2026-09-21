@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RotateCcw, Save, Settings2 } from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { ClientConfigEditor } from "@/components/client-config/ClientConfigEditor";
@@ -14,6 +15,7 @@ import {
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import { sanitizeHostConfigForEvalSuite } from "@/lib/host-config-computer";
+import { useActorCanQuery } from "@/hooks/use-actor-can-query";
 import type { EvalSuite } from "./types";
 import type { ModelDefinition } from "@/shared/types";
 
@@ -51,9 +53,13 @@ export function SuiteExecutionConfigEditor({
 }: SuiteExecutionConfigEditorProps) {
   void availableModels; // currently unused; ClientConfigEditor uses a free-text modelId.
 
+  // Readiness alone would strand the unscoped guest suites this editor exists
+  // to serve: a direct guest has no `users` row to wait for and would sit on
+  // the loading state below forever.
+  const canQuery = useActorCanQuery();
   const dto = useQuery(
     "hostConfigsV2:getSuiteConfig" as any,
-    { suiteId: suite._id } as any
+    canQuery ? ({ suiteId: suite._id } as any) : "skip"
   ) as HostConfigDtoV2 | null | undefined;
 
   // Phase 4: project default snapshot used by the "Reset to project
@@ -61,7 +67,12 @@ export function SuiteExecutionConfigEditor({
   // (e.g. unscoped guest suites).
   const projectDefaultDto = useQuery(
     "hostConfigsV2:getProjectDefault" as any,
-    projectId ? ({ projectId } as any) : "skip"
+    // `shouldQueryProjectId`, not a bare truthiness check — an unscoped guest
+    // suite carries a sentinel or local id, and `v.id("projects")` throws on
+    // it before the handler runs.
+    canQuery && shouldQueryProjectId(projectId)
+      ? ({ projectId } as any)
+      : "skip"
   ) as HostConfigDtoV2 | null | undefined;
 
   const setSuiteConfig = useMutation(
@@ -213,7 +224,7 @@ export function SuiteExecutionConfigEditor({
       // suite's frozen server snapshot. The mutation mints a new v2 row
       // when the project-default content differs from the suite's
       // existing row, or no-ops via dedupe when they already match.
-      // The project default may carry a `computer` (valid for chatbox hosts);
+      // The project default may carry a `computer` (valid for scenario hosts);
       // strip it here so resetting an eval suite to the project default can't
       // smuggle a computer into a config the backend will reject at run start.
       const projectDefaultInput = sanitizeHostConfigForEvalSuite(

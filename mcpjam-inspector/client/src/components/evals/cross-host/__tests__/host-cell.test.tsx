@@ -26,12 +26,16 @@ function trendPoint(
   id: string,
   result: CellTrendPoint["result"],
   latencyMs: number | null,
+  counts?: { passed: number; failed: number; total: number },
 ): CellTrendPoint {
   return {
     runId: id,
     runLabel: id.slice(-4),
     timestamp: 1,
     result,
+    passed: counts?.passed ?? (result === "passed" ? 1 : 0),
+    failed: counts?.failed ?? (result === "failed" ? 1 : 0),
+    total: counts?.total ?? 1,
     latencyMs,
     latencyP95Ms: latencyMs,
     tokens: 1900,
@@ -133,6 +137,47 @@ describe("HostCell", () => {
     expect(screen.getByTestId("metric-sparkline-pass-rate")).toBeInTheDocument();
     expect(screen.getByTestId("metric-sparkline-latency")).toBeInTheDocument();
     expect(screen.queryByText("p50")).not.toBeInTheDocument();
+  });
+
+  it("shows cumulative iteration counts across runs in the metric strip", () => {
+    render(
+      <HostCell
+        trendsLayout
+        data={makeCell([
+          trendPoint("run-old", "partial", 8000, {
+            passed: 3,
+            failed: 2,
+            total: 5,
+          }),
+          trendPoint("run-new", "partial", 10_000, {
+            passed: 4,
+            failed: 1,
+            total: 5,
+          }),
+        ])}
+      />,
+    );
+    expect(screen.getByText("7/10 passed")).toBeInTheDocument();
+    expect(screen.getByText("70%")).toBeInTheDocument();
+    expect(screen.getByText("3 failing")).toBeInTheDocument();
+  });
+
+  it("shows the full iteration count for a single multi-iteration run", () => {
+    render(
+      <HostCell
+        trendsLayout
+        data={{
+          ...makeCell(),
+          passCount: 3,
+          failCount: 2,
+          pendingCount: 0,
+          totalCount: 5,
+          passRate: 60,
+        }}
+      />,
+    );
+    expect(screen.getByText("3/5 passed")).toBeInTheDocument();
+    expect(screen.getByText("60%")).toBeInTheDocument();
   });
 
   it("uses metric strip layout with a single run when trendsLayout is on", () => {

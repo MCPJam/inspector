@@ -13,7 +13,7 @@ interface PlaygroundPreviewedHostSyncProps {
 /**
  * Subscribe to the project's previewed-host id (the named host picked in
  * `PlaygroundHeader`'s `HostPicker` dropdown — backed by the same
- * localStorage key Connect's `HostOverlayBar` uses), resolve that host's
+ * localStorage key Connect's `HostCanvasSelector` uses), resolve that host's
  * persisted config via `useHost`, and snapshot its defaults into the
  * playground top-bar chip state whenever the resolved id changes.
  *
@@ -37,10 +37,10 @@ export function PlaygroundPreviewedClientSync({
   const { host } = useHost({ isAuthenticated, hostId: previewedHostId });
   const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
   const setHostCapabilitiesOverride = usePreferencesStore(
-    (state) => state.setHostCapabilitiesOverride
+    (state) => state.setHostCapabilitiesOverride,
   );
   const setChatUiOverride = usePreferencesStore(
-    (state) => state.setChatUiOverride
+    (state) => state.setChatUiOverride,
   );
 
   // Track the last (id, configId) tuple we applied so the effect only
@@ -49,7 +49,7 @@ export function PlaygroundPreviewedClientSync({
   // to hostId so an edit to the host's underlying config (re-saving from
   // the Hosts editor while the playground is open) triggers a re-snapshot.
   const lastAppliedRef = useRef<{ hostId: string; configId: string } | null>(
-    null
+    null,
   );
 
   useEffect(() => {

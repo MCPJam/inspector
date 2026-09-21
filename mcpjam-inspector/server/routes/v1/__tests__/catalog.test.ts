@@ -6,12 +6,17 @@ import { Hono } from "hono";
 // mapping. The Convex side of the contract is covered by the backend's
 // publicApi tests; these assert the Inspector half of the proxy seam.
 
-const { validateGuestTokenMock } = vi.hoisted(() => ({
+const { validateGuestTokenMock, captureServerEventMock } = vi.hoisted(() => ({
   validateGuestTokenMock: vi.fn(),
+  captureServerEventMock: vi.fn(),
 }));
 
 vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: validateGuestTokenMock,
+}));
+
+vi.mock("../../../utils/analytics.js", () => ({
+  captureServerEvent: captureServerEventMock,
 }));
 
 import v1Routes from "../index.js";
@@ -77,8 +82,14 @@ describe("v1 catalog read proxies", () => {
       "https://convex-http.example.com/v1/chat-sessions?projectId=p1&status=archived&limit=10&before=123",
     ],
     [
-      "/api/v1/projects/p1/chatboxes",
-      "https://convex-http.example.com/v1/chatboxes?projectId=p1",
+      "/api/v1/projects/p1/scenarios",
+      "https://convex-http.example.com/v1/scenarios?projectId=p1",
+    ],
+    [
+      // Project-NESTED, and every search param forwarded verbatim — `cursor`
+      // is NOT renamed here, unlike `/chat-sessions` above.
+      "/api/v1/projects/p1/sessions?q=refund&scope=transcripts&sourceType=direct,eval&status=archived&limit=10&cursor=abc",
+      "https://convex-http.example.com/v1/sessions?projectId=p1&sourceType=direct%2Ceval&status=archived&q=refund&scope=transcripts&limit=10&cursor=abc",
     ],
   ])(
     "maps %s onto the Convex read surface",
@@ -107,6 +118,62 @@ describe("v1 catalog read proxies", () => {
     expect(String(target)).toBe(
       "https://convex-http.example.com/v1/chat-sessions?limit=2&before=999"
     );
+  });
+
+  it("passes the upstream `scope` echo through to the caller", async () => {
+    // The SDK fails closed on a missing marker, so the proxy dropping or
+    // rewriting it would break transcript search across every surface.
+    fetchMock.mockResolvedValue(
+      jsonResponse({ items: [], scope: "transcripts" })
+    );
+    const res = await request(
+      makeApp(),
+      "/api/v1/projects/p1/sessions?q=refund&scope=transcripts"
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ items: [], scope: "transcripts" });
+  });
+
+  it("counts a blank ?q= as a listing, matching what it forwarded", async () => {
+    // `forwardQueryParams` drops `q=`, so the upstream ran a list. Reporting
+    // it as a search would inflate the metric with the very requests it is
+    // meant to be compared against.
+    captureServerEventMock.mockClear();
+    fetchMock.mockResolvedValue(jsonResponse({ items: [], scope: "titles" }));
+    await request(makeApp(), "/api/v1/projects/p1/sessions?q=");
+
+    const [, event, props] = captureServerEventMock.mock.calls.at(-1)!;
+    expect(event).toBe("api_sessions_search");
+    expect(props.hasQuery).toBe(false);
+    // And the upstream really did not receive it.
+    const [target] = fetchMock.mock.calls[0] as [URL];
+    expect(String(target)).not.toContain("q=");
+  });
+
+  it("reports the honored scope and item count, never the query text", async () => {
+    captureServerEventMock.mockClear();
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        items: [{ id: "s1" }],
+        scope: "transcripts",
+        nextCursor: "abc",
+      })
+    );
+    await request(
+      makeApp(),
+      "/api/v1/projects/p1/sessions?q=super-secret-term&scope=transcripts&sourceType=direct,eval"
+    );
+
+    const [, , props] = captureServerEventMock.mock.calls.at(-1)!;
+    expect(props).toMatchObject({
+      scope: "transcripts",
+      hasQuery: true,
+      itemCount: 1,
+      hasNextCursor: true,
+      sourceTypes: ["direct", "eval"],
+    });
+    // A search term is user content and can carry names or secrets.
+    expect(JSON.stringify(props)).not.toContain("super-secret");
   });
 
   it("does not forward a bearer to the public models catalog", async () => {
@@ -211,37 +278,37 @@ describe("v1 catalog read proxies", () => {
     expect(((await res.json()) as { code?: string }).code).toBe("TIMEOUT");
   });
 
-  it("returns the chatbox detail when the path projectId matches", async () => {
+  it("returns the scenario detail when the path projectId matches", async () => {
     const detail = {
       id: "cbx_1",
       projectId: "p1",
-      name: "Support Chatbox",
+      name: "Support Scenario",
       modelId: "gpt-4o-mini",
       servers: [{ id: "srv_1", name: "server-a", url: null, useOAuth: false }],
     };
     fetchMock.mockResolvedValue(jsonResponse(detail));
-    const res = await request(makeApp(), "/api/v1/projects/p1/chatboxes/cbx_1");
+    const res = await request(makeApp(), "/api/v1/projects/p1/scenarios/cbx_1");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(detail);
     expect(String((fetchMock.mock.calls[0] as [URL])[0])).toBe(
-      "https://convex-http.example.com/v1/chatbox?chatboxId=cbx_1"
+      "https://convex-http.example.com/v1/scenario?scenarioId=cbx_1"
     );
   });
 
-  it("answers NOT_FOUND when the chatbox lives in a different project", async () => {
+  it("answers NOT_FOUND when the scenario lives in a different project", async () => {
     fetchMock.mockResolvedValue(
-      jsonResponse({ id: "cbx_1", projectId: "p2", name: "Support Chatbox" })
+      jsonResponse({ id: "cbx_1", projectId: "p2", name: "Support Scenario" })
     );
-    const res = await request(makeApp(), "/api/v1/projects/p1/chatboxes/cbx_1");
+    const res = await request(makeApp(), "/api/v1/projects/p1/scenarios/cbx_1");
     expect(res.status).toBe(404);
     expect(((await res.json()) as { code?: string }).code).toBe("NOT_FOUND");
   });
 
-  it("passes a chatbox upstream error through with its status", async () => {
+  it("passes a scenario upstream error through with its status", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ code: "VALIDATION_ERROR", message: "bad id" }, 400)
     );
-    const res = await request(makeApp(), "/api/v1/projects/p1/chatboxes/bad");
+    const res = await request(makeApp(), "/api/v1/projects/p1/scenarios/bad");
     expect(res.status).toBe(400);
     expect(((await res.json()) as { code?: string }).code).toBe(
       "VALIDATION_ERROR"
@@ -256,6 +323,26 @@ describe("v1 catalog read proxies", () => {
     const [target, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
     expect(String(target)).toBe("https://convex-http.example.com/v1/projects");
     // The guest JWT is forwarded verbatim so Convex authedV1 resolves the guest.
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe(
+      "Bearer tok"
+    );
+  });
+
+  it("admits guests on the project-nested sessions read", async () => {
+    // The route is on the guest allowlist because it is part of the platform
+    // MCP tool surface; the backend threads the guest bearer's subject through
+    // to `ownsSession`, so a guest sees only their own rows.
+    validateGuestTokenMock.mockResolvedValue({ valid: true, guestId: "g1" });
+    fetchMock.mockResolvedValue(jsonResponse({ items: [], scope: "titles" }));
+    const res = await request(
+      makeApp(),
+      "/api/v1/projects/p1/sessions?q=refund"
+    );
+    expect(res.status).toBe(200);
+    const [target, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(String(target)).toBe(
+      "https://convex-http.example.com/v1/sessions?projectId=p1&q=refund"
+    );
     expect((init.headers as Record<string, string>)["Authorization"]).toBe(
       "Bearer tok"
     );

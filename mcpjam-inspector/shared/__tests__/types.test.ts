@@ -8,6 +8,9 @@ import {
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
   isModelSupported,
+  modelSupportsTemperature,
+  modelDefinitionSupportsTemperature,
+  type ModelDefinition,
   normalizeOauthProtocolMode,
   resolveEffectiveOauthProtocolMode,
   resolveOAuthProtocolSelection,
@@ -118,12 +121,239 @@ describe("MCPJam-provided model classification", () => {
     }
   });
 
+  it("offers the current Anthropic models to BYOK keys, and no retired ones", () => {
+    // The BYOK Anthropic rows are hand-maintained, so they drift behind
+    // Anthropic's releases: a user with a valid key could not select Sonnet 5
+    // or Opus 5, while five ids that now 404 were still listed. See MMA-2.
+    const anthropicIds = SUPPORTED_MODELS.filter(
+      (m) => m.provider === "anthropic"
+    ).map((m) => String(m.id));
+
+    for (const id of [
+      "claude-opus-5",
+      "claude-sonnet-5",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+      "claude-opus-4-6",
+      "claude-sonnet-4-6",
+    ]) {
+      expect(anthropicIds).toContain(id);
+    }
+
+    // Retired upstream — listing them offers a selection that can only 404.
+    // Opus 4 and Sonnet 4 went out on 2026-06-15, after the 3.x pair.
+    for (const id of [
+      "claude-3-7-sonnet-latest",
+      "claude-3-5-haiku-latest",
+      "claude-opus-4-1",
+      "claude-opus-4-0",
+      "claude-sonnet-4-0",
+    ]) {
+      expect(anthropicIds).not.toContain(id);
+    }
+  });
+
+  it("reports no temperature support for the Anthropic rows that reject it", () => {
+    // Fable 5, Opus 5, Opus 4.8/4.7 and Sonnet 5 answer a temperature with a
+    // 400, so every one of these rows would fail on its first request while
+    // prepareChatV2 sent the slider value. See MMA-2.
+    for (const id of [
+      "claude-fable-5",
+      "claude-opus-5",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+      "claude-sonnet-5",
+    ]) {
+      expect(modelSupportsTemperature(id)).toBe(false);
+    }
+  });
+
+  it("keeps temperature for the Anthropic rows that still accept it", () => {
+    for (const id of [
+      "claude-opus-4-6",
+      "claude-sonnet-4-6",
+      "claude-sonnet-4-5",
+      "claude-haiku-4-5",
+    ]) {
+      expect(modelSupportsTemperature(id)).toBe(true);
+    }
+  });
+
+  it("answers the same for a hosted id as for the model it names", () => {
+    // Hosted ids were exempted while the backend was assumed to own the
+    // request body; it substitutes 0.7 instead of stripping, so every one of
+    // these was 400ing on its first hosted turn.
+    for (const id of [
+      "anthropic/claude-opus-4.7",
+      "anthropic/claude-opus-4.8",
+      "anthropic/claude-sonnet-5",
+      "anthropic/claude-fable-5",
+      "openai/gpt-5-mini",
+    ]) {
+      expect(isMCPJamProvidedModel(id)).toBe(true);
+      expect(modelSupportsTemperature(id)).toBe(false);
+    }
+    // A hosted model whose family never dropped the parameters keeps it.
+    for (const id of [
+      "anthropic/claude-opus-4.6",
+      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-haiku-4.5",
+    ]) {
+      expect(modelSupportsTemperature(id)).toBe(true);
+    }
+  });
+
+  it("gives every BYOK Anthropic row a context length", () => {
+    // getDefaultModel and the token-budget UI both read contextLength; a row
+    // added without one silently degrades those rather than failing loudly.
+    for (const model of SUPPORTED_MODELS.filter(
+      (m) => m.provider === "anthropic"
+    )) {
+      expect(model.contextLength).toBeGreaterThan(0);
+    }
+  });
+
   it("hostedModelDefinitionsFromSnapshot() is a non-empty, all-hosted fallback", () => {
     const hosted = hostedModelDefinitionsFromSnapshot();
     expect(hosted.length).toBeGreaterThan(100);
     expect(hosted.every((m) => m.hosted === true)).toBe(true);
     // Every hosted snapshot model is guest-allowed now (guests un-curated).
     expect(hosted.every((m) => m.guestAllowed === true)).toBe(true);
+  });
+});
+
+describe("modelSupportsTemperature", () => {
+  it("still strips temperature for own-provider GPT-5 models", () => {
+    expect(modelSupportsTemperature("gpt-5")).toBe(false);
+    expect(modelSupportsTemperature("gpt-5.1-codex")).toBe(false);
+    // Each shipped 5.6 row, not just one: the carve-out is a substring match,
+    // so a rename that drops "gpt-5" would start sending temperature.
+    expect(modelSupportsTemperature("gpt-5.6-luna")).toBe(false);
+    expect(modelSupportsTemperature("gpt-5.6-sol")).toBe(false);
+    expect(modelSupportsTemperature("gpt-5.6-terra")).toBe(false);
+  });
+
+  it("strips temperature for a hosted GPT-5 too", () => {
+    // Hosted ids used to be exempt on the grounds that the backend owns the
+    // body it sends upstream. It substitutes 0.7 rather than stripping, so the
+    // exemption only hid the field from the one side that can omit it.
+    expect(modelSupportsTemperature("openai/gpt-5")).toBe(false);
+  });
+
+  it("resolves a dated snapshot like the alias it pins", () => {
+    expect(modelSupportsTemperature("claude-opus-5-20260401")).toBe(false);
+  });
+
+  it("resolves a provider-prefixed id by its model family, hosted or not", () => {
+    // A prefixed id we don't serve ourselves still reaches the same upstream
+    // model on the caller's key, so it rejects temperature just the same — and
+    // so does the hosted twin we do serve.
+    expect(modelSupportsTemperature("anthropic/claude-opus-5")).toBe(false);
+    expect(modelSupportsTemperature("anthropic/claude-sonnet-5")).toBe(false);
+  });
+
+  it("keeps temperature for models it knows nothing about", () => {
+    expect(modelSupportsTemperature("newvendor/some-new-model")).toBe(true);
+    // A blank id matches no family either. It has to fall back to allowing the
+    // field rather than being read as a model that rejects it.
+    expect(modelSupportsTemperature("")).toBe(true);
+    // The id arrives from a catalog row or a persisted config, so a nullish one
+    // reaches String() at runtime whatever the signature says. It has to land on
+    // the same permissive fallback rather than throwing on the request path.
+    expect(modelSupportsTemperature(null as unknown as string)).toBe(true);
+    expect(modelSupportsTemperature(undefined as unknown as string)).toBe(true);
+  });
+
+  it("strips temperature for Bedrock ids of an affected family", () => {
+    // The shape the original report came in under: Bedrock serves the same
+    // models over the same request surface, so an inference profile for an
+    // affected family 400s identically. None of these are hosted, so the
+    // MCPJam-provided carve-out does not apply.
+    const ids = [
+      "us.anthropic.claude-opus-4-7-20260205-v1:0",
+      "eu.anthropic.claude-sonnet-5-20260401-v1:0",
+      "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-4-8-20260310-v1:0",
+    ];
+    for (const id of ids) {
+      expect(modelSupportsTemperature(id), id).toBe(false);
+    }
+  });
+
+  it("keeps temperature for a Bedrock id whose family still accepts it", () => {
+    const ids = [
+      "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      // A bare major on Bedrock is followed by the release date; it must not
+      // be read as a minor version, which would push Opus 4 over the 4.7
+      // threshold.
+      "anthropic.claude-opus-4-20250514-v1:0",
+    ];
+    for (const id of ids) {
+      expect(modelSupportsTemperature(id), id).toBe(true);
+    }
+  });
+
+  it("covers versions past the cutoff that have not shipped yet", () => {
+    // The threshold is numeric, so a new release in an affected family is
+    // handled without anyone editing this file.
+    expect(modelSupportsTemperature("anthropic/claude-opus-4.9")).toBe(false);
+    expect(modelSupportsTemperature("anthropic/claude-opus-6")).toBe(false);
+    // A family with no threshold of its own is held to 5, so a Haiku 5 loses
+    // the field while every shipped Haiku keeps it.
+    expect(modelSupportsTemperature("anthropic/claude-haiku-5")).toBe(false);
+    expect(modelSupportsTemperature("anthropic/claude-haiku-4.5")).toBe(true);
+  });
+});
+
+describe("modelDefinitionSupportsTemperature", () => {
+  const row = (over: Partial<ModelDefinition>): ModelDefinition =>
+    ({
+      id: "openai/gpt-4o",
+      name: "GPT-4o",
+      provider: "openai",
+      ...over,
+    } as ModelDefinition);
+
+  it("answers from the catalog when it lists parameters", () => {
+    expect(
+      modelDefinitionSupportsTemperature(
+        row({ supportedParameters: ["tools", "temperature"] })
+      )
+    ).toBe(true);
+    expect(
+      modelDefinitionSupportsTemperature(
+        row({ supportedParameters: ["tools", "max_tokens"] })
+      )
+    ).toBe(false);
+  });
+
+  it("treats absent or empty parameters as no metadata", () => {
+    // Every BYOK/org/Ollama row, and any hosted row cached before the field
+    // existed, arrives this way. Reading it as "accepts nothing" would strip
+    // temperature from the whole picker.
+    expect(modelDefinitionSupportsTemperature(row({}))).toBe(true);
+    expect(
+      modelDefinitionSupportsTemperature(row({ supportedParameters: [] }))
+    ).toBe(true);
+  });
+
+  it("never lets the catalog restore temperature to a rejecting id", () => {
+    // The id predicate knows the request 400s; a stale row claiming otherwise
+    // is not new information.
+    expect(
+      modelDefinitionSupportsTemperature(
+        row({
+          id: "anthropic/claude-sonnet-5",
+          provider: "anthropic",
+          supportedParameters: ["temperature"],
+        })
+      )
+    ).toBe(false);
+    expect(
+      modelDefinitionSupportsTemperature(
+        row({ id: "openai/gpt-5", supportedParameters: ["temperature"] })
+      )
+    ).toBe(false);
   });
 });
 

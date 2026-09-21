@@ -68,6 +68,22 @@ describe("environmentLabel", () => {
     expect(environmentLabel(row({ origin: "adhoc" }), ctx)).toBe("Claude");
   });
 
+  it("appends a model segment on an ad-hoc row that carries a model override", () => {
+    expect(
+      environmentLabel(row({ origin: "adhoc", modelId: "google/gemini-2.5-flash" }), {
+        ...ctx,
+        modelName: (id) =>
+          id === "google/gemini-2.5-flash" ? "Gemini 2.5 Flash" : undefined,
+      })
+    ).toBe("Claude · Gemini 2.5 Flash");
+  });
+
+  it("falls back to the model id tail when no catalog name is supplied", () => {
+    expect(
+      environmentLabel(row({ origin: "adhoc", modelId: "anthropic/claude-haiku-4.5" }), ctx)
+    ).toBe("Claude · claude-haiku-4.5");
+  });
+
   // The `.trim() ||` vs `??` distinction. An empty name must fall THROUGH to the
   // client name; `??` would pass it straight to the UI as a blank cell.
   it("falls through an empty-string name to the client name", () => {

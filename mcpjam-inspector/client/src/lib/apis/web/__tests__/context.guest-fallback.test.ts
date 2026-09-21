@@ -59,24 +59,24 @@ describe("getApiAuthorizationHeader guest fallback", () => {
     expect(getAccessToken).not.toHaveBeenCalled();
   });
 
-  it("prefers guest token for chatbox guests without calling WorkOS", async () => {
+  it("prefers guest token for scenario guests without calling WorkOS", async () => {
     const getAccessToken = vi
       .fn()
       .mockResolvedValue("workos-token-should-skip");
     setApiContext({
-      projectId: "ws-chatbox",
+      projectId: "ws-scenario",
       isAuthenticated: false,
       serverIdsByName: { bench: "srv-1" },
       getAccessToken,
-      chatboxId: "cbx_123",
+      scenarioId: "cbx_123",
       accessVersion: 1,
     });
 
-    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-chatbox");
+    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-scenario");
 
     const result = await getApiAuthorizationHeader();
 
-    expect(result).toBe("Bearer guest-chatbox");
+    expect(result).toBe("Bearer guest-scenario");
     expect(getAccessToken).not.toHaveBeenCalled();
   });
 
@@ -165,7 +165,42 @@ describe("getApiAuthorizationHeader guest fallback", () => {
     vi.useRealTimers();
   });
 
-  it("prefers guest token for guest-owned projects (unauthed + projectId, no share/chatbox)", async () => {
+  it("re-resolves when one signed-in user replaces another mid-flight", async () => {
+    // Both actors are signed in, so the guest-mode flag reads the same for
+    // each and never flips. Only the context revision separates them — without
+    // it, user A's in-flight token is returned for, and cached against, user B.
+    let releaseA: ((token: string) => void) | undefined;
+    const getAccessTokenA = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          releaseA = resolve;
+        })
+    );
+    const getAccessTokenB = vi.fn().mockResolvedValue("token-user-b");
+
+    setApiContext({
+      projectId: "ws-user-a",
+      serverIdsByName: {},
+      getAccessToken: getAccessTokenA,
+      isAuthenticated: true,
+    });
+
+    const pending = getApiAuthorizationHeader();
+
+    // User B signs in while A's token is still resolving.
+    setApiContext({
+      projectId: "ws-user-b",
+      serverIdsByName: {},
+      getAccessToken: getAccessTokenB,
+      isAuthenticated: true,
+    });
+
+    releaseA?.("token-user-a");
+
+    expect(await pending).toBe("Bearer token-user-b");
+  });
+
+  it("prefers guest token for guest-owned projects (unauthed + projectId, no share/scenario)", async () => {
     // Pre-"guests are users" this case returned null because a set projectId
     // was treated as proof of an authed session. Guests can now own projects,
     // so this path must surface a guest bearer.
@@ -203,6 +238,64 @@ describe("getApiAuthorizationHeader guest fallback", () => {
     expect(result2).toBe("Bearer cached-workos");
     expect(getAccessToken).toHaveBeenCalledTimes(1);
     expect(getGuestBearerToken).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse a cached guest bearer after sign-in", async () => {
+    setApiContext({
+      projectId: "ws-guest-owned",
+      isAuthenticated: false,
+      serverIdsByName: {},
+    });
+    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-stale");
+
+    const guestResult = await getApiAuthorizationHeader();
+    expect(guestResult).toBe("Bearer guest-stale");
+    expect(getGuestBearerToken).toHaveBeenCalledTimes(1);
+
+    // No `resetTokenCache` spy here: `setApiContext` calls it through the
+    // module's own binding, so a namespace spy never takes effect. The real
+    // reset runs, and the assertions below hold on that behavior.
+    const getAccessToken = vi.fn().mockResolvedValue("workos-after-sign-in");
+    setApiContext({
+      projectId: "ws-guest-owned",
+      serverIdsByName: {},
+      getAccessToken,
+      isAuthenticated: true,
+    });
+
+    const signedInResult = await getApiAuthorizationHeader();
+
+    expect(signedInResult).toBe("Bearer workos-after-sign-in");
+    expect(getAccessToken).toHaveBeenCalledTimes(1);
+    expect(getGuestBearerToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not hand back a guest token minted for an actor that just signed in", async () => {
+    // Guest mode at the start; the sign-in lands while the guest bearer
+    // lookup is still in flight.
+    setApiContext({
+      projectId: null,
+      isAuthenticated: false,
+      serverIdsByName: {},
+    });
+
+    const getAccessToken = vi.fn().mockResolvedValue("workos-after-switch");
+    vi.mocked(getGuestBearerToken).mockImplementationOnce(async () => {
+      setApiContext({
+        projectId: "ws-1",
+        serverIdsByName: {},
+        getAccessToken,
+        isAuthenticated: true,
+      });
+      return "guest-from-previous-actor";
+    });
+
+    const result = await getApiAuthorizationHeader();
+
+    expect(result).toBe("Bearer workos-after-switch");
+    // And the stale guest token was not cached for the next caller either.
+    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-should-not-be-used");
+    expect(await getApiAuthorizationHeader()).toBe("Bearer workos-after-switch");
   });
 
   it("re-evaluates guest token after cache expiry", async () => {
@@ -252,11 +345,11 @@ describe("guest-owned project request building", () => {
     );
   });
 
-  it("buildServerRequest uses project path for chatbox guests", () => {
+  it("buildServerRequest uses project path for scenario guests", () => {
     setApiContext({
-      projectId: "ws-chatbox",
+      projectId: "ws-scenario",
       isAuthenticated: false,
-      chatboxId: "cbx_123",
+      scenarioId: "cbx_123",
       accessVersion: 1,
       serverIdsByName: { "my-server": "srv-1" },
     });
@@ -264,10 +357,10 @@ describe("guest-owned project request building", () => {
     const result = buildServerRequest("my-server");
 
     expect(result).toMatchObject({
-      projectId: "ws-chatbox",
+      projectId: "ws-scenario",
       serverId: "srv-1",
       serverName: "my-server",
-      chatboxId: "cbx_123",
+      scenarioId: "cbx_123",
       accessVersion: 1,
     });
   });

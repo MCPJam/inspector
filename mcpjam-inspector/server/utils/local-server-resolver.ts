@@ -1,5 +1,17 @@
+import { connectionKey } from "@mcpjam/sdk";
+import type { AuthorizedOAuthConnection } from "../../shared/oauth-connections.js";
+import { connectionLabels } from "../../shared/oauth-connections.js";
+import {
+  getManagerConnections,
+  setManagerConnections,
+  registerLocalConnectionScope,
+} from "./mcp-connections.js";
 import type { Context } from "hono";
-import type { MCPClientManager, MCPServerConfig } from "@mcpjam/sdk";
+import type {
+  MCPClientManager,
+  MCPServerConfig,
+  HttpServerConfig,
+} from "@mcpjam/sdk";
 import { narrowElicitationToLocalSupport } from "../routes/mcp/elicitation.js";
 import {
   registerLocalMrtrCollector,
@@ -19,7 +31,7 @@ import {
 } from "../routes/web/errors.js";
 import {
   buildHostedOAuthUnauthorizedHandler,
-  forceRefreshHostedOAuthAccessToken,
+  refreshHostedOAuthAccessTokenWithLocalFallback,
 } from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
 import { maybeCaptureOriginError } from "./error-origin-capture.js";
@@ -123,6 +135,7 @@ type LocalAuthorizeBatchSuccess = {
   permissions: { chatOnly: boolean };
   serverConfig: LocalAuthorizeServerConfig;
   oauthAccessToken?: string | null;
+  oauthConnections?: AuthorizedOAuthConnection[];
   internalLogContext?: InternalLogContext;
 };
 
@@ -187,7 +200,7 @@ export interface WorkosApiKeyActingAs {
 /**
  * Call Convex `/web/authorize-batch-local` with the user's bearer.
  * Returns the full server config for each requested serverId, including
- * STDIO command/args/env. Hosted-only fields (share/chatbox tokens) are not
+ * STDIO command/args/env. Hosted-only fields (share/scenario tokens) are not
  * accepted by this endpoint by design.
  *
  * `c` is only a request-log sink; callers without a live Hono context (the
@@ -199,7 +212,11 @@ export async function authorizeBatchLocal(
   bearerToken: string,
   projectId: string,
   serverIds: string[],
-  workosApiKeyActingAs?: WorkosApiKeyActingAs
+  workosApiKeyActingAs?: WorkosApiKeyActingAs,
+  connectionOptions?: {
+    includeConnections?: boolean;
+    connectionIds?: Record<string, string>;
+  },
 ): Promise<LocalAuthorizeBatchResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -246,7 +263,7 @@ export async function authorizeBatchLocal(
     response = await fetch(`${convexUrl}/web/authorize-batch-local`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ projectId, serverIds }),
+      body: JSON.stringify({ projectId, serverIds, ...connectionOptions }),
       signal: controller.signal,
     });
   } catch (error) {
@@ -304,7 +321,7 @@ export async function authorizeBatchLocal(
       // the batch instead.
       partial.serverId = null;
       partial.serverTransport = null;
-      partial.chatboxId = null;
+      partial.scenarioId = null;
     }
     setRequestLogContext(c, partial);
   }
@@ -337,7 +354,11 @@ export async function authorizeServerLocal(
   bearerToken: string,
   projectId: string,
   serverId: string,
-  workosApiKeyActingAs?: WorkosApiKeyActingAs
+  workosApiKeyActingAs?: WorkosApiKeyActingAs,
+  connectionOptions?: {
+    includeConnections?: boolean;
+    connectionIds?: Record<string, string>;
+  },
 ): Promise<
   LocalAuthorizeBatchSuccess & {
     organizationId?: string | null;
@@ -349,7 +370,8 @@ export async function authorizeServerLocal(
     bearerToken,
     projectId,
     [serverId],
-    workosApiKeyActingAs
+    workosApiKeyActingAs,
+    connectionOptions,
   );
   const result = batch.results[serverId];
   if (!result) {
@@ -478,6 +500,22 @@ export function parseConnectionDefaults(
   if (input.supportsMrtr === false) {
     out.supportsMrtr = false;
   }
+  if (input.suppressListenChannel === true) {
+    out.suppressListenChannel = true;
+  }
+  if (input.dropToolListChanged === true) {
+    out.dropToolListChanged = true;
+  }
+  if (input.toolCallCancellation && typeof input.toolCallCancellation === "object") {
+    const raw = input.toolCallCancellation as {
+      legacy?: unknown;
+      modern?: unknown;
+    };
+    const leaves: { legacy?: boolean; modern?: boolean } = {};
+    if (raw.legacy === false) leaves.legacy = false;
+    if (raw.modern === false) leaves.modern = false;
+    if (Object.keys(leaves).length > 0) out.toolCallCancellation = leaves;
+  }
 
   // Enterprise-managed authorization policy. UNLIKE every field above, this
   // one is enforcement, not advisory: silently dropping a malformed value
@@ -564,6 +602,7 @@ export function toMCPServerConfig(
       projectId: string;
       serverId: string;
       serverName: string;
+      connectionId?: string;
     };
     /**
      * XAA re-mint hook. When the server uses Cross-App Access, the connect
@@ -619,6 +658,16 @@ export function toMCPServerConfig(
      */
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean };
+    /**
+     * `mcpProfile.toolListChanged`. Split by transport, unlike the pair above:
+     * `suppressListenChannel` refuses the server→client GET stream, which
+     * only exists on Streamable HTTP, so it is HTTP-only like the mirroring
+     * flag; `dropToolListChanged` edits an inbound JSON-RPC frame and is
+     * forwarded on stdio too.
+     */
+    suppressListenChannel?: boolean;
+    dropToolListChanged?: boolean;
     /**
      * The host's enterprise-managed authorization policy (validated `on`
      * value). Present ⇒ the EMA extension is advertised on EVERY server of
@@ -694,6 +743,13 @@ export function toMCPServerConfig(
     // unlike the mirroring flag they are forwarded here as well as on HTTP.
     if (options?.firstPageOnly === true) stdio.firstPageOnly = true;
     if (options?.supportsMrtr === false) stdio.supportsMrtr = false;
+    // Only the drop half: a stdio connection has no GET listen stream to
+    // refuse, so `suppressListenChannel` is inert here (see the options
+    // docblock) and writing it would put a field on a config that can never
+    // act on it.
+    if (options?.dropToolListChanged === true) stdio.dropToolListChanged = true;
+    if (options?.toolCallCancellation)
+      stdio.toolCallCancellation = options.toolCallCancellation;
     return stdio as MCPServerConfig;
   }
 
@@ -773,6 +829,11 @@ export function toMCPServerConfig(
     http.mirrorToolParamHeaders = false;
   if (options?.firstPageOnly === true) http.firstPageOnly = true;
   if (options?.supportsMrtr === false) http.supportsMrtr = false;
+  if (options?.suppressListenChannel === true)
+    http.suppressListenChannel = true;
+  if (options?.dropToolListChanged === true) http.dropToolListChanged = true;
+  if (options?.toolCallCancellation)
+    http.toolCallCancellation = options.toolCallCancellation;
 
   // Attach the SDK's 401-recovery hook only when this is a hosted-OAuth
   // server (we have a token from `authorize-batch-local`) AND the caller
@@ -801,6 +862,13 @@ export function toMCPServerConfig(
       projectId: options.refreshContext.projectId,
       serverId: options.refreshContext.serverId,
       serverName: options.refreshContext.serverName,
+      connectionId: options.refreshContext.connectionId,
+      // In local mode this process is the one that can reach a private
+      // authorization server. Covers the in-flight 401 during a long session,
+      // not just the connect. `!HOSTED_MODE` rather than `true`:
+      // toMCPServerConfig is exported, so gate at the call site too instead of
+      // relying solely on the assertion inside local-oauth-refresh.
+      allowPrivateAuthorizationServerFallback: !HOSTED_MODE,
     });
   } else if (
     oauthToken &&
@@ -850,7 +918,7 @@ async function applyLocalRuntimeResolution<
     serverDisplayName?: string;
     /** Secret-reveal scope; must match what the hosted mint path would send. */
     accessScope?: "project_member" | "chat_v2";
-    chatboxId?: string;
+    scenarioId?: string;
     accessVersion?: number;
     workosApiKeyActingAs?: WorkosApiKeyActingAs;
     /**
@@ -875,7 +943,7 @@ async function applyLocalRuntimeResolution<
       projectId,
       serverId,
       accessScope: args.accessScope,
-      chatboxId: args.chatboxId,
+      scenarioId: args.scenarioId,
       accessVersion: args.accessVersion,
       workosApiKeyActingAs: args.workosApiKeyActingAs,
     });
@@ -988,7 +1056,7 @@ export async function readAuthorizedStdioLaunchSpec(args: {
   serverId: string;
   serverDisplayName?: string;
   accessScope?: "project_member" | "chat_v2";
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
 }): Promise<PluginStdioLaunchSpec> {
   const result = await authorizeServerLocal(
@@ -1019,10 +1087,12 @@ export async function readAuthorizedStdioLaunchSpec(args: {
             projectId: args.projectId,
             serverId: args.serverId,
             accessScope: args.accessScope,
-            chatboxId: args.chatboxId,
+            scenarioId: args.scenarioId,
             accessVersion: args.accessVersion,
           })
-        ).env ?? config.env ?? {}
+        ).env ??
+        config.env ??
+        {}
       : config.env ?? {};
 
   return {
@@ -1060,16 +1130,23 @@ export async function resolveLocalStdioServerConfig(
     supportedProtocolVersions?: string[];
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    /**
+     * The drop half of `mcpProfile.toolListChanged` only: this helper
+     * resolves stdio rows exclusively (it 409s on anything else), and there
+     * is no listen channel on stdio for `suppressListenChannel` to refuse.
+     */
+    dropToolListChanged?: boolean;
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean };
     xaaPolicy?: XaaEnterprisePolicy;
     /**
      * Secret-reveal scope + delegated identity, threaded from
      * `createAuthorizedManager`'s options and caller context so the local
      * reread and reveal follow the same trust model as the hosted batch —
-     * a chatbox-scoped or WorkOS-API-key caller must not get a lesser (or
+     * a scenario-scoped or WorkOS-API-key caller must not get a lesser (or
      * failing) resolution just because the deployment is local.
      */
     accessScope?: "project_member" | "chat_v2";
-    chatboxId?: string;
+    scenarioId?: string;
     accessVersion?: number;
     workosApiKeyActingAs?: WorkosApiKeyActingAs;
     /**
@@ -1107,7 +1184,7 @@ export async function resolveLocalStdioServerConfig(
     managerKey: serverId,
     serverDisplayName: options?.serverDisplayName,
     accessScope: options?.accessScope,
-    chatboxId: options?.chatboxId,
+    scenarioId: options?.scenarioId,
     accessVersion: options?.accessVersion,
     workosApiKeyActingAs: options?.workosApiKeyActingAs,
     onPluginLease: options?.onPluginLease,
@@ -1119,6 +1196,8 @@ export async function resolveLocalStdioServerConfig(
     supportedProtocolVersions: options?.supportedProtocolVersions,
     firstPageOnly: options?.firstPageOnly,
     supportsMrtr: options?.supportsMrtr,
+    dropToolListChanged: options?.dropToolListChanged,
+    toolCallCancellation: options?.toolCallCancellation,
     // Advertises the EMA extension host-wide on stdio too, matching the
     // /api/mcp path; stdio never gets OAuth/XAA hooks, so no
     // refreshContext / xaaUnauthorizedHandler here.
@@ -1160,7 +1239,14 @@ export async function resolveLocalServerForConnect(
    */
   effectiveAuth: EffectiveAuthMethod;
 }> {
-  let result = await authorizeServerLocal(c, bearerToken, projectId, serverId);
+  let result = await authorizeServerLocal(
+    c,
+    bearerToken,
+    projectId,
+    serverId,
+    undefined,
+    { includeConnections: true },
+  );
 
   // One resolver decides the flow for every dispatch below: canonical
   // authMethod wins ("auto" selects XAA when configured, "discover"
@@ -1212,12 +1298,13 @@ export async function resolveLocalServerForConnect(
   if (useOAuth && !resolvedOauthAccessToken) {
     const displayName = options?.serverDisplayName ?? serverId;
     try {
-      resolvedOauthAccessToken = await forceRefreshHostedOAuthAccessToken(
-        bearerToken,
-        projectId,
-        serverId,
-        { serverName: displayName }
-      );
+      resolvedOauthAccessToken =
+        await refreshHostedOAuthAccessTokenWithLocalFallback(
+          bearerToken,
+          projectId,
+          serverId,
+          { serverName: displayName }
+        );
     } catch (error) {
       const refreshTokenInvalid =
         error instanceof WebRouteError &&
@@ -1258,12 +1345,13 @@ export async function resolveLocalServerForConnect(
   // needs auth, the connect 401s and the tagged error escalates client-side.
   if (effectiveAuth === "discover" && !resolvedOauthAccessToken) {
     try {
-      resolvedOauthAccessToken = await forceRefreshHostedOAuthAccessToken(
-        bearerToken,
-        projectId,
-        serverId,
-        { serverName: options?.serverDisplayName ?? serverId }
-      );
+      resolvedOauthAccessToken =
+        await refreshHostedOAuthAccessTokenWithLocalFallback(
+          bearerToken,
+          projectId,
+          serverId,
+          { serverName: options?.serverDisplayName ?? serverId }
+        );
     } catch (error) {
       logger.debug(
         "[discover connect] silent token refresh unavailable; attempting unauthenticated connect",
@@ -1399,12 +1487,17 @@ export async function resolveLocalServerForConnect(
     // Same path again for the sibling conformance knobs.
     firstPageOnly: options?.defaults?.firstPageOnly,
     supportsMrtr: options?.defaults?.supportsMrtr,
+    suppressListenChannel: options?.defaults?.suppressListenChannel,
+    dropToolListChanged: options?.defaults?.dropToolListChanged,
+    toolCallCancellation: options?.defaults?.toolCallCancellation,
     oauthAccessToken: resolvedOauthAccessToken,
     refreshContext: {
       bearerToken,
       projectId,
       serverId,
       serverName: options?.serverDisplayName ?? serverId,
+      connectionId: result.oauthConnections?.find((c) => c.isDefault)
+        ?.connectionId,
     },
     xaaUnauthorizedHandler,
     xaaPolicy,
@@ -1545,7 +1638,8 @@ export function respondWithLocalRouteError(c: Context, error: WebRouteError) {
   ) {
     c.header("X-MCP-Auth-Required", "oauth");
   }
-  const normalized = error.normalized ?? describeError(error);
+  const normalized =
+    error.normalized ?? describeError(error, { surface: "mcpServer" });
   // Skip-if-stamped by construction: most callers reach here holding a
   // `WebRouteError` that `mapRuntimeError` already ruled on, and the helper
   // short-circuits on the stamp. The call is still made so the local-mode
@@ -1615,6 +1709,10 @@ export async function executeLocalServerConnect(
 ) {
   const { serverId, projectId, serverDisplayName, bearer } = params;
   const mcpClientManager = c.mcpClientManager;
+  registerLocalConnectionScope(mcpClientManager, serverDisplayName, {
+    serverId,
+    projectId,
+  });
 
   let resolved: Awaited<ReturnType<typeof resolveLocalServerForConnect>>;
   try {
@@ -1639,7 +1737,7 @@ export async function executeLocalServerConnect(
         success: false,
         error: "Failed to resolve server config",
         details: error instanceof Error ? error.message : "Unknown error",
-        normalized: describeError(error),
+        normalized: describeError(error, { surface: "mcpServer" }),
       },
       500
     );
@@ -1715,7 +1813,7 @@ export async function executeLocalServerConnect(
               serverName: serverDisplayName,
               serverUrl,
             },
-            describeError(error)
+            describeError(error, { surface: "mcpServer" })
           )
         );
       }
@@ -1740,7 +1838,7 @@ export async function executeLocalServerConnect(
               serverName: serverDisplayName,
               serverUrl,
             },
-            describeError(error)
+            describeError(error, { surface: "mcpServer" })
           )
         );
       }
@@ -1764,11 +1862,83 @@ export async function executeLocalServerConnect(
         error: failureMessage,
         serverName: serverDisplayName,
         details: failureMessage,
-        normalized: describeError(error),
+        normalized: describeError(error, { surface: "mcpServer" }),
       },
       500
     );
   }
+
+  // The bare key remains the default for inspection/evals. Chat owns stable
+  // account keys, including an alias for the default: rebinding the bare key
+  // must not redirect an in-flight turn to another credential.
+  const previousGroups = getManagerConnections(mcpClientManager) ?? {};
+  const accounts = resolved.authorizeResult.oauthConnections ?? [];
+  // See the note in routes/web/auth.ts: labels are unique per group.
+  const accountLabels = connectionLabels(accounts);
+  const connected = [];
+  for (const [index, account] of accounts.entries()) {
+    if (
+      !account.accessToken ||
+      account.needsReauth ||
+      !("url" in connectConfig)
+    )
+      continue;
+    const key = connectionKey(serverDisplayName, account.connectionId, false);
+    const headers = new Headers(connectConfig.requestInit?.headers);
+    headers.set("Authorization", `Bearer ${account.accessToken}`);
+    registerLocalMrtrCollector(mcpClientManager, key);
+    try {
+      const existing = mcpClientManager.getServerConfig(key) as
+        | HttpServerConfig
+        | undefined;
+      const sameToken =
+        existing &&
+        new Headers(existing.requestInit?.headers).get("Authorization") ===
+          headers.get("Authorization");
+      if (
+        !sameToken ||
+        mcpClientManager.getConnectionStatus(key) !== "connected"
+      ) {
+        await mcpClientManager.disconnectServer(key).catch(() => undefined);
+        await mcpClientManager.connectToServer(key, {
+          ...(connectConfig as HttpServerConfig),
+          requestInit: { ...connectConfig.requestInit, headers },
+          onUnauthorized: buildHostedOAuthUnauthorizedHandler({
+            bearerToken: bearer,
+            projectId,
+            serverId,
+            serverName: serverDisplayName,
+            connectionId: account.connectionId,
+            allowPrivateAuthorizationServerFallback: true,
+          }),
+        });
+      }
+      connected.push({
+        serverId,
+        key,
+        connectionId: account.connectionId,
+        label: accountLabels[index],
+        profile: account.profile,
+        isDefault: account.isDefault,
+      });
+    } catch (error) {
+      logger.debug("Account connection unavailable", {
+        serverId,
+        connectionId: account.connectionId,
+        error: String(error),
+      });
+      await mcpClientManager.removeServer(key).catch(() => undefined);
+    }
+  }
+  for (const previous of previousGroups[serverDisplayName] ?? []) {
+    if (!connected.some((c) => c.key === previous.key))
+      await mcpClientManager.removeServer(previous.key).catch(() => undefined);
+  }
+  const { [serverDisplayName]: _previous, ...otherGroups } = previousGroups;
+  setManagerConnections(mcpClientManager, {
+    ...otherGroups,
+    ...(connected.length ? { [serverDisplayName]: connected } : {}),
+  });
 
   // Capture the inspection snapshot synchronously so a fast follow-up
   // disconnect/reconnect on the same server can't tear down the manager

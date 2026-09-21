@@ -2,7 +2,8 @@ import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { shouldQueryHostId, useHost } from "../useClients";
 
-const { mockUseMutation, mockUseQuery } = vi.hoisted(() => ({
+const { mockDbUserReady, mockUseMutation, mockUseQuery } = vi.hoisted(() => ({
+  mockDbUserReady: { value: true },
   mockUseMutation: vi.fn(),
   mockUseQuery: vi.fn(),
 }));
@@ -10,6 +11,10 @@ const { mockUseMutation, mockUseQuery } = vi.hoisted(() => ({
 vi.mock("convex/react", () => ({
   useMutation: mockUseMutation,
   useQuery: mockUseQuery,
+}));
+
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => mockDbUserReady.value,
 }));
 
 // A real Convex document id: a long lowercase base32 string, nothing like the
@@ -50,6 +55,7 @@ describe("shouldQueryHostId", () => {
 describe("useHost", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockDbUserReady.value = true;
     mockUseMutation.mockReturnValue(vi.fn());
   });
 
@@ -96,6 +102,18 @@ describe("useHost", () => {
       useHost({ isAuthenticated: true, hostId: CONVEX_HOST_ID }),
     );
 
+    expect(result.current.isLoading).toBe(true);
+  });
+
+  it("reports loading while an authenticated host waits for the database user", () => {
+    mockDbUserReady.value = false;
+
+    const { result } = renderHook(() =>
+      useHost({ isAuthenticated: true, hostId: CONVEX_HOST_ID }),
+    );
+
+    expect(mockUseQuery).toHaveBeenCalledWith("hosts:getHost", "skip");
+    expect(result.current.host).toBeNull();
     expect(result.current.isLoading).toBe(true);
   });
 });

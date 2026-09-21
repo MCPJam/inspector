@@ -8,8 +8,10 @@ import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   buildServerToolSnapshotDebug,
   exportConnectedServerToolSnapshotForEvalAuthoring,
+  type ServerCatalogBytes,
 } from "../../utils/export-helpers.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
+import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 
 export type ReplayConfig = {
   runId: string;
@@ -22,11 +24,17 @@ export async function captureToolSnapshotForEvalAuthoring(
   serverIds: string[],
   options?: { logPrefix?: string; promptSectionMaxChars?: number },
 ) {
+  // Collected DURING capture, because that is the only moment the assembled
+  // catalog exists in full — the snapshot below drops and rewrites fields, so
+  // measuring it afterwards answers a different question. Rides on
+  // `toolSnapshotDebug`, which is `v.any()`, so this needs no schema change.
+  const catalogBytes: ServerCatalogBytes[] = [];
   const toolSnapshot = await exportConnectedServerToolSnapshotForEvalAuthoring(
     clientManager,
     serverIds,
     {
       logPrefix: options?.logPrefix,
+      catalogBytes,
     },
   );
 
@@ -34,6 +42,7 @@ export async function captureToolSnapshotForEvalAuthoring(
     toolSnapshot,
     toolSnapshotDebug: buildServerToolSnapshotDebug(toolSnapshot, {
       maxChars: options?.promptSectionMaxChars,
+      catalogBytes,
     }),
   };
 }
@@ -181,6 +190,10 @@ export function buildReplayManager(replayConfig: ReplayConfig) {
     {
       defaultTimeout: WEB_CALL_TIMEOUT_MS,
       lazyConnect: true,
+      // Replay dials the server configs a caller stored, so this one is the
+      // MJ-001 fix rather than uniformity: without it an eval replay was a
+      // second unguarded route to the same egress.
+      baseFetch: hostedMcpBaseFetch(),
       retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
     },
   );

@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { MemoryRouter, Route, Routes } from "react-router";
+import {
+  isSignOutInProgress,
+  resetSignOutLatchForTests,
+  SIGN_OUT_REQUEST_TIMEOUT_MS,
+} from "@/lib/auth/sign-out-latch";
 
 const authState = vi.hoisted(() => ({
   signInMock: vi.fn(),
@@ -49,22 +55,6 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
 }));
 
-vi.mock("@/components/sidebar/sidebar-credit-usage", () => ({
-  SidebarCreditUsage: ({
-    className,
-    variant,
-  }: {
-    className?: string;
-    variant?: string;
-  }) => (
-    <div
-      data-testid="sidebar-credit-usage"
-      data-variant={variant}
-      className={className}
-    />
-  ),
-}));
-
 vi.mock("@mcpjam/design-system/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
@@ -107,11 +97,31 @@ vi.mock("@/components/ui/sidebar", () => ({
 import { SidebarUser } from "../sidebar-user";
 
 describe("SidebarUser", () => {
+  it("opens Support in Settings from the account menu", async () => {
+    authState.user = { email: "owner@example.com", firstName: "Owner" };
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <SidebarUser />
+        <Routes>
+          <Route path="/home" element={null} />
+          <Route
+            path="/settings/support"
+            element={<h1>Support settings page</h1>}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByText("Support"));
+    expect(
+      await screen.findByRole("heading", { name: "Support settings page" }),
+    ).toBeInTheDocument();
+  });
   beforeEach(() => {
     authState.user = null;
     authState.signInMock.mockClear();
-    authState.signOutMock.mockClear();
+    authState.signOutMock.mockReset();
     window.isElectron = false;
+    resetSignOutLatchForTests();
   });
 
   it("renders nothing when unauthenticated", () => {
@@ -120,7 +130,7 @@ describe("SidebarUser", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("no longer renders credit usage in the account dropdown (moved to the org switcher)", () => {
+  it("no longer renders credit usage in the account dropdown (it is its own footer row)", () => {
     authState.user = {
       email: "owner@example.com",
       firstName: "Owner",
@@ -129,9 +139,7 @@ describe("SidebarUser", () => {
 
     render(<SidebarUser />);
 
-    expect(
-      screen.queryByTestId("sidebar-credit-usage")
-    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("sidebar-see-credits")).not.toBeInTheDocument();
   });
 
   it("account menu offers Notifications and Support alongside Profile and Settings", () => {
@@ -147,6 +155,28 @@ describe("SidebarUser", () => {
     expect(screen.getByText("Settings")).toBeInTheDocument();
     expect(screen.getByText("Notifications")).toBeInTheDocument();
     expect(screen.getByText("Support")).toBeInTheDocument();
+  });
+
+  it("latches sign-out before calling WorkOS, not after", () => {
+    // authkit's refresh timer fires ~1s later, sees the revoked session, and
+    // would redirect this tab to the hosted login page on top of the logout
+    // navigation. The latch has to be set by the time `signOut` is entered.
+    authState.user = {
+      email: "owner@example.com",
+      firstName: "Owner",
+      lastName: "Example",
+    };
+    let latchedWhenSignOutRan = false;
+    authState.signOutMock.mockImplementation(() => {
+      latchedWhenSignOutRan = isSignOutInProgress();
+    });
+
+    render(<SidebarUser />);
+
+    fireEvent.click(screen.getByText("Log out"));
+
+    expect(authState.signOutMock).toHaveBeenCalled();
+    expect(latchedWhenSignOutRan).toBe(true);
   });
 
   it("returns logout to the app origin instead of the callback route", () => {
@@ -184,8 +214,50 @@ describe("SidebarUser", () => {
       });
     });
     expect(onBeforeSignOut.mock.invocationCallOrder[0]).toBeLessThan(
-      authState.signOutMock.mock.invocationCallOrder[0]
+      authState.signOutMock.mock.invocationCallOrder[0],
     );
+  });
+
+  it("leaves Electron even when the logout request never answers", async () => {
+    // Nothing else navigates this window: `signOut({navigate: false})` settles
+    // only when its logout fetch does. A request that hung used to outlast the
+    // sign-out latch, and the refresh timer would then redirect the window to
+    // the hosted login page — the same hijack, arriving on a slow network.
+    authState.user = {
+      email: "owner@example.com",
+      firstName: "Owner",
+      lastName: "Example",
+    };
+    window.isElectron = true;
+    authState.signOutMock.mockReturnValue(new Promise(() => {}));
+
+    const assign = vi.fn();
+    const realLocation = window.location;
+    // jsdom's `location` is not writable and its `assign` throws "not
+    // implemented", so replacing the property is the only way to see where the
+    // sign-out would have gone.
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { assign, origin: "https://app.example.test" },
+    });
+
+    render(<SidebarUser />);
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByText("Log out"));
+
+      expect(assign).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(SIGN_OUT_REQUEST_TIMEOUT_MS);
+
+      expect(assign).toHaveBeenCalledWith("https://app.example.test");
+    } finally {
+      vi.useRealTimers();
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: realLocation,
+      });
+    }
   });
 
   it("uses non-navigation logout in Electron", () => {

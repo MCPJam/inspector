@@ -1,5 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { ConnectionAccountsSection } from "./ConnectionAccountsSection";
+import type { ConnectionIntent } from "@/shared/oauth-connections";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { toast } from "@/lib/toast";
+import { toastServerConnectionFailure } from "@/lib/server-error-toast";
 import { reportCaught } from "@/lib/error-reporting";
 import { useMutation, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
@@ -32,11 +42,17 @@ import {
   isOpenAIApp,
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
-import { getConnectionStatusMeta } from "./server-card-utils";
+import {
+  UNKNOWN_CONNECTION_STATUS,
+  getConnectionStatusMeta,
+  isConnectionStatus,
+} from "./server-card-utils";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
 import { EditServerFormContent } from "./EditServerFormContent";
+import { ServerUrlChangeHistory } from "./ServerUrlChangeHistory";
 import { ServerHistoryContent } from "./ServerHistoryContent";
 import { ServerHistoryDriftChip } from "./ServerHistoryDriftChip";
 import { HostCompatContent } from "@/components/compat/HostCompatContent";
@@ -55,6 +71,7 @@ import { shouldQueryProjectId } from "@/hooks/useProjects";
 export type ServerDetailTab =
   | "overview"
   | "configuration"
+  | "authorization"
   | "tools-metadata"
   | "compatibility"
   | "history";
@@ -63,7 +80,6 @@ interface ServerDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   server: ServerWithName;
-  needsReconnect?: boolean;
   defaultTab?: ServerDetailTab;
   onSubmit: (
     formData: ServerFormData,
@@ -74,6 +90,7 @@ interface ServerDetailModalProps {
     serverName: string,
     options?: {
       forceOAuthFlow?: boolean;
+      connectionIntent?: ConnectionIntent;
       allowInteractiveOAuthFlow?: boolean;
     }
   ) => Promise<void>;
@@ -92,7 +109,7 @@ interface ServerDetailModalProps {
    * Undefined = no host-level pin = "Legacy · default" attribution on
    * the chip.
    */
-  hostDefaultMcpProtocolVersion?: McpProtocolVersion;
+  hostDefaultMcpProtocolVersion?: McpProtocolVersion | "auto";
   /** Project default XAA test identity — shown as override placeholders. */
   projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
@@ -101,7 +118,6 @@ export function ServerDetailModal({
   isOpen,
   onClose,
   server,
-  needsReconnect = false,
   defaultTab = "overview",
   onSubmit,
   onDisconnect,
@@ -116,7 +132,18 @@ export function ServerDetailModal({
   projectXaaDefaultIdentity = null,
 }: ServerDetailModalProps) {
   const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
-  const [isReconnecting, setIsReconnecting] = useState(false);
+  // Any HTTP server, matching the token section's own guard rather than
+  // `useOAuth`: a server that has since had OAuth turned off can still hold
+  // stored tokens, or unparseable ones, and "Saved auth data is invalid" has
+  // to stay reachable. The sections inside hide themselves when there is
+  // nothing to show.
+  const showAuthorization = "url" in server.config;
+  // Reconnects overlap: two quick wire-mode changes start a second one while
+  // the first is still running. A boolean would be cleared by whichever
+  // finished first and let a configuration save through mid-reconnect, so the
+  // guard counts them and lifts only when the last one settles.
+  const [reconnectsInFlight, setReconnectsInFlight] = useState(0);
+  const isReconnecting = reconnectsInFlight > 0;
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
   const [toolsLoadError, setToolsLoadError] = useState<string | null>(null);
@@ -136,7 +163,9 @@ export function ServerDetailModal({
   // `project_` placeholder) makes it reject during render. Same guard every
   // other project-scoped Convex consumer uses; callers in local mode should
   // pass null, but this keeps a stray local id from taking down the page.
-  const canQueryProjectServerConfig = shouldQueryProjectId(projectId);
+  const isUserReady = useDbUserReady();
+  const canQueryProjectServerConfig =
+    isUserReady && shouldQueryProjectId(projectId);
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
     canQueryProjectServerConfig ? ({ projectId } as never) : "skip"
@@ -157,7 +186,7 @@ export function ServerDetailModal({
   // The History tab + drift chip surface persisted snapshot revisions, which
   // only exist for project-scoped (hosted) servers — hidden in local mode.
   // Both surfaces key off `showHistory`, so this is the single gate.
-  const showHistory = Boolean(projectId && serverId);
+  const showHistory = isUserReady && Boolean(projectId && serverId);
   const currentMcpProtocolVersionOverride = useMemo<
     McpProtocolVersion | undefined
   >(
@@ -176,8 +205,12 @@ export function ServerDetailModal({
   // without forcing the Servers tab to also wire up the provider just
   // for the chip's source attribution.
   const activeMcpProfile = useActiveMcpProfile();
-  const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
+  const storedHostDefaultMcpProtocolVersion =
     hostDefaultMcpProtocolVersion ?? activeMcpProfile?.mcpProtocolVersion;
+  const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
+    storedHostDefaultMcpProtocolVersion === "auto"
+      ? undefined
+      : storedHostDefaultMcpProtocolVersion;
   const canEditMcpProtocolVersionOverride = Boolean(
     canQueryProjectServerConfig &&
       serverId &&
@@ -210,27 +243,37 @@ export function ServerDetailModal({
     },
     []
   );
+  /**
+   * The wire-mode override's own reconnect, flagged in flight so the
+   * configuration Save is blocked for its duration like a user-initiated one.
+   * Both paths below reach it — the reactive watcher and the 1.5s safety net —
+   * because neither goes through `handleConnect`, which is where
+   * `isReconnecting` used to be set. Errors are reported, not toasted: the
+   * toggle owns that.
+   */
+  const reconnectForWireModeOverride = useCallback(async () => {
+    setReconnectsInFlight((count) => count + 1);
+    try {
+      await onReconnect(server.name, { allowInteractiveOAuthFlow: false });
+    } catch (err) {
+      reportCaught(err, {
+        source: "server_detail_wire_mode_reconnect",
+        level: "warning",
+      });
+    } finally {
+      setReconnectsInFlight((count) => count - 1);
+    }
+  }, [onReconnect, server.name]);
+
   useEffect(() => {
     const pending = pendingReconnectRef.current;
     if (!pending) return;
     if (currentMcpProtocolVersionOverride !== pending.target) return;
     pendingReconnectRef.current = null;
-    void onReconnect(server.name, { allowInteractiveOAuthFlow: false }).catch(
-      (err) => {
-        // The handler surfaces its own toast; report so a systematically
-        // failing reconnect is visible. Same source/level as the 1.5s
-        // safety-net path below — this is the branch that runs when the
-        // reactive read-back arrives in time, i.e. the common one.
-        reportCaught(err, {
-          source: "server_detail_wire_mode_reconnect",
-          level: "warning",
-        });
-      }
-    );
+    void reconnectForWireModeOverride();
   }, [
     currentMcpProtocolVersionOverride,
-    onReconnect,
-    server.name,
+    reconnectForWireModeOverride,
     pendingReconnectTick,
   ]);
 
@@ -292,17 +335,7 @@ export function ServerDetailModal({
         fallbackReconnectTimerRef.current = null;
         if (pendingReconnectRef.current?.target === next) {
           pendingReconnectRef.current = null;
-          void onReconnect(server.name, {
-            allowInteractiveOAuthFlow: false,
-          }).catch((err) => {
-            // Deliberately not toasted: this is the 1.5s safety-net
-            // reconnect and the toggle has its own error path. Reported so a
-            // systematically failing fallback is visible rather than dropped.
-            reportCaught(err, {
-              source: "server_detail_wire_mode_reconnect",
-              level: "warning",
-            });
-          });
+          void reconnectForWireModeOverride();
         }
       }, 1500);
       // Tick the watcher so it re-evaluates immediately in case the
@@ -333,8 +366,11 @@ export function ServerDetailModal({
     existingServerNames.includes(trimmedName);
 
   const isConnected = server.connectionStatus === "connected";
-  const { label: connectionStatusLabel, indicatorColor } =
-    getConnectionStatusMeta(server.connectionStatus);
+  /** See ServerConnectionCard: unreadable is not the same claim as offline. */
+  const { label: connectionStatusLabel, indicatorClassName } =
+    isConnectionStatus(server.connectionStatus)
+      ? getConnectionStatusMeta(server.connectionStatus)
+      : UNKNOWN_CONNECTION_STATUS;
 
   useEffect(() => {
     let isCancelled = false;
@@ -463,9 +499,10 @@ export function ServerDetailModal({
 
   const handleConnect = async (options?: {
     forceOAuthFlow?: boolean;
+    connectionIntent?: ConnectionIntent;
     allowInteractiveOAuthFlow?: boolean;
   }) => {
-    setIsReconnecting(true);
+    setReconnectsInFlight((count) => count + 1);
     track("server_detail_modal_connect_clicked", {
       location: "server_detail_modal",
       server_id: server.name,
@@ -475,9 +512,9 @@ export function ServerDetailModal({
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      toast.error(`Failed to connect to ${server.name}: ${errorMessage}`);
+      toastServerConnectionFailure(server.name, errorMessage);
     } finally {
-      setIsReconnecting(false);
+      setReconnectsInFlight((count) => count - 1);
     }
   };
 
@@ -514,15 +551,37 @@ export function ServerDetailModal({
   const tabTriggerClass = "min-w-0 flex-1 px-1.5 text-xs sm:px-2 sm:text-sm";
   const isConfigurationTab = activeTab === "configuration";
 
+  /**
+   * The single condition that decides whether this configuration may be saved.
+   *
+   * Extracted because the Save button's `disabled` and the form's submit
+   * handler were two different lists, and Enter in any configuration input
+   * submits the form — so every condition the button enforced was bypassable
+   * from the keyboard. That matters most for MJ-003's credential-clear
+   * acknowledgement, which is there precisely so a destructive save cannot
+   * happen without one, but it was equally true of the duplicate-name check,
+   * the auth-configuration block, and the in-flight reconnect guard.
+   */
+  const saveBlocked =
+    isDuplicateServerName ||
+    isSaving ||
+    isReconnecting ||
+    (!formState.hasChanges && !isConnected) ||
+    formState.authConfigurationBlocksSubmit ||
+    formState.credentialClearBlocksSubmit;
+
   const handleConfigurationSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!isConfigurationTab || isSaving) return;
+    if (!isConfigurationTab || saveBlocked) return;
     void handleSave();
   };
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogContent
+        // Browser translators rewrite text nodes in-place. React then cannot
+        // safely remove this portaled dialog after its close animation.
+        translate="no"
         // The `sm:` prefix is load-bearing. DialogContent's base carries
         // `sm:max-w-lg`, and tailwind-merge only collapses classes that
         // share a variant — so an unprefixed `max-w-2xl` never conflicts
@@ -532,7 +591,7 @@ export function ServerDetailModal({
         // spares the base `max-w-[calc(100%-2rem)]`, which tailwind-merge
         // used to drop as a same-variant conflict — that's the guard that
         // keeps the dialog off both screen edges below 640px.
-        className="sm:max-w-2xl max-h-[85vh] flex flex-col outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
+        className="notranslate sm:max-w-2xl max-h-[85vh] flex flex-col outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
         onOpenAutoFocus={(event) => {
           event.preventDefault();
         }}
@@ -597,8 +656,7 @@ export function ServerDetailModal({
                   <Loader2 className="h-2.5 w-2.5 animate-spin" />
                 ) : (
                   <span
-                    className="h-1.5 w-1.5 rounded-full"
-                    style={{ backgroundColor: indicatorColor }}
+                    className={`h-1.5 w-1.5 rounded-full ${indicatorClassName}`}
                   />
                 )}
                 <span>
@@ -659,6 +717,11 @@ export function ServerDetailModal({
               >
                 Tools
               </TabsTrigger>
+              {showAuthorization && (
+                <TabsTrigger value="authorization" className={tabTriggerClass}>
+                  Auth
+                </TabsTrigger>
+              )}
               <TabsTrigger
                 value="compatibility"
                 aria-label="Client compatibility"
@@ -699,6 +762,11 @@ export function ServerDetailModal({
                         : undefined
                     }
                   />
+                  {/* MJ-003 AC 3: where this server has been repointed, and
+                      whether that cleared credentials. Readable on every plan,
+                      unlike the organization audit log. Renders nothing when
+                      there is no history. */}
+                  <ServerUrlChangeHistory serverId={hostedServerId} />
                 </div>
               </TabsContent>
 
@@ -722,13 +790,7 @@ export function ServerDetailModal({
                           })
                       : undefined
                   }
-                  disabled={
-                    isDuplicateServerName ||
-                    isSaving ||
-                    isReconnecting ||
-                    (!formState.hasChanges && !isConnected) ||
-                    formState.authConfigurationBlocksSubmit
-                  }
+                  disabled={saveBlocked}
                   size="sm"
                 >
                   {isSaving || isReconnecting ? (
@@ -758,14 +820,51 @@ export function ServerDetailModal({
                     </div>
                   ) : (
                     <ServerInfoContent
+                      sections="info"
                       server={server}
-                      needsReconnect={needsReconnect}
                       projectId={projectId}
                       hostedServerId={hostedServerId}
                     />
                   )}
                 </div>
               </TabsContent>
+
+              {showAuthorization && (
+                <TabsContent
+                  value="authorization"
+                  // Overlays the force-mounted configuration panel, like every
+                  // other tab. Configuration's own classes are NOT reusable
+                  // here: it keeps `invisible` while inactive, which still
+                  // occupies layout, so a sibling in normal flow stacks below
+                  // its full height and spills out of the dialog.
+                  className="mt-0 flex-none absolute inset-0 overflow-y-auto bg-background"
+                >
+                  <div className="space-y-4 pl-1 pr-6">
+                  <ConnectionAccountsSection
+                    projectId={projectId}
+                    serverId={hostedServerId}
+                    enabled={isUserReady && server.useOAuth === true}
+                    onAuthenticate={(connectionIntent) =>
+                      onReconnect(server.name, {
+                        forceOAuthFlow: true,
+                        connectionIntent,
+                      })
+                    }
+                    onSwitch={() =>
+                      onReconnect(server.name, {
+                        allowInteractiveOAuthFlow: false,
+                      })
+                    }
+                  />
+                    <ServerInfoContent
+                      sections="auth"
+                      server={server}
+                      projectId={projectId}
+                      hostedServerId={hostedServerId}
+                    />
+                  </div>
+                </TabsContent>
+              )}
 
               {/* Tools Metadata: overlays the configuration panel + footer to use full space */}
               <TabsContent

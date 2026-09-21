@@ -13,6 +13,8 @@ const EXECUTE_ACTION_TIMEOUT_MS = 150_000;
  * @property {string} [idempotencyKey]
  * @property {string} [conversationId]
  * @property {string} [channelId]
+ * @property {{channel:string,ts:string}} [replyHandle]
+ * @property {string} [threadId]
  * @property {number} [limit]
  * @property {string} [projectId]
  * @property {string} [apiKey]
@@ -63,9 +65,49 @@ export class McpjamApiError extends Error {
 	}
 }
 
-/** @param {string} value */
+/**
+ * Strip trailing slashes from an origin, in LINEAR time.
+ *
+ * This was `.replace(/\/+$/, "")`, which is a polynomial-ReDoS shape: the `+`
+ * is greedy and `$` can fail, so the engine retries from every start position
+ * and the cost is quadratic in the run of slashes. Measured on this repo, an
+ * input of 60k slashes followed by one other character took ~3 SECONDS; the
+ * scan below takes microseconds.
+ *
+ * The regex predates this change — CodeQL surfaced it because a new caller
+ * reached it — but a base URL arrives from caller options and the environment,
+ * and a config value is not a reason to keep a quadratic scan on the request
+ * path. Fixed at the sink, so every caller of `getConfig` gets it.
+ *
+ * @param {string} value
+ */
 function trimOrigin(value) {
-	return String(value || "").replace(/\/+$/, "");
+	const text = String(value || "");
+	let end = text.length;
+	while (end > 0 && text[end - 1] === "/") end -= 1;
+	return text.slice(0, end);
+}
+
+/**
+ * The app URL for one eval run, matching what `@mcpjam/sdk/platform`'s
+ * `buildAppPermalink` mints for `eval_run`.
+ *
+ * MIRRORED, NOT IMPORTED — the same trade `run-evidence.js` documents:
+ * surface-core has zero dependencies on purpose so a bot can vendor it. The
+ * `?project=` is the load-bearing part: eval routes carry no project segment,
+ * so without it the link opens whichever project the reader last selected.
+ *
+ * @param {{ appUrl: string, projectId: string }} config
+ * @param {string} suiteId
+ * @param {string} runId
+ */
+function runUrlFor(config, suiteId, runId) {
+	const url = new URL(
+		`/evals/suite/${encodeURIComponent(suiteId)}/runs/${encodeURIComponent(runId)}`,
+		config.appUrl,
+	);
+	url.searchParams.set("project", config.projectId);
+	return url.toString();
 }
 
 /**
@@ -207,12 +249,14 @@ export function createApiClient(options = {}) {
 	 */
 	async function runAgentTurn(messages, ctx, opts = {}) {
 		const config = getConfig(ctx, opts);
-		const payload = await requestJson(
+		let payload = await requestJson(
 			`${config.baseUrl}/api/v1/projects/${encodeURIComponent(config.projectId)}${routePrefix}`,
 			{
 				method: "POST",
 				body: {
 					messages,
+					...(opts.replyHandle ? { replyHandle: opts.replyHandle } : {}),
+					...(opts.threadId ? { threadId: opts.threadId } : {}),
 					...(opts.idempotencyKey
 						? { idempotencyKey: opts.idempotencyKey }
 						: {}),
@@ -226,7 +270,47 @@ export function createApiClient(options = {}) {
 				fetchImpl: opts.fetchImpl,
 			},
 		);
+		let completedJobId = payload?.jobId;
+		if (typeof payload?.jobId === "string" && payload.status === "pending") {
+			const jobId = payload.jobId;
+			const deadline = Date.now() + 35 * 60 * 1000;
+			while (Date.now() < deadline) {
+				await new Promise((resolve) => setTimeout(resolve, 2000));
+				const job = await requestJson(
+					`${config.baseUrl}/api/v1/projects/${encodeURIComponent(config.projectId)}/agent/jobs/${encodeURIComponent(jobId)}`,
+					{
+						method: "GET",
+						apiKey: config.apiKey,
+						headers: config.headers,
+						timeoutMs: TURN_TIMEOUT_MS,
+						fetchImpl: opts.fetchImpl,
+					},
+				);
+				if (job.status === "completed") {
+					completedJobId = job.jobId ?? jobId;
+					payload = job.result;
+					break;
+				}
+				if (job.status === "failed" || job.status === "cancelled")
+					throw new McpjamApiError(job.error || "Agent turn stopped.", {
+						code: "AGENT_JOB_FAILED",
+						details: {
+							jobId,
+							createdResources: job.createdResources,
+							proposedActions: job.proposedActions,
+						},
+					});
+			}
+			if (payload?.status === "pending")
+				throw new McpjamApiError(
+					"Agent turn is still pending. Reconnect with the same event key.",
+					{ code: "AGENT_JOB_PENDING", details: { jobId } },
+				);
+		}
 		return {
+			...(payload?.replyHandle
+				? { replyHandle: payload.replyHandle, jobId: completedJobId }
+				: {}),
 			reply: typeof payload?.reply === "string" ? payload.reply : "",
 			toolCalls: Array.isArray(payload?.toolCalls) ? payload.toolCalls : [],
 			createdResources: Array.isArray(payload?.createdResources)
@@ -261,10 +345,8 @@ export function createApiClient(options = {}) {
 		// decides whether to watch a run by the resource TYPE the server sent,
 		// never by guessing from an operation name it may not recognise.
 		//
-		// NON-EMPTY, not merely a string. `resource?.url ?? legacy` short-circuits
-		// on `''` (?? only skips null/undefined), so an empty url would set
-		// `runUrl` to `''` and defeat the legacy synthesis in exactly the
-		// mixed-version case that fallback exists to cover.
+		// NON-EMPTY, not merely a string: an empty url is not a link, and
+		// letting one through would hand a caller `runUrl: ''` to render.
 		const resource =
 			payload?.resource &&
 			typeof payload.resource.url === "string" &&
@@ -275,8 +357,13 @@ export function createApiClient(options = {}) {
 						url: String(payload.resource.url),
 					}
 				: null;
-		// Legacy synthesis, kept ONLY as the mixed-version fallback: a bot
-		// deployed ahead of the server would otherwise lose the run link.
+		// The run's own ids still travel — a caller decides whether to WATCH a
+		// run from these — but no URL is synthesised from them any more. The
+		// server derives every executed action's link from the operation
+		// catalog's permalink policy, so `resource.url` is now present for
+		// anything linkable; a synthesised twin would only differ from it when
+		// one of them was wrong, and this one could not know the project scope
+		// the operation actually resolved.
 		const runId = typeof result?.runId === "string" ? result.runId : null;
 		const suiteId =
 			typeof result?.suiteId === "string"
@@ -297,11 +384,7 @@ export function createApiClient(options = {}) {
 			kind: typeof payload?.kind === "string" ? payload.kind : null,
 			resource,
 			result,
-			runUrl:
-				resource?.url ??
-				(runId && suiteId
-					? `${config.appUrl}/evals/suite/${encodeURIComponent(suiteId)}/runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(config.projectId)}`
-					: null),
+			runUrl: resource?.url ?? null,
 		};
 	}
 
@@ -332,7 +415,13 @@ export function createApiClient(options = {}) {
 		return {
 			runId,
 			suiteId,
-			url: `${config.appUrl}/evals/suite/${encodeURIComponent(suiteId)}/runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(config.projectId)}`,
+			// Built through `URL`, not concatenation, so segments stay encoded and
+			// the project scope cannot be dropped. Unlike `executeAction` above
+			// this route is plain REST (`POST /eval-runs`) and mints no permalink
+			// of its own yet; when it does, this reads it instead. surface-core
+			// deliberately depends on nothing, so it cannot call the SDK builder
+			// — the shape it produces is pinned by the test below.
+			url: runUrlFor(config, suiteId, runId),
 		};
 	}
 
@@ -346,6 +435,45 @@ export function createApiClient(options = {}) {
 		const config = getConfig(ctx, opts);
 		return requestJson(
 			`${config.baseUrl}/api/v1/projects/${encodeURIComponent(config.projectId)}/eval-runs/${encodeURIComponent(runId)}`,
+			{
+				apiKey: config.apiKey,
+				headers: config.headers,
+				timeoutMs: RUN_TIMEOUT_MS,
+				fetchImpl: opts.fetchImpl,
+			},
+		);
+	}
+
+	/**
+	 * THE FIRST THING TO READ ABOUT A FINISHED RUN: what it decided, the
+	 * population that decision covers, and one page of per-trial diagnostics
+	 * carrying the user-value chain and the first failed stage.
+	 *
+	 * Separate from {@link getEvalRun} rather than folded into it because the
+	 * poll loop runs every ten seconds and this document is only worth a request
+	 * ONCE, when a run lands on a terminal status that is not a clean pass.
+	 *
+	 * NO LIMIT IS SENT by default, and that is deliberate: `limit` bounds the
+	 * ITERATIONS SCANNED, not the diagnostics returned, so asking for one would
+	 * scan a single iteration and report an empty failure list for every run
+	 * whose first trial happened to pass.
+	 *
+	 * Callers must treat any error as "no chain to tell" — a deployment that
+	 * predates this route answers 404, which is a fact about the deployment and
+	 * never a fact about the run.
+	 *
+	 * @param {string} runId
+	 * @param {SurfaceContext} ctx
+	 * @param {RequestOptions} [opts]
+	 * @returns {Promise<any>}
+	 */
+	async function getEvalRunDecisionSummary(runId, ctx, opts = {}) {
+		const config = getConfig(ctx, opts);
+		const query = opts.limit
+			? `?limit=${encodeURIComponent(String(opts.limit))}`
+			: "";
+		return requestJson(
+			`${config.baseUrl}/api/v1/projects/${encodeURIComponent(config.projectId)}/eval-runs/${encodeURIComponent(runId)}/decision-summary${query}`,
 			{
 				apiKey: config.apiKey,
 				headers: config.headers,
@@ -519,6 +647,7 @@ export function createApiClient(options = {}) {
 		executeProposedAction,
 		startSuiteRun,
 		getEvalRun,
+		getEvalRunDecisionSummary,
 		listEvalRunIterations,
 		getEvalRunSteps,
 		getJourneyRun,
@@ -534,6 +663,7 @@ export const {
 	executeProposedAction,
 	startSuiteRun,
 	getEvalRun,
+	getEvalRunDecisionSummary,
 	listEvalRunIterations,
 	getEvalRunSteps,
 	getJourneyRun,

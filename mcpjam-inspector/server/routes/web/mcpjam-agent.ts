@@ -1,3 +1,4 @@
+import { EVAL_DESCRIBE_ONLY_AGENT, evalAgentScopeSchema, evalAgentSystemPrompt, EVAL_AGENT_TOOL_NAMES } from "../../../shared/eval-agent-scope.js";
 /**
  * MCPJam Agent — POST /api/web/mcpjam-agent
  *
@@ -25,7 +26,7 @@
  *
  * It deliberately does NOT connect the MCPJam platform MCP worker for chat
  * turns any more: those tools mutate the user's workspace (projects,
- * servers, evals, chatboxes) server-side and invisibly, which is exactly
+ * servers, evals, scenarios) server-side and invisibly, which is exactly
  * what this surface is meant not to do. `MCPJAM_AGENT_PLATFORM_TOOLS=1`
  * restores the old ACTION contract wholesale (see
  * `agentPlatformToolsEnabled`). It does not gate the knowledge sources: the
@@ -62,7 +63,7 @@
  *     would fail backend `selectedServerIds` validation against the
  *     project's `servers` rows. The chat appears in the user's history alongside
  *     other direct sessions; per-surface differentiation is client-side.
- *   - Ignores chatbox / appTools / selectedServerIds fields up front — this
+ *   - Ignores scenario / appTools / selectedServerIds fields up front — this
  *     surface owns its MCP tool set. The one client-supplied tool snapshot it
  *     DOES accept is `uiTools` (WebMCP UI tools, validated at the boundary):
  *     the agent panel is the primary surface for driving the inspector UI.
@@ -77,10 +78,6 @@ import {
 } from "@mcpjam/sdk";
 import { isMCPAuthError } from "@mcpjam/sdk";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type {
-  McpUiResourceCsp,
-  McpUiResourcePermissions,
-} from "@modelcontextprotocol/ext-apps";
 import { HOSTED_MODE, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
@@ -91,6 +88,8 @@ import {
 import { WEB_SEARCH_TOOL_NAME } from "../../utils/built-in-tools/exa-web-search.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import { injectOpenAICompat } from "../../utils/widget-helpers.js";
+import { resolveUiResourceMeta } from "../../utils/ui-resource-meta.js";
+import { viewOriginLabel } from "../../utils/view-origin-label.js";
 import { logger } from "../../utils/logger.js";
 import { resolvePlatformMcpUrl } from "../../utils/platform-mcp-url.js";
 import { MCPJAM_PLATFORM_SERVER_ID } from "../../../shared/mcpjam-agent-widgets";
@@ -104,7 +103,8 @@ import {
   mapRuntimeError,
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
-import { getClientIp } from "../../utils/client-ip.js";
+import { getSpendClientIp } from "../../utils/client-ip.js";
+import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 
 const DOCS_SERVER_ID = "mcpjam-docs";
 const DEFAULT_DOCS_URL = "https://docs.mcpjam.com/mcp";
@@ -260,7 +260,7 @@ function buildPlatformConfig(bearerToken: string): HttpServerConfig {
 // validation errors. Server-side use of the parsed body still only reads
 // the explicitly-declared fields below plus `uiTools` (validated by
 // `validateUiToolEntries` before use) — there's no path here that routes
-// a tampered selectedServerIds / appTools / chatbox field into the
+// a tampered selectedServerIds / appTools / scenario field into the
 // streamWebChatTurn call because we don't read them at all.
 const mcpjamAgentSchema = z
   .object({
@@ -274,6 +274,7 @@ const mcpjamAgentSchema = z
       .passthrough(),
     chatSessionId: z.string().min(1),
     projectId: z.string().min(1),
+    evalScope: evalAgentScopeSchema.optional(),
     systemPrompt: z.string().optional(),
     temperature: z.number().optional(),
     requireToolApproval: z.boolean().optional(),
@@ -307,7 +308,17 @@ mcpjamAgent.post("/", async (c) => {
       throw error;
     }
 
-    const platformToolsEnabled = agentPlatformToolsEnabled();
+    if (EVAL_DESCRIBE_ONLY_AGENT && body.evalScope && !body.evalScope.caseId) {
+      return webError(c, 400, ErrorCode.VALIDATION_ERROR, "Ask MCPJam is available only from Describe.");
+    }
+    if (body.evalScope && body.evalScope.projectId !== body.projectId) {
+      return webError(c, 400, ErrorCode.VALIDATION_ERROR, "Eval scope does not match the active project.");
+    }
+    if (body.chatSessionId.startsWith("eval-") && !body.evalScope) {
+      return webError(c, 400, ErrorCode.VALIDATION_ERROR, "Eval sessions require an explicit scope.");
+    }
+    if (body.evalScope) validatedUiTools = validatedUiTools.filter(tool => EVAL_AGENT_TOOL_NAMES.has(tool.name));
+    const platformToolsEnabled = !body.evalScope && agentPlatformToolsEnabled();
 
     manager = new MCPClientManager(
       {
@@ -319,6 +330,13 @@ mcpjamAgent.post("/", async (c) => {
       },
       {
         defaultTimeout: WEB_STREAM_TIMEOUT_MS,
+        // These three URLs are ours, not a caller's, so this is uniformity
+        // rather than a fix: after MJ-001 no hosted manager is constructed
+        // without the guard, which is what lets the static check forbid a bare
+        // `new MCPClientManager` in hosted route files. `MCPJAM_*_MCP_URL`
+        // overrides are classified at boot so a private one fails there
+        // (`assertHostedFirstPartyMcpUrls`) instead of mid-turn.
+        baseFetch: hostedMcpBaseFetch(),
         rpcLogger: rpcCollector.rpcLogger,
         httpLogger: rpcCollector.httpLogger,
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
@@ -336,7 +354,7 @@ mcpjamAgent.post("/", async (c) => {
       // manager, so the later prepare doesn't repeat the round trips. With
       // all down, the turn still runs on web_search + the bare model.
       const mcp = manager;
-      const candidateServerIds = platformToolsEnabled
+      const candidateServerIds = body.evalScope ? [] : platformToolsEnabled
         ? [DOCS_SERVER_ID, SPEC_SERVER_ID, PLATFORM_SERVER_ID]
         : [DOCS_SERVER_ID, SPEC_SERVER_ID];
       const preflights = await Promise.allSettled(
@@ -403,8 +421,8 @@ mcpjamAgent.post("/", async (c) => {
       // job is to behave exactly like the old one. A rollback that leaves
       // the new prompt in place is not a rollback.
       const effectiveSystemPrompt = [
-        body.systemPrompt,
-        platformToolsEnabled ? undefined : AGENT_IDENTITY_PROMPT,
+        body.evalScope ? evalAgentSystemPrompt(body.evalScope) : body.systemPrompt,
+        platformToolsEnabled || body.evalScope ? undefined : AGENT_IDENTITY_PROMPT,
         specToolsAvailable ? SPEC_DOCS_PROMPT : undefined,
         ambientContextPrompt,
       ]
@@ -412,7 +430,7 @@ mcpjamAgent.post("/", async (c) => {
         .join("\n\n");
 
       const authHeader = c.req.header("authorization");
-      const builtInTools = authHeader
+      const builtInTools = authHeader && !body.evalScope
         ? resolveHostTools(
             { builtInToolIds: [WEB_SEARCH_TOOL_NAME] },
             {
@@ -471,7 +489,7 @@ mcpjamAgent.post("/", async (c) => {
         },
         runtime: {
           authHeader,
-          clientIp: getClientIp(c),
+          clientIp: getSpendClientIp(c),
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
           rpcCollector,
           c,
@@ -566,6 +584,7 @@ mcpjamAgent.post("/widget-content", async (c) => {
       { [PLATFORM_SERVER_ID]: buildPlatformConfig(bearerToken) },
       {
         defaultTimeout: WEB_STREAM_TIMEOUT_MS,
+        baseFetch: hostedMcpBaseFetch(),
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
       }
     );
@@ -612,13 +631,12 @@ mcpjamAgent.post("/widget-content", async (c) => {
       }
 
       const resourceMeta = record._meta as Record<string, unknown> | undefined;
-      const uiMeta = (resourceMeta as { ui?: unknown } | undefined)?.ui as
-        | {
-            csp?: McpUiResourceCsp;
-            permissions?: McpUiResourcePermissions;
-            prefersBorder?: boolean;
-          }
-        | undefined;
+      // The shared resolver rather than a local cast, so this route reports
+      // the same normalized fields (and the same `domain`) as the other two
+      // widget-content routes. No listing lookup: these resources come from
+      // MCPJam's own MCP server and a fixed table, so there is no second
+      // source a lower-precedence declaration could arrive from.
+      const uiMeta = resolveUiResourceMeta({ contentMeta: resourceMeta });
       const effectiveCspMode = body.cspMode ?? "permissive";
 
       if (body.injectOpenAiCompat === true) {
@@ -640,11 +658,16 @@ mcpjamAgent.post("/widget-content", async (c) => {
 
       return c.json({
         html,
-        csp: effectiveCspMode === "permissive" ? undefined : uiMeta?.csp,
-        permissions: uiMeta?.permissions,
+        csp: effectiveCspMode === "permissive" ? undefined : uiMeta.csp,
+        permissions: uiMeta.permissions,
         permissive: effectiveCspMode === "permissive",
         cspMode: effectiveCspMode,
-        prefersBorder: uiMeta?.prefersBorder,
+        prefersBorder: uiMeta.prefersBorder,
+        declaredDomain: uiMeta.domain,
+        // A fixed label of its own rather than none: with per-app origins on,
+        // "no label" means the bare sandbox origin, and MCPJam's own widgets
+        // should not be the one thing still rendering there.
+        viewOriginLabel: viewOriginLabel("mcpjam:platform"),
         injectedOpenAiCompat: body.injectOpenAiCompat === true,
         injectedOpenAiCompatCapabilities:
           body.injectOpenAiCompat === true &&

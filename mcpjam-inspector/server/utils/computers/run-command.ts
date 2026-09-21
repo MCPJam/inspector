@@ -60,6 +60,36 @@ export type BashRunner = (args: {
   workdir?: string;
   timeoutMs: number;
   signal?: AbortSignal;
+  /**
+   * Extra environment for THIS command — how a materialized project secret
+   * reaches a CLI the emulated engine runs (`stripe`, `gh`, `psql`).
+   *
+   * In `envs`, never interpolated into `command`. Argv is readable by every
+   * process in the box through `/proc` and lands in shell history; the
+   * environment is not (`plugin-box.ts` states the same rule for the same
+   * reason).
+   *
+   * Only the SANDBOX runners honour this. `localBashRunner` runs on the user's
+   * own machine behind a strict env allowlist, and `execViaRemoteDataPlane`
+   * would put the value in a request body to a plane that is not this box's —
+   * neither is a place a project's credential should appear, so neither takes
+   * the parameter's value even if one is passed.
+   */
+  envs?: Record<string, string>;
+  /**
+   * Fired once `envs` has actually been handed to the box, and only then.
+   *
+   * The dispatch boundary is not the same as the call returning. A timeout or
+   * an abort rejects AFTER the box has the values — the process may still be
+   * alive in there holding them — so the caller's delivery stamp has to fire.
+   * But a failure BEFORE dispatch (no connection, no workdir) delivered
+   * nothing, and stamping those would turn "was this credential exposed?" into
+   * "did a turn once intend to send it?".
+   *
+   * Runners that do not honour `envs` never call this, which is the right
+   * answer for them: they deliver nothing.
+   */
+  onEnvsDispatched?: () => void;
 }) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
 
 // Default runner — real E2B. Kept injectable so tests exercise the pipeline
@@ -70,6 +100,8 @@ export const e2bRunner: BashRunner = async ({
   workdir,
   timeoutMs,
   signal,
+  envs,
+  onEnvsDispatched,
 }) => {
   const sandbox = await Sandbox.connect(sandboxId);
   try {
@@ -82,10 +114,22 @@ export const e2bRunner: BashRunner = async ({
         await sandbox.files.makeDir(workdir);
       } catch {}
     }
+    const carriesEnvs = !!envs && Object.keys(envs).length > 0;
+    // Immediately before the call that carries them, so a connect or makeDir
+    // failure above does not count as a delivery while a timeout below does.
+    //
+    // Skipped when the turn is ALREADY cancelled. Neither `connect` nor
+    // `makeDir` is given the signal, so an abort arriving during either sits
+    // unnoticed until here — and `commands.run` will then reject on it without
+    // handing the environment over. Checking narrows that window from the whole
+    // connect-and-mkdir span to the gap before the call itself, which is as
+    // close as this can get without an acknowledgement from the vendor SDK.
+    if (carriesEnvs && !signal?.aborted) onEnvsDispatched?.();
     const result = await sandbox.commands.run(command, {
       ...(workdir ? { cwd: workdir } : {}),
       timeoutMs,
       ...(signal ? { signal } : {}),
+      ...(carriesEnvs ? { envs } : {}),
     });
     return {
       stdout: result.stdout,
@@ -131,7 +175,7 @@ export interface RunComputerCommandArgs {
 
 export async function runComputerCommand(
   args: RunComputerCommandArgs,
-  runner: BashRunner = e2bRunner
+  runner: BashRunner = e2bRunner,
 ): Promise<RunComputerCommandResult> {
   if (!isComputersDataPlaneConfigured()) {
     return { error: COMPUTERS_NOT_CONFIGURED_ERROR };
@@ -173,7 +217,7 @@ export async function runComputerCommand(
   const timeoutMs =
     Math.min(
       Math.max(args.timeoutSeconds ?? DEFAULT_COMMAND_TIMEOUT_S, 1),
-      MAX_COMMAND_TIMEOUT_S
+      MAX_COMMAND_TIMEOUT_S,
     ) * 1000;
 
   let result: { stdout: string; stderr: string; exitCode: number };

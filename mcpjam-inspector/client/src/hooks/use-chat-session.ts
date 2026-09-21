@@ -1,3 +1,8 @@
+import { hydrateTurnRequestPayloads } from "@/components/evals/turn-trace-spans";
+import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
+import { withWebMcpTraffic } from "@/lib/webmcp-traffic";
+import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
+import { BROWSER_CONSENT_HEADER } from "@/lib/local-browser-consent";
 /**
  * useChatSession
  *
@@ -21,8 +26,13 @@ import {
   useLayoutEffect,
   useSyncExternalStore,
 } from "react";
+import {
+  pageToolRowsFromRecords,
+  type MintedPageToolRecord,
+} from "@/shared/declared-tools";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { toast } from "sonner";
+import { track } from "@/lib/analytics";
 import {
   convertToModelMessages,
   type ChatTransport,
@@ -70,21 +80,24 @@ import {
 } from "@/components/chat-v2/shared/available-models";
 import { useOutOfCredits } from "@/hooks/useCreditBalance";
 import { isMCPJamGuestAllowedModel } from "@/shared/types";
-import { providerForModelId } from "@/shared/model-provider";
+import {
+  providerForModelId,
+  runtimeChosenModelSentinelName,
+} from "@/shared/model-provider";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
-import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
+import {
+  withBuiltInToolDefinitions,
+  type SerializedModelRequestTool,
+} from "@/shared/model-request-payload";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
+import { authFetch } from "@/lib/session-token";
 import {
-  authFetch,
-  getAuthHeaders as getSessionAuthHeaders,
-} from "@/lib/session-token";
-import {
-  classifyChatboxAccessResponse,
+  classifyScenarioAccessResponse,
   patchBodyAccessVersion,
-} from "@/lib/chatbox-access-errors";
+} from "@/lib/scenario-access-errors";
 import {
   notifyMCPJamLimitError,
   notifyMCPJamLimitErrorFromResponse,
@@ -97,9 +110,19 @@ import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
 import {
+  prepareLocalHarnessSendRequest,
+  type ChatSendRequestOptions,
+} from "@/lib/chat-send-request";
+import type { LocalHarnessTargetIds } from "@/lib/local-harness-consent";
+import {
   preserveHydratedMessageIds,
   transcriptToUIMessages,
 } from "@/lib/transcript-to-ui-messages";
+import {
+  hydrateMessageTimestamps,
+  timestampMessageById,
+  withMessageTimestampMetadata,
+} from "@mcpjam/chat-ui";
 import {
   getCachedBlobJson,
   invalidateChatHistoryPrefetch,
@@ -155,6 +178,13 @@ import {
   type HostedElicitationUrlRequiredEvent,
 } from "@/shared/hosted-elicitation";
 import {} from "@/state/oauth-orchestrator";
+import {
+  deferPageToolCallForApproval,
+  fulfillApprovedPageToolCall,
+  snapshotPageToolsForTurn,
+} from "@/lib/webmcp-inspector/chat-dispatch";
+import { pageToolCallNeedsApproval } from "@/shared/client-fulfilled-tools";
+import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
   HOSTED_MRTR_VERSION,
@@ -178,6 +208,10 @@ import {
   type HarnessResetReason,
 } from "@/shared/harness-session";
 import {
+  isPersistReceiptDataPart,
+  type PersistReceiptData,
+} from "@/shared/persist-receipt";
+import {
   isSandboxNoticeDataPart,
   type SandboxNoticeReason,
 } from "@/shared/sandbox-notice";
@@ -187,6 +221,7 @@ import {
 } from "@/shared/hosted-task-created";
 import { getTrackedTaskScope, trackTask } from "@/lib/task-tracker";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type {
@@ -204,6 +239,12 @@ import * as AppStateContext from "@/state/app-state-context";
 import { findProjectByAnyId, type AppState } from "@/state/app-types";
 import { isLocalOnlyMcpServerConfig } from "@/shared/local-only-mcp";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
+import { isEmbeddedPreview } from "@/lib/embedded-preview";
+import {
+  clearScenarioChatTranscript,
+  readScenarioChatTranscript,
+  writeScenarioChatTranscript,
+} from "@/lib/scenario-chat-transcript";
 
 // User-facing copy for a harness session reset, keyed by reason. Only hard
 // resets are shown; `legacy-cold-resume` is a server-side log (resume is still
@@ -216,7 +257,7 @@ const HARNESS_RESET_MESSAGES: Record<HarnessResetReason, string | null> = {
   "legacy-cold-resume": null,
 };
 
-// User-facing copy for a chatbox ephemeral-sandbox notice, keyed by reason.
+// User-facing copy for a scenario ephemeral-sandbox notice, keyed by reason.
 //
 // All are shown. A reset is the sharper one: the model may have written files
 // in an earlier turn and will otherwise reason confidently about a filesystem
@@ -228,6 +269,10 @@ const SANDBOX_NOTICE_MESSAGES: Record<SandboxNoticeReason, string> = {
     "This conversation is still running on the computer image it started with; a newer build is available and will be used by your next conversation.",
   sandbox_unavailable:
     "This conversation's bash runs in a disposable cloud sandbox, but this inspector can't execute disposable sandboxes. The conversation continues without bash.",
+  secrets_undelivered:
+    "This environment's materialized secrets weren't delivered: they are only set in a sandbox the project provisions, and this conversation doesn't have one. Commands that need them will fail.",
+  secrets_unavailable:
+    "This conversation's secrets couldn't be checked this turn, so bash is paused. Its sandbox may still hold credentials from an earlier turn and there is nothing to redact them with. Your sandbox is untouched — bash returns as soon as secrets can be read again.",
 };
 
 // SEP-1865 App-Provided Tools: opaque alias shape minted by
@@ -253,19 +298,19 @@ function getOrgProviderKeyForModel(model: ModelDefinition): string | null {
 
 function isOrgManagedModel(
   orgConfig: OrgVisibleConfig | undefined,
-  model: ModelDefinition
+  model: ModelDefinition,
 ): boolean {
   if (isMCPJamProvidedModelMenuItem(model)) return false;
   const providerKey = getOrgProviderKeyForModel(model);
   if (!providerKey) return false;
   const provider = orgConfig?.providers.find(
-    (p) => p.providerKey === providerKey && p.enabled
+    (p) => p.providerKey === providerKey && p.enabled,
   );
   if (!provider) return false;
 
   if (provider.providerKey === "ollama") {
     return Boolean(
-      provider.baseUrl && provider.modelIds?.includes(String(model.id))
+      provider.baseUrl && provider.modelIds?.includes(String(model.id)),
     );
   }
 
@@ -312,10 +357,15 @@ export interface UseChatSessionOptions {
   directVisibility?: "private" | "project";
   /** Sanitized organization provider config for org-backed projects */
   hostedOrgModelConfig?: OrgVisibleConfig;
-  /** Hosted runtime context (project, server IDs, OAuth tokens, share/chatbox scope) */
+  /** Hosted runtime context (project, server IDs, OAuth tokens, share/scenario scope) */
   hostedContext?: HostedRuntimeContext;
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
+  /** Browser location and Browser-only capability, independent of shell. */
+  personalBrowserEngine?: {
+    engine: "local" | "cloud";
+    consentToken: string | null;
+  };
   /**
    * Resolved Local⇄Cloud engine for this project's personal computer, provided
    * by the caller (Playground) so the CENTRAL hook stays free of the config
@@ -328,20 +378,44 @@ export interface UseChatSessionOptions {
     engine: "local" | "cloud";
     consentToken: string | null;
   };
+  /**
+   * Local Claude Code execution for THIS send, provided by the caller
+   * (Playground) for the same reason `personalComputerEngine` is: the central
+   * chat hook must not run the availability fetch, the install poll or the
+   * consent lifecycle — every chat surface in the app mounts it.
+   *
+   * `requested` is the caller's answer to the shared host/surface scope
+   * predicate (`lib/local-harness-scope.ts`) AND the user's explicit target
+   * choice. It is deliberately NOT "is a grant present": a request that cannot
+   * be satisfied must FAIL, not quietly become a hosted turn, which is what
+   * the backstop in the transport enforces.
+   *
+   * `resolveSendTarget` is called once per send and re-derives everything from
+   * current state. A transport built before Allow, before a sign-out or before
+   * an expiry holds values that were true then; the send needs what is true
+   * now.
+   */
+  localHarnessExecution?: {
+    requested: boolean;
+    resolveSendTarget: () => {
+      target: LocalHarnessTargetIds;
+      token: string;
+    } | null;
+  };
   /** Execution configuration (model, system prompt, temperature, tool approval) */
   executionConfig?: ExecutionConfig;
   /**
    * Phase 3: real host style for direct chat traces. Forwarded into
    * the request body so the backend persists the v2 hostConfig with
    * the user's actual host style rather than defaulting to `'claude'`.
-   * Omitted for chatbox flows — the
-   * backend resolves chatbox host style from the chatbox row.
+   * Omitted for scenario flows — the
+   * backend resolves scenario host style from the scenario row.
    */
   hostStyle?: string;
   /**
    * Host-level opt-in for progressive MCP tool discovery
    * (`search_mcp_tools` / `load_mcp_tools` meta-tools). Sourced from the
-   * caller's resolved host config DTO (per-chatbox, per-host playground
+   * caller's resolved host config DTO (per-scenario, per-host playground
    * column, or project default — caller knows). `undefined` ⇒ backend
    * orchestrator uses its auto policy; `true`/`false` ⇒ explicit
    * host-level override that the orchestrator forwards into
@@ -369,16 +443,41 @@ export interface UseChatSessionOptions {
    * `executionConfig.builtInToolIds` when this top-level option is omitted.
    */
   builtInToolIds?: string[];
+  /**
+   * Definitions for those built-in tools, as the model is shown them — used by
+   * the RAW view of a reopened session and nowhere else.
+   *
+   * A live turn streams a `request_payload` carrying the real advertised set,
+   * so this is never consulted then. A rehydrated session replays no such
+   * event, so Raw synthesizes one from the currently-resolved tool schemas —
+   * and those come from connected MCP servers only. A host whose whole
+   * capability is the browser therefore rendered `"tools": {}` next to a
+   * conversation in which the model had just driven one. These are merged into
+   * the synthesized entry so it says what would actually be sent next.
+   */
+  builtInToolDefinitions?: SerializedModelRequestTool[];
+  /**
+   * Offer this turn the WebMCP tools of the page the inspector currently has
+   * open. Off unless the caller opts in: a chat that silently gained tools from
+   * a browser session opened in another tab would be a surprise, and page tools
+   * run code on a third-party site.
+   */
+  usePageTools?: boolean;
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
 
 export type ChatSessionResetReason =
-  | "auth-bootstrap"
-  | "hydrate"
-  | "fork"
-  | "servers-changed"
-  | "reset";
+  "auth-bootstrap" | "hydrate" | "fork" | "servers-changed" | "reset";
+
+/**
+ * Shown when `detachToLocalFork` could not confirm its fork went live. The
+ * thread is still attached to a session the surface has decided it must not
+ * write to, so the copy must NOT promise a new thread the way a successful
+ * detach does. Shared so both chat surfaces say the same thing.
+ */
+export const DETACH_FORK_FAILED_MESSAGE =
+  "Couldn't move this conversation to a new thread. Reload the page before sending again.";
 
 export interface TokenUsage {
   inputTokens: number;
@@ -489,7 +588,7 @@ export interface UseChatSessionReturn {
   selectedModel: ModelDefinition;
   setSelectedModel: (
     model: ModelDefinition,
-    options?: SetSelectedModelOptions
+    options?: SetSelectedModelOptions,
   ) => void;
   /**
    * False while the persisted selection has not (yet) matched an entry in
@@ -559,8 +658,24 @@ export interface UseChatSessionReturn {
     options?: {
       resetReason?: ChatSessionResetReason;
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
-    }
+    },
   ) => Promise<string>;
+  /**
+   * Fork the given transcript onto a fresh `chatSessionId` and confirm the fork
+   * is the session that actually went live, so post-detach sends cannot land
+   * back on the thread the caller just detached from.
+   *
+   * Resolves to the minted id, or `null` when a concurrent session change
+   * superseded the fork — in which case the caller is still pointed at a thread
+   * it must not write to and must say so rather than claiming a new thread.
+   * Never clears `resumedVersion` itself; see the implementation's contract.
+   */
+  detachToLocalFork: (
+    messages: UIMessage[],
+    options?: {
+      toolRenderOverrides?: Record<string, ToolRenderOverride>;
+    },
+  ) => Promise<{ chatSessionId: string } | null>;
   loadChatSession: (
     session: {
       chatSessionId: string;
@@ -596,15 +711,31 @@ export interface UseChatSessionReturn {
         finishReason?: string;
         usage?: LiveChatTraceUsage;
         spansBlobUrl?: string | null;
+        requestPayloadsBlobUrl?: string | null;
         modelId?: string;
+        pageToolsAtTurn?: MintedPageToolRecord[];
       }>;
     },
     options?: {
       shouldRestoreResumeConfig?: () => boolean;
       shouldApply?: () => boolean;
-    }
+    },
   ) => Promise<void>;
   syncResumedVersion: (version: number | null) => void;
+  /**
+   * Take the turn's `data-persist-receipt` — the server's own statement of what
+   * happened to the chat-history save — or null when none arrived (a client
+   * abort, or a server that predates the part). Consuming: each receipt
+   * describes exactly one turn.
+   */
+  consumePersistReceipt: () => PersistReceiptData | null;
+  /**
+   * Take whether the turn that just ended was ABORTED (Stop, or any other abort
+   * of the active response). The AI SDK reports an abort as `status: "ready"`
+   * with no receipt, so without this a stopped turn looks exactly like a turn
+   * whose save silently vanished. Consuming: each answer describes one turn.
+   */
+  consumeTurnAborted: () => boolean;
 
   // Resumed thread version (for optimistic concurrency)
   resumedVersion: number | null;
@@ -646,6 +777,24 @@ function inferModelProviderFromId(modelId: string): ModelProvider {
 }
 
 function createLockedInitialModel(modelId: string): ModelDefinition {
+  // A RUNTIME-CHOSEN SENTINEL is locked for a different reason than everything
+  // else this builds, and the copy has to say so. `cursor/auto` is not a model
+  // the picker is hiding behind a sign-in wall — it is the placeholder for a
+  // runtime that chooses its own model on the customer's own account. Showing
+  // the raw id under "Sign in to use MCPJam provided models" gets both halves
+  // wrong: the label names a model nothing ran, and the reason names a wall
+  // signing in would not lift.
+  const sentinelName = runtimeChosenModelSentinelName(modelId);
+  if (sentinelName) {
+    return {
+      id: modelId,
+      name: sentinelName,
+      provider: inferModelProviderFromId(modelId),
+      disabled: true,
+      disabledReason:
+        "This host's runtime chooses its own model on your own account.",
+    };
+  }
   return {
     id: modelId,
     name: modelId,
@@ -669,6 +818,14 @@ interface LiveTraceTurnState {
    * when the spans blob fails to load or is genuinely empty.
    */
   endedAtMs?: number;
+  /**
+   * The page tools this turn advertised (rehydration only).
+   *
+   * Kept on the TURN rather than in a store keyed by browser: a store answers
+   * for the browser as it is now, and this has to answer for the turn as it
+   * was.
+   */
+  pageToolsAtTurn?: MintedPageToolRecord[];
   /** Persisted finish reason (rehydration only). */
   finishReason?: string;
   /** Persisted model id (rehydration only). */
@@ -726,6 +883,7 @@ function createEmptyLiveTraceState(): LiveTraceAccumulatorState {
 }
 
 export interface HydratedTurnTrace {
+  requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   turnId: string;
   promptIndex: number;
   startedAt: number;
@@ -734,6 +892,19 @@ export interface HydratedTurnTrace {
   usage?: LiveChatTraceUsage;
   spans: EvalTraceSpan[];
   modelId?: string;
+  /**
+   * The page's own WebMCP tools this turn advertised, as it advertised them.
+   *
+   * The reason it is persisted rather than re-read: the live browser describes
+   * the page it is on NOW. Reopened tomorrow, a card for `webmcp_bookSlot`
+   * would be attributed to whatever tool happens to carry that name then, and
+   * the Raw view would show a request that was never sent.
+   *
+   * Absent means "we do not know" — every historical turn, and every turn
+   * whose claim the backend could not parse. It is NOT the same as an empty
+   * array, which means "this turn advertised none".
+   */
+  pageToolsAtTurn?: MintedPageToolRecord[];
 }
 
 interface PersistedWidgetSnapshot {
@@ -761,9 +932,11 @@ async function resolveHydratedTurnTraces(
         finishReason?: string;
         usage?: LiveChatTraceUsage;
         spansBlobUrl?: string | null;
+        requestPayloadsBlobUrl?: string | null;
         modelId?: string;
+        pageToolsAtTurn?: MintedPageToolRecord[];
       }>
-    | undefined
+    | undefined,
 ): Promise<HydratedTurnTrace[] | undefined> {
   // Preserve the `undefined` sentinel so `queueSessionHydration` can tell
   // "caller didn't provide traces — leave existing state alone" apart from
@@ -786,6 +959,18 @@ async function resolveHydratedTurnTraces(
       : raw;
   const results = await Promise.all(
     boundedRaw.map(async (trace) => {
+      const requestPayloads = await hydrateTurnRequestPayloads([trace]).catch(
+        (err) => {
+          // Same terms as the span blob below: the turn survives, and Raw
+          // falls back to the request it would send next. Warn so a failed
+          // read is not mistaken for a session that saved none.
+          console.warn(
+            `[useChatSession] Failed to fetch model requests for turn ${trace.turnId}:`,
+            err,
+          );
+          return [];
+        },
+      );
       let spans: EvalTraceSpan[] = [];
       if (trace.spansBlobUrl) {
         try {
@@ -804,7 +989,7 @@ async function resolveHydratedTurnTraces(
           // numbers in the trace viewer.
           console.warn(
             `[useChatSession] Failed to fetch spans for turn ${trace.turnId}:`,
-            err
+            err,
           );
         }
       }
@@ -816,15 +1001,19 @@ async function resolveHydratedTurnTraces(
         finishReason: trace.finishReason,
         usage: trace.usage,
         spans,
+        requestPayloads,
         modelId: trace.modelId,
+        ...(trace.pageToolsAtTurn !== undefined
+          ? { pageToolsAtTurn: trace.pageToolsAtTurn }
+          : {}),
       };
-    })
+    }),
   );
   return results;
 }
 
 async function resolveHydratedWidgetSnapshots(
-  raw: PersistedWidgetSnapshot[] | undefined
+  raw: PersistedWidgetSnapshot[] | undefined,
 ): Promise<PersistedWidgetSnapshot[] | undefined> {
   if (raw === undefined) {
     return undefined;
@@ -852,23 +1041,23 @@ async function resolveHydratedWidgetSnapshots(
       } catch (err) {
         console.warn(
           `[useChatSession] Failed to fetch tool output for snapshot ${snapshot.toolCallId}:`,
-          err
+          err,
         );
         return snapshot;
       }
-    })
+    }),
   );
 }
 
 function buildLiveTraceStateFromTurnTraces(
-  traces: HydratedTurnTrace[]
+  traces: HydratedTurnTrace[],
 ): LiveTraceAccumulatorState {
   if (traces.length === 0) {
     return createEmptyLiveTraceState();
   }
 
   const ordered = [...traces].sort(
-    (left, right) => left.promptIndex - right.promptIndex
+    (left, right) => left.promptIndex - right.promptIndex,
   );
   const turnOrder: string[] = [];
   const turns: Record<string, LiveTraceTurnState> = {};
@@ -884,6 +1073,9 @@ function buildLiveTraceStateFromTurnTraces(
       endedAtMs: trace.endedAt,
       finishReason: trace.finishReason,
       modelId: trace.modelId,
+      ...(trace.pageToolsAtTurn !== undefined
+        ? { pageToolsAtTurn: trace.pageToolsAtTurn }
+        : {}),
     };
   }
 
@@ -892,7 +1084,9 @@ function buildLiveTraceStateFromTurnTraces(
     turns,
     messages: [],
     events: [],
-    requestPayloadHistory: [],
+    requestPayloadHistory: ordered.flatMap(
+      (trace) => trace.requestPayloads ?? [],
+    ),
     activeTurnId: null,
     activeTurnHasSnapshot: false,
     anySnapshotSeen: true,
@@ -900,7 +1094,7 @@ function buildLiveTraceStateFromTurnTraces(
 }
 
 function isTraceEventDataPart(
-  value: unknown
+  value: unknown,
 ): value is { type: "data-trace-event"; data: LiveChatTraceEvent } {
   if (!value || typeof value !== "object") {
     return false;
@@ -912,13 +1106,13 @@ function isTraceEventDataPart(
 
 function hasChatToolCall(
   chatMessages: UIMessage[],
-  toolCallId: string
+  toolCallId: string,
 ): boolean {
   return chatMessages.some((message) =>
     message.parts?.some((part) => {
       if (!part || typeof part !== "object") return false;
       return (part as { toolCallId?: unknown }).toolCallId === toolCallId;
-    })
+    }),
   );
 }
 
@@ -931,7 +1125,7 @@ function hasChatToolCall(
  */
 export function shouldAutoSendCompletedClientToolCalls(
   options: Parameters<typeof lastAssistantMessageIsCompleteWithToolCalls>[0],
-  scopeStepUpResumeInFlight = false
+  scopeStepUpResumeInFlight = false,
 ): boolean {
   if (
     scopeStepUpResumeInFlight ||
@@ -944,13 +1138,13 @@ export function shouldAutoSendCompletedClientToolCalls(
   const lastStepStartIndex = message.parts.reduce(
     (lastIndex, part, index) =>
       part.type === "step-start" ? index : lastIndex,
-    -1
+    -1,
   );
   return message.parts
     .slice(lastStepStartIndex + 1)
     .some(
       (part) =>
-        isToolUIPart(part) && isClientFulfilledToolName(getToolName(part))
+        isToolUIPart(part) && isClientFulfilledToolName(getToolName(part)),
     );
 }
 
@@ -1007,7 +1201,7 @@ export function rpcToolCallOperation(message: unknown): string | undefined {
  */
 export function reconcileChatToolCallStepUp(
   pending: Map<string, Map<string | number, string>>,
-  log: { direction: string; serverId: string; message: unknown }
+  log: { direction: string; serverId: string; message: unknown },
 ): string | undefined {
   if (log.direction === "send") {
     // Track only tool invocations; ids from other methods never gate a reset,
@@ -1040,7 +1234,7 @@ export function reconcileChatToolCallStepUp(
 }
 
 function dedupeTraceToolCalls(
-  toolCalls: LiveChatTraceToolCall[] | null | undefined
+  toolCalls: LiveChatTraceToolCall[] | null | undefined,
 ): LiveChatTraceToolCall[] {
   if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
     return [];
@@ -1072,12 +1266,12 @@ function dedupeTraceToolCalls(
 
 function upsertRequestPayloadEntry(
   entries: LiveChatTraceRequestPayloadEntry[],
-  nextEntry: LiveChatTraceRequestPayloadEntry
+  nextEntry: LiveChatTraceRequestPayloadEntry,
 ): LiveChatTraceRequestPayloadEntry[] {
   const existingIndex = entries.findIndex(
     (entry) =>
       entry.turnId === nextEntry.turnId &&
-      entry.stepIndex === nextEntry.stepIndex
+      entry.stepIndex === nextEntry.stepIndex,
   );
 
   if (existingIndex < 0) {
@@ -1085,7 +1279,7 @@ function upsertRequestPayloadEntry(
   }
 
   return entries.map((entry, index) =>
-    index === existingIndex ? nextEntry : entry
+    index === existingIndex ? nextEntry : entry,
   );
 }
 
@@ -1094,7 +1288,7 @@ function upsertRequestPayloadEntry(
 // Also applies a flat backstop cap to `requestPayloadHistory` in case a
 // single turn (still within the turn cap) accumulates many step entries.
 function trimLiveTraceTurns(
-  state: LiveTraceAccumulatorState
+  state: LiveTraceAccumulatorState,
 ): LiveTraceAccumulatorState {
   let turnOrder = state.turnOrder;
   let turns = state.turns;
@@ -1115,13 +1309,13 @@ function trimLiveTraceTurns(
     turns = nextTurns;
 
     requestPayloadHistory = requestPayloadHistory.filter(
-      (entry) => !droppedTurnIds.has(entry.turnId)
+      (entry) => !droppedTurnIds.has(entry.turnId),
     );
   }
 
   if (requestPayloadHistory.length > MAX_LIVE_TRACE_REQUEST_PAYLOADS) {
     requestPayloadHistory = requestPayloadHistory.slice(
-      -MAX_LIVE_TRACE_REQUEST_PAYLOADS
+      -MAX_LIVE_TRACE_REQUEST_PAYLOADS,
     );
   }
 
@@ -1142,7 +1336,7 @@ function trimLiveTraceTurns(
 
 function applyLiveTraceEvent(
   state: LiveTraceAccumulatorState,
-  event: LiveChatTraceEvent
+  event: LiveChatTraceEvent,
 ): LiveTraceAccumulatorState {
   // Heartbeat events carry no state. Drop them before any allocation so a
   // long idle stream doesn't bloat the visible event list or trigger
@@ -1161,7 +1355,7 @@ function applyLiveTraceEvent(
 
   const ensureTurnState = (
     turnId: string,
-    promptIndex: number
+    promptIndex: number,
   ): LiveTraceTurnState =>
     baseState.turns[turnId] ?? {
       turnId,
@@ -1216,14 +1410,14 @@ function applyLiveTraceEvent(
             promptIndex: event.promptIndex,
             stepIndex: event.stepIndex,
             payload: event.payload,
-          }
+          },
         ),
       });
     }
     case "trace_snapshot": {
       const turnState = ensureTurnState(
         event.turnId,
-        event.snapshot.promptIndex
+        event.snapshot.promptIndex,
       );
       const turnExists = baseState.turnOrder.includes(event.turnId);
       return trimLiveTraceTurns({
@@ -1241,7 +1435,7 @@ function applyLiveTraceEvent(
               : [],
             usage: event.snapshot.usage,
             actualToolCalls: dedupeTraceToolCalls(
-              event.snapshot.actualToolCalls
+              event.snapshot.actualToolCalls,
             ),
           },
         },
@@ -1289,7 +1483,7 @@ function applyLiveTraceEvent(
 }
 
 function buildLiveTraceEnvelope(
-  state: LiveTraceAccumulatorState
+  state: LiveTraceAccumulatorState,
 ): LiveChatTraceEnvelope | null {
   if (state.events.length === 0 && !state.anySnapshotSeen) {
     return null;
@@ -1373,7 +1567,7 @@ function mergePreviewSpansIntoLiveEnvelope(
   envelope: LiveChatTraceEnvelope,
   state: LiveTraceAccumulatorState,
   previewWallElapsedMs: number | undefined,
-  transcriptFromUi: ModelMessage[] | null
+  transcriptFromUi: ModelMessage[] | null,
 ): LiveChatTraceEnvelope {
   if (!state.activeTurnId || state.activeTurnHasSnapshot) {
     return envelope;
@@ -1394,7 +1588,7 @@ function mergePreviewSpansIntoLiveEnvelope(
   });
   const previewIndexed = applyPreviewSpansUserMessageIndices(
     preview,
-    transcript
+    transcript,
   );
 
   const existing = envelope.spans ?? [];
@@ -1431,7 +1625,7 @@ function isTransientMessage(message: UIMessage): boolean {
 
 function shouldForkChatSession(
   previousMessages: UIMessage[],
-  nextMessages: UIMessage[]
+  nextMessages: UIMessage[],
 ): boolean {
   const previousPersistentIds = previousMessages
     .filter((message) => !isTransientMessage(message))
@@ -1445,13 +1639,13 @@ function shouldForkChatSession(
   }
 
   return nextPersistentIds.every(
-    (messageId, index) => messageId === previousPersistentIds[index]
+    (messageId, index) => messageId === previousPersistentIds[index],
   );
 }
 
 function areAuthHeadersEqual(
   a: Record<string, string> | undefined,
-  b: Record<string, string> | undefined
+  b: Record<string, string> | undefined,
 ): boolean {
   if (a === b) return true;
   if (!a || !b) return !a && !b;
@@ -1465,10 +1659,10 @@ type HostedSessionScope = {
   projectId?: string | null;
   /**
    * ONE stable key for "what this session executes against", replacing the
-   * previous pair of independently-compared `chatboxId` / `hostId` fields:
+   * previous pair of independently-compared `scenarioId` / `hostId` fields:
    *
    *   `host:<hostId>` | `environment:<environmentId>` |
-   *   `chatbox:<chatboxId>` | `adhoc:<projectId>`
+   *   `scenario:<scenarioId>` | `adhoc:<projectId>`
    *
    * Namespacing matters — the id spaces are different Convex tables, and a bare
    * id comparison would call a host and an environment that happen to share an
@@ -1486,7 +1680,7 @@ type HostedSessionScope = {
 /** Build the {@link HostedSessionScope} target key. Exported for tests. */
 export function hostedTargetKey(input: {
   projectId?: string | null;
-  chatboxId?: string;
+  scenarioId?: string;
   hostId?: string;
   executionTarget?: HostedExecutionTarget;
 }): string {
@@ -1495,7 +1689,7 @@ export function hostedTargetKey(input: {
       ? `environment:${input.executionTarget.environmentId}`
       : `host:${input.executionTarget.hostId}`;
   }
-  if (input.chatboxId) return `chatbox:${input.chatboxId}`;
+  if (input.scenarioId) return `scenario:${input.scenarioId}`;
   if (input.hostId) return `host:${input.hostId}`;
   return `adhoc:${input.projectId ?? ""}`;
 }
@@ -1503,9 +1697,9 @@ export function hostedTargetKey(input: {
 // `accessVersion` is intentionally NOT part of the scope. The chat-reset
 // path uses this comparison to decide when to blow away `chatSessionId` /
 // `messages`, which is only appropriate when *identity* changes (different
-// project, different chatbox, different previewed host). A pure `accessVersion`
-// bump — e.g. from the silent re-redeem triggered by `chatbox_access_stale` —
-// keeps the same chatbox and the same conversation; tearing the chat down on
+// project, different scenario, different previewed host). A pure `accessVersion`
+// bump — e.g. from the silent re-redeem triggered by `scenario_access_stale` —
+// keeps the same scenario and the same conversation; tearing the chat down on
 // those bumps would defeat the purpose of the recovery path.
 //
 // The execution TARGET is part of the scope: switching the previewed host — or,
@@ -1514,7 +1708,7 @@ export function hostedTargetKey(input: {
 // must fork rather than append target B's turns onto target A's.
 export function areHostedSessionScopesEqual(
   a: HostedSessionScope,
-  b: HostedSessionScope
+  b: HostedSessionScope,
 ): boolean {
   return a.projectId === b.projectId && a.targetKey === b.targetKey;
 }
@@ -1528,7 +1722,7 @@ function isAuthDeniedError(error: unknown): boolean {
 }
 
 export function useChatSession(
-  options: UseChatSessionOptions
+  options: UseChatSessionOptions,
 ): UseChatSessionReturn {
   const {
     selectedServers,
@@ -1539,12 +1733,21 @@ export function useChatSession(
     executionConfig,
     hostStyle,
     personalComputerEngine,
+    personalBrowserEngine,
+    localHarnessExecution,
     onReset,
   } = options;
   // Caller-provided (Playground): send local only when it will actually run
   // there. Consent-gated `engine`, device-scoped token — both from the caller.
   const resolvedLocalEngine = personalComputerEngine?.engine === "local";
   const localConsentToken = personalComputerEngine?.consentToken ?? null;
+  const localBrowserRequested =
+    !HOSTED_MODE &&
+    personalBrowserEngine?.engine === "local" &&
+    (options.builtInToolIds ?? executionConfig?.builtInToolIds)?.includes(
+      "browser",
+    ) === true;
+  const browserConsentToken = personalBrowserEngine?.consentToken ?? null;
   // Surfaces that omit `executionConfig` entirely (e.g. Playground) own their
   // chat-execution state imperatively and must not be re-synced from prop
   // defaults. Surfaces that pass `executionConfig` are in controlled mode and
@@ -1556,7 +1759,7 @@ export function useChatSession(
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedEnsureServerIds = hostedContext?.ensureServerIds;
   const hostedOAuthTokens = hostedContext?.oauthTokens;
-  const hostedChatboxId = hostedContext?.chatboxId;
+  const hostedScenarioId = hostedContext?.scenarioId;
   const hostedHostId = hostedContext?.hostId;
   // CACHE KEYING ONLY — see `HostedRuntimeContext.presentationHostId`. Never
   // added to a request body or to `hostedTargetKey`: the execution target must
@@ -1583,7 +1786,7 @@ export function useChatSession(
   // effect that depended on it.
   const hostedTargetKeyValue = hostedTargetKey({
     projectId: hostedProjectId,
-    chatboxId: hostedChatboxId,
+    scenarioId: hostedScenarioId,
     hostId: hostedTargetHostId ?? hostedHostId,
     ...(hostedEnvironmentId
       ? {
@@ -1601,8 +1804,8 @@ export function useChatSession(
   const hostedTargetKeyRef = useRef(hostedTargetKeyValue);
   hostedTargetKeyRef.current = hostedTargetKeyValue;
   const hostedAccessVersion = hostedContext?.accessVersion;
-  const hostedChatboxSurface = hostedContext?.chatboxSurface;
-  // Published-chatbox runtime sessions must use the org-aware web engine
+  const hostedScenarioSurface = hostedContext?.scenarioSurface;
+  // Published-scenario runtime sessions must use the org-aware web engine
   // on every platform — their servers resolve by Convex id, which the
   // local /api/mcp engine can't connect. See HostedRuntimeContext.
   const hostedRequiresWebChatApi = hostedContext?.requiresWebChatApi === true;
@@ -1613,7 +1816,7 @@ export function useChatSession(
   const appState = useMaybeSharedAppState();
   const initialModelId = executionConfig?.modelId;
   const initialSystemPrompt = resolveSystemPrompt(
-    executionConfig?.systemPrompt
+    executionConfig?.systemPrompt,
   );
   const initialTemperature = executionConfig?.temperature ?? 0.7;
   const initialRequireToolApproval =
@@ -1664,9 +1867,74 @@ export function useChatSession(
     setSystemPromptState(resolveSystemPrompt(prompt));
   }, []);
   const [temperature, setTemperature] = useState(initialTemperature);
-  const [chatSessionId, setChatSessionId] = useState(generateId());
+  /**
+   * The scenario whose transcript this surface may resume across a refresh, or
+   * null for every other surface.
+   *
+   * The embedded Preview iframe is excluded for the same reason it is excluded
+   * from reading the scenario grant: it is same-origin with the dashboard and
+   * shares its sessionStorage, so writing there would leak a preview's
+   * conversation into the tester page (and back). A preview reloads by
+   * re-redeeming its token anyway.
+   */
+  const resumableScenarioId =
+    hostedScenarioId && !isEmbeddedPreview() ? hostedScenarioId : null;
+  /**
+   * Read ONCE, during the first render, before anything can overwrite the row:
+   * this is what a refresh has to work from, and both the initial
+   * `chatSessionId` below and the hydration effect further down consume it.
+   *
+   * A LAZY `useState` initializer, not `useRef(read(...))`: `useRef` evaluates
+   * its argument on every render and throws the result away after the first,
+   * so the ref form re-ran a `getItem` + `JSON.parse` on every render while
+   * only ever using the first value. This hook re-renders on every streaming
+   * chunk, and a transcript here is allowed to approach `MAX_SERIALIZED_LENGTH`
+   * (~2MB — one image attachment rides along as a `data:` URL, which is why
+   * the oldest-turn trimming exists), so that slip put a multi-megabyte
+   * synchronous parse on the streaming path. The value never changes after the
+   * first render, so state is the honest shape for it.
+   */
+  const [restoredScenarioTranscript] = useState(() =>
+    resumableScenarioId
+      ? readScenarioChatTranscript(resumableScenarioId)
+      : null,
+  );
+  // Restoring the stored id — rather than minting a fresh one and seeding it —
+  // is what keeps the resumed turns appending to the SAME server-side thread.
+  const [chatSessionId, setChatSessionId] = useState(
+    () => restoredScenarioTranscript?.chatSessionId ?? generateId(),
+  );
   const chatSessionIdRef = useRef(chatSessionId);
   chatSessionIdRef.current = chatSessionId;
+  /**
+   * This turn's persist receipt, held until a post-stream consumer takes it.
+   * Refs rather than state: nothing renders from these, and a re-render between
+   * the receipt landing and the post-stream effect reading it would be pure
+   * noise.
+   */
+  const persistReceiptRef = useRef<PersistReceiptData | null>(null);
+  /** Session + turn the in-flight turn belongs to; set at `turn_start`. */
+  const receiptTurnIdentityRef = useRef<{
+    chatSessionId: string;
+    turnId: string;
+  } | null>(null);
+  /**
+   * Whether the turn that just ended was ABORTED rather than allowed to finish.
+   *
+   * The AI SDK has no distinct "aborted" status — on abort it sets
+   * `status: "ready"` and returns (ai/dist/index.mjs, in `makeRequest`'s catch:
+   * `if (isAbort || err.name === "AbortError") { this.setStatus({ status:
+   * "ready" }); return null; }`). So a stopped turn is indistinguishable from a
+   * completed one by status alone, and post-stream consumers that expect a
+   * persist receipt would wait out their whole reconciliation window for a
+   * receipt the server never sends: it persists only `runSucceeded && !aborted`.
+   *
+   * Sourced from the SDK's own `onFinish({ isAbort })` rather than from the Stop
+   * button, so an abort from ANY source counts — Stop, an unmounting instance
+   * aborting its controller, a navigation. Set on every turn end (true or
+   * false), so a finished turn always overwrites a stopped predecessor.
+   */
+  const turnAbortedRef = useRef(false);
   const [, setHydrationTick] = useState(0);
   const [resumedVersion, setResumedVersion] = useState<number | null>(null);
   const [restoredToolRenderOverrides, setRestoredToolRenderOverrides] =
@@ -1690,7 +1958,7 @@ export function useChatSession(
   const mrtrResumeSenderRef = useRef<
     | ((
         round: HostedMrtrRound,
-        responses: Record<string, MrtrElicitationResponse>
+        responses: Record<string, MrtrElicitationResponse>,
       ) => Promise<void>)
     | null
   >(null);
@@ -1738,14 +2006,24 @@ export function useChatSession(
   const [systemPromptTokenCountLoading, setSystemPromptTokenCountLoading] =
     useState(false);
   const [requireToolApproval, setRequireToolApproval] = useState(
-    initialRequireToolApproval
+    initialRequireToolApproval,
   );
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
+  /**
+   * The approval value the IN-FLIGHT turn was sent with.
+   *
+   * Stamped once per send, in the transport's `body` closure, beside
+   * `turnTaskScopeRef`. Everything that has to agree with the SERVER's view of
+   * this turn reads this rather than the live setting: the server declared
+   * every tool's `needsApproval` from the value in that request, and a user is
+   * free to flip the switch while the response streams.
+   */
+  const turnRequireToolApprovalRef = useRef(requireToolApproval);
 
   // Host-level progressive tool discovery toggle. The value comes from the
   // caller — each useChatSession site knows which host config row applies
-  // to its chat surface (per-host playground column, per-chatbox session,
+  // to its chat surface (per-host playground column, per-scenario session,
   // project default for direct chat, etc.) — and the hook just threads it
   // into the request body. Held in a ref so a mid-session flip is
   // reflected on the very next send without remounting.
@@ -1760,7 +2038,7 @@ export function useChatSession(
     options.progressiveToolDiscovery ??
     options.executionConfig?.progressiveToolDiscovery;
   const [respectToolVisibility, setRespectToolVisibility] = useState(
-    initialRespectToolVisibility
+    initialRespectToolVisibility,
   );
   const respectToolVisibilityRef = useRef<boolean>(respectToolVisibility);
   respectToolVisibilityRef.current =
@@ -1794,37 +2072,42 @@ export function useChatSession(
   const builtInToolIdsRef = useRef<string[] | undefined>(undefined);
   builtInToolIdsRef.current =
     options.builtInToolIds ?? options.executionConfig?.builtInToolIds;
+  // Read through a ref for the same reason the ids above are: the transport's
+  // body builder is created once and must see the CURRENT value at POST time,
+  // not the one captured when the transport was memoized.
+  const usePageToolsRef = useRef(false);
+  usePageToolsRef.current = options.usePageTools === true;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
-    isHostedGuest && !isAuthLoading && !!hostedProjectId && !!hostedChatboxId;
+    isHostedGuest && !isAuthLoading && !!hostedProjectId && !!hostedScenarioId;
   const guestMode = sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
   const hasResolvedAuthHeadersRef = useRef(false);
   const lastResolvedAuthHeadersRef = useRef<Record<string, string> | undefined>(
-    undefined
+    undefined,
   );
   const lastResolvedHostedScopeRef = useRef<HostedSessionScope>({
     projectId: undefined,
     targetKey: undefined,
   });
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
-    null
+    null,
   );
   const pendingLiveTraceStateRef = useRef<LiveTraceAccumulatorState | null>(
-    null
+    null,
   );
   const selectedServersSignature = useMemo(
     () => selectedServers.join("\u0000"),
-    [selectedServers]
+    [selectedServers],
   );
   const apiContextRevision = useSyncExternalStore(
     subscribeApiContext,
     getApiContextRevision,
-    getApiContextRevision
+    getApiContextRevision,
   );
   const liveTraceEnvelopeBase = useMemo(
     () => buildLiveTraceEnvelope(liveTraceState),
-    [liveTraceState]
+    [liveTraceState],
   );
   const hasTraceSnapshot = liveTraceState.activeTurnId
     ? liveTraceState.activeTurnHasSnapshot
@@ -1866,7 +2149,7 @@ export function useChatSession(
         withdraw("client hosted-MRTR version mismatch");
         toast.error(
           `This tab is running an outdated build (hosted-MRTR v${HOSTED_MRTR_VERSION}; ` +
-            `this request needs v${event.version}). Refresh the page and try again.`
+            `this request needs v${event.version}). Refresh the page and try again.`,
         );
         return;
       }
@@ -1899,11 +2182,40 @@ export function useChatSession(
         cancel: () => withdraw("dismissed by user"),
       });
     },
-    []
+    [],
   );
 
+  const paidFallbackNotices = useRef(new Set<string>());
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
+      if (part && typeof part === "object" && "type" in part && part.type === "data-platform-paid-fallback") {
+        const session = chatSessionIdRef.current ?? "new";
+        if (!paidFallbackNotices.current.has(session)) {
+          paidFallbackNotices.current.add(session);
+          toast.info("MCPJam's shared free allowance is unavailable; this chat is using your credits.");
+          track("platform_paid_fallback_notice", { chatSessionId: session });
+        }
+        return;
+      }
+      if (
+        part &&
+        typeof part === "object" &&
+        "type" in part &&
+        part.type === "data-browser-readiness" &&
+        "data" in part
+      ) {
+        const data = part.data as { reason?: unknown } | null;
+        if (!data || typeof data !== "object") return;
+        if (data.reason === null || typeof data.reason === "string") {
+          useBrowserReadinessStore
+            .getState()
+            .setReason(
+              `${hostedProjectId}:${chatSessionIdRef.current}`,
+              data.reason,
+            );
+        }
+        return;
+      }
       if (!isTraceEventDataPart(part)) {
         if (isScopeStepUpFinishedDataPart(part)) {
           const event = part.data;
@@ -1932,7 +2244,7 @@ export function useChatSession(
           const sessionId = chatSessionIdRef.current;
           if (!server || !sessionId) {
             toast.error(
-              "Authorization is required, but this conversation cannot be resumed automatically. Authorize, then retry the tool."
+              "Authorization is required, but this conversation cannot be resumed automatically. Authorize, then retry the tool.",
             );
             return;
           }
@@ -1947,7 +2259,7 @@ export function useChatSession(
               requiredScope: event.requiredScope,
               resourceMetadataUrl: event.resourceMetadataUrl,
             },
-            event.operation
+            event.operation,
           );
         } else if (isHostedElicitationDataPart(part)) {
           const event = part.data;
@@ -1957,14 +2269,14 @@ export function useChatSession(
             setPendingElicitations((queue) =>
               queue.some((e) => e.rendezvousId === event.rendezvousId)
                 ? queue
-                : [...queue, event]
+                : [...queue, event],
             );
           } else if (event.kind === "resolved") {
             // The server reached a terminal state on its own (TTL expiry, or
             // an answer that landed elsewhere) — close the dialog rather than
             // leave the user submitting into a dead rendezvous.
             setPendingElicitations((queue) =>
-              queue.filter((e) => e.rendezvousId !== event.rendezvousId)
+              queue.filter((e) => e.rendezvousId !== event.rendezvousId),
             );
           } else if (event.kind === "url_required") {
             setUrlElicitationRequired((current) => [...current, event]);
@@ -1976,14 +2288,14 @@ export function useChatSession(
             // same store ToolsTab uses; without it there is no stored issuer /
             // granted scopes to widen, so skip.
             //
-            // Chatbox / share-link turns are DELIBERATELY skipped here: their
-            // servers are synthesized in ChatboxChatPage with a placeholder
+            // Scenario / share-link turns are DELIBERATELY skipped here: their
+            // servers are synthesized in ScenarioChatPage with a placeholder
             // URL and never inserted into the dashboard appState, so this
             // lookup returns undefined and the `if (server && ...)` guard below
             // makes the event a safe no-op. That is correct — a share-link
             // visitor (even an authenticated one) does not own the host's MCP
             // servers and cannot re-authorize the owner's OAuth; connect-time
-            // chatbox OAuth is handled separately by `useHostedOAuthGate`.
+            // scenario OAuth is handled separately by `useHostedOAuthGate`.
             const server = resolveScopeStepUpServer(appState, {
               serverId: event.serverId,
               serverName: event.serverName,
@@ -2019,11 +2331,11 @@ export function useChatSession(
               // Exactly-once: a side-effecting call may or may not have run, so
               // never auto-retry — say so and let the user decide.
               toast.error(
-                "That tool call was interrupted and may or may not have run. Check the server before retrying."
+                "That tool call was interrupted and may or may not have run. Check the server before retrying.",
               );
             } else if (event.outcome === "expired") {
               toast.info(
-                "That request timed out, so the operation was cancelled."
+                "That request timed out, so the operation was cancelled.",
               );
             }
             return;
@@ -2043,7 +2355,7 @@ export function useChatSession(
           // bounded cap. Responses carry no `method`, so correlate by JSON-RPC
           // id: record outgoing `tools/call` request ids per server, then reset
           // only when a matching successful response arrives. Same store lookup
-          // the insufficient_scope branch uses (a share-link chatbox resolves to
+          // the insufficient_scope branch uses (a share-link scenario resolves to
           // no server, a safe no-op there).
           const log = part.data;
           // Track outgoing `tools/call` ids and evict them on any settled
@@ -2051,7 +2363,7 @@ export function useChatSession(
           // the only signal that clears this server's bounded step-up counter.
           const successfulOperation = reconcileChatToolCallStepUp(
             chatToolCallRequestIdsRef.current,
-            log
+            log,
           );
           if (successfulOperation) {
             const activeProject =
@@ -2060,8 +2372,8 @@ export function useChatSession(
               ];
             const server =
               (log.serverName
-                ? appState?.servers?.[log.serverName] ??
-                  activeProject?.servers?.[log.serverName]
+                ? (appState?.servers?.[log.serverName] ??
+                  activeProject?.servers?.[log.serverName])
                 : undefined) ??
               appState?.servers?.[log.serverId] ??
               activeProject?.servers?.[log.serverId];
@@ -2077,6 +2389,27 @@ export function useChatSession(
           // frames). The `data-rpc-log` part for the same call is what clears
           // the counter; this part exists purely to fill the Tracing view.
           ingestHostedHttpLogs([part.data]);
+        } else if (isPersistReceiptDataPart(part)) {
+          // What actually happened to this turn's chat-history save. Validated
+          // before it is stored, because a receipt is only meaningful for the
+          // conversation it describes: it arrives at the very end of a turn, by
+          // which point a reset, fork, or thread switch may already have moved
+          // this surface somewhere else. Applying a stale receipt would sync a
+          // version baseline onto a thread it does not belong to.
+          const receipt = part.data;
+          const expectedTurn = receiptTurnIdentityRef.current;
+          const sameSession =
+            receipt.chatSessionId === chatSessionIdRef.current;
+          // The turn check is against the identity captured at `turn_start`,
+          // NOT `activeTurnId` — that is cleared by `turn_finish`, which always
+          // arrives BEFORE the receipt.
+          const sameTurn =
+            !receipt.turnId ||
+            !expectedTurn?.turnId ||
+            receipt.turnId === expectedTurn.turnId;
+          if (sameSession && sameTurn) {
+            persistReceiptRef.current = receipt;
+          }
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
           // terminal there. Keyed by project + host — and on an ENVIRONMENT
@@ -2089,10 +2422,10 @@ export function useChatSession(
             .setWorkdir(
               hostedProjectId ?? null,
               hostedHostId ?? hostedPresentationHostId ?? null,
-              part.data.workdir
+              part.data.workdir,
             );
         } else if (isSandboxNoticeDataPart(part)) {
-          // One-time fact about the chatbox's ephemeral sandbox. Exactly-once
+          // One-time fact about the scenario's ephemeral sandbox. Exactly-once
           // delivery is the BACKEND's job (it marks the notice consumed in the
           // same transaction that hands it over), so this side just renders
           // whatever arrives — no client-side dedupe that a reconnect could
@@ -2143,6 +2476,23 @@ export function useChatSession(
         return;
       }
 
+      if (part.data.type === "turn_start") {
+        // A dedicated identity for receipt matching, captured while the turn is
+        // starting rather than read off trace state later: `activeTurnId` is
+        // cleared by `turn_finish`, which lands before the receipt does. A new
+        // turn also invalidates the previous turn's receipt.
+        receiptTurnIdentityRef.current = {
+          chatSessionId: chatSessionIdRef.current,
+          turnId: part.data.turnId,
+        };
+        persistReceiptRef.current = null;
+        // Same lifetime as the receipt: a new turn invalidates the previous
+        // turn's abort just as it invalidates the previous turn's receipt.
+        // `onFinish` already clears it at every turn end, so this only matters
+        // when nothing consumed the flag (no history rail on this surface).
+        turnAbortedRef.current = false;
+      }
+
       setLiveTraceState((current) => applyLiveTraceEvent(current, part.data));
     },
     [
@@ -2151,8 +2501,52 @@ export function useChatSession(
       hostedPresentationHostId,
       appState,
       handleMrtrInputRequired,
-    ]
+    ],
   );
+
+  /**
+   * Take this turn's persist receipt, if one arrived and passed validation.
+   *
+   * Consuming rather than reading: the receipt describes exactly one turn, and
+   * leaving it in place would let a later reconciliation pass mistake it for a
+   * fresh answer about a different turn.
+   *
+   * Ordering is safe. The AI SDK processes stream chunks in order and only
+   * flips `status` to `ready` once the reader completes, so a receipt on the
+   * wire is always observed before any post-stream effect runs. A client abort
+   * or disconnect means no receipt at all — callers fall back to reconciling
+   * against the session subscription.
+   */
+  const consumePersistReceipt = useCallback((): PersistReceiptData | null => {
+    const receipt = persistReceiptRef.current;
+    persistReceiptRef.current = null;
+    // Re-checked at CONSUME time, not just on arrival: the session can change
+    // in the window between the receipt landing and a post-stream effect
+    // reading it, and handing a receipt for the old thread to the new one would
+    // sync its version baseline — or detach it — on the wrong conversation.
+    if (receipt && receipt.chatSessionId !== chatSessionIdRef.current) {
+      return null;
+    }
+    return receipt;
+  }, []);
+
+  /**
+   * Take whether the turn that just ended was aborted.
+   *
+   * Consuming, like {@link consumePersistReceipt}: the answer describes exactly
+   * one turn, and a leftover `true` would tell the next turn's post-stream
+   * reconciliation to stand down when it should be watching.
+   *
+   * Deliberately NOT session-scoped the way the receipt is. The receipt carries
+   * data (a version) that would be actively wrong if applied to another thread;
+   * this is a bare "nothing was written", which is true of the aborted turn no
+   * matter which thread the surface is on when it reads it.
+   */
+  const consumeTurnAborted = useCallback((): boolean => {
+    const aborted = turnAbortedRef.current;
+    turnAbortedRef.current = false;
+    return aborted;
+  }, []);
 
   const syncResumedVersion = useCallback((version: number | null) => {
     resumedVersionRef.current = version;
@@ -2163,7 +2557,7 @@ export function useChatSession(
       restoredToolRenderOverridesRef.current = overrides;
       setRestoredToolRenderOverrides(overrides);
     },
-    []
+    [],
   );
   const clearPendingSessionHydration = useCallback(() => {
     // Drop any queued trace state so a subsequent resetChat / fork does not
@@ -2181,7 +2575,7 @@ export function useChatSession(
 
   // Build available models — the same composition every picker surface
   // uses (see `composeAvailableModels`); only the org-config source is
-  // chat-specific (chatbox embeds resolve a host-provided project context).
+  // chat-specific (scenario embeds resolve a host-provided project context).
   const outOfCredits = useOutOfCredits();
   const { hostedCatalog } = useHostedModelCatalog();
   const availableModels = useMemo(
@@ -2209,7 +2603,7 @@ export function useChatSession(
       hostedOrgModelConfig,
       outOfCredits,
       hostedCatalog,
-    ]
+    ],
   );
 
   // Model selection with persistence
@@ -2223,11 +2617,11 @@ export function useChatSession(
   } = usePersistedModel();
   const selectableModels = useMemo(
     () => availableModels.filter((model) => !model.disabled),
-    [availableModels]
+    [availableModels],
   );
   const selectedModel = useMemo<ModelDefinition>(() => {
     const fallback = getDefaultModel(
-      selectableModels.length > 0 ? selectableModels : availableModels
+      selectableModels.length > 0 ? selectableModels : availableModels,
     );
     const resolveAvailableModel = (modelId?: string | null) => {
       if (!modelId) {
@@ -2252,7 +2646,7 @@ export function useChatSession(
             // must not silently switch the user off it. Other locks (guest,
             // ollama-no-tools) stay unselectable.
             (!model.disabled ||
-              model.disabledReason === OUT_OF_CREDITS_MODEL_REASON)
+              model.disabledReason === OUT_OF_CREDITS_MODEL_REASON),
         ) ?? null
       );
     };
@@ -2280,7 +2674,7 @@ export function useChatSession(
     if (initialModelId) return true;
     if (!selectedModelId) return true;
     return availableModels.some(
-      (model) => String(model.id) === selectedModelId
+      (model) => String(model.id) === selectedModelId,
     );
   }, [availableModels, initialModelId, selectedModelId]);
 
@@ -2313,13 +2707,13 @@ export function useChatSession(
       }
       setSelectedModelId(String(model.id));
     },
-    [initialModelId, setSelectedModelId]
+    [initialModelId, setSelectedModelId],
   );
 
   const setSelectedModelIds = useCallback(
     (modelIds: string[]) => {
-      // A surface with a pinned model — a hosted chatbox or share link,
-      // where `executionConfig.modelId` names the model the chatbox owner
+      // A surface with a pinned model — a hosted scenario or share link,
+      // where `executionConfig.modelId` names the model the scenario owner
       // chose — is not expressing *this* user's choice. `setSelectedModel`
       // already no-ops for that reason; this setter has to as well, because
       // it ends in `saveSelectedModelId` (`use-persisted-model.ts:150-159`)
@@ -2333,7 +2727,7 @@ export function useChatSession(
       }
       persistSelectedModelIds(modelIds);
     },
-    [initialModelId, persistSelectedModelIds]
+    [initialModelId, persistSelectedModelIds],
   );
 
   const isMcpJamModel = useMemo(() => {
@@ -2341,13 +2735,13 @@ export function useChatSession(
   }, [selectedModel]);
   const selectedModelUsesOrgRuntime = useMemo(
     () => isOrgManagedModel(hostedOrgModelConfig, selectedModel),
-    [hostedOrgModelConfig, selectedModel]
+    [hostedOrgModelConfig, selectedModel],
   );
   const hasLocalOnlySelectedServer = useMemo(() => {
     if (!appState || selectedServers.length === 0) return false;
     const activeProject = findProjectByAnyId(
       appState.projects,
-      hostedProjectId ?? appState.activeProjectId
+      hostedProjectId ?? appState.activeProjectId,
     );
     return selectedServers.some((serverName) => {
       const server =
@@ -2365,7 +2759,37 @@ export function useChatSession(
     !HOSTED_MODE &&
     !hostedRequiresWebChatApi &&
     selectedModelUsesOrgRuntime &&
-    hasLocalOnlySelectedServer;
+    (hasLocalOnlySelectedServer || localBrowserRequested);
+  /**
+   * Does THIS send explicitly ask to run Claude Code on this machine?
+   *
+   * The caller answered the host/surface half (`lib/local-harness-scope.ts`)
+   * and the "did the user choose it" half. The surface facts this hook owns —
+   * hosted mode, a scenario session, a surface already forced onto the web
+   * route — are re-applied here so the two ends of the same predicate cannot
+   * disagree; each is a case where a local turn is structurally impossible
+   * rather than merely unauthorized.
+   *
+   * Notably NOT gated on having a grant. "Requested" and "can be satisfied"
+   * are different questions, and collapsing them is how an explicit local
+   * request became a silent cloud turn: the target was simply omitted and the
+   * server obliged.
+   */
+  const localHarnessRequested =
+    !HOSTED_MODE &&
+    !hostedRequiresWebChatApi &&
+    !hostedScenarioId &&
+    localHarnessExecution?.requested === true;
+  const isHostedTransport = HOSTED_MODE || hostedRequiresWebChatApi;
+  const shouldUseOrgAwareChatApi =
+    isHostedTransport ||
+    (selectedModelUsesOrgRuntime &&
+      !localMcpRuntimeRequired &&
+      // Local execution only exists on the local `/api/mcp` route. An
+      // org-runtime model would otherwise route an explicitly local turn to
+      // `/api/web/chat-v2`, which refuses the target — so the ask has to keep
+      // the turn on the route that can honour it.
+      !localHarnessRequested);
   const traceViewsSupported = HOSTED_MODE
     ? isMcpJamModel || selectedModelUsesOrgRuntime
     : true;
@@ -2386,15 +2810,12 @@ export function useChatSession(
       // belonging to a different request.
       lastChatResponseRef.current = null;
 
-      // authFetch owns auth resolution (WorkOS bearer / guest bearer via
-      // the chatbox-installed apiContext) wherever the web engine is in
-      // play — hosted builds, and chatbox runtime sessions on any platform.
-      const useAuthedFetch = HOSTED_MODE || hostedRequiresWebChatApi;
-      let response = useAuthedFetch
-        ? await authFetch(input, init)
-        : await fetch(input, init);
+      // Resolve the WorkOS / guest bearer at request time for every chat
+      // route. authFetch attaches it only to allowlisted Convex-backed paths,
+      // including both /api/web/chat-v2 and local /api/mcp/chat-v2.
+      let response = await authFetch(input, init);
 
-      // Chatbox access recovery. A chatbox turn re-resolves its authoritative
+      // Scenario access recovery. A scenario turn re-resolves its authoritative
       // config server-side on every send, so an open tab can lose access
       // between one send and the next — a rebind, a mode round-trip, a
       // rotated guest identity. The refusal lands here PRE-STREAM (the route
@@ -2403,17 +2824,17 @@ export function useChatSession(
       // the one place a re-redeem + replay is invisible to the tester.
       //
       // DENIED is retried as well as STALE: /redeem re-mints the grant for an
-      // `anyone_with_link` chatbox, so most "denied" verdicts are recoverable
+      // `anyone_with_link` scenario, so most "denied" verdicts are recoverable
       // identity drift rather than a real refusal. Exactly ONE recovery per
       // send — the replay's own verdict is final.
       if (
         !response.ok &&
-        useAuthedFetch &&
-        hostedChatboxId &&
+        isHostedTransport &&
+        hostedScenarioId &&
         typeof init?.body === "string" &&
         hostedRefreshAccessSession
       ) {
-        const accessError = await classifyChatboxAccessResponse(response);
+        const accessError = await classifyScenarioAccessResponse(response);
         if (accessError) {
           const recovery = await hostedRefreshAccessSession();
           if (recovery.ok) {
@@ -2425,7 +2846,7 @@ export function useChatSession(
             });
             if (!response.ok) {
               const replayError =
-                await classifyChatboxAccessResponse(response);
+                await classifyScenarioAccessResponse(response);
               if (replayError?.kind === "denied") {
                 hostedOnAccessRevoked?.(replayError);
               }
@@ -2453,8 +2874,11 @@ export function useChatSession(
       };
 
       if (!response.ok) {
-        await notifyMCPJamLimitErrorFromResponse(response);
-        if (useAuthedFetch) {
+        await notifyMCPJamLimitErrorFromResponse(
+          response,
+          hostedScenarioId ? "scenario" : undefined,
+        );
+        if (isHostedTransport) {
           await ingestHostedRpcLogsFromResponse(response);
         }
       }
@@ -2462,10 +2886,11 @@ export function useChatSession(
     },
     [
       hostedRequiresWebChatApi,
-      hostedChatboxId,
+      isHostedTransport,
+      hostedScenarioId,
       hostedRefreshAccessSession,
       hostedOnAccessRevoked,
-    ]
+    ],
   );
 
   const handleChatError = useCallback((chatError: Error) => {
@@ -2493,8 +2918,12 @@ export function useChatSession(
         // not JSON; ignore
       }
     }
-    notifyMCPJamLimitError({ message: chatError.message, limitKind });
-  }, []);
+    notifyMCPJamLimitError({
+      message: chatError.message,
+      limitKind,
+      ...(hostedScenarioId ? { surface: "scenario" as const } : {}),
+    });
+  }, [hostedScenarioId]);
 
   // Create transport
   const pendingWidgetModelContextRef = useRef<
@@ -2517,10 +2946,6 @@ export function useChatSession(
   const turnTaskScopeRef = useRef<string | undefined>(undefined);
 
   const transport = useMemo(() => {
-    const shouldUseOrgAwareChatApi =
-      HOSTED_MODE ||
-      hostedRequiresWebChatApi ||
-      (selectedModelUsesOrgRuntime && !localMcpRuntimeRequired);
     const shouldSendClientApiKey =
       !shouldUseOrgAwareChatApi && !selectedModelUsesOrgRuntime;
     let apiKey: string;
@@ -2535,16 +2960,20 @@ export function useChatSession(
       apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     }
 
-    // Merge session auth headers with workos auth headers
-    const sessionHeaders = getSessionAuthHeaders();
-    const mergedHeaders = { ...sessionHeaders, ...authHeaders } as Record<
-      string,
-      string
-    >;
+    // NEITHER credential is snapshotted here. authFetch calls the very same
+    // `getAuthHeaders()` at request time, and `buildAuthFetchInit` merges
+    // `init.headers` LAST — so a copy taken when this memo ran would override
+    // the fresh one. That is not theoretical: the local dev server mints a new
+    // session token on every restart, and this memo (which no longer depends
+    // on `authHeaders`) can outlive several of them, so the stale copy won the
+    // merge and the route answered 401 "Invalid session token". authFetch's
+    // own 401 session-recovery could not rescue it either — its retry rebuilds
+    // from the same `init`, re-applying the same stale header.
+    const mergedHeaders = {} as Record<string, string>;
     // Consent capability for the local computer engine — a header, never the
     // body, so it can't land in a persisted transcript. Only on a direct
-    // (non-chatbox) turn whose resolved engine is local; the server re-checks
-    // !HOSTED_MODE + non-guest + non-chatbox + verifies the token.
+    // (non-scenario) turn whose resolved engine is local; the server re-checks
+    // !HOSTED_MODE + non-guest + non-scenario + verifies the token.
     //
     // Scoped to the /api/mcp/chat-v2 path (`!shouldUseOrgAwareChatApi`): the
     // local engine only exists on the local server's mcp route (both this
@@ -2556,20 +2985,26 @@ export function useChatSession(
     const sendLocalEngine =
       !shouldUseOrgAwareChatApi &&
       resolvedLocalEngine &&
-      !hostedChatboxId &&
+      !hostedScenarioId &&
       Boolean(localConsentToken) &&
       authIsMemberRef.current;
+    const sendLocalBrowser =
+      !shouldUseOrgAwareChatApi && localBrowserRequested && !hostedScenarioId;
+    if (sendLocalBrowser && browserConsentToken)
+      mergedHeaders[BROWSER_CONSENT_HEADER] = browserConsentToken;
     if (sendLocalEngine && localConsentToken) {
       mergedHeaders[LOCAL_CONSENT_HEADER] = localConsentToken;
     }
-    // When authFetch carries the request (hosted builds, chatbox runtime
-    // sessions), it owns the Authorization header — don't double-attach.
+    // The local-harness target is NOT resolved here. Its ids and its capability
+    // are produced together from one fresh snapshot taken per send, in
+    // `prepareSendMessagesRequest` below — this closure is built when the
+    // transport is memoized, which is before Allow, before a sign-out and
+    // before an expiry, and any of those makes a value captured here a lie by
+    // the time it is sent.
+    // Only the local-computer consent capability rides the transport, because
+    // it is not a credential authFetch knows how to resolve.
     const transportHeaders =
-      HOSTED_MODE || hostedRequiresWebChatApi
-        ? undefined
-        : Object.keys(mergedHeaders).length > 0
-        ? mergedHeaders
-        : undefined;
+      Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined;
 
     const chatApi = shouldUseOrgAwareChatApi
       ? "/api/web/chat-v2"
@@ -2581,10 +3016,10 @@ export function useChatSession(
       if (!hostedProjectId) {
         throw new Error("Hosted chat context is not ready: missing projectId.");
       }
-      const isHostedDirectChat = !hostedChatboxId;
+      const isHostedDirectChat = !hostedScenarioId;
       // Prefer ids resolved by the `sendMessage` preflight (ad-hoc/App servers
       // persisted to real Convex ids); consume once. Fall back to the
-      // pre-resolved selection for surfaces without a preflight (e.g. chatbox).
+      // pre-resolved selection for surfaces without a preflight (e.g. scenario).
       const preflight = resolvedHostedServersRef.current;
       resolvedHostedServersRef.current = null;
       const hostedServerBatch = buildResolvedServerBatchRequest({
@@ -2597,8 +3032,8 @@ export function useChatSession(
         Object.keys(hostedOAuthTokens).length > 0
           ? { oauthTokens: hostedOAuthTokens }
           : {}),
-        ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
-        ...(hostedChatboxId && Number.isFinite(hostedAccessVersion)
+        ...(hostedScenarioId ? { scenarioId: hostedScenarioId } : {}),
+        ...(hostedScenarioId && Number.isFinite(hostedAccessVersion)
           ? { accessVersion: hostedAccessVersion }
           : {}),
       });
@@ -2612,6 +3047,9 @@ export function useChatSession(
         selectedServerIds: resolvedServerIds,
         selectedServerNames: resolvedServerNames,
         chatSessionId,
+        ...(isHostedDirectChat
+          ? { browserScope: "conversation" as const }
+          : {}),
         // Handshake: tells the server this bundle can render an elicitation
         // prompt. Catalog hosts already declare the capability, so without
         // this a stale bundle would leave the turn blocked for a full TTL on
@@ -2649,15 +3087,15 @@ export function useChatSession(
                 : {}),
             }
           : // Host-bound direct preview: forward the saved host id so the server
-          // re-resolves the host's authoritative runtime config (harness /
-          // computer included). Only on the direct path — chatbox sessions own
-          // their host via chatboxId and the server ignores hostId when
-          // chatboxId is set.
-          isHostedDirectChat && hostedHostId
-          ? { hostId: hostedHostId }
-          : {}),
-        ...(hostedChatboxId && hostedChatboxSurface
-          ? { surface: hostedChatboxSurface }
+            // re-resolves the host's authoritative runtime config (harness /
+            // computer included). Only on the direct path — scenario sessions own
+            // their host via scenarioId and the server ignores hostId when
+            // scenarioId is set.
+            isHostedDirectChat && hostedHostId
+            ? { hostId: hostedHostId }
+            : {}),
+        ...(hostedScenarioId && hostedScenarioSurface
+          ? { surface: hostedScenarioSurface }
           : {}),
       };
     };
@@ -2673,8 +3111,16 @@ export function useChatSession(
         // the data-part handler, whose closure is recreated on a project
         // switch and would stamp the NEW project on a late part.
         turnTaskScopeRef.current = shouldUseOrgAwareChatApi
-          ? hostedProjectId ?? undefined
+          ? (hostedProjectId ?? undefined)
           : getTrackedTaskScope();
+        // And the approval value this turn is SENT with, for the same reason.
+        // The server declares each tool's `needsApproval` from the value in
+        // THIS request; a client that later read the live setting would answer
+        // a different question than the one the server answered. Flipping the
+        // switch mid-stream then either runs a page tool the server is about
+        // to request approval for, or defers one nothing will ever ask about
+        // — and that second one stalls the turn.
+        turnRequireToolApprovalRef.current = requireToolApprovalRef.current;
         const widgetModelContext = pendingWidgetModelContextRef.current;
         pendingWidgetModelContextRef.current = undefined;
         const rewind =
@@ -2697,15 +3143,18 @@ export function useChatSession(
             : {
                 selectedServers,
                 chatSessionId,
+                ...(!hostedScenarioId
+                  ? { browserScope: "conversation" as const }
+                  : {}),
                 // `directVisibility` only applies to direct chat. The
-                // /mcp/chat-v2 route gates it off when chatboxId is present
-                // (owner-preview persists as `sourceType: "chatbox"`), but
+                // /mcp/chat-v2 route gates it off when scenarioId is present
+                // (owner-preview persists as `sourceType: "scenario"`), but
                 // omitting it client-side keeps the body honest about the
                 // session kind.
-                ...(hostedChatboxId ? {} : { directVisibility }),
+                ...(hostedScenarioId ? {} : { directVisibility }),
                 // Host-bound direct preview: forward the saved host id so the
                 // server re-resolves harness/computer authoritatively. Direct
-                // path only — omitted when a chatbox owns the host.
+                // path only — omitted when a scenario owns the host.
                 //
                 // NO `executionTarget` here, by design: the local /api/mcp
                 // engine cannot resolve an environment (it has no Convex read
@@ -2715,13 +3164,20 @@ export function useChatSession(
                 // environment mode — and if a caller ever gets it wrong, the
                 // turn runs as a plain host turn rather than silently claiming
                 // to be an environment run.
-                ...(!hostedChatboxId && !hostedExecutionTarget && hostedHostId
+                ...(!hostedScenarioId && !hostedExecutionTarget && hostedHostId
                   ? { hostId: hostedHostId }
                   : {}),
                 // "This machine": run this host's bash on the local computer
                 // engine. The consent capability rides the header above; the
                 // server ignores this without it (and off the /mcp direct
                 // path). Absent ⇒ the legacy cloud-family resolution.
+                ...(!hostedScenarioId && personalBrowserEngine
+                  ? {
+                      browserEngine: sendLocalBrowser
+                        ? ("local" as const)
+                        : ("cloud" as const),
+                    }
+                  : {}),
                 ...(sendLocalEngine
                   ? { computerEngine: "local" as const }
                   : {}),
@@ -2736,20 +3192,25 @@ export function useChatSession(
                 ...(hostedSelectedServerIds.length === selectedServers.length
                   ? { selectedServerIds: hostedSelectedServerIds }
                   : {}),
-                ...(localMcpRuntimeRequired
+                // Keeps an org-runtime model's turn on the local route's own
+                // runtime resolution. Local-only MCP servers need it; so does
+                // an explicit local-harness ask, for the same reason — the
+                // agent runs here, so the servers it reaches must resolve here.
+                ...(localMcpRuntimeRequired ||
+                (localHarnessRequested && selectedModelUsesOrgRuntime)
                   ? { localMcpRuntimeRequired: true }
                   : {}),
-                // Phase F: owner-preview / local chatbox sessions persist as
-                // `sourceType: "chatbox"`. Without forwarding the resolved
-                // chatbox identity here, /mcp/chat-v2 derives sourceType
+                // Phase F: owner-preview / local scenario sessions persist as
+                // `sourceType: "scenario"`. Without forwarding the resolved
+                // scenario identity here, /mcp/chat-v2 derives sourceType
                 // from absent fields and the chat is filed as a direct chat
-                // instead of a chatbox session.
-                ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
-                ...(hostedChatboxId && Number.isFinite(hostedAccessVersion)
+                // instead of a scenario session.
+                ...(hostedScenarioId ? { scenarioId: hostedScenarioId } : {}),
+                ...(hostedScenarioId && Number.isFinite(hostedAccessVersion)
                   ? { accessVersion: hostedAccessVersion }
                   : {}),
-                ...(hostedChatboxId && hostedChatboxSurface
-                  ? { surface: hostedChatboxSurface }
+                ...(hostedScenarioId && hostedScenarioSurface
+                  ? { surface: hostedScenarioSurface }
                   : {}),
                 ...(selectedModel.provider === "ollama"
                   ? { ollamaBaseUrl: getOllamaBaseUrl() }
@@ -2792,11 +3253,8 @@ export function useChatSession(
             ? { expectedVersion: resumedVersionRef.current }
             : {}),
           ...(rewind ? { rewind } : {}),
-          // Host-managed built-in tools (e.g. ["web_search"]). Forwarded only
-          // when non-empty so pre-feature traces stay byte-identical. The
-          // chatbox path overrides this with the persisted host config server-
-          // side; playground trusts this value (same as systemPrompt etc.).
-          ...(builtInToolIdsRef.current && builtInToolIdsRef.current.length > 0
+          // Preserve []: it explicitly disables the client's built-in tools.
+          ...(builtInToolIdsRef.current !== undefined
             ? { builtInToolIds: builtInToolIdsRef.current }
             : {}),
           // SEP-1865 App-Provided Tools snapshot. Drained fresh at POST time
@@ -2806,6 +3264,15 @@ export function useChatSession(
           appTools: useAppToolsRegistry
             .getState()
             .snapshotForChatBody(chatSessionIdRef.current),
+          // WebMCP page tools, when the caller opted this turn into the tools
+          // of an open inspector session. Drained fresh at POST time for the
+          // same reason as `appTools`: the page may have registered or dropped
+          // tools since the last turn. `setAdvertisedPageTools` records what
+          // this turn advertised so an alias in the response resolves back to
+          // the tool it stood for.
+          ...(usePageToolsRef.current
+            ? { pageTools: snapshotPageToolsForTurn() }
+            : {}),
           // MCPJam UI tools are agent-surface-only; the only uiTools sender
           // is agent-chat-instances.ts (/api/web/mcpjam-agent).
           ...(widgetModelContext && widgetModelContext.length > 0
@@ -2814,16 +3281,58 @@ export function useChatSession(
         };
       },
       headers: transportHeaders,
+      /**
+       * The one place a local-harness turn's ids and capability are produced,
+       * and the one place they are produced TOGETHER.
+       *
+       * `prepareSendMessagesRequest` runs exactly once per send, after `body`
+       * and `headers` have resolved, and can rewrite both — which is what makes
+       * "one fresh snapshot" expressible at all. Splitting it across the `body`
+       * closure and the `headers` object (where it used to live) meant the ids
+       * and the token were read at different moments from different sources,
+       * and a grant minted in between produced a body claiming a target with no
+       * capability to authorize it.
+       *
+       * The refusal below is the backstop the whole design rests on. Before it,
+       * an expired grant, a sign-out, or a false `authIsMemberRef` each simply
+       * OMITTED the target — and the server, seeing no target, ran the turn
+       * hosted. A user who deliberately scoped work to their machine got a
+       * cloud sandbox and no indication of it. Failing loudly is the point.
+       */
+      //
+      // Installed ONLY on a local-harness turn. The SDK adds `messages` (and
+      // `id`/`trigger`/`messageId`) to the request itself, but only when no
+      // `prepareSendMessagesRequest` returns a body — any returned body replaces
+      // the SDK's wholesale. A hook that ran on every turn and handed back the
+      // custom fields it was given sent every chat turn out with no `messages`
+      // (400 "messages are required", both routes). Not installing it on the
+      // ordinary path leaves the SDK's own composition in charge there, and
+      // `prepareLocalHarnessSendRequest` re-adds the SDK fields on the path
+      // that does rewrite the body — `lib/chat-send-request.ts` owns that
+      // contract and pins it against the real transport.
+      ...(localHarnessRequested
+        ? {
+            prepareSendMessagesRequest: (
+              options: ChatSendRequestOptions<UIMessage>,
+            ) =>
+              prepareLocalHarnessSendRequest(
+                options,
+                localHarnessExecution?.resolveSendTarget() ?? null,
+              ),
+          }
+        : {}),
     });
   }, [
     selectedModel,
     getToken,
     getCustomProviderByName,
     customProviders,
-    authHeaders,
     selectedModelUsesOrgRuntime,
     localMcpRuntimeRequired,
+    localHarnessRequested,
+    localHarnessExecution,
     hostedRequiresWebChatApi,
+    shouldUseOrgAwareChatApi,
     temperature,
     systemPrompt,
     selectedServers,
@@ -2832,13 +3341,13 @@ export function useChatSession(
     chatSessionId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
-    hostedChatboxId,
+    hostedScenarioId,
     hostedHostId,
     hostedExecutionTarget,
     hostedEnvironmentId,
     hostedEnvironmentOverrides,
     hostedAccessVersion,
-    hostedChatboxSurface,
+    hostedScenarioSurface,
     getOllamaBaseUrl,
     getAzureBaseUrl,
     hostStyle,
@@ -2848,6 +3357,9 @@ export function useChatSession(
     // the very next turn.
     resolvedLocalEngine,
     localConsentToken,
+    localBrowserRequested,
+    browserConsentToken,
+    personalBrowserEngine,
     // requireToolApproval read from ref at request time
   ]);
   // `@ai-sdk/react` only recreates its internal Chat when the chat id changes.
@@ -2856,13 +3368,14 @@ export function useChatSession(
   const latestTransportRef = useRef<ChatTransport<UIMessage>>(transport);
   latestTransportRef.current = transport;
   const proxyTransport = useMemo<ChatTransport<UIMessage>>(
-    () => ({
-      sendMessages: (options) =>
-        latestTransportRef.current.sendMessages(options),
-      reconnectToStream: (options) =>
-        latestTransportRef.current.reconnectToStream(options),
-    }),
-    []
+    () =>
+      withWebMcpTraffic({
+        sendMessages: (options) =>
+          latestTransportRef.current.sendMessages(options),
+        reconnectToStream: (options) =>
+          latestTransportRef.current.reconnectToStream(options),
+      }),
+    [],
   );
 
   // Held until the entire userless resume request settles. AI SDK evaluates
@@ -2879,20 +3392,68 @@ export function useChatSession(
     status,
     error,
     setMessages: baseSetMessages,
-    addToolApprovalResponse,
+    addToolApprovalResponse: sdkAddToolApprovalResponse,
     addToolOutput,
   } = useChat({
     id: chatSessionId,
     transport: proxyTransport,
     onData: handleStreamDataPart,
     onError: handleChatError,
+    // Records whether the turn was aborted, for `consumeTurnAborted`. Runs in
+    // the SDK's `finally` — after `setStatus({ status: "ready" })` but before
+    // React renders that status — so a post-stream effect reading it on the
+    // ready transition always sees THIS turn's answer. Same ordering guarantee
+    // the persist receipt already relies on.
+    onFinish: ({ isAbort, message }) => {
+      turnAbortedRef.current = isAbort;
+      baseSetMessages((current) =>
+        timestampMessageById(current, message.id, Date.now()),
+      );
+    },
     // SEP-1865 App-Provided Tools: AI SDK v6 IGNORES the return value of
     // `onToolCall`. Tool results must be supplied imperatively via
     // `addToolOutput(...)`. Server-tool calls bypass this handler (they
-    // resolve via the server's `execute` function); only client-fulfilled
-    // app aliases land here.
+    // resolve via the server's `execute` function); client-fulfilled app and
+    // page aliases land here.
     onToolCall: async ({ toolCall }) => {
       const toolName = (toolCall as { toolName: string }).toolName;
+
+      // WebMCP page tools: the model asked for a tool a real web page
+      // registered, and the browser session that owns that page lives in this
+      // app. Claim it synchronously — the AI SDK delivers
+      // tool-input-available before tool-approval-request, so a claim is the
+      // only way to hold the call until the user's decision arrives.
+      const pageToolCallId = (toolCall as { toolCallId: string }).toolCallId;
+      const pageToolInput = (toolCall as { input: unknown }).input;
+      if (
+        deferPageToolCallForApproval({
+          toolName,
+          toolCallId: pageToolCallId,
+          input: pageToolInput,
+        })
+      ) {
+        // AND RUN IT, when nothing is going to ask. The server emits an
+        // approval request only when the tool it built declared one, so with
+        // the switch off there is no pill coming and a call left deferred
+        // waits for a decision nobody will make — the turn stalls on a tool
+        // that was never gated in the first place.
+        //
+        // The SAME predicate the server built the tool from, AND the same
+        // value: `turnRequireToolApprovalRef` is what this turn was sent with,
+        // not what the switch says now. A client that guessed differently
+        // either strands the turn or runs something the user was meant to see
+        // first, and flipping the switch mid-stream is enough to cause it.
+        if (!pageToolCallNeedsApproval(turnRequireToolApprovalRef.current)) {
+          void fulfillApprovedPageToolCall({
+            toolCallId: pageToolCallId,
+            alias: toolName,
+            input: pageToolInput,
+            addToolOutput,
+          });
+        }
+        return;
+      }
+
       const entry = useAppToolsRegistry
         .getState()
         .resolve(toolName, chatSessionIdRef.current);
@@ -3008,7 +3569,7 @@ export function useChatSession(
             input: tc.input,
             raw,
           },
-          useTrafficLogStore.getState().addLog
+          useTrafficLogStore.getState().addLog,
         );
         addToolOutput({
           tool: tc.toolName,
@@ -3045,7 +3606,7 @@ export function useChatSession(
       if (
         shouldAutoSendCompletedClientToolCalls(
           options,
-          scopeStepUpResumeInFlightRef.current
+          scopeStepUpResumeInFlightRef.current,
         )
       ) {
         return true;
@@ -3055,6 +3616,19 @@ export function useChatSession(
   });
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+
+  // UI/page tools are client-fulfilled. Their approval response must be
+  // routed through the shared defer/fulfill handler; a raw AI SDK approval
+  // response would leave a no-execute page tool without a result.
+  const addToolApprovalResponse = useMemo(
+    () =>
+      createUiAwareApprovalResponseHandler({
+        getMessages: () => messagesRef.current,
+        addToolApprovalResponse: sdkAddToolApprovalResponse,
+        addToolOutput,
+      }),
+    [sdkAddToolApprovalResponse, addToolOutput],
+  );
 
   useEffect(() => {
     const sessionId = chatSessionIdRef.current;
@@ -3112,7 +3686,7 @@ export function useChatSession(
         toast.error(
           wasCancelled
             ? "Authorization was cancelled, but the suspended tool call could not be updated."
-            : "The authorized tool call could not be resumed safely. Check whether it ran before retrying manually."
+            : "The authorized tool call could not be resumed safely. Check whether it ran before retrying manually.",
         );
       })
       .finally(() => {
@@ -3135,11 +3709,11 @@ export function useChatSession(
   const submitMrtrResume = useCallback(
     async (
       round: HostedMrtrRound,
-      responses: Record<string, MrtrElicitationResponse>
+      responses: Record<string, MrtrElicitationResponse>,
     ) => {
       const toolCallId = findUnresolvedMrtrToolCallId(
         messagesRef.current,
-        round.operationLabel
+        round.operationLabel,
       );
       if (!toolCallId) {
         // Nothing to splice the driven result into (history was reset/forked
@@ -3150,7 +3724,7 @@ export function useChatSession(
           reason: "no unresolved tool call to resume",
         }).catch(() => {});
         toast.error(
-          "This chat no longer has the tool call that needed input, so the operation was cancelled."
+          "This chat no longer has the tool call that needed input, so the operation was cancelled.",
         );
         return;
       }
@@ -3170,7 +3744,7 @@ export function useChatSession(
         console.warn("[hosted-mrtr] resume turn failed", error);
       });
     },
-    [baseSendMessage]
+    [baseSendMessage],
   );
   mrtrResumeSenderRef.current = submitMrtrResume;
 
@@ -3188,6 +3762,10 @@ export function useChatSession(
   statusRef.current = status;
   const hostedProjectIdRef = useRef(hostedProjectId);
   hostedProjectIdRef.current = hostedProjectId;
+  const browserProjectIdRef = useRef(
+    hostedProjectId ?? appState?.activeProjectId,
+  );
+  browserProjectIdRef.current = hostedProjectId ?? appState?.activeProjectId;
 
   // Bounded wait for the turn to land server-side. There is no "persisted"
   // event on the wire, so this polls the same detail row the post-stream
@@ -3214,7 +3792,7 @@ export function useChatSession(
             chatSessionId: sessionId,
             projectId: hostedProjectIdRef.current ?? undefined,
           },
-          { signal: controller.signal }
+          { signal: controller.signal },
         );
         const version = detail?.session?.version;
         // A brand-new chat is persisted the moment the row exists; a resumed
@@ -3252,7 +3830,7 @@ export function useChatSession(
         hold,
         statusRef.current === "error"
           ? undefined
-          : waitForTurnPersistedRef.current
+          : waitForTurnPersistedRef.current,
       );
     };
   }, [isTurnActive]);
@@ -3281,12 +3859,12 @@ export function useChatSession(
         // persisted IDs. Preserve matching live IDs so React updates widgets
         // in place instead of remounting iframes keyed by the parent message.
         baseSetMessages(
-          preserveHydratedMessageIds(messagesRef.current, hydration.messages)
+          preserveHydratedMessageIds(messagesRef.current, hydration.messages),
         );
         syncResumedVersion(hydration.resumedVersion);
         syncRestoredToolRenderOverrides(hydration.toolRenderOverrides ?? {});
         setPersistedSnapshotToolCallIds(
-          hydration.persistedSnapshotToolCallIds ?? []
+          hydration.persistedSnapshotToolCallIds ?? [],
         );
         if (hydratedTraceState !== null) {
           setLiveTraceState(hydratedTraceState);
@@ -3305,7 +3883,7 @@ export function useChatSession(
         setChatSessionId(hydration.sessionId);
       });
     },
-    [clearPendingSessionHydration, baseSetMessages, syncResumedVersion]
+    [clearPendingSessionHydration, baseSetMessages, syncResumedVersion],
   );
 
   const [traceTranscriptFromUi, setTraceTranscriptFromUi] = useState<
@@ -3314,7 +3892,7 @@ export function useChatSession(
 
   useEffect(() => {
     const persistent = messages.filter(
-      (message) => !isTransientMessage(message)
+      (message) => !isTransientMessage(message),
     );
     if (persistent.length === 0) {
       setTraceTranscriptFromUi(null);
@@ -3325,7 +3903,7 @@ export function useChatSession(
       persistent.map(({ id: _omitId, ...rest }) => rest) as Parameters<
         typeof convertToModelMessages
       >[0],
-      { ignoreIncompleteToolCalls: true }
+      { ignoreIncompleteToolCalls: true },
     ).then((modelMessages) => {
       if (!cancelled) {
         setTraceTranscriptFromUi(modelMessages);
@@ -3347,7 +3925,7 @@ export function useChatSession(
     }
     const id = window.setInterval(
       () => setPreviewWallTick((previous) => previous + 1),
-      400
+      400,
     );
     return () => clearInterval(id);
   }, [
@@ -3382,7 +3960,7 @@ export function useChatSession(
       liveTraceEnvelopeBase,
       liveTraceState,
       previewWallElapsedMs,
-      traceTranscriptFromUi
+      traceTranscriptFromUi,
     );
     // Rehydrated sessions arrive with `state.messages = []` (see
     // buildLiveTraceStateFromTurnTraces), so the envelope's messages stay
@@ -3425,6 +4003,41 @@ export function useChatSession(
     if (!traceTranscriptFromUi || traceTranscriptFromUi.length === 0) {
       return live;
     }
+    // Host-executed built-ins (today: the six `browser_*` tools) are advertised
+    // by the SERVER from the host's config, so they never appear in the
+    // client's server-derived schemas. See `withBuiltInToolDefinitions` for why
+    // an MCP tool of the same name still wins here.
+    // The page's own tools, from the turn that actually advertised them.
+    //
+    // PERSISTED, not re-read. Asking the live browser would answer for the page
+    // it is on now, which is a confident answer to a question about the past —
+    // and for a closed session there is no browser to ask at all. The rows
+    // carry identity and origin but no schema, because the turn record stores a
+    // digest rather than the schema itself; see `pageToolRowsFromRecords`.
+    // THE NEWEST TURN'S ANSWER, including when that answer is "we do not know".
+    //
+    // Filtering before picking would walk back to an older turn whose record
+    // happens to exist — and `undefined` here means the newest turn did not
+    // record one, not that its tools were the previous turn's. Showing a
+    // stale set for the current turn is a more confident wrong answer than
+    // showing none.
+    const lastTurnPageTools = [...Object.values(liveTraceState.turns)]
+      .sort((left, right) => left.promptIndex - right.promptIndex)
+      .at(-1)?.pageToolsAtTurn;
+    const tools = withBuiltInToolDefinitions(
+      {
+        ...(lastTurnPageTools
+          ? Object.fromEntries(
+              pageToolRowsFromRecords(lastTurnPageTools).map((row) => [
+                row.name,
+                row,
+              ]),
+            )
+          : {}),
+        ...serializedTools,
+      },
+      options.builtInToolDefinitions,
+    );
     return [
       {
         turnId: "rehydrated",
@@ -3432,16 +4045,18 @@ export function useChatSession(
         stepIndex: 0,
         payload: {
           system: systemPrompt ?? "",
-          tools: serializedTools,
+          tools,
           messages: traceTranscriptFromUi,
         },
       },
     ];
   }, [
     liveTraceState.requestPayloadHistory,
+    liveTraceState.turns,
     traceTranscriptFromUi,
     systemPrompt,
     serializedTools,
+    options.builtInToolDefinitions,
   ]);
 
   // useLayoutEffect (not useEffect) so the trace state is swapped out
@@ -3455,12 +4070,12 @@ export function useChatSession(
   }, [chatSessionId]);
 
   useSharedChatWidgetCapture({
-    // Chatbox runtime sessions persist server-side on every platform, so
+    // Scenario runtime sessions persist server-side on every platform, so
     // their widget capture follows the session kind, not the build.
     enabled: (HOSTED_MODE || hostedRequiresWebChatApi) && isAuthenticated,
     readyToPersist: status === "ready",
     chatSessionId,
-    hostedChatboxId,
+    hostedScenarioId,
     hostedAccessVersion,
     persistedSnapshotToolCallIds,
     messages,
@@ -3501,7 +4116,7 @@ export function useChatSession(
         return nextMessages;
       });
     },
-    [baseSetMessages]
+    [baseSetMessages],
   );
 
   useLayoutEffect(() => {
@@ -3516,7 +4131,7 @@ export function useChatSession(
     syncResumedVersion(pendingHydration.resumedVersion);
     syncRestoredToolRenderOverrides(pendingHydration.toolRenderOverrides ?? {});
     setPersistedSnapshotToolCallIds(
-      pendingHydration.persistedSnapshotToolCallIds ?? []
+      pendingHydration.persistedSnapshotToolCallIds ?? [],
     );
     // Force a React state update so that useSyncExternalStore re-reads the
     // messages snapshot that was just written to the Chat store above.
@@ -3558,7 +4173,6 @@ export function useChatSession(
       // continuations — tool-approval responses, tool outputs — reuse the same
       // client and go through `addToolApprovalResponse`/`addToolOutput`.)
       chatToolCallRequestIdsRef.current.clear();
-      const extra = metadata ? ({ metadata } as { metadata: unknown }) : {};
       pendingWidgetModelContextRef.current =
         widgetModelContext && widgetModelContext.length > 0
           ? widgetModelContext
@@ -3576,10 +4190,7 @@ export function useChatSession(
         // name. Only on the web-engine path, and only when the surface provided
         // a resolver (Playground). On failure, fail the send CLOSED with a
         // visible toast (callers fire-and-forget, so don't reject).
-        const usesWebEngine =
-          HOSTED_MODE ||
-          selectedModelUsesOrgRuntime ||
-          hostedRequiresWebChatApi;
+        const usesWebEngine = shouldUseOrgAwareChatApi;
         // Snapshot the selection ONCE: the resolved ids must ride with the
         // names they were resolved from, even if the user edits the selection
         // while the preflight is in flight.
@@ -3593,6 +4204,7 @@ export function useChatSession(
         // during the preflight below would post this turn under an unrelated
         // session and ingest it into that transcript.
         const sessionAtSend = chatSessionIdRef.current;
+        const browserProjectAtSend = browserProjectIdRef.current;
         // NEVER for an environment target. The environment's servers already
         // carry authoritative Convex ids and are re-resolved server-side; some
         // of them are plugin-contributed and deliberately absent from
@@ -3617,7 +4229,7 @@ export function useChatSession(
               pendingWidgetModelContextRef.current = undefined;
               resolvedHostedServersRef.current = null;
               toast.error(
-                "The chat target changed while this message was being prepared. Send it again to run it against the current selection."
+                "The chat target changed while this message was being prepared. Send it again to run it against the current selection.",
               );
               return false;
             }
@@ -3629,7 +4241,7 @@ export function useChatSession(
               pendingWidgetModelContextRef.current = undefined;
               resolvedHostedServersRef.current = null;
               toast.error(
-                "The chat changed while this message was being prepared. Send it again to run it in the current thread."
+                "The chat changed while this message was being prepared. Send it again to run it in the current thread.",
               );
               return false;
             }
@@ -3643,12 +4255,39 @@ export function useChatSession(
             toast.error(
               error instanceof Error
                 ? error.message
-                : "Couldn't prepare the selected servers for this run."
+                : "Couldn't prepare the selected servers for this run.",
             );
             return false; // fail closed — do not send with unresolved servers
           }
         }
         try {
+          await releaseBrowserForChat(browserProjectAtSend, sessionAtSend);
+          if (
+            chatSessionIdRef.current !== sessionAtSend ||
+            browserProjectIdRef.current !== browserProjectAtSend
+          ) {
+            throw new Error(
+              "The chat changed while returning browser control. Send your message again.",
+            );
+          }
+        } catch (error) {
+          pendingWidgetModelContextRef.current = undefined;
+          resolvedHostedServersRef.current = null;
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Couldn't return browser control.",
+          );
+          return false;
+        }
+        try {
+          const timestampedMetadata = withMessageTimestampMetadata(
+            metadata,
+            Date.now(),
+          );
+          const extra = {
+            metadata: timestampedMetadata,
+          } as { metadata: unknown };
           if (files && files.length > 0) {
             // AI SDK accepts FileUIPart[] with data URLs
             baseSendMessage({ text, files, ...extra });
@@ -3668,9 +4307,8 @@ export function useChatSession(
       hostedEnsureServerIds,
       hostedEnvironmentId,
       selectedServers,
-      selectedModelUsesOrgRuntime,
-      hostedRequiresWebChatApi,
-    ]
+      shouldUseOrgAwareChatApi,
+    ],
   );
 
   // `sendMessage` is NOT a stable function, and callers that cross an `await`
@@ -3719,13 +4357,105 @@ export function useChatSession(
     syncRestoredToolRenderOverrides,
   ]);
 
+  // ── Tester-surface transcript resume (BB-51) ──────────────────────────────
+  //
+  // Apply the row read during the first render. `queueSessionHydration` takes
+  // its same-session branch — `chatSessionId` was INITIALIZED from this very
+  // record — so the messages land without minting a second session, and the
+  // restored thread is the one the next turn appends to.
+  const hasAppliedRestoredTranscriptRef = useRef(false);
+  useEffect(() => {
+    if (hasAppliedRestoredTranscriptRef.current) return;
+    hasAppliedRestoredTranscriptRef.current = true;
+    const restored = restoredScenarioTranscript;
+    if (!restored) return;
+    void queueSessionHydration({
+      sessionId: restored.chatSessionId,
+      messages: restored.messages,
+      // Null, not a stored number: the tab that wrote those turns is gone, so
+      // there is no version this one can be optimistic about. The first ingest
+      // after a resume therefore carries no `expectedVersion` and cannot 409.
+      resumedVersion: null,
+      persistedSnapshotToolCallIds: [],
+    });
+  }, [queueSessionHydration, restoredScenarioTranscript]);
+
+  // The scenario the transcript on screen belongs to. A tester can open a
+  // SECOND tester link in the same tab: `session` is replaced in place, so
+  // `hostedContext.scenarioId` flips from A to B under a mounted chat that is
+  // still holding A's messages.
+  // True once this mount has HELD messages for the attached scenario, which is
+  // what separates "the tester reset the chat" from "the restore has not landed
+  // yet". Reset by the switch effect below, so a scenario change starts clean.
+  const hasHeldMessagesThisMountRef = useRef(false);
+  const attachedTranscriptScenarioRef = useRef(resumableScenarioId);
+  // Set while a scenario switch is settling. Persistence is OFF in that window,
+  // and it has to be: the messages on screen still belong to the PREVIOUS
+  // scenario, so a write would file one tester's conversation under another's
+  // key — and the empty pass that follows the reset would then delete the row
+  // the new scenario is supposed to resume from.
+  const awaitingScenarioTranscriptResetRef = useRef(false);
+  useEffect(() => {
+    if (attachedTranscriptScenarioRef.current === resumableScenarioId) return;
+    attachedTranscriptScenarioRef.current = resumableScenarioId;
+    hasHeldMessagesThisMountRef.current = false;
+    awaitingScenarioTranscriptResetRef.current = true;
+  }, [resumableScenarioId]);
+
+  // Save after every SETTLED turn, never mid-stream, so a resumed transcript
+  // only ever holds turns the tester watched finish — the same turns the owner
+  // sees persisted server-side.
+  useEffect(() => {
+    if (!resumableScenarioId) return;
+    if (status === "submitted" || status === "streaming") return;
+    // Mid-switch. The scope change also reaches the auth-bootstrap effect,
+    // whose reset empties the transcript; THAT is the signal the messages on
+    // screen are no longer the previous scenario's, and the point at which the
+    // new one may restore its own row and resume being saved.
+    if (awaitingScenarioTranscriptResetRef.current) {
+      if (messages.length > 0) return;
+      awaitingScenarioTranscriptResetRef.current = false;
+      const restored = readScenarioChatTranscript(resumableScenarioId);
+      if (restored) {
+        void queueSessionHydration({
+          sessionId: restored.chatSessionId,
+          messages: restored.messages,
+          resumedVersion: null,
+          persistedSnapshotToolCallIds: [],
+        });
+      }
+      return;
+    }
+    if (messages.length > 0) {
+      hasHeldMessagesThisMountRef.current = true;
+      writeScenarioChatTranscript(resumableScenarioId, {
+        chatSessionId,
+        messages,
+      });
+      return;
+    }
+    // An empty transcript is only news once this mount has HAD messages — the
+    // tester reset the chat. On the first render it means the restore has not
+    // been applied yet, and clearing there would delete the very row this
+    // mount is about to resume from.
+    if (hasHeldMessagesThisMountRef.current) {
+      clearScenarioChatTranscript(resumableScenarioId);
+    }
+  }, [
+    resumableScenarioId,
+    status,
+    messages,
+    chatSessionId,
+    queueSessionHydration,
+  ]);
+
   const startChatWithMessages = useCallback(
     (
       messages: UIMessage[],
       options?: {
         resetReason?: ChatSessionResetReason;
         toolRenderOverrides?: Record<string, ToolRenderOverride>;
-      }
+      },
     ) => {
       skipNextForkDetectionRef.current = true;
       resumedModelVisibleMcpToolResultsRef.current = undefined;
@@ -3739,9 +4469,28 @@ export function useChatSession(
       // superseding session change — is the one that actually went live.
       // Existing callers that ignore the return value are unaffected.
       const nextSessionId = generateId();
+      const previousSessionHadBrowser =
+        useActiveChatSessionStore.getState().browserSessionId ===
+        chatSessionIdRef.current;
+      const branchMessages = previousSessionHadBrowser
+        ? [
+            {
+              id: `browser-fork-note-${nextSessionId}`,
+              role: "system" as const,
+              parts: [
+                {
+                  type: "text" as const,
+                  text: "Browser state was not copied to this thread.",
+                },
+              ],
+              metadata: { source: "browser-fork-note" },
+            },
+            ...messages,
+          ]
+        : messages;
       const hydrationPromise = queueSessionHydration({
         sessionId: nextSessionId,
-        messages,
+        messages: branchMessages,
         resumedVersion: null,
         toolRenderOverrides: options?.toolRenderOverrides,
         persistedSnapshotToolCallIds: [],
@@ -3749,7 +4498,7 @@ export function useChatSession(
       onResetRef.current?.(options?.resetReason ?? "fork");
       return hydrationPromise.then(() => nextSessionId);
     },
-    [queueSessionHydration]
+    [queueSessionHydration],
   );
 
   /**
@@ -3835,7 +4584,7 @@ export function useChatSession(
       }
 
       const targetIndex = messagesRef.current.findIndex(
-        (message) => message.id === options.messageId
+        (message) => message.id === options.messageId,
       );
       if (targetIndex < 0) {
         return null;
@@ -3901,7 +4650,70 @@ export function useChatSession(
 
       return { previousChatSessionId };
     },
-    [startChatWithMessages]
+    [startChatWithMessages],
+  );
+
+  /**
+   * Detach from a resumed history thread by forking the current transcript onto
+   * a freshly minted `chatSessionId`, and CONFIRM the fork actually went live.
+   *
+   * Surfaces detach when a thread they resumed can no longer be safely written
+   * to (it was deleted, or another writer moved it on). The whole point is that
+   * subsequent sends must land on a NEW row — but the callers used to
+   * fire-and-forget `startChatWithMessages` and never check, which is the same
+   * superseded-hydration trap `rewindToMessage` documents at length: awaiting
+   * that promise proves the hydration settled, not that OUR id is the one that
+   * committed. `clearPendingSessionHydration` resolves a superseded hydration
+   * identically, leaving the live id as either the ORIGINAL (nothing else
+   * committed) or a THIRD id (an interloping session change won the race).
+   *
+   * In production the first case is what actually happened: post-detach turns
+   * kept writing to the OLD `chatSessionId`, which is how they reached the
+   * ingest replay heuristic on the old row and got dropped. So the exact-match
+   * check here is the load-bearing part — "the id changed" is not good enough.
+   *
+   * Deliberately does NOT retry a superseded fork. Re-minting looks like cheap
+   * insurance, but `queueSessionHydration` clears whatever hydration is pending
+   * — so a second attempt cancels the very session change that superseded the
+   * first. In practice that is a `loadChatSession` still resolving its
+   * transcript blob: the user clicked a thread, and the retry would yank them
+   * back out of it. Failing closed is both safer and honest, and the caller's
+   * next send is still protected — `resumedVersion` is untouched below, so a
+   * send on the old row carries its `expectedVersion` and conflicts rather than
+   * clobbering.
+   *
+   * `resumedVersion` is deliberately NOT cleared by this function. On success
+   * the fork's own hydration nulls it (that is what makes the branch's first
+   * ingest carry no `expectedVersion`); on failure the superseding session's
+   * value must stay untouched, because the live thread is now someone else's
+   * and tearing down ITS optimistic-concurrency guard would let the next send
+   * clobber whatever another tab wrote — precisely the hazard
+   * `rewindToMessage`'s `onBeforeBranch` contract exists to prevent.
+   *
+   * Returns the minted id on success, or `null` when the fork could not be
+   * confirmed. `null` means the caller is still pointed at a thread it must not
+   * write to, so callers must report failure rather than the reassuring
+   * "continuing in a new thread" copy.
+   */
+  const detachToLocalFork = useCallback(
+    async (
+      messages: UIMessage[],
+      options?: {
+        toolRenderOverrides?: Record<string, ToolRenderOverride>;
+      },
+    ): Promise<{ chatSessionId: string } | null> => {
+      const forkSessionId = await startChatWithMessages(messages, {
+        resetReason: "fork",
+        toolRenderOverrides: options?.toolRenderOverrides,
+      });
+      // Exact match, not "it changed": the live id after a superseded hydration
+      // can be the ORIGINAL (nothing else committed) or a THIRD id (an
+      // interloper's session won). Only our own id proves the fork went live.
+      return chatSessionIdRef.current === forkSessionId
+        ? { chatSessionId: forkSessionId }
+        : null;
+    },
+    [startChatWithMessages],
   );
 
   const loadChatSession = useCallback(
@@ -3928,21 +4740,53 @@ export function useChatSession(
           finishReason?: string;
           usage?: LiveChatTraceUsage;
           spansBlobUrl?: string | null;
+          requestPayloadsBlobUrl?: string | null;
           modelId?: string;
         }>;
       },
       options?: {
         shouldRestoreResumeConfig?: () => boolean;
         shouldApply?: () => boolean;
-      }
+      },
     ) => {
+      // The resume pointer is only a destination hint. Read the existing
+      // authenticated logical-session binding before selecting its location.
+      if (!HOSTED_MODE && hostedContext?.projectId && personalBrowserEngine) {
+        try {
+          const response = await authFetch(
+            "/api/mcp/computers/browser-location",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                projectId: hostedContext.projectId,
+                conversationId: session.chatSessionId,
+              }),
+            },
+          );
+          if (response.ok) {
+            const location = await response.json();
+            if (
+              (!options?.shouldApply || options.shouldApply()) &&
+              (location.engine === "local" || location.engine === "cloud")
+            )
+              useActiveChatSessionStore.getState().setBrowserLocation({
+                projectId: hostedContext.projectId,
+                sessionId: session.chatSessionId,
+                engine: location.engine,
+              });
+          }
+        } catch {
+          /* A failed lookup grants nothing; the turn/open boundary still refuses a mismatch. */
+        }
+      }
       let uiMessages: UIMessage[] = [];
 
       if (session.messagesBlobUrl) {
         // Goes through the dedup cache so a hover-prefetched blob is reused
         // by the click path. Throws on non-OK responses internally.
         const transcript = (await getCachedBlobJson(
-          session.messagesBlobUrl
+          session.messagesBlobUrl,
         )) as unknown[];
         uiMessages = transcriptToUIMessages(transcript);
       }
@@ -3950,13 +4794,13 @@ export function useChatSession(
       // Build toolRenderOverrides from widget snapshots if available
       let overrides: Record<string, ToolRenderOverride> = {};
       const hydratedWidgetSnapshots = await resolveHydratedWidgetSnapshots(
-        session.widgetSnapshots
+        session.widgetSnapshots,
       );
       const persistedSnapshotToolCallIds =
         hydratedWidgetSnapshots?.map((snapshot) => snapshot.toolCallId) ?? [];
       if (hydratedWidgetSnapshots && hydratedWidgetSnapshots.length > 0) {
         const traceSnapshots = snapshotsToTraceWidgetSnapshots(
-          hydratedWidgetSnapshots
+          hydratedWidgetSnapshots,
         );
         // In-flow session revisit: prefer the live MCP Apps fetch over the
         // cached snapshot HTML so the widget re-renders against the active
@@ -3968,8 +4812,11 @@ export function useChatSession(
       }
 
       const hydratedTurnTraces = await resolveHydratedTurnTraces(
-        session.turnTraces
+        session.turnTraces,
       );
+      if (hydratedTurnTraces !== undefined) {
+        uiMessages = hydrateMessageTimestamps(uiMessages, hydratedTurnTraces);
+      }
 
       if (options?.shouldApply && !options.shouldApply()) {
         return;
@@ -4010,7 +4857,12 @@ export function useChatSession(
       });
       onResetRef.current?.("hydrate");
     },
-    [queueSessionHydration, setSystemPrompt]
+    [
+      queueSessionHydration,
+      setSystemPrompt,
+      hostedContext?.projectId,
+      personalBrowserEngine,
+    ],
   );
 
   // When controlled, mirror `executionConfig` fields into local state; when
@@ -4122,8 +4974,23 @@ export function useChatSession(
         const hostedScopeChanged =
           hasResolvedBefore &&
           !areHostedSessionScopesEqual(previousHostedScope, currentHostedScope);
+        // A scenario switch that beat the FIRST auth resolution (BB-51). The
+        // "no prior session to invalidate" reasoning above does not hold in
+        // that case: a restored tester transcript is applied by the hydration
+        // effect without waiting for auth, so scenario A's messages CAN be on
+        // screen while `hasResolvedBefore` is still false — the in-flight first
+        // pass was cancelled by the switch and never set the flag. Without this,
+        // no reset ever arrives, the persistence effect stays parked on its
+        // `awaiting` branch waiting for an empty transcript, and scenario B
+        // neither resumes nor saves for the rest of the tab's life.
+        const scenarioSwitchNeedsReset =
+          awaitingScenarioTranscriptResetRef.current;
 
-        if (authHeadersChanged || hostedScopeChanged) {
+        if (
+          authHeadersChanged ||
+          hostedScopeChanged ||
+          scenarioSwitchNeedsReset
+        ) {
           invalidateChatHistoryPrefetch();
           skipNextForkDetectionRef.current = true;
           clearPendingSessionHydration();
@@ -4147,7 +5014,7 @@ export function useChatSession(
     // `hostedAccessVersion` is intentionally excluded. The effect resets
     // `isSessionBootstrapComplete` to `false` synchronously on every run;
     // including a value that bumps on every silent re-redeem (the
-    // `chatbox_access_stale` recovery path) would flip the flag false →
+    // `scenario_access_stale` recovery path) would flip the flag false →
     // true on each refresh, briefly unmounting downstream consumers gated
     // on it (ChatTabV2). Auth-header resolution doesn't depend on the
     // version, and the scope-equality check inside the effect no longer
@@ -4162,7 +5029,7 @@ export function useChatSession(
     // scope for Phase 2; the target key covers it the moment it lands.)
   }, [
     getAccessToken,
-    hostedChatboxId,
+    hostedScenarioId,
     hostedEnvironmentId,
     hostedTargetKeyValue,
     hostedProjectId,
@@ -4181,22 +5048,22 @@ export function useChatSession(
       if (selectedServers.length === 0) {
         lastObservedTokenCountSelectionKeyRef.current = null;
         setToolsMetadata((previous) =>
-          Object.keys(previous).length > 0 ? {} : previous
+          Object.keys(previous).length > 0 ? {} : previous,
         );
         setToolServerMap((previous) =>
-          Object.keys(previous).length > 0 ? {} : previous
+          Object.keys(previous).length > 0 ? {} : previous,
         );
         setSerializedTools((previous) =>
-          Object.keys(previous).length > 0 ? {} : previous
+          Object.keys(previous).length > 0 ? {} : previous,
         );
         setMcpToolsTokenCount((previous) =>
-          previous !== null ? null : previous
+          previous !== null ? null : previous,
         );
         setMcpToolsTokenCountErrors((previous) =>
-          previous !== null ? null : previous
+          previous !== null ? null : previous,
         );
         setMcpToolsTokenCountLoading((previous) =>
-          previous ? false : previous
+          previous ? false : previous,
         );
         return;
       }
@@ -4235,19 +5102,19 @@ export function useChatSession(
           setMcpToolsTokenCount(
             tokenCounts && Object.keys(tokenCounts).length > 0
               ? tokenCounts
-              : null
+              : null,
           );
           setMcpToolsTokenCountErrors(
             tokenCountErrors && Object.keys(tokenCountErrors).length > 0
               ? tokenCountErrors
-              : null
+              : null,
           );
         }
       } catch (error) {
-        if (!(hostedChatboxId && isAuthDeniedError(error))) {
+        if (!(hostedScenarioId && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to fetch tools metadata:",
-            error
+            error,
           );
         }
         setToolsMetadata({});
@@ -4267,7 +5134,7 @@ export function useChatSession(
     selectedServersSignature,
     selectedModel,
     tokenCountSelectionKey,
-    hostedChatboxId,
+    hostedScenarioId,
     apiContextRevision,
   ]);
 
@@ -4288,10 +5155,10 @@ export function useChatSession(
         const count = await countTextTokens(systemPrompt, modelId);
         setSystemPromptTokenCount(count > 0 ? count : null);
       } catch (error) {
-        if (!(hostedChatboxId && isAuthDeniedError(error))) {
+        if (!(hostedScenarioId && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to count system prompt tokens:",
-            error
+            error,
           );
         }
         setSystemPromptTokenCount(null);
@@ -4301,7 +5168,7 @@ export function useChatSession(
     };
 
     fetchSystemPromptTokenCount();
-  }, [systemPrompt, selectedModel, hostedChatboxId]);
+  }, [systemPrompt, selectedModel, hostedScenarioId]);
 
   const previousSelectedServersRef = useRef<string[]>(selectedServers);
   useEffect(() => {
@@ -4347,7 +5214,7 @@ export function useChatSession(
   }, [messages]);
 
   // Computed state for UI
-  // Compute share/chatbox guest access from React state instead of the global
+  // Compute share/scenario guest access from React state instead of the global
   // apiContext.
   // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
   // In non-hosted mode: auth is needed for org-managed BYOK and sign-in-only MCPJam models.
@@ -4374,7 +5241,12 @@ export function useChatSession(
   const selectedServerIdsRequired =
     HOSTED_MODE ||
     hostedRequiresWebChatApi ||
-    (selectedModelUsesOrgRuntime && !localMcpRuntimeRequired);
+    (selectedModelUsesOrgRuntime &&
+      !localMcpRuntimeRequired &&
+      // Same carve-out as the route choice above, and for a sharper reason:
+      // this one feeds `hostedContextNotReady`, so getting it wrong leaves
+      // submit disabled forever with no way for the user to find out why.
+      !localHarnessRequested);
   // When the surface provides a send-time resolver (`ensureServerIds`), the
   // preflight resolves ad-hoc/App server names → Convex ids at send, so a
   // pre-resolved id per selected server is NOT required up front — requiring
@@ -4419,13 +5291,13 @@ export function useChatSession(
         // the row is terminal either way, so keeping the dialog open would
         // only invite a second doomed submit.
         setPendingElicitations((queue) =>
-          queue.filter((e) => e.rendezvousId !== answer.rendezvousId)
+          queue.filter((e) => e.rendezvousId !== answer.rendezvousId),
         );
         if (!result.ok) {
           toast.info(
             result.reason === "expired"
               ? "That request timed out, so it was cancelled."
-              : "That request was already resolved."
+              : "That request was already resolved.",
           );
         }
       } catch (error) {
@@ -4435,12 +5307,12 @@ export function useChatSession(
         setElicitationResponding(false);
       }
     },
-    [convexClient]
+    [convexClient],
   );
 
   const dismissUrlElicitationRequired = useCallback((toolCallId?: string) => {
     setUrlElicitationRequired((current) =>
-      current.filter((e) => e.toolCallId !== toolCallId)
+      current.filter((e) => e.toolCallId !== toolCallId),
     );
   }, []);
 
@@ -4489,7 +5361,14 @@ export function useChatSession(
     isAuthLoading,
     authHeaders,
     isAuthReady,
-    isSessionBootstrapComplete,
+    // A target change is unready in the first render, before the auth effect
+    // can reset its state. History restoration must not hydrate in that gap.
+    isSessionBootstrapComplete:
+      isSessionBootstrapComplete &&
+      areHostedSessionScopesEqual(lastResolvedHostedScopeRef.current, {
+        projectId: hostedProjectId,
+        targetKey: hostedTargetKeyValue,
+      }),
 
     // Config
     systemPrompt,
@@ -4517,8 +5396,11 @@ export function useChatSession(
     // Actions
     resetChat,
     startChatWithMessages,
+    detachToLocalFork,
     loadChatSession,
     syncResumedVersion,
+    consumePersistReceipt,
+    consumeTurnAborted,
 
     // Resumed thread version
     resumedVersion,

@@ -17,7 +17,7 @@ describe("BillingUpsellGate", () => {
   it("captures billing_upsell_gate_viewed once on mount", () => {
     render(
       <BillingUpsellGate
-        feature="chatboxes"
+        feature="scenarios"
         currentPlan="free"
         upgradePlan="team"
         canManageBilling
@@ -28,7 +28,7 @@ describe("BillingUpsellGate", () => {
     expect(trackMock).toHaveBeenCalledTimes(1);
     expect(trackMock).toHaveBeenCalledWith("billing_upsell_gate_viewed", {
       location: "billing_upsell_gate",
-      feature: "chatboxes",
+      feature: "scenarios",
       current_plan: "free",
       upgrade_plan: "team",
       can_manage_billing: true,
@@ -60,7 +60,7 @@ describe("BillingUpsellGate", () => {
   it("shows ask-admin copy when user cannot manage billing", () => {
     render(
       <BillingUpsellGate
-        feature="chatboxes"
+        feature="scenarios"
         currentPlan="free"
         upgradePlan="team"
         canManageBilling={false}

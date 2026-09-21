@@ -120,7 +120,8 @@ function resetFromConfig(
   defaultConfig: ProjectConnectionConfigDraft | null,
   savedConfig?: ProjectConnectionConfigDraft,
 ) {
-  const normalizedDefaultConfig = normalizeConfigForEditing(defaultConfig) ?? null;
+  const normalizedDefaultConfig =
+    normalizeConfigForEditing(defaultConfig) ?? null;
   const normalizedSavedConfig = normalizeConfigForEditing(savedConfig);
   const baseline = normalizedSavedConfig ?? normalizedDefaultConfig;
   return {
@@ -177,7 +178,9 @@ function parseConnectionDefaultsJson(text: string): ProjectConnectionDefaults {
       !Number.isFinite(requestTimeout) ||
       requestTimeout <= 0)
   ) {
-    throw new Error("connectionDefaults.requestTimeout must be a positive number");
+    throw new Error(
+      "connectionDefaults.requestTimeout must be a positive number",
+    );
   }
 
   if (headers !== undefined) {
@@ -257,7 +260,8 @@ export const useClientConfigStore = create<ClientConfigStoreState>(
 
     loadProjectConfig: ({ projectId, defaultConfig, savedConfig }) => {
       const state = get();
-      const normalizedDefaultConfig = normalizeConfigForEditing(defaultConfig) ?? null;
+      const normalizedDefaultConfig =
+        normalizeConfigForEditing(defaultConfig) ?? null;
       const normalizedSavedConfig = normalizeConfigForEditing(savedConfig);
       const shouldApplyPendingRemoteEcho = isPendingRemoteEchoMatch(
         state,

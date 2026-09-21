@@ -44,7 +44,7 @@ import {
 
 const directMember = {
   isGuest: false,
-  isChatboxSession: false,
+  isScenarioSession: false,
   isJourneySession: false,
   executionScopeKind: undefined,
 };
@@ -159,7 +159,7 @@ describe("coercePersonalEngineForActor", () => {
 
   it.each([
     ["guest", { ...directMember, isGuest: true }],
-    ["chatbox session", { ...directMember, isChatboxSession: true }],
+    ["scenario session", { ...directMember, isScenarioSession: true }],
     ["journey session", { ...directMember, isJourneySession: true }],
     [
       "swarm scope",

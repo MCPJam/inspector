@@ -1,9 +1,9 @@
 const reportEvalResultsMocks = vi.hoisted(() => ({
-  reportEvalResultsSafely: vi.fn(),
+  reportEvalResults: vi.fn(),
 }));
 
 vi.mock("../src/report-eval-results.js", () => ({
-  reportEvalResultsSafely: reportEvalResultsMocks.reportEvalResultsSafely,
+  reportEvalResults: reportEvalResultsMocks.reportEvalResults,
 }));
 
 import { EvalSuite } from "../src/EvalSuite";
@@ -56,8 +56,14 @@ function createReplayAwareAgent() {
 
 describe("server replay config auto-save wiring", () => {
   beforeEach(() => {
-    reportEvalResultsMocks.reportEvalResultsSafely.mockReset();
-    reportEvalResultsMocks.reportEvalResultsSafely.mockResolvedValue(null);
+    reportEvalResultsMocks.reportEvalResults.mockReset();
+    reportEvalResultsMocks.reportEvalResults.mockResolvedValue({
+      suiteId: "suite",
+      runId: "run",
+      status: "completed",
+      result: "passed",
+      summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
+    });
   });
 
   it("exposes replay configs from HostRunner when a client manager is attached", () => {
@@ -83,6 +89,7 @@ describe("server replay config auto-save wiring", () => {
   it("auto-infers replay configs for EvalTest uploads when the agent provides them", async () => {
     const agent = createReplayAwareAgent();
     const test = new EvalTest({
+      id: "c_replay_1",
       name: "list-projects",
       test: async (evalAgent) => {
         await evalAgent.run("Show me my projects");
@@ -98,7 +105,7 @@ describe("server replay config auto-save wiring", () => {
       },
     });
 
-    expect(reportEvalResultsMocks.reportEvalResultsSafely).toHaveBeenCalledWith(
+    expect(reportEvalResultsMocks.reportEvalResults).toHaveBeenCalledWith(
       expect.objectContaining({
         serverReplayConfigs: [
           {
@@ -116,6 +123,7 @@ describe("server replay config auto-save wiring", () => {
     const suite = new EvalSuite({ name: "Asana suite" });
     suite.add(
       new EvalTest({
+        id: "c_replay_2",
         name: "asana-get-user",
         test: async (evalAgent) => {
           await evalAgent.run("Who am I in Asana?");
@@ -132,10 +140,8 @@ describe("server replay config auto-save wiring", () => {
       },
     });
 
-    expect(
-      reportEvalResultsMocks.reportEvalResultsSafely
-    ).toHaveBeenCalledTimes(1);
-    expect(reportEvalResultsMocks.reportEvalResultsSafely).toHaveBeenCalledWith(
+    expect(reportEvalResultsMocks.reportEvalResults).toHaveBeenCalledTimes(1);
+    expect(reportEvalResultsMocks.reportEvalResults).toHaveBeenCalledWith(
       expect.objectContaining({
         serverReplayConfigs: [
           {
@@ -151,6 +157,7 @@ describe("server replay config auto-save wiring", () => {
   it("falls back to all inferred replay configs when serverNames is omitted", async () => {
     const agent = createReplayAwareAgent();
     const test = new EvalTest({
+      id: "c_replay_3",
       name: "list-projects",
       test: async (evalAgent) => {
         await evalAgent.run("Show me my projects");
@@ -165,7 +172,7 @@ describe("server replay config auto-save wiring", () => {
       },
     });
 
-    expect(reportEvalResultsMocks.reportEvalResultsSafely).toHaveBeenCalledWith(
+    expect(reportEvalResultsMocks.reportEvalResults).toHaveBeenCalledWith(
       expect.objectContaining({
         serverReplayConfigs: [
           {

@@ -65,3 +65,59 @@ describe("resolveAppVersion", () => {
     expect(buildHealthMeta().version).toBe(resolveAppVersion());
   });
 });
+
+describe("resolveEnvironment", () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("takes an exact member of the enum", async () => {
+    for (const value of ["prod", "staging", "preview", "dev", "local", "test"]) {
+      vi.stubEnv("ENVIRONMENT", value);
+      const { resolveEnvironment } = await freshLogEvents();
+      expect(resolveEnvironment()).toBe(value);
+    }
+  });
+
+  it("accepts the spelling production actually deploys with", async () => {
+    // The Railway production environment sets `ENVIRONMENT=production`, which
+    // is not `prod`. Before the alias the allowlist discarded it and the answer
+    // came from the `NODE_ENV` fallback — right by accident, and reported as
+    // "ENVIRONMENT not set" in the logs, which is why nobody fixed the value.
+    // It also left `ENV NODE_ENV=production` in the Dockerfile deciding which
+    // platform MCP worker production dials.
+    vi.stubEnv("ENVIRONMENT", "production");
+    vi.stubEnv("NODE_ENV", "");
+    const { resolveEnvironment } = await freshLogEvents();
+    expect(resolveEnvironment()).toBe("prod");
+  });
+
+  it("resolves prod from the alias without NODE_ENV's help", async () => {
+    vi.stubEnv("ENVIRONMENT", "production");
+    vi.stubEnv("NODE_ENV", "development");
+    const { resolveEnvironment } = await freshLogEvents();
+    expect(resolveEnvironment()).toBe("prod");
+  });
+
+  it("tolerates whitespace around either spelling", async () => {
+    // Found in review: the alias branch trimmed and the allowlist branch did
+    // not, so a padded exact value silently became `dev`.
+    for (const [value, expected] of [
+      [" prod ", "prod"],
+      [" production ", "prod"],
+      ["  staging  ", "staging"],
+    ] as const) {
+      vi.stubEnv("ENVIRONMENT", value);
+      vi.stubEnv("NODE_ENV", "");
+      const { resolveEnvironment } = await freshLogEvents();
+      expect(resolveEnvironment()).toBe(expected);
+    }
+  });
+
+  it("still falls back for a value that is not an environment at all", async () => {
+    vi.stubEnv("ENVIRONMENT", "banana");
+    vi.stubEnv("NODE_ENV", "production");
+    const { resolveEnvironment } = await freshLogEvents();
+    expect(resolveEnvironment()).toBe("prod");
+  });
+});

@@ -64,7 +64,7 @@ export function buildLocalStepHandlers(
     const totalBefore = acc.accumulatedUsage.totalTokens ?? 0;
     const errorBefore = acc.iterationError;
 
-    await driveLocalEvalTurn({
+    const outcome = await driveLocalEvalTurn({
       ...driverParams,
       promptIndex: turnOrdinal,
       promptTurn,
@@ -92,8 +92,12 @@ export function buildLocalStepHandlers(
       ...(toolCalls.length ? { toolCalls } : {}),
       ...(toolErrors.length ? { toolErrors } : {}),
       usage,
+      // Optional-chained: `driveLocalEvalTurn` always returns an outcome, but
+      // this bridge has no business crashing over one it did not get.
+      ...(outcome?.kind === "cancelled" ? { cancelled: true } : {}),
       ...(newError
         ? {
+            ...(acc.timeout ? { timeout: acc.timeout } : {}),
             iterationError: newError,
             ...(acc.iterationErrorDetails
               ? { iterationErrorDetails: acc.iterationErrorDetails }
@@ -124,7 +128,7 @@ export function buildLocalStepHandlers(
     const totalBefore = acc.accumulatedUsage.totalTokens ?? 0;
     const errorBefore = acc.iterationError;
 
-    await driveLocalEvalTurn({
+    const outcome = await driveLocalEvalTurn({
       ...driverParams,
       promptIndex: turnOrdinal,
       promptTurn,
@@ -153,8 +157,12 @@ export function buildLocalStepHandlers(
       ...(toolCalls.length ? { toolCalls } : {}),
       ...(toolErrors.length ? { toolErrors } : {}),
       usage,
+      // Optional-chained: `driveLocalEvalTurn` always returns an outcome, but
+      // this bridge has no business crashing over one it did not get.
+      ...(outcome?.kind === "cancelled" ? { cancelled: true } : {}),
       ...(newError
         ? {
+            ...(acc.timeout ? { timeout: acc.timeout } : {}),
             iterationError: newError,
             ...(acc.iterationErrorDetails
               ? { iterationErrorDetails: acc.iterationErrorDetails }
@@ -254,11 +262,28 @@ export function buildHostedStepHandlers(
       ...(messages.length ? { messages } : {}),
       ...(toolCalls.length ? { toolCalls } : {}),
       usage,
+      ...(outcome.kind === "cancelled" ? { cancelled: true } : {}),
       ...(outcome.kind === "failed"
         ? {
+            ...(outcome.timeout ? { timeout: outcome.timeout } : {}),
             iterationError: outcome.iterationError,
             ...(outcome.iterationErrorDetails
               ? { iterationErrorDetails: outcome.iterationErrorDetails }
+              : {}),
+            // WHICH LAYER failed, carried across the bridge.
+            //
+            // Dropping these was enough to make provider attribution dead on
+            // the hosted path entirely: `drive-hosted-eval-turn` classifies the
+            // failure, `step-executor` propagates whatever it is handed, and
+            // `evals-runner` builds `stepError` from it — but this conversion
+            // sat in the middle copying only the message, so `errorSource` was
+            // always undefined and no hosted run was ever attributed.
+            ...(outcome.errorSource
+              ? { errorSource: outcome.errorSource }
+              : {}),
+            ...(outcome.errorCode ? { errorCode: outcome.errorCode } : {}),
+            ...(typeof outcome.errorHttpStatus === "number"
+              ? { errorHttpStatus: outcome.errorHttpStatus }
               : {}),
           }
         : {}),
@@ -304,11 +329,28 @@ export function buildHostedStepHandlers(
       ...(toolCalls.length ? { toolCalls } : {}),
       ...(toolErrors.length ? { toolErrors } : {}),
       usage,
+      ...(outcome.kind === "cancelled" ? { cancelled: true } : {}),
       ...(outcome.kind === "failed"
         ? {
+            ...(outcome.timeout ? { timeout: outcome.timeout } : {}),
             iterationError: outcome.iterationError,
             ...(outcome.iterationErrorDetails
               ? { iterationErrorDetails: outcome.iterationErrorDetails }
+              : {}),
+            // WHICH LAYER failed, carried across the bridge.
+            //
+            // Dropping these was enough to make provider attribution dead on
+            // the hosted path entirely: `drive-hosted-eval-turn` classifies the
+            // failure, `step-executor` propagates whatever it is handed, and
+            // `evals-runner` builds `stepError` from it — but this conversion
+            // sat in the middle copying only the message, so `errorSource` was
+            // always undefined and no hosted run was ever attributed.
+            ...(outcome.errorSource
+              ? { errorSource: outcome.errorSource }
+              : {}),
+            ...(outcome.errorCode ? { errorCode: outcome.errorCode } : {}),
+            ...(typeof outcome.errorHttpStatus === "number"
+              ? { errorHttpStatus: outcome.errorHttpStatus }
               : {}),
           }
         : {}),
@@ -340,6 +382,7 @@ export function buildHostedStepHandlers(
         mcpClientManager: ctx.mcpClientManager,
         browser: ctx.browser,
         promptIndex: turnOrdinal,
+        toolPolicyGate: ctx.toolPolicyGate,
       });
       const accounting = buildPinnedTurnAccounting(pinned, result);
       // messageHistory invariant: append only a COMPLETE plain-TEXT
@@ -347,6 +390,13 @@ export function buildHostedStepHandlers(
       // history as `/stream` input; text-only messages round-trip the backend
       // untouched — tool-call parts would NOT.
       acc.messageHistory.push(
+        accounting.userMessage,
+        accounting.assistantMessage,
+      );
+      // The trace transcript moves at every site the model transcript does; a
+      // pinned turn is inspector-executed (no harness narration to enrich), so
+      // its slice is identical in both.
+      acc.traceMessageHistory.push(
         accounting.userMessage,
         accounting.assistantMessage,
       );

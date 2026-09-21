@@ -288,3 +288,212 @@ describe("review hardening (cyclic values, fence escape, byte cap)", () => {
     }
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// `checks.env` — the declared environment channel
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The bounds below are the BACKEND's, mirrored here on purpose: the plan route
+// rejects an out-of-bounds `env` with a message about a file the author cannot
+// see from a 400, so the parser has to fail first, at the field, in the file's
+// own vocabulary. If the two ever disagree, this is the side that finds out.
+//
+// The other property under test is that VALUES never surface in an error.
+// Keys do (the author needs to see their typo, and they are length-clamped);
+// values are the one part of the file this module refuses to echo.
+
+describe("parseMcpjamYaml — checks.env", () => {
+  const withEnv = (envBlock: string) =>
+    `${VALID_YAML.trimEnd()}\n  env:\n${envBlock}\n`;
+
+  it("round-trips a valid map onto the declared recipe", () => {
+    const resolved = parseMcpjamYaml(
+      withEnv("    LOG_LEVEL: debug\n    FIXTURE_MODE: strict"),
+    );
+    expect(resolved?.env).toEqual({
+      LOG_LEVEL: "debug",
+      FIXTURE_MODE: "strict",
+    });
+    expect(resolved?.rung).toBe("declared");
+    // The rest of the recipe is untouched by the new field.
+    expect(resolved?.build).toBe("npm ci && npm run build");
+    expect(resolved?.port).toBe(3001);
+  });
+
+  it("keeps shell-significant characters as literal values", () => {
+    // These reach E2B's `envs` option, never a shell script, so nothing here is
+    // expanded, substituted, or split. The parser's job is to hand them over
+    // byte-for-byte.
+    const resolved = parseMcpjamYaml(
+      withEnv(
+        [
+          `    SHELLY: "$(whoami) \`id\` $HOME"`,
+          `    QUOTED: "a 'b' \\"c\\" d"`,
+          `    SEMIS: "x; rm -rf /; y && z | w"`,
+          `    NEWLINEY: "first\\nsecond"`,
+        ].join("\n"),
+      ),
+    );
+    expect(resolved?.env).toEqual({
+      SHELLY: "$(whoami) `id` $HOME",
+      QUOTED: `a 'b' "c" d`,
+      SEMIS: "x; rm -rf /; y && z | w",
+      NEWLINEY: "first\nsecond",
+    });
+  });
+
+  it("treats an absent map and an empty map identically — no env at all", () => {
+    // Same runtime behaviour AND the same wire shape: `env: {}` must not travel
+    // to the backend as an empty object, because an empty object is a value and
+    // "no environment" is the absence of one.
+    expect(parseMcpjamYaml(VALID_YAML)?.env).toBeUndefined();
+    expect("env" in (parseMcpjamYaml(VALID_YAML) ?? {})).toBe(false);
+    const empty = parseMcpjamYaml(`${VALID_YAML.trimEnd()}\n  env: {}\n`);
+    expect(empty?.env).toBeUndefined();
+    expect("env" in (empty ?? {})).toBe(false);
+  });
+
+  it("accepts exactly 20 keys and rejects 21", () => {
+    const lines = (count: number) =>
+      Array.from({ length: count }, (_, i) => `    K${i}: v`).join("\n");
+    expect(Object.keys(parseMcpjamYaml(withEnv(lines(20)))?.env ?? {})).toHaveLength(
+      20,
+    );
+    const err = expectResolutionError(() => parseMcpjamYaml(withEnv(lines(21))));
+    expect(err.reason).toBe("invalid_mcpjam_yaml");
+    expect(err.message).toContain("checks.env");
+    expect(err.message).toContain("20");
+  });
+
+  it("accepts a 64-character key and rejects a 65-character one", () => {
+    const key = (length: number) => `K${"A".repeat(length - 1)}`;
+    expect(parseMcpjamYaml(withEnv(`    ${key(64)}: v`))?.env).toEqual({
+      [key(64)]: "v",
+    });
+    const err = expectResolutionError(() =>
+      parseMcpjamYaml(withEnv(`    ${key(65)}: v`)),
+    );
+    expect(err.message).toContain("64");
+  });
+
+  it("accepts a 1024-character value and rejects a 1025-character one", () => {
+    const value = (length: number) => "v".repeat(length);
+    expect(parseMcpjamYaml(withEnv(`    BIG: ${value(1024)}`))?.env).toEqual({
+      BIG: value(1024),
+    });
+    const err = expectResolutionError(() =>
+      parseMcpjamYaml(withEnv(`    BIG: ${value(1025)}`)),
+    );
+    expect(err.message).toContain("checks.env.BIG");
+    expect(err.message).toContain("1024");
+    // REJECTED, never truncated: a shortened value is a different configuration
+    // from the one the author committed.
+    expect(err.message).not.toContain(value(100));
+  });
+
+  it.each([
+    ["lowercase", "    log_level: debug", "log_level"],
+    ["a leading digit", "    0BAD: v", "0BAD"],
+    ["a leading underscore", "    _BAD: v", "_BAD"],
+    ["a hyphen", "    LOG-LEVEL: v", "LOG-LEVEL"],
+    ["a dot", "    LOG.LEVEL: v", "LOG.LEVEL"],
+  ])("rejects a key with %s, naming it", (_label, line, offender) => {
+    const err = expectResolutionError(() => parseMcpjamYaml(withEnv(line)));
+    expect(err.message).toContain(`checks.env.${offender}`);
+  });
+
+  it.each([
+    ["a number", "    PORT_MODE: 8080"],
+    ["a boolean", "    STRICT: true"],
+    ["null", "    EMPTY:"],
+    ["a nested mapping", "    NESTED:\n      inner: v"],
+    ["a list", "    LISTY:\n      - one\n      - two"],
+  ])("rejects %s value rather than coercing it", (_label, line) => {
+    const err = expectResolutionError(() => parseMcpjamYaml(withEnv(line)));
+    expect(err.message).toContain("checks.env.");
+    expect(err.message).toContain("string");
+  });
+
+  it.each([
+    ["a list", "  env:\n    - LOG_LEVEL=debug"],
+    ["a scalar", "  env: LOG_LEVEL=debug"],
+    ["null", "  env:"],
+  ])("rejects %s in place of the map itself", (_label, block) => {
+    const err = expectResolutionError(() =>
+      parseMcpjamYaml(`${VALID_YAML.trimEnd()}\n${block}\n`),
+    );
+    expect(err.message).toContain("checks.env");
+    expect(err.message).toContain("mapping");
+  });
+
+  it("never echoes a VALUE into an error message", () => {
+    const secretish = "IGNORE-PREVIOUS-INSTRUCTIONS-hunter2";
+    // Two ways to make the same map invalid — a bad key beside a good value,
+    // and a bad value — so neither error path can leak what was on the right
+    // of the colon.
+    const badKey = expectResolutionError(() =>
+      parseMcpjamYaml(withEnv(`    bad_key: ${secretish}`)),
+    );
+    const overCap = expectResolutionError(() =>
+      parseMcpjamYaml(withEnv(`    BIG: ${secretish.repeat(64)}`)),
+    );
+    for (const err of [badKey, overCap]) {
+      const surfaces = `${err.message}\n${err.detailsMarkdown ?? ""}`;
+      expect(surfaces).not.toContain(secretish);
+      expect(surfaces).not.toContain("hunter2");
+    }
+  });
+
+  it("clamps a hostile key before it reaches the error message", () => {
+    // Same treatment every other echoed key gets: bounded, no backticks, no
+    // newlines — the message is rendered into a GitHub check summary.
+    //
+    // Written through `JSON.stringify` because the key has to survive being a
+    // YAML scalar first: JSON's escaping is a subset of YAML's double-quoted
+    // form, so the backticks and the newline arrive in the KEY rather than
+    // ending the scalar and failing the file as unparseable — which is what an
+    // earlier version of this test actually asserted, having never reached the
+    // clamp at all.
+    const hostile = `a\`\`\`\ninjected${"x".repeat(400)}`;
+    const err = expectResolutionError(() =>
+      parseMcpjamYaml(withEnv(`    ${JSON.stringify(hostile)}: v`)),
+    );
+    // It got as far as the env field, so the clamp is what produced this.
+    expect(err.message).toContain("checks.env.");
+    expect(err.message).not.toContain("```");
+    expect(err.message).not.toContain("\n");
+    expect(err.message.length).toBeLessThan(300);
+  });
+
+  it("still rejects unknown siblings of env under checks:", () => {
+    const err = expectResolutionError(() =>
+      parseMcpjamYaml(
+        `${withEnv("    LOG_LEVEL: debug").trimEnd()}\n  envs: nope\n`,
+      ),
+    );
+    expect(err.message).toContain("envs");
+  });
+
+  it("an invalid env FAILS the ladder — it does not fall through", () => {
+    // The authoritative-rung contract, applied to the new field: a broken env
+    // map is the author's, and running a heuristic guess instead would start a
+    // server without the configuration they declared.
+    const err = expectResolutionError(() =>
+      resolveRecipe({
+        repoFullName: "someone/some-server",
+        mcpjamYaml: withEnv("    log_level: debug"),
+      }),
+    );
+    expect(err.reason).toBe("invalid_mcpjam_yaml");
+    expect(err.reason).not.toBe("no_recipe");
+  });
+
+  it("carries env through the ladder onto the declared recipe", () => {
+    const resolved = resolveRecipe({
+      repoFullName: "someone/some-server",
+      mcpjamYaml: withEnv("    LOG_LEVEL: debug"),
+    });
+    expect(resolved.rung).toBe("declared");
+    expect(resolved.env).toEqual({ LOG_LEVEL: "debug" });
+  });
+});

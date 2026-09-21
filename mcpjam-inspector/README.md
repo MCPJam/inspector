@@ -72,6 +72,39 @@ docker build -t mcpjam/mcp-inspector:local -f mcpjam-inspector/Dockerfile .
 docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local
 ```
 
+## Accessing over the network
+
+Network access requires **Docker**. A native (`npx`) install binds to
+`127.0.0.1` (localhost only) and has no bind-address override, so it is not
+reachable from another machine. The Docker image binds `0.0.0.0`, so it is.
+
+For security, the inspector only issues its session token to `localhost`. When
+you open a Docker install from another machine (e.g. `http://192.168.1.50:6274`),
+it will otherwise dead-end on an authentication error. To allow a specific host,
+set `MCPJAM_ALLOWED_HOSTS` to that hostname (or a comma-separated list; wildcards
+like `*.example.com` are supported), and publish the port on your network
+interface (drop the `127.0.0.1:` prefix from `-p`):
+
+```bash
+docker run -p 6274:6274 -e MCPJAM_ALLOWED_HOSTS=192.168.1.50 mcpjam/mcp-inspector:local
+```
+
+For an IPv6 host, bracket the entry: `MCPJAM_ALLOWED_HOSTS=[fd00::50]`.
+
+If you use a **wildcard** entry (e.g. `MCPJAM_ALLOWED_HOSTS=*.lan`), also set
+`MCPJAM_ALLOW_WILDCARD_ORIGINS=true`. Wildcards deliver the session token on
+their own, but for security the request-origin check ignores wildcard hosts
+unless you opt in with that variable — without it, API calls still 403. A
+single exact host (like the IP above) needs no extra flag.
+
+Only add hosts you trust. Allowlisting a host does more than expose the session
+token: the same host is accepted as a request Origin, which also reaches the
+local shell and agent-browser tools that are enabled by default in self-hosted
+mode. Any client that can reach an allowlisted host can obtain the session token
+and drive those tools. Set `MCPJAM_LOCAL_COMPUTER_ENABLED=false` and
+`MCPJAM_LOCAL_BROWSER_ENABLED=false` if you don't want that. Tunnel/relay domains
+are never allowed, even if listed.
+
 # Key features
 
 | Capability            | Description                                                                                                                                                                                                                                                                                        |

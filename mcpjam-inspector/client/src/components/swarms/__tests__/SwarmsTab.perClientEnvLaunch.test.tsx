@@ -1,47 +1,28 @@
 /**
- * SUTB-15 regression: one swarm across TWO per-client environments, graded by a
- * GPT-4 judge.
+ * SUTB-15 regression: one swarm across TWO per-client environments.
  *
  * This is the shape the report described — an environment per client (ChatGPT,
- * Claude), one swarm over both, a scoring rubric on a GPT-4 model — and it is
- * the supported modern usage since journeys became environments-only. The
- * pieces are each covered elsewhere (`SwarmsTab.createFlow` pins the multi-env
- * stamp; `judges-section` pins the toggle), and nothing covered the ONE launch
- * that carries both at once. That combination is what a fan-out bug and a
- * grading bug would have shared, so it is what a regression has to reproduce.
+ * Claude), one swarm over both — and it is the supported modern usage since
+ * journeys became environments-only. The pieces are each covered elsewhere
+ * (`SwarmsTab.createFlow` pins the multi-env stamp), and nothing covered the
+ * ONE launch that carries both at once.
  *
  * Two properties, both about what leaves the client:
- *   1. every write and every launch carries BOTH environment ids, and the judge
- *      the author picked rides on the swarm row and on each created journey —
- *      grading a two-client comparison on one model is the entire point;
+ *   1. every write and every launch carries BOTH environment ids;
  *   2. an environment that does not resolve fails the whole launch with a
  *      sentence naming what to do, rather than silently producing a
  *      single-client swarm the user believes is a comparison.
- *
- * `JourneyRubricEditor` is stubbed to one button (the real predicate editor is
- * `ChecksSection`'s own test's job); the judge picker is NOT stubbed, because
- * the model id it emits is the thing under test.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Predicate } from "@/shared/eval-matching";
 
-const CRITERION: Predicate = {
-  type: "toolCalledAtLeastOnce",
-  toolName: "search",
-};
-
-/** The GPT-4 model the report's author reached for, plus the managed default. */
-const GPT_4_MODEL_ID = "openai/gpt-4.1";
+vi.mock("@/hooks/use-host-snapshot", () => ({
+  useHostSnapshotForHost: () => ({ status: "unavailable" }),
+  useHostSnapshotForSession: () => ({ status: "unavailable" }),
+}));
 
 vi.mock("@/hooks/use-available-models", () => ({
-  useAvailableModels: () => ({
-    availableModels: [
-      { id: GPT_4_MODEL_ID, name: "GPT-4.1", provider: "openai" },
-      { id: "openai/gpt-5.4-mini", name: "GPT-5.4 mini", provider: "openai" },
-    ],
-  }),
+  useAvailableModels: () => ({ availableModels: [] }),
 }));
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
@@ -67,16 +48,33 @@ const HOSTS = [
   { hostId: "host-claude", name: "Claude" },
 ];
 
-vi.mock("@/hooks/useClients", () => ({
+vi.mock("@/hooks/useClients", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useClients")>()),
+  useHost: () => ({ host: null, isLoading: false }),
   useHostList: () => ({ hosts: HOSTS, isLoading: false }),
 }));
 
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => <div data-testid="server-group-picker" />,
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => <div data-testid="server-group-picker" />,
+}));
+
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,
+  useDbUserBootstrapStatus: () => ({
+    isUserReady: true,
+    isEnsuringUser: false,
+  }),
+}));
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({
+    user: { id: "user-1", email: "user-1@example.com" },
+  }),
 }));
 
 const { environmentsRef, createEnvironmentMock, ensureAdhocEnvironmentsMock } =
@@ -114,6 +112,9 @@ vi.mock("@/components/swarms/use-journey-run-stream", () => ({
 }));
 
 const createSwarmMock = vi.fn();
+// The launch preflight (`projectEnvironments:resolveEnvironmentForLaunch`)
+// goes through `useConvex().query`; resolves a runnable target by default.
+const convexQueryMock = vi.fn();
 const createPersonaMock = vi.fn();
 const createJourneyMock = vi.fn();
 
@@ -158,6 +159,7 @@ vi.mock("convex/react", () => ({
     isLoading: false,
   }),
   useConvexAuth: () => ({ isAuthenticated: true }),
+  useConvex: () => ({ query: convexQueryMock }),
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -190,7 +192,7 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
   ShareUsageThreadDetail: () => null,
 }));
 
-vi.mock("@/lib/chatbox-session", () => ({
+vi.mock("@/lib/scenario-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
 
@@ -203,39 +205,6 @@ vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
-}));
-
-vi.mock("@/components/swarms/journey-rubric-editor", () => ({
-  JourneyRubricEditor: ({
-    value,
-    onChange,
-  }: {
-    value: Array<{ id: string; predicate: Predicate }>;
-    onChange: (next: Array<{ id: string; predicate: Predicate }>) => void;
-  }) => (
-    <button
-      type="button"
-      onClick={() => onChange([{ id: "crit-1", predicate: CRITERION }])}
-    >
-      add criterion ({value.length})
-    </button>
-  ),
-}));
-
-vi.mock("@/components/mcpjam-agent/McpjamAgentComposer", () => ({
-  McpjamAgentComposer: ({
-    value,
-    onChange,
-  }: {
-    value: string;
-    onChange: (next: string) => void;
-  }) => (
-    <textarea
-      aria-label="Describe swarm"
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-    />
-  ),
 }));
 
 vi.mock("@/components/project-environments/environment-picker", () => ({
@@ -293,7 +262,7 @@ function perClientEnvironments() {
 /** Describe with a paragraph and BOTH per-client environments selected. */
 function describeAcrossBothClients() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
-  fireEvent.change(screen.getByLabelText("Describe swarm"), {
+  fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
     target: { value: "Finance ops reconciling payouts" },
   });
   const picker = screen.getByTestId("new-swarm-environments-picker");
@@ -304,6 +273,10 @@ function describeAcrossBothClients() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  convexQueryMock.mockResolvedValue({
+    effectiveModelId: "anthropic/claude-haiku-4.5",
+    modelSource: "host",
+  });
   // The flow mirrors its resumable state into sessionStorage, so a leftover
   // draft would otherwise resume the previous case's slate.
   sessionStorage.clear();
@@ -335,8 +308,7 @@ beforeEach(() => {
 });
 
 describe("SwarmsTab — a swarm across two per-client environments", () => {
-  it("launches both environments and grades them on the chosen GPT-4 judge", async () => {
-    const user = userEvent.setup();
+  it("launches both environments on one wave", async () => {
     describeAcrossBothClients();
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-proposed-personas");
@@ -348,42 +320,27 @@ describe("SwarmsTab — a swarm across two per-client environments", () => {
       "ChatGPT prod · Claude prod"
     );
     expect(
-      screen.getByText(/2 personas · 2 goals · 4 new sessions/i)
-    ).toBeInTheDocument();
-
-    // Attach the rubric: a deterministic check plus the LLM judge, moved off
-    // the managed default onto a GPT-4 model.
-    fireEvent.click(screen.getByTestId("new-swarm-grading-toggle"));
-    fireEvent.click(screen.getByRole("button", { name: /add criterion/i }));
-    await user.click(
-      screen.getByRole("switch", { name: /auto-grade every session/i })
-    );
-    await user.click(screen.getByRole("combobox", { name: "Judge model" }));
-    await user.click(screen.getByRole("option", { name: "GPT-4.1" }));
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/4 conversations/i);
+    expect(
+      screen.queryByTestId("new-swarm-grading-toggle"),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() => expect(createJourneyMock).toHaveBeenCalledTimes(2));
-    const judgeConfig = {
-      goalCompletion: {
-        enabled: true,
-        autoRun: true,
-        judgeModel: GPT_4_MODEL_ID,
-      },
-    };
-    // The swarm row records where the wave ran and how it is graded.
+    // The swarm row records where the wave ran.
     expect(createSwarmMock.mock.calls[0][0]).toMatchObject({
       environmentIds: ["env-gpt", "env-claude"],
-      judgeConfig,
     });
-    // Every created journey is born with the full fan-out and the same judge:
-    // scores from the two clients are only comparable if one model produced
-    // them, and an env-based journey stores no host list.
+    expect(createSwarmMock.mock.calls[0][0]).not.toHaveProperty("judgeConfig");
+    // Every created journey is born with the full fan-out. An env-based
+    // journey stores no host list.
     for (const [args] of createJourneyMock.mock.calls) {
       expect(args.environmentIds).toEqual(["env-gpt", "env-claude"]);
       expect(args.hostIds).toEqual([]);
-      expect(args.judgeConfig).toEqual(judgeConfig);
-      expect(args.rubric).toHaveLength(1);
+      expect("judgeConfig" in args).toBe(false);
+      expect("rubric" in args).toBe(false);
     }
 
     // One launch per journey, each in the same wave, and no per-run override:

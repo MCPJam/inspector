@@ -111,7 +111,7 @@ afterEach(() => {
 });
 
 describe("createBrowserArtifactOutbox", () => {
-  it("writes a taken batch without a chatbox (the swarm auth branch)", async () => {
+  it("writes a taken batch without a scenario (the swarm auth branch)", async () => {
     const outbox = makeOutbox();
     outbox.take(fakeBrowser([{ observations: [observation()], steps: [step()] }]), 0);
 
@@ -121,8 +121,8 @@ describe("createBrowserArtifactOutbox", () => {
     expect(mutationMock).toHaveBeenCalledTimes(1);
     const [name, args] = mutationMock.mock.calls[0]! as [string, any];
     expect(name).toBe("chatSessions:recordBrowserArtifacts");
-    // No chatboxId/accessVersion ⇒ the mutation authorizes the session owner.
-    expect(args.chatboxId).toBeUndefined();
+    // No scenarioId/accessVersion ⇒ the mutation authorizes the session owner.
+    expect(args.scenarioId).toBeUndefined();
     expect(args.accessVersion).toBeUndefined();
     expect(args.chatSessionId).toBe("swarm_run-1_target-1_0");
     expect(args.promptIndex).toBe(0);
@@ -233,6 +233,76 @@ describe("createBrowserArtifactOutbox", () => {
     expect(args.videoBlobId).toBe("video-1");
     expect(args.widgetRenderObservations).toBeUndefined();
     expect(args.browserInteractionSteps).toBeUndefined();
+  });
+
+  it("carries the container and the recording's own numbers", async () => {
+    // A hosted daemon's MP4 must reach Convex as an MP4 — it serves back
+    // exactly the type the bytes were posted with, and an mp4 announced as
+    // webm plays nowhere. The metadata rides the SAME write as the blob: on
+    // its own it would render a duration and an fps under an empty player.
+    const outbox = makeOutbox();
+    const meta = {
+      source: "hosted" as const,
+      fps: 15,
+      durationMs: 9_000,
+      distinctFrames: 42,
+      truncated: true,
+    };
+
+    await outbox.stageVideo(Buffer.from("mp4-bytes"), {
+      mime: "video/mp4",
+      meta,
+    });
+    await outbox.flush();
+
+    expect(uploadVideoBlobMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      { contentType: "video/mp4" },
+    );
+    const args = mutationMock.mock.calls[0]![1] as any;
+    expect(args.videoBlobId).toBe("video-1");
+    expect(args.videoMeta).toEqual(meta);
+  });
+
+  it("rides the metadata along with an artifact write too", async () => {
+    const outbox = makeOutbox();
+    outbox.take(fakeBrowser([{ observations: [observation()], steps: [] }]), 0);
+    await outbox.stageVideo(Buffer.from("mp4-bytes"), {
+      mime: "video/mp4",
+      meta: { source: "hosted", fps: 15 },
+    });
+
+    await outbox.flush();
+
+    const args = mutationMock.mock.calls[0]![1] as any;
+    expect(args.videoMeta).toEqual({ source: "hosted", fps: 15 });
+  });
+
+  it("sends no metadata when the upload produced no blob", async () => {
+    const outbox = makeOutbox();
+    outbox.take(fakeBrowser([{ observations: [observation()], steps: [] }]), 0);
+    uploadVideoBlobMock.mockResolvedValueOnce(undefined);
+
+    await outbox.stageVideo(Buffer.from("mp4-bytes"), {
+      mime: "video/mp4",
+      meta: { source: "hosted", fps: 15 },
+    });
+    await outbox.flush();
+
+    const args = mutationMock.mock.calls[0]![1] as any;
+    expect(args.videoBlobId).toBeUndefined();
+    expect(args.videoMeta).toBeUndefined();
+  });
+
+  it("keeps the webm default for a caller that names no container", async () => {
+    const outbox = makeOutbox();
+    await outbox.stageVideo(Buffer.from("webm-bytes"));
+    expect(uploadVideoBlobMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      {},
+    );
   });
 
   it("stages a video at most once", async () => {
@@ -363,18 +433,18 @@ describe("createBrowserArtifactOutbox", () => {
     expect(uploadVideoBlobMock).not.toHaveBeenCalled();
   });
 
-  it("passes the chatbox auth pair through when the surface has one", async () => {
+  it("passes the scenario auth pair through when the surface has one", async () => {
     const outbox = createBrowserArtifactOutbox({
       chatSessionId: "synth_1",
       convexAuthToken: "token",
-      chatboxId: "cb-1",
+      scenarioId: "cb-1",
       accessVersion: 4,
       logScope: "test",
     });
     outbox.take(fakeBrowser([{ observations: [observation()], steps: [] }]), 0);
     await outbox.flush();
     expect(mutationMock.mock.calls[0]![1]).toMatchObject({
-      chatboxId: "cb-1",
+      scenarioId: "cb-1",
       accessVersion: 4,
     });
   });

@@ -17,6 +17,7 @@
  * `@mcpjam/sdk/host-config/internal`; see `./types.ts`.
  */
 
+export { cancellationLeafForVersion } from "./types.js";
 export {
   Host,
   isHostJson,

@@ -228,9 +228,9 @@ export class RelayConnection {
       ) {
         const why =
           code === CLOSE_REPLACED
-            ? "Tunnel taken over by another session — re-run `mcpjam tunnel` to take it back"
+            ? "Tunnel taken over by another session — re-run `mcpjam cloud tunnel` to take it back"
             : code === CLOSE_CONTROL_PLANE
-              ? "Tunnel was closed or its secret rotated elsewhere — re-run `mcpjam tunnel` to recreate it"
+              ? "Tunnel was closed or its secret rotated elsewhere — re-run `mcpjam cloud tunnel` to recreate it"
               : "Tunnel session expired — recreate the tunnel";
         this.permanent = why;
         this.logger.warn(`Tunnel relay closed permanently (${code}): ${reason}`);

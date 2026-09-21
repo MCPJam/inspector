@@ -17,6 +17,7 @@ import { useHostMutations } from "@/hooks/useClients";
 import { useProjectServers } from "@/hooks/useViews";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { cloneHostTemplateInput } from "@/lib/client-config-v2";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -40,8 +41,8 @@ interface CreateHostDialogProps {
   initialTemplateId?: string;
   /**
    * Product ownership for the new host. `'journeys'` mints a STANDALONE
-   * (chatbox-less) host owned by the Swarms surface. Absent → legacy behavior
-   * (a chatbox / publish surface is minted). Every existing mount omits it.
+   * (scenario-less) host owned by the Swarms surface. Absent → legacy behavior
+   * (a scenario / publish surface is minted). Every existing mount omits it.
    */
   owner?: "journeys";
 }
@@ -61,15 +62,17 @@ export function CreateHostDialog({
   const catalogState = useHostCatalog();
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  const cursorCliEnabled = useCursorHostEnabled();
   const visibleCatalogHosts = useMemo(
     () =>
       catalogState.status === "live"
         ? filterHostsByFeatureFlags(getCatalogHosts(catalogState.catalog), {
             claudeCode: claudeCodeEnabled,
             codex: codexEnabled,
+            cursorCli: cursorCliEnabled,
           }).sort((a, b) => a.label.localeCompare(b.label))
         : [],
-    [catalogState, claudeCodeEnabled, codexEnabled]
+    [catalogState, claudeCodeEnabled, codexEnabled, cursorCliEnabled]
   );
   const defaultHostId =
     visibleCatalogHosts.find((host) => host.id === DEFAULT_CATALOG_HOST_ID)
@@ -148,8 +151,9 @@ export function CreateHostDialog({
       // Users opt servers in afterward via the Servers tab on the host.
       //
       // Historical context: this used to guard against an auto-connect
-      // storm. The current auto-connect toggle is project-scoped (see
-      // preferences-store.ts:40), so the original storm risk is gone,
+      // storm. Auto-connect is now a personal per-device preference that
+      // opens the whole project catalog regardless of a host's serverIds
+      // (see preferences-store.ts), so the original storm risk is gone,
       // but the deliberate-creation framing stays.
       const seed = cloneHostTemplateInput(selectedTemplateInput, { themeMode });
       // Capture available-server count for analytics (we don't attach
@@ -161,7 +165,7 @@ export function CreateHostDialog({
         name: trimmed,
         input: { ...seed, serverIds: [] },
         // Standalone (Swarms-owned) host when requested; omitted → legacy
-        // chatbox-minting path.
+        // scenario-minting path.
         ...(owner ? { owner } : {}),
       });
       toast.success(`Client "${trimmed}" created`);

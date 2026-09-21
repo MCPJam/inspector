@@ -52,15 +52,25 @@ export function ComputerView({
 }: {
   projectId: string | null;
   /**
-   * True only for a signed-in member — NOT merely "has a Convex identity".
+   * Tri-state, and every branch below tests it explicitly.
+   *
+   * `true` only for a signed-in member — NOT merely "has a Convex identity".
    * Anonymous guests are `useConvexAuth().isAuthenticated === true` (they're
    * provisioned as anonymous actors), so gating the personal computer on raw
-   * auth would let guests through; the caller must pass member-ness
-   * (`!currentUser.isAnonymous`) so the guest sign-in affordance below fires.
+   * auth would let guests through.
+   *
+   * `undefined` is "Convex has not said yet", and the caller must be able to
+   * say so: a boolean derived from `currentUser?.isAnonymous === true` reads
+   * `false` — "not a guest" — for the whole time `users:getCurrentUser` is in
+   * flight, which would fire the member-only status query as a guest and offer
+   * them a computer the backend refuses. Pass `useIsMemberActor()` straight
+   * through.
    */
-  isSignedInMember: boolean;
+  isSignedInMember: boolean | undefined;
 }) {
-  const effectiveProjectId = isSignedInMember ? projectId : null;
+  // `=== true`, so the unresolved window skips the query rather than asking as
+  // whoever the socket is currently carrying.
+  const effectiveProjectId = isSignedInMember === true ? projectId : null;
   const status = useComputerStatus(effectiveProjectId);
   const reserve = useReserveComputer();
   const deleteComputer = useDeleteComputer();
@@ -84,14 +94,14 @@ export function ComputerView({
   const attachedEnvironmentId = status?.environmentId ?? null;
   const hasCustomImage = attachedEnvironmentId != null;
   const attachedEnvName = hasCustomImage
-    ? environments?.find((e) => e.environmentId === attachedEnvironmentId)
-        ?.name ?? null
+    ? (environments?.find((e) => e.environmentId === attachedEnvironmentId)
+        ?.name ?? null)
     : null;
   // A custom image is attached but its name hasn't resolved yet (list still
   // loading, or it's not visible to this caller) — don't mislabel it as base.
   const imageLabel = !hasCustomImage
     ? "Base image"
-    : attachedEnvName ?? "Custom image";
+    : (attachedEnvName ?? "Custom image");
 
   // Where the terminal lives: this server (local data plane), a deployed
   // data plane (remote URL → cross-origin WS), or nowhere (honest empty
@@ -105,7 +115,8 @@ export function ComputerView({
   const dataPlaneUnavailable =
     dataPlane !== undefined && !dataPlane.localConfigured && !remoteWsBase;
 
-  const liveStatus = status === undefined ? undefined : status?.status ?? null;
+  const liveStatus =
+    status === undefined ? undefined : (status?.status ?? null);
   const hibernatedReason = status?.hibernatedReason;
   // Paused because compute hours ran out and the wallet couldn't cover the
   // overage (COMP-7) — distinct from an idle sleep the user can just wake.
@@ -148,7 +159,7 @@ export function ComputerView({
           useMCPJamLimitDialogStore.getState().notifyLimitHit();
         } else {
           toast.error(
-            getBillingErrorMessage(err, "Could not start the computer.")
+            getBillingErrorMessage(err, "Could not start the computer."),
           );
         }
       } finally {
@@ -166,7 +177,7 @@ export function ComputerView({
       toast.success("Computer deleted.");
     } catch (err) {
       toast.error(
-        getBillingErrorMessage(err, "Could not delete the computer.")
+        getBillingErrorMessage(err, "Could not delete the computer."),
       );
     } finally {
       setDeleting(false);
@@ -183,7 +194,7 @@ export function ComputerView({
       toast.success("Computer hibernated. It'll wake next time you use it.");
     } catch (err) {
       toast.error(
-        getBillingErrorMessage(err, "Could not hibernate the computer.")
+        getBillingErrorMessage(err, "Could not hibernate the computer."),
       );
     } finally {
       setHibernating(false);
@@ -199,7 +210,7 @@ export function ComputerView({
       toast.success(
         res.reset
           ? "Resetting your computer to its image…"
-          : "Nothing to reset."
+          : "Nothing to reset.",
       );
     } catch (err) {
       toast.error(getBillingErrorMessage(err, "Could not reset the computer."));
@@ -232,7 +243,7 @@ export function ComputerView({
     if (!effectiveProjectId) {
       throw createInspectorCommandClientError(
         "unsupported_in_mode",
-        "The Computer tools need a signed-in project — sign in and select a project first."
+        "The Computer tools need a signed-in project — sign in and select a project first.",
       );
     }
     // Config still loading: `dataPlaneUnavailable` is false while `dataPlane`
@@ -243,13 +254,13 @@ export function ComputerView({
     if (dataPlane === undefined) {
       throw createInspectorCommandClientError(
         "execution_failed",
-        "The Computer configuration is still loading — try again in a moment."
+        "The Computer configuration is still loading — try again in a moment.",
       );
     }
     if (dataPlaneUnavailable) {
       throw createInspectorCommandClientError(
         "unsupported_in_mode",
-        "Computers aren't available in this deployment (no data plane), so the Computer tools are off."
+        "Computers aren't available in this deployment (no data plane), so the Computer tools are off.",
       );
     }
     return effectiveProjectId;
@@ -275,12 +286,15 @@ export function ComputerView({
             // Daily start cap hit — report the cap, never a bypass.
             throw createInspectorCommandClientError(
               "execution_failed",
-              getBillingErrorMessage(err, "Daily computer start limit reached.")
+              getBillingErrorMessage(
+                err,
+                "Daily computer start limit reached.",
+              ),
             );
           }
           throw createInspectorCommandClientError(
             "execution_failed",
-            getBillingErrorMessage(err, "Could not start the computer.")
+            getBillingErrorMessage(err, "Could not start the computer."),
           );
         }
       },
@@ -298,7 +312,7 @@ export function ComputerView({
         } catch (err) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            getBillingErrorMessage(err, "Could not hibernate the computer.")
+            getBillingErrorMessage(err, "Could not hibernate the computer."),
           );
         }
       },
@@ -312,7 +326,7 @@ export function ComputerView({
             "execution_failed",
             `The computer can't be reset from "${
               liveStatus ?? "none"
-            }" — reset only when it's ready or hibernating.`
+            }" — reset only when it's ready or hibernating.`,
           );
         }
         try {
@@ -324,7 +338,7 @@ export function ComputerView({
         } catch (err) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            getBillingErrorMessage(err, "Could not reset the computer.")
+            getBillingErrorMessage(err, "Could not reset the computer."),
           );
         }
       },
@@ -337,7 +351,7 @@ export function ComputerView({
         } catch (err) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            getBillingErrorMessage(err, "Could not delete the computer.")
+            getBillingErrorMessage(err, "Could not delete the computer."),
           );
         }
       },
@@ -358,7 +372,7 @@ export function ComputerView({
         };
       }
       return {
-        status: liveStatus === undefined ? "loading" : liveStatus ?? "none",
+        status: liveStatus === undefined ? "loading" : (liveStatus ?? "none"),
         hasComputer,
         isReady,
         hibernatedReason: hibernatedReason ?? null,
@@ -379,6 +393,21 @@ export function ComputerView({
     },
   });
 
+  if (isSignedInMember === undefined) {
+    // Convex has not yet said who the socket is carrying, and both faces are
+    // wrong until it does: the member pane offers a guest a computer that
+    // `projectComputers:*` will refuse, and the sign-in prompt below tells a
+    // member to sign in when they already are. Hold the pane for the round
+    // trip instead of guessing.
+    return (
+      <PaneMessage>
+        <span className="inline-flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Checking your account…
+        </span>
+      </PaneMessage>
+    );
+  }
   if (!isSignedInMember) {
     // Guest actor (anonymous or not signed in): the personal computer (and the
     // Claude Code harness that runs inside it) is account-scoped, so the
@@ -732,10 +761,10 @@ function ComputerUsageMeter({ projectId }: { projectId: string }) {
     allowanceMs === null
       ? 0
       : allowanceMs <= 0
-      ? awakeMs > 0
-        ? 100
-        : 0
-      : Math.min(100, (awakeMs / allowanceMs) * 100);
+        ? awakeMs > 0
+          ? 100
+          : 0
+        : Math.min(100, (awakeMs / allowanceMs) * 100);
 
   return (
     <div

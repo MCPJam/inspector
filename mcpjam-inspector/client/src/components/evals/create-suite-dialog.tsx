@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useConvexAuth } from "convex/react";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@mcpjam/design-system/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@mcpjam/design-system/dialog";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -12,7 +19,10 @@ import {
 import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useHostList } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
-import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
+import {
+  EnvironmentComposer,
+  EVALS_COMPOSER_SLOTS,
+} from "@/components/environment-composer/environment-composer";
 import {
   composerHasTarget,
   emptyComposerState,
@@ -20,20 +30,20 @@ import {
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { toast } from "@/lib/toast";
 import {
   ClientAttachmentsEditor,
   type HostAttachmentDraft,
 } from "./client-attachments-editor";
-import { ServerAttachmentPicker } from "./server-attachment-picker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 
 export type CreateSuitePayload = {
   name: string;
   /**
    * Hosts the suite runs against. Each attachment fans out into its own
-   * run on "Run all hosts" — the host's snapshotted config is the source
+   * run on "Run all clients" — the client's snapshotted config is the source
    * of truth for model, system prompt, temperature, and servers. There is
    * no longer a suite-level flat server list or model override.
    */
@@ -74,24 +84,29 @@ export function CreateSuiteDialog({
   initialName = null,
 }: CreateSuiteDialogProps) {
   const [name, setName] = useState("");
-  const [hostAttachments, setHostAttachments] = useState<
-    HostAttachmentDraft[]
-  >([]);
+  const [hostAttachments, setHostAttachments] = useState<HostAttachmentDraft[]>(
+    [],
+  );
   const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
     null,
   );
   const [isSaving, setIsSaving] = useState(false);
-  const [target, setTarget] = useState<EnvironmentComposerState>(
-    emptyComposerState,
-  );
+  const [target, setTarget] =
+    useState<EnvironmentComposerState>(emptyComposerState);
 
-  const environmentsEnabled = useProjectEnvironmentsEnabled();
   /**
    * Born in environment mode. A suite created legacy can be converted from the
-   * header later, but starting there means the axes the dialog offers are the
-   * ones its runs will actually read.
+   * header later, but starting there means the axes the dialog offers are the ones
+   * its runs will actually read.
+   *
+   * Keyed on the CAPABILITY, not the named-environments flag: composing cells
+   * is ungated launch-path substrate (see `useEvalComposeCapable`). While the
+   * probe is in flight the composer renders disabled rather than the legacy
+   * form, so the form does not change shape after mount.
    */
-  const composeMode = Boolean(projectId) && environmentsEnabled;
+  const { capable: composeCapable, pending: composePending } =
+    useEvalComposeCapable(projectId);
+  const composeMode = composeCapable || composePending;
   // Only used when `composeMode`; `projectId` is non-null in that case.
   const resolveTargets = useComposerResolver(projectId ?? "");
   const composerEnvironments = useProjectEnvironments(
@@ -137,12 +152,7 @@ export function CreateSuiteDialog({
     if (serverAttachmentId === null && serverAttachments.length > 0) {
       setServerAttachmentId(serverAttachments[0]._id);
     }
-  }, [
-    composeMode,
-    shouldFetchDefaults,
-    serverAttachmentId,
-    serverAttachments,
-  ]);
+  }, [composeMode, shouldFetchDefaults, serverAttachmentId, serverAttachments]);
 
   useEffect(() => {
     if (!shouldFetchDefaults) return;
@@ -198,13 +208,13 @@ export function CreateSuiteDialog({
     if (canSubmit || isSaving) return null;
     if (name.trim().length === 0) return "Add a suite name first.";
     if (composeMode && !composeHasTarget) {
-      return "Pick an environment or at least one client first.";
+      return "Pick at least one client first.";
     }
-    if (!composerReady) return "Loading this project's environments…";
+    if (!composerReady) return "Loading this project's clients…";
     if (attachmentsRequired && serverAttachmentId === null) {
       return hostAttachments.length === 0
         ? "Attach a server and at least one client first."
-        : "Pick a server group first.";
+        : "Pick a server or group first.";
     }
     if (attachmentsRequired && hostAttachments.length === 0) {
       return "Attach at least one client first.";
@@ -239,7 +249,7 @@ export function CreateSuiteDialog({
           ...new Set(resolved.environments.map((env) => env.hostId)),
         ];
         const resolvedGroups = new Set(
-          resolved.environments.map((env) => env.serverAttachmentId ?? null)
+          resolved.environments.map((env) => env.serverAttachmentId ?? null),
         );
         const fallbackServerAttachmentId =
           resolvedGroups.size === 1
@@ -298,8 +308,8 @@ export function CreateSuiteDialog({
         <DialogHeader>
           <DialogTitle>Create suite</DialogTitle>
           <DialogDescription>
-            Name your suite and pick what it runs against. You can change
-            this later.
+            Name your suite and pick what it runs against. You can change this
+            later.
           </DialogDescription>
         </DialogHeader>
 
@@ -311,7 +321,7 @@ export function CreateSuiteDialog({
             <Input
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="Customer support workflows"
+              placeholder="Suite 1"
             />
           </div>
 
@@ -322,8 +332,8 @@ export function CreateSuiteDialog({
                   Where it runs
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  Start from an environment, or build one here. Each client fans
-                  out into its own run.
+                  Start from a client, or build one here. Each client fans out
+                  into its own run.
                 </p>
               </div>
               <EnvironmentComposer
@@ -335,6 +345,13 @@ export function CreateSuiteDialog({
                 disabled={isSaving}
                 testIdPrefix="create-suite"
                 inModal
+                slots={EVALS_COMPOSER_SLOTS}
+                environmentsVocabulary="client"
+                clientDefaultLabel={(() => {
+                  const previewed =
+                    hosts.find((h) => h.hostId === previewedHostId) ?? hosts[0];
+                  return previewed?.modelId ?? null;
+                })()}
               />
             </div>
           ) : hostsEnabled && projectId ? (
@@ -345,15 +362,18 @@ export function CreateSuiteDialog({
                     Servers
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    Server group all hosts run against.
+                    Server group all clients run against.
                   </p>
                 </div>
                 <div className="shrink-0">
-                  <ServerAttachmentPicker
+                  <ServerPicker
                     projectId={projectId}
                     value={serverAttachmentId}
                     onChange={setServerAttachmentId}
+                    // The X only where Create would accept none; the callback
+                    // always, so a delete in the picker reaches this form.
                     onClearSelection={() => setServerAttachmentId(null)}
+                    offerClear={!attachmentsRequired}
                     inModal
                     disabled={isSaving}
                   />

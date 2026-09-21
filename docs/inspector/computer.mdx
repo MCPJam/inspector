@@ -105,7 +105,7 @@ knowledge:
 ```
 
 The editor lints as you type (the backend is the single validator; the CLI has
-`mcpjam images validate` for the same check). Build the image, then **Use on
+`mcpjam cloud images validate` for the same check). Build the image, then **Use on
 computer** to boot from it. `base` / `initialize` edits need a re-build;
 `maintenance` / `knowledge` edits take effect at the next chat turn without
 one. Images can be kept private to you or shared with the whole project.
@@ -116,9 +116,9 @@ Manage them from **Change** on the image strip.
   any one computer's disk — see [Data & persistence](#data-and-persistence).
 </Note>
 
-## Chatbox sandbox
+## Scenario sandbox
 
-When a chatbox is backed by an environment that has a pinned computer image,
+When a scenario is backed by an environment that has a pinned computer image,
 the `bash` tool runs on a **per-conversation ephemeral sandbox** booted from
 that image — not on your personal computer.
 
@@ -134,22 +134,65 @@ that image — not on your personal computer.
   sandbox is deleted (not paused). When that happens, you'll see a notification
   in the chat: *"This conversation's sandbox was reset after being idle — files
   and shell state from earlier turns are gone."*
-- **Image from the environment.** All members on the same chatbox boot from the
+- **Image from the environment.** All members on the same scenario boot from the
   same environment image, so the machine is consistent regardless of who is
   chatting.
 - **No bash if the image is unavailable.** If the environment's image can't
-  boot right now, the chatbox loads normally without a `bash` tool — no error,
+  boot right now, the scenario loads normally without a `bash` tool — no error,
   and no fallback to your personal computer.
 
 ### What is unchanged
 
-- **Your personal computer** is unaffected. Nothing a chatbox conversation
+- **Your personal computer** is unaffected. Nothing a scenario conversation
   writes lands on your personal computer, and nothing on your personal computer
-  is visible inside a chatbox sandbox.
-- **Host-backed chatboxes** (those not tied to an environment) continue to use
+  is visible inside a scenario sandbox.
+- **Host-backed scenarios** (those not tied to an environment) continue to use
   your personal computer as before.
 - **Environments with no pinned image** also continue to use your personal
   computer as before.
+
+## Browser panel in the Playground
+
+When a host configuration includes a browser tool, the Playground shows a browser panel alongside the chat. Each conversation owns its own browser — switching between chats reattaches the existing browser for that conversation rather than opening a new one or navigating away.
+
+### Switching conversations
+
+When you switch from one conversation to another, the Playground reconnects to that conversation's existing browser. The live tabs, page content, unsaved form text, and scroll position are preserved exactly as you left them. No navigation happens on reattach.
+
+If the conversation's browser is not yet running when you open it, the panel shows an **Open a browser for this conversation** button. The panel also polls in the background so it can attach automatically if the agent starts a browser after the pane is already open.
+
+### Closing the browser pane
+
+Closing the browser panel stops the viewer — it does not hand control back to the agent. If you held the browser (took manual control), that hold stays parked after you close the pane. The agent remains blocked until you explicitly click **Hand back** to release control. A parked hold keeps the agent waiting, but does not by itself keep a hosted cloud browser running — a hosted browser box is reclaimed shortly after nobody is actively watching it.
+
+### Hosted browser sleep and wake
+
+A hosted cloud browser box is reclaimed automatically when nobody has the panel open and visible. If you hide the panel or switch away from the tab, the box may be paused within a couple of minutes. When you re-open or re-show the panel, it wakes the box automatically — you will see a brief reconnecting state while it resumes, then the live view returns. No action is needed on your part.
+
+### Typing credentials without exposing them
+
+When a browser agent needs to sign into a site, it can use a **secret placeholder** instead of a literal credential. The model writes `{{secret:NAME}}` — where `NAME` is the environment-variable name of a [materialized project secret](/inspector/projects#secret-storage-for-env-vars-and-headers) — and the value is substituted at the last moment inside the browser, never appearing in the transcript, tool-call arguments, or trace.
+
+**How to use it**
+
+1. Add the credential as a **materialized** secret in your project environment (brokered secrets cannot be used here — their values never enter the server).
+2. The agent will see only the secret's name, not its value. It writes `{{secret:GITHUB_PASSWORD}}` (or whichever name you chose) in a `type` or `fill_form` browser action.
+3. The value is substituted immediately before the keystroke runs. Everything the page returns afterwards — the accessibility tree, page text, console output — shows `{{secret:NAME}}` again, not the real value.
+
+**Screenshot suppression**
+
+While the page that received the credential is still open, screenshots are suppressed and replaced with a `screenshotSuppressed` flag. The agent still receives the accessibility tree and page text. Screenshots resume automatically once the page navigates to a new document (for example, after a login form submits and loads the dashboard).
+
+**Constraints**
+
+- The secret must be at least 8 characters. Shorter values are refused before anything is typed.
+- Only **materialized** delivery works. Brokered secrets are refused with `secret_not_typeable`.
+- Placeholders only work on verbs that type text (`type`, `fill_form`). Using one on `click` or `scroll` is refused with `secret_verb_refused`.
+- If the named secret does not exist for the current environment, the action is refused with `secret_unknown` — nothing is typed.
+
+### Browser panel layout
+
+The open and expanded state of the browser panel is tracked per conversation. Opening or closing the panel in one chat does not affect any other chat's panel state.
 
 ## Data & persistence
 

@@ -186,6 +186,138 @@ describe("adaptTraceToUiMessages", () => {
     );
   });
 
+  it("keeps the raw result in the shared tool card without a sibling", () => {
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "read_me",
+              input: { id: 42 },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "read_me",
+              output: { type: "json", value: { hello: "world" } },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = adaptTraceToUiMessages({
+      trace,
+      toolResultDisplay: "tool-card",
+    });
+
+    expect(result.messages[0].parts).toHaveLength(1);
+    expect(result.messages[0].parts[0]).toMatchObject({
+      type: "dynamic-tool",
+      input: { id: 42 },
+      output: { hello: "world" },
+    });
+    expect(result.messages[0].parts[0]).not.toHaveProperty("traceDisplayMode");
+  });
+
+  it("does not parse large JSON text that the shared tool card renders raw", () => {
+    const largeJsonText = JSON.stringify({ items: ["x".repeat(100_000)] });
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-large",
+              toolName: "read_large_result",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-large",
+              toolName: "read_large_result",
+              result: {
+                content: [{ type: "text", text: largeJsonText }],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const parseSpy = vi.spyOn(JSON, "parse");
+
+    try {
+      const result = adaptTraceToUiMessages({
+        trace,
+        toolResultDisplay: "tool-card",
+      });
+
+      expect(parseSpy).not.toHaveBeenCalled();
+      expect(result.messages[0].parts).toHaveLength(1);
+    } finally {
+      parseSpy.mockRestore();
+    }
+  });
+
+  it("keeps tool-card errors inside the shared card without a duplicate", () => {
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-error-card",
+              toolName: "read_me",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-error-card",
+              toolName: "read_me",
+              result: {
+                isError: true,
+                content: [{ type: "text", text: "Request failed" }],
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = adaptTraceToUiMessages({
+      trace,
+      toolResultDisplay: "tool-card",
+    });
+
+    expect(result.messages[0].parts).toEqual([
+      expect.objectContaining({
+        type: "dynamic-tool",
+        state: "output-error",
+        errorText: "Request failed",
+      }),
+    ]);
+  });
+
   // --- Test 2: Multiple tool calls ---
   it("groups multiple tool-calls and results into a single assistant UIMessage", () => {
     const trace: TraceEnvelope = {
@@ -544,7 +676,62 @@ describe("adaptTraceToUiMessages", () => {
     );
   });
 
-  it("appends fenced JSON when tool output has only structured data", () => {
+  it("renders JSON text-block output as a structured result", () => {
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-json-text",
+              toolName: "list_searches",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-json-text",
+              toolName: "list_searches",
+              output: {
+                type: "json",
+                value: {
+                  content: [
+                    {
+                      type: "text",
+                      text: '{"searches":[{"id":"admissions-community"}],"nextCursor":null}',
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = adaptTraceToUiMessages({ trace });
+    expect(result.messages[0].parts).toContainEqual({
+      type: "data-result",
+      data: {
+        searches: [{ id: "admissions-community" }],
+        nextCursor: null,
+      },
+    });
+    expect(
+      result.messages[0].parts.some(
+        (part) =>
+          part.type === "text" &&
+          (part as { text?: string }).text?.startsWith('{"searches"'),
+      ),
+    ).toBe(false);
+  });
+
+  it("renders structured tool output as a structured result", () => {
     const trace: TraceEnvelope = {
       messages: [
         {
@@ -576,11 +763,59 @@ describe("adaptTraceToUiMessages", () => {
     };
 
     const result = adaptTraceToUiMessages({ trace });
-    const textParts = result.messages[0].parts.filter((p) => p.type === "text");
-    const jsonFallback = textParts.find((p) =>
-      (p as any).text?.startsWith("```json"),
-    );
-    expect(jsonFallback).toBeDefined();
+    expect(result.messages[0].parts).toContainEqual({
+      type: "data-result",
+      data: { count: 5, items: ["a", "b"] },
+    });
+  });
+
+  it("formats JSON text output alongside a replayed widget", () => {
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-widget-json",
+              toolName: "create_view",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-widget-json",
+              toolName: "create_view",
+              result: {
+                content: [
+                  {
+                    type: "text",
+                    text: '{"team":"Barcelona","teams":["Arsenal","Barcelona"]}',
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+      widgetSnapshots: [
+        makeWidgetSnapshot({
+          toolCallId: "call-widget-json",
+          widgetHtmlUrl: "https://storage.example.com/widget.html",
+        }),
+      ],
+    };
+
+    const result = adaptTraceToUiMessages({ trace });
+    expect(result.toolRenderOverrides["call-widget-json"]).toBeDefined();
+    expect(result.messages[0].parts).toContainEqual({
+      type: "data-result",
+      data: { team: "Barcelona", teams: ["Arsenal", "Barcelona"] },
+    });
   });
 
   // --- Test 9: Reasoning parts with no state ---
@@ -1149,7 +1384,9 @@ describe("adaptTraceToUiMessages", () => {
       connectedServerIds: [],
     });
 
-    expect(result.toolRenderOverrides["call-disconnected-widget"]).toBeDefined();
+    expect(
+      result.toolRenderOverrides["call-disconnected-widget"],
+    ).toBeDefined();
     expect(
       result.toolRenderOverrides["call-disconnected-widget"].toolMetadata,
     ).toEqual({});

@@ -20,7 +20,7 @@ The SDK provides APIs to save eval results to MCPJam for visualization in the CI
 
 Use `MCPJAM_BASE_URL` only when you need to override the default ingest host, such as internal development against a non-production backend.
 
-`MCPJAM_API_KEY` controls whether results are uploaded. **Replay credential** capture only happens when you provide `serverReplayConfigs`, `agent`, or `mcpClientManager`. **MCP App widget snapshots** in each result’s trace (for iframe replay in MCPJam) come from [`PromptResult.getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots), which is only populated when [`HostRunner`](/sdk/reference/host-runner) was constructed with [`mcpClientManager`](/sdk/reference/host-runner#parameters).
+`MCPJAM_API_KEY` controls whether results are uploaded. **Replay credential** capture only happens when you provide `serverReplayConfigs`, `agent`, or `mcpClientManager`. **MCP App widget snapshots** in each result's trace (for iframe replay in MCPJam) come from [`PromptResult.getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots), which is only populated when [`HostRunner`](/sdk/reference/host-runner) was constructed with [`mcpClientManager`](/sdk/reference/host-runner#parameters).
 
 ---
 
@@ -189,10 +189,6 @@ const reporter = createEvalRunReporter({
   suiteName: "Integration Tests",
   passCriteria: { minimumPassRate: 85 },
   agent,
-  ci: {
-    branch: process.env.GITHUB_REF_NAME,
-    commitSha: process.env.GITHUB_SHA,
-  },
 });
 ```
 
@@ -225,7 +221,7 @@ Authenticated HTTP evals can securely persist replay credentials for reruns and 
 
 Prefer passing `agent` or `mcpClientManager` directly. Use `serverReplayConfigs` only when you need a low-level override.
 
-If you also provide `serverNames`, inferred replay configs are filtered to those server IDs before upload. Explicit `serverReplayConfigs` are left unchanged.
+When `serverNames` is not set, the SDK infers it from the unique server IDs in the resolved replay configs. Pass an explicit list to override, or `serverNames: []` to opt out entirely. Explicit `serverReplayConfigs` are left unchanged.
 
 ### Replay metadata for the MCPJam UI
 
@@ -235,7 +231,7 @@ Uploaded runs can show **Replay this run** / server-side MCP replay when the ing
 - **`HostRunner` vs reporter** — Putting `mcpClientManager` on [`HostRunner`](/sdk/reference/host-runner) fills **MCP App widget snapshots** on [`PromptResult`](/sdk/reference/prompt-result). The **reporter** (and one-shot `report*`) resolves **server replay** from its **own** `agent` / `mcpClientManager` fields. Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](#createevalrunreporter) as well; **agent-only** wiring can still upload traces and widgets but **omit** `hasServerReplayConfig`.
 - **Teardown order** — `finalize()` / one-shot reporting calls `getServerReplayConfigs()` against **connected** registrations. In `afterAll`, run **`await reporter.finalize()`** (or `reportEvalResults`) **before** **`await manager.disconnectAllServers()`**. Disconnecting first clears manager state and uploads **without** replay metadata.
 
-**LLM API keys** are **not** stored on the run. Replaying in the MCPJam UI still requires provider keys (e.g. OpenRouter) in **Settings** for your suite’s models.
+**LLM API keys** are **not** stored on the run. Replaying in the MCPJam UI still requires provider keys (e.g. OpenRouter) in **Settings** for your suite's models.
 
 ### Using with PromptResult
 
@@ -258,6 +254,7 @@ const output = await reporter.finalize();
 const reporter = createEvalRunReporter({ suiteName: "Full Suite" });
 
 const test = new EvalTest({
+  id: "c_addition",
   name: "addition",
   test: async (agent) => (await agent.run("Add 2+3")).hasToolCall("add"),
 });
@@ -364,7 +361,7 @@ Fields specific to `ReportEvalResultsInput` (everything else comes from [`MCPJam
 | `project` | `string` | No | Project id results are filed under (falls back to `MCPJAM_PROJECT_ID`, then the org's Default project) |
 | `suiteName` | `string` | No | Suite name for the run |
 | `suiteDescription` | `string` | No | Description of the suite |
-| `serverNames` | `string[]` | No | MCP server names being tested |
+| `serverNames` | `string[]` | No | MCP server names to associate with the run. When omitted, the SDK infers names from the server IDs in the resolved replay configs. Pass `[]` to opt out of inference and record no server names. |
 | `serverReplayConfigs` | `MCPServerReplayConfig[]` | No | Advanced override for replay credential capture |
 | `notes` | `string` | No | Free-form notes |
 | `passCriteria` | `{ minimumPassRate: number }` | No | Pass threshold (0-100) |
@@ -421,9 +418,11 @@ Advanced replay override. Most users should not construct this manually.
 
 ### EvalCiMetadata
 
+Automatically detected when `ci` is omitted for supported CI services. An explicit object is preserved without filling missing fields; `ci: {}` disables detection. This includes incremental reporters, which accept and preserve `provider`. See [automatic CI metadata](/sdk/concepts/saving-results#automatic-ci-metadata) for providers and available fields.
+
 | Property | Type | Description |
 |----------|------|-------------|
-| `provider` | `string` | CI provider (e.g., `"github"`, `"gitlab"`) |
+| `provider` | `string` | CI provider (e.g., `"github_actions"`, `"gitlab_ci"`) |
 | `pipelineId` | `string` | Pipeline/workflow identifier |
 | `jobId` | `string` | Job identifier |
 | `runUrl` | `string` | URL to the CI run |
@@ -448,6 +447,8 @@ Advanced replay override. Most users should not construct this manually.
 | `trace` | `EvalTraceInput` | No | Conversation trace |
 | `externalIterationId` | `string` | No | Custom iteration ID |
 | `externalCaseId` | `string` | No | Custom case ID |
+| `caseId` | `string` | No | The case's declared identity ([`EvalTestConfig.id`](/sdk/reference/eval-test)). An `EvalSuite` puts this on every result automatically. The backend resolves by it first and adopts it onto a case that resolved by content hash, which is what lets a renamed test keep its history. Must equal `externalCaseId` when both are present. |
+| `intent` | `string \| null` | No | Analytics grouping label for this case. `null` explicitly records an unlabelled modern producer; omit the field to preserve legacy wire behavior. Never affects scoring or the verdict. |
 | `metadata` | `Record<string, string \| number \| boolean>` | No | Custom metadata; values must be scalars. When the runner evaluates a case's predicates, it persists `{ predicate, passed, reason, scope? }[]` under `metadata.predicates` automatically. |
 | `isNegativeTest` | `boolean` | No | Whether this is a negative test |
 | `advancedConfig` | `Record<string, unknown>` | No | Advanced case configuration recorded with the iteration (e.g. `steps`, `system`, `temperature`) |
@@ -458,7 +459,7 @@ Advanced replay override. Most users should not construct this manually.
 
 Predicates add a deterministic, state-based assertion layer on top of tool-call matching. Each predicate is a pure function of the iteration transcript — same transcript, same verdict — which makes it suitable as a CI release gate.
 
-Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** from SDK 3.0 onward by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff **all** predicates pass. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
+Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** from SDK 3.0 onward by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff every **required** predicate passes. A check's `role` is `"required"` (legacy spelling: `"gating"`) or `"advisory"`; absent means required. A predicate authored `role: "advisory"` — which every observation kind must be — is recorded and surfaced, and never fails the case, including when its `status` is `"error"`. A **required** check that could not be scored is the opposite: it holds the gate shut, because a check that never ran is not a check that passed (see [A predicate never passes by default](#a-predicate-never-passes-by-default)); its `onError` / `onSkipped` policy is what decides, and for a required role both default to `"fail"`. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
 
 <Note>
   Before SDK 3.0 the predicate engine was hosted-only: `EvalResultInput` had no predicate field, and a code-first run could not evaluate them. Code-first predicates now gate the iteration locally **and** report the same verdicts, so a suite reads identically whether it ran from your test file or from the platform.
@@ -468,20 +469,50 @@ The three widget predicates — `widgetRendered`, `widgetRenderLatencyUnder`, `w
 
 #### Predicate types
 
-| Type | Fields | Description |
-|------|--------|-------------|
-| `toolCalledWith` | `toolName`, `args` ([`ArgMatcher`](#argmatcher)), `minCount?` | A call to `toolName` whose args satisfy `args` occurred at least `minCount` (default 1) times. |
-| `toolCalledAtLeastOnce` | `toolName` | `toolName` was called at least once (args irrelevant). |
-| `toolNeverCalled` | `toolName` | `toolName` was never called (forbidden-tool check). |
-| `firstToolWas` | `toolName` | The first tool call observed in the transcript was `toolName`. |
-| `responseContains` | `needle`, `caseSensitive?` | The final assistant message contains `needle`. Case-insensitive by default. |
-| `responseMatches` | `pattern` | The final assistant message matches the regular expression `pattern` (regex source string, no flags). |
-| `noToolErrors` | — | No tool produced an error (neither MCP `isError: true` nor a JSON-RPC/transport failure). |
-| `finalAssistantMessageNonEmpty` | — | The final assistant message is a non-empty, non-whitespace string. |
-| `tokenBudgetUnder` | `tokens` | Total token usage for the iteration is strictly under `tokens`. Fails when usage was not measured. |
-| `widgetRendered` | `toolName?` | At least one MCP App widget render observation (narrowed to `toolName` when set) has `status === "rendered"`. Fails when the iteration recorded no render observations in scope. |
-| `widgetRenderLatencyUnder` | `ms`, `toolName?` | Every rendered widget observation (narrowed to `toolName` when set) mounted in strictly under `ms` milliseconds. Fails when nothing in scope rendered — an unrendered widget has no latency to check. |
-| `widgetNoConsoleErrors` | `toolName?` | No widget render observation (narrowed to `toolName` when set) captured console errors. Fails when the iteration recorded no render observations in scope. |
+The **Measures** column is the link of the [user-value chain](/sdk/concepts/user-value-chain) each kind's evidence is filed at. It is where the evidence is recorded, not a claim about where a failure originated. Connection is measured by the runner. Discovery also accepts the six catalog assertions below. They require complete raw tools/list capture; absent or partial capture produces an evaluator error.
+
+| Type | Fields | Measures | Description |
+|------|--------|----------|-------------|
+| `toolDescriptionsPresent` | `minLength?` | Discovery | Trimmed descriptions meet the minimum length (default 20). |
+| `toolAnnotationsPresent` | `require?` | Discovery | Every tool declares annotations; optionally require boolean readOnlyHint and destructiveHint. |
+| `toolNamesUnique` | — | Discovery | Raw tool names are unique within each server. |
+| `noDeprecatedToolExposed` | — | Discovery | No description marks itself deprecated. Heuristic; advisory only. |
+| `toolInputSchemasWellFormed` | — | Discovery | Every input schema has an object root and documented properties. |
+| `toolOutputSchemasPresent` | — | Discovery | Every tool declares an output schema; does not validate result conformance. |
+| `toolCalledWith` | `toolName`, `args` ([`ArgMatcher`](#argmatcher)), `minCount?` | Selection | A call to `toolName` whose args satisfy `args` occurred at least `minCount` (default 1) times. |
+| `toolCalledAtLeastOnce` | `toolName` | Selection | `toolName` was called at least once (args irrelevant). |
+| `toolNeverCalled` | `toolName` | Selection | `toolName` was never called (forbidden-tool check). |
+| `onlyToolsCalled` | `toolNames` | Selection | Every tool called appears in `toolNames`. An empty array is the "no tool was called" claim. Generalizes `toolNeverCalled` from one forbidden tool to an allowed set. |
+| `firstToolWas` | `toolName` | Selection | The first tool call observed in the transcript was `toolName`. |
+| `responseContains` | `needle`, `caseSensitive?` | User value | The final assistant message contains `needle`. Case-insensitive by default. |
+| `responseMatches` | `pattern` | User value | The final assistant message matches the regular expression `pattern` (regex source string, no flags). |
+| `responseCloseTo` | `reference`, `maxDistance`, optional `caseSensitive`, `normalizeWhitespace` | User value | Normalized Unicode code-point edit distance; budget overflow is unscored, not a mismatch. |
+| `noToolErrors` | — | Response | No tool produced an error (neither MCP `isError: true` nor a JSON-RPC/transport failure). |
+| `finalAssistantMessageNonEmpty` | — | User value | The final assistant message is a non-empty, non-whitespace string. |
+| `tokenBudgetUnder` | `tokens` | User value | Total token usage for the iteration is strictly under `tokens`. Fails when usage was not measured. |
+| `widgetRendered` | `toolName?` | User value | At least one MCP App widget render observation (narrowed to `toolName` when set) has `status === "rendered"`. Fails when the iteration recorded no render observations in scope. |
+| `widgetRenderLatencyUnder` | `ms`, `toolName?` | User value | Every rendered widget observation (narrowed to `toolName` when set) mounted in strictly under `ms` milliseconds. Fails when nothing in scope rendered — an unrendered widget has no latency to check. |
+| `widgetNoConsoleErrors` | `toolName?` | User value | No widget render observation (narrowed to `toolName` when set) captured console errors. Fails when the iteration recorded no render observations in scope. |
+| `turnCountUnder` | `turns` | User value | The iteration used strictly fewer than `turns` user turns. Fails when the transcript carries no turn count. |
+| `noEndingQuestion` | — | User value | **Observation.** The final assistant message's last non-empty line does not end with `?`. Cannot tell an offer ("Would you like a breakdown?") from a request for missing input, so it is Advisory only — `role: "advisory"` is required and a required one is refused. |
+| `toolLatencyUnder` | `ms`, `toolName?` | Response | Every observed call in scope settled in strictly under `ms`. Reports `status: "error"` when the run captured no per-call timing. |
+| `toolResultContains` | `needle`, `caseSensitive?`, `toolName?` | Response | A tool result in scope contains `needle`, searched over the model-visible text and the structured payload. |
+| `toolResultMatchesSchema` | `schema`, `toolName?` | Response | Every tool result in scope validates against the authored JSON Schema. Any JSON root — 2026-07-28 dropped the object-only restriction on `structuredContent`. |
+| `toolResultSizeUnder` | `maxBytes`, `toolName?` | Response | Every tool result in scope is strictly under `maxBytes`, measured on what the server returned and **before** the transcript's own 64 000-character text cap. Bytes, not tokens. |
+| `argumentsMatchToolSchema` | `toolName?` | Tool call | Every call's arguments validate against the tool's declared `inputSchema`, classified as `missing-required`, `wrong-type`, `bad-enum` or `hallucinated-param`. A key merely absent from `properties` is legal and is reported, never failed. Schema validity does not establish that the arguments match the user's intent. |
+| `noRepeatedIdenticalCall` | `toolName?` | Tool call | **Observation.** No call repeated the one immediately before it with equal arguments. A poll loop and a transient retry are the same shape and both correct, so it is Advisory only. |
+| `toolCallCountUnder` | `count`, `toolName?` | Selection | Strictly fewer than `count` calls in scope. Total calls, which is not the same as calls before the right tool. |
+| `toolCalledBefore` | `toolName`, `beforeToolName` | Selection | Every call to `beforeToolName` was preceded by a call to `toolName`. Vacuously true when `beforeToolName` never ran. |
+| `noDeprecatedToolCalled` | — | Selection | **Observation.** No called tool's own description marks it deprecated. Anchored to self-deprecation, so "Replaces the deprecated `old_search` tool" does not fire. Advisory only. |
+| `noDestructiveToolCalled` | — | Selection | No called tool declares `annotations.destructiveHint`. Reports `status: "error"` when no tool in the inventory declares annotations at all. |
+| `toolErrorNamesInput` | `toolName?` | Response | **Observation.** Every tool error message names one of that tool's input keys or a value the call sent. It does not measure recovery quality — "Rate limited. Retry in 30 seconds." names nothing and is a good message. Advisory only. |
+| `fullPageHasContinuation` | `toolName?` | Response | **Observation.** A page whose length equals its requested limit carries recognized continuation metadata. A full page is not proof that more results exist, so this reports rather than fails. Advisory only. |
+
+#### Standard checks
+
+Standard checks use the browser-safe `STANDARD_CHECKS` catalog from `@mcpjam/sdk/contract`. Every assertion preset defaults to Advisory. UVC reports these evaluator results without turning advisory failures into failed stages. Scored **required** discovery failures can fail Discovery; setup failure attribution takes precedence. Empty complete catalogs receive an explicit "no tools advertised" rationale.
+
+Cases can suppress suite check families with `suppressedSuiteStandardCheckIds` (for example, `["response.performance"]`). This filters suite defaults before inherit/extend/replace resolution, preserves explicit case and step assertions, and remains effective after a suite threshold changes. Omitted updates preserve suppression; `[]` clears it. Catalog IDs are authoring references; evaluator reporting keeps its existing content-derived scorer IDs.
 
 #### ArgMatcher
 
@@ -495,6 +526,22 @@ Used by `toolCalledWith` to specify expected arguments and matching mode.
 #### A predicate never passes by default
 
 A predicate that cannot be evaluated fails the case instead of silently passing. That covers malformed predicates (unknown type, missing required fields, invalid `minCount`, empty `needle`/`pattern`) and predicates with nothing to measure: `tokenBudgetUnder` when usage was not captured, and the `widget*` predicates when the iteration recorded no render observations. `responseMatches` also rejects patterns with nested quantifiers (ReDoS guard) and messages over 100,000 characters.
+
+#### Observations may never gate
+
+Some kinds above are marked **Observation**. They are heuristics — a pattern
+that can be right about what it saw and still wrong about what it means — so
+they carry one rule everywhere: `role: "advisory"` is required, a required one is
+refused by the schema and by the backend, the authoring UI offers Advisory
+only, and they never enter `allGatingScorersPassed`.
+
+#### Missing evidence is an error, not a failure
+
+The kinds that read tool results, per-call timings or the tool inventory report
+`status: "error"` when the run did not capture what they need. An error row
+carries no value, keeps its scorer in `unresolvedScorerIds`, and leaves its
+stage `notMeasured`. A gate with an unscored row does not pass — but nothing is
+attributed to the server for a measurement we could not take.
 
 #### Example
 
@@ -518,7 +565,7 @@ const predicates: Predicate[] = [
 
 // Pass predicates via the per-run override in the Inspector corpus,
 // or use evaluatePredicates() directly in custom pipelines:
-import { evaluatePredicates, buildIterationTranscript } from "@mcpjam/sdk/predicates";
+import { evaluatePredicates, allPredicatesPassed, buildIterationTranscript } from "@mcpjam/sdk/predicates";
 
 const transcript = buildIterationTranscript({
   trace: myTrace,
@@ -527,7 +574,10 @@ const transcript = buildIterationTranscript({
 });
 
 const results = evaluatePredicates(transcript, predicates);
-const allPassed = results.every((r) => r.passed);
+// `allPredicatesPassed`, not `results.every(...)`: the results array keeps
+// failed ADVISORY rows so a reader can see them, and counting those as
+// failures rejects a run over a finding that was never meant to gate.
+const allPassed = allPredicatesPassed(results);
 ```
 
 #### Predicate results in metadata
@@ -541,6 +591,39 @@ type PredicateResult = {
   reason: string;         // Structured explanation, e.g. "tool "book_flight" called with matching args"
   scope?: { kind: "turn"; promptIndex: number }; // Absent = case-level; present = authored on one prompt turn
 };
+```
+
+---
+
+### EvalReportingError
+
+Thrown by `reportEvalResults()` and (when `strict: true`) by `reportEvalResultsSafely()` when an upload fails. Extends `Error`.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `isBillingLimitReached` | `boolean` | The org's billing limit was reached. No results were filed. |
+| `isReportingBackendIncompatible` | `boolean` | The destination rejected a field this SDK sends — the reporting backend is older than the SDK's minimum contract. No results were filed, and retrying will not help. Upgrade the destination or point `baseUrl` at one that accepts declared case ids. |
+| `statusCode` | `number \| undefined` | HTTP status code from the backend, if available. |
+| `attemptCount` | `number \| undefined` | Number of upload attempts made before giving up. |
+| `endpoint` | `string \| undefined` | The endpoint path that was called. |
+
+```typescript
+import { reportEvalResults, EvalReportingError } from "@mcpjam/sdk";
+
+try {
+  await reportEvalResults({ suiteName: "CI", results, baseUrl: myBaseUrl });
+} catch (err) {
+  if (err instanceof EvalReportingError) {
+    if (err.isReportingBackendIncompatible) {
+      // The destination predates @mcpjam/sdk 6 — upgrade it or switch baseUrl.
+      console.error("Reporting backend needs upgrade:", err.message);
+    } else if (err.isBillingLimitReached) {
+      console.error("Billing limit reached");
+    } else {
+      throw err;
+    }
+  }
+}
 ```
 
 ---
@@ -589,3 +672,6 @@ It is on by default and there is nothing to configure. Details worth knowing:
 - [Running Evals](/sdk/concepts/running-evals) - Conceptual guide
 - [EvalTest Reference](/sdk/reference/eval-test) - EvalTest API
 - [EvalSuite Reference](/sdk/reference/eval-suite) - EvalSuite API
+
+
+See [Reliable evals in CI](/sdk/concepts/enterprise-evals) for canonical evaluators, reporting receipts, explicit limits, metadata compatibility, and migration guidance.

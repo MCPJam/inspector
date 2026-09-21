@@ -26,6 +26,7 @@
  */
 
 import type { ConvexHttpClient } from "convex/browser";
+import type { EvalTraceVideoMeta } from "@/shared/eval-trace";
 import { logger } from "../utils/logger.js";
 import type { BrowserSessionContext } from "./browser-session-context.js";
 import { finalizeEvalIteration } from "./evals/finalize-iteration.js";
@@ -66,8 +67,11 @@ export type BrowserArtifactFinalizeSink =
       kind: "eval";
       recorder: SuiteRunRecorder | null;
       convexClient: ConvexHttpClient;
-      /** Everything but `videoBytes`, which this module supplies. */
-      finishParams: Omit<EvalIterationFinishParams, "videoBytes">;
+      /** Everything but the video fields, which this module supplies. */
+      finishParams: Omit<
+        EvalIterationFinishParams,
+        "videoBytes" | "videoMime" | "videoMeta"
+      >;
     }
   | {
       kind: "session";
@@ -103,6 +107,23 @@ export async function finalizeWithBrowserArtifacts(args: {
    * behavior is unchanged. Must not throw.
    */
   teardown?: () => Promise<void>;
+  /**
+   * A recording made somewhere other than the local harness — today, the one a
+   * hosted daemon wrote on a per-run box, collected before that box was
+   * released.
+   *
+   * A FALLBACK, with explicit precedence: `collectVideo()` above wins whenever
+   * it produced bytes. `videoBlobId` is first-write-wins on the backend, so
+   * two videos racing for one iteration would land on whichever call arrived
+   * first — a coin toss decided by network timing. There is no conflict today
+   * (a hosted iteration has no local Chromium to record), and stating the
+   * order here is what keeps it that way if one ever appears.
+   */
+  fallbackVideo?: {
+    bytes: Buffer;
+    mime: string;
+    meta?: EvalTraceVideoMeta;
+  } | null;
   sink: BrowserArtifactFinalizeSink;
   /** Log prefix so each surface stays greppable. */
   logScope: string;
@@ -144,16 +165,43 @@ export async function finalizeWithBrowserArtifacts(args: {
   }
 
   if (args.sink.kind === "session") {
+    // The session sink takes bytes alone and has no hosted path — a synthetic
+    // session runs the local harness. Passing the fallback here would need a
+    // mime it cannot carry, so it is not offered rather than half-offered.
     await args.sink.persist(videoBytes);
     return;
   }
+
+  // The local harness first, the fallback only if it produced nothing. See
+  // `fallbackVideo` above for why the order is stated rather than left to
+  // whichever write reaches the backend first.
+  const video =
+    videoBytes && videoBytes.length > 0
+      ? { bytes: videoBytes, mime: "video/webm", meta: WIDGET_VIDEO_META }
+      : args.fallbackVideo ?? null;
 
   await dispatchEvalIterationFinalize({
     recorder: args.sink.recorder,
     convexClient: args.sink.convexClient,
     finishParams: {
       ...args.sink.finishParams,
-      ...(videoBytes ? { videoBytes } : {}),
+      ...(video
+        ? {
+            videoBytes: video.bytes,
+            videoMime: video.mime,
+            ...(video.meta ? { videoMeta: video.meta } : {}),
+          }
+        : {}),
     },
   });
 }
+
+/**
+ * What the local widget harness's recording says about itself.
+ *
+ * Only the source. Playwright writes the `.webm` itself and tells us nothing
+ * about it — no duration, no frame count, and no way to know it was cut short
+ * — so claiming any of those here would be inventing them. The reader's UI
+ * shows what is present and nothing else.
+ */
+const WIDGET_VIDEO_META: EvalTraceVideoMeta = { source: "widget" };

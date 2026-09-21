@@ -22,12 +22,12 @@ export interface BillingGateDefinition {
 }
 
 export const BILLING_GATES = {
-  chatboxes: {
-    gateKey: "chatboxes",
-    feature: "chatboxes",
+  scenarios: {
+    gateKey: "scenarios",
+    feature: "scenarios",
   },
-  chatboxCreation: {
-    gateKey: "maxChatboxesPerProject",
+  scenarioCreation: {
+    gateKey: "maxScenariosPerProject",
     feature: null,
   },
   memberInvites: {

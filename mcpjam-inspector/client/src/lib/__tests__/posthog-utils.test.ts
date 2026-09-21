@@ -4,8 +4,33 @@ import {
   getPageviewCaptureOptions,
   isPostHogBooleanFlagOn,
   options,
+  scrubSensitiveUrl,
   standardEventProps,
 } from "../PosthogUtils";
+
+describe("scrubSensitiveUrl", () => {
+  // Autocapture attaches $current_url to every event, so an unredacted share
+  // path ships the bearer token to PostHog on each click.
+  it.each([
+    ["/results/", "score run"],
+    ["/conformance/shared/", "conformance share"],
+    ["/evals/shared/", "eval share"],
+  ])("redacts the credential segment of %s (%s)", (prefix) => {
+    const url = `https://app.mcpjam.com${prefix}sk-secret-token-value`;
+    const scrubbed = scrubSensitiveUrl(url);
+    expect(scrubbed).not.toContain("sk-secret-token-value");
+    expect(scrubbed).toBe(`https://app.mcpjam.com${prefix}[redacted]`);
+  });
+
+  it("keeps the query string and leaves unrelated paths alone", () => {
+    expect(
+      scrubSensitiveUrl("https://app.mcpjam.com/evals/shared/tok?project=abc"),
+    ).toBe("https://app.mcpjam.com/evals/shared/[redacted]?project=abc");
+    expect(scrubSensitiveUrl("https://app.mcpjam.com/evals/suite/abc")).toBe(
+      "https://app.mcpjam.com/evals/suite/abc",
+    );
+  });
+});
 
 describe("PosthogUtils", () => {
   beforeEach(() => {
@@ -55,6 +80,7 @@ describe("PosthogUtils", () => {
     // `register` feeds EVENTS; `/flags` evaluates PERSON properties. Without
     // this call a `deployment = self_hosted` flag rule matches nobody.
     expect(posthog.setPersonPropertiesForFlags).toHaveBeenCalledWith({
+      local_browser_security_version: "1",
       deployment: "self_hosted",
       platform: expect.any(String),
     });
@@ -206,10 +232,15 @@ describe("PosthogUtils", () => {
         pathname: "/results/super-secret-token",
       });
       vi.resetModules();
-      const { options: opts, shouldRecordSession, isCredentialBearingPath } =
-        await import("../PosthogUtils");
+      const {
+        options: opts,
+        shouldRecordSession,
+        isCredentialBearingPath,
+      } = await import("../PosthogUtils");
 
       expect(isCredentialBearingPath("/results/abc")).toBe(true);
+      expect(isCredentialBearingPath("/conformance/shared/secret")).toBe(true);
+      expect(isCredentialBearingPath("/evals/shared/secret")).toBe(true);
       expect(isCredentialBearingPath("/servers")).toBe(false);
       expect(shouldRecordSession()).toBe(false);
       expect(opts.disable_session_recording).toBe(true);
@@ -331,9 +362,7 @@ describe("PosthogUtils", () => {
       const { syncSessionRecordingForPath } = await import("../PosthogUtils");
 
       // Missing methods, and a method that throws — neither may break render.
-      expect(() =>
-        syncSessionRecordingForPath({}, "/results/x"),
-      ).not.toThrow();
+      expect(() => syncSessionRecordingForPath({}, "/results/x")).not.toThrow();
       expect(() =>
         syncSessionRecordingForPath(
           {

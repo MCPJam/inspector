@@ -12,6 +12,18 @@ export {
   type TranscriptProps,
 } from "./read-only-transcript";
 export { MessageView, type MessageViewProps } from "./message-view";
+export {
+  MESSAGE_TIMESTAMP_METADATA_KEY,
+  MessageTimestamp,
+  formatMessageDateTime,
+  formatMessageTime,
+  getMessageTimestampMs,
+  hydrateMessageTimestamps,
+  timestampMessageById,
+  withMessageTimestamp,
+  withMessageTimestampMetadata,
+  type MessageTurnTiming,
+} from "./message-timestamp";
 export { PartSwitch, type PartSwitchProps } from "./part-switch";
 export { ToolCallPart, type ToolCallPartProps } from "./tool-call-part";
 export { WidgetPlaceholder } from "./widget-placeholder";
@@ -30,6 +42,18 @@ export { SourceUrlPart } from "./parts/source-url-part";
 export { SourceDocumentPart } from "./parts/source-document-part";
 export { JsonPart } from "./parts/json-part";
 export { JsonView } from "./parts/json-view";
+// The one JSON tokenizer, also on the `@mcpjam/chat-ui/json-tokens` subpath
+// for consumers that want it without the renderer graph (BB-239).
+//
+// `highlightJson` is deliberately NOT re-exported here: it returns a raw HTML
+// string for `dangerouslySetInnerHTML`, and its escaping is element-content
+// only. It stays on the subpath, next to the editor that already feeds it.
+export {
+  formatPath,
+  tokenizeJson,
+  type Token,
+  type TokenType,
+} from "./internal/json-tokens";
 export { Markdown } from "./internal/markdown";
 
 // --- Public types ---
@@ -46,11 +70,21 @@ export {
   type ReasoningDisplayMode,
   type ToolRenderContext,
   type WidgetRenderInput,
+  type JsonRenderer,
 } from "./types";
 
 // --- Pure helpers (single-sourced for hosts that build messages/overrides) ---
 export * from "./internal/thread-helpers";
 export * from "./internal/widget-detection";
 export * from "./internal/tool-result-utils";
+// The adapter-to-renderer channel for a readable tool result. Public because
+// the inspector's own tool card reads the same field off the same parts, and
+// three hand-rolled readers with three different gates is how BB-198 stayed
+// open on one surface while another rendered it fine.
+export {
+  readTraceDisplayText,
+  isTraceDisplayMode,
+  type TraceDisplayMode,
+} from "./internal/trace-display";
 export * from "./internal/safe-external-url";
 export * from "./internal/persisted-execution-replay";

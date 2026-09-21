@@ -7,7 +7,6 @@ const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 const ORIGINAL_REMOTE_URL = process.env.MCPJAM_GUEST_SESSION_URL;
 const ORIGINAL_SHARED_SECRET = process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
 const ORIGINAL_HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE;
-const ORIGINAL_NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN;
 const ORIGINAL_FETCH = global.fetch;
 
 const SAMPLE_COOKIE =
@@ -30,7 +29,6 @@ describe("POST /guest-session", () => {
     process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
     delete process.env.MCPJAM_GUEST_SESSION_URL;
     delete process.env.VITE_MCPJAM_HOSTED_MODE;
-    delete process.env.MCPJAM_NONPROD_LOCKDOWN;
     process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET =
       "test-guest-session-secret";
     global.fetch = vi.fn().mockImplementation(async () => {
@@ -69,11 +67,6 @@ describe("POST /guest-session", () => {
       delete process.env.VITE_MCPJAM_HOSTED_MODE;
     } else {
       process.env.VITE_MCPJAM_HOSTED_MODE = ORIGINAL_HOSTED_MODE;
-    }
-    if (ORIGINAL_NON_PROD_LOCKDOWN === undefined) {
-      delete process.env.MCPJAM_NONPROD_LOCKDOWN;
-    } else {
-      process.env.MCPJAM_NONPROD_LOCKDOWN = ORIGINAL_NON_PROD_LOCKDOWN;
     }
     if (ORIGINAL_SHARED_SECRET === undefined) {
       delete process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
@@ -123,6 +116,37 @@ describe("POST /guest-session", () => {
       const parts = data.token.split(".");
       expect(parts.length).toBe(3);
     });
+  });
+
+  it("returns 429 with Retry-After and RATE_LIMITED when the upstream refuses creation (per-IP cap)", async () => {
+    vi.mocked(global.fetch).mockImplementationOnce(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: "Too many guest sessions from this network",
+          }),
+          {
+            status: 429,
+            headers: {
+              "Content-Type": "application/json",
+              "retry-after": "3600",
+            },
+          },
+        ),
+    );
+
+    // Distinct IP so this request does not spend the shared local window
+    // the later 503/limit tests rely on.
+    const res = await app.request("/guest-session", {
+      method: "POST",
+      headers: { "x-forwarded-for": "198.51.100.9" },
+    });
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("3600");
+    const body = await res.json();
+    expect(body.code).toBe("RATE_LIMITED");
+    expect(body.message).toMatch(/Sign in to continue/);
   });
 
   it("forwards Set-Cookie from Convex to the browser", async () => {
@@ -336,17 +360,6 @@ describe("POST /guest-session", () => {
     expect(setCookie).toContain(
       "mcpjam_guest_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
     );
-  });
-
-  it("returns 403 when non-prod lockdown is enabled", async () => {
-    process.env.MCPJAM_NONPROD_LOCKDOWN = "true";
-
-    const res = await app.request("/guest-session", { method: "POST" });
-
-    expect(res.status).toBe(403);
-    await expect(res.json()).resolves.toMatchObject({
-      code: "FORBIDDEN",
-    });
   });
 
   describe("HTTP method handling", () => {

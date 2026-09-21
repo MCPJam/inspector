@@ -59,7 +59,7 @@ export interface SubscriptionInterestRejectionView {
     /**
      * A task-filtered listen was wanted but this connection cannot put the
      * extension's per-request eligibility declaration on the listen request
-     * (sending it undeclared would earn `-32003`). Polling continues — a
+     * (sending it undeclared would earn `-32021`). Polling continues — a
      * notification is only ever a poll-now hint, so the handle is not lost.
      */
     | "tasks-declaration-unavailable";

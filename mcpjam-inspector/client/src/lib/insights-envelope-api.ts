@@ -3,10 +3,16 @@
  *
  * ONE shape across Eval runs, Swarm waves, and User Testing windows, so the
  * three surfaces render through one component instead of three that drift.
- * Types are hand-mirrored from `convex/lib/insightsEnvelope.ts` and
- * `convex/lib/actionableFindingsValidators.ts` (two-repo norm); query names
- * live here for the same reason they do in `swarm-api.ts` — a backend rename
- * is chased through one file, not every component.
+ *
+ * The shapes are now ALIASES of `@mcpjam/sdk/platform`'s published types, not
+ * a third hand-maintained copy. The backend/SDK boundary is unavoidable (a
+ * Convex function cannot import the SDK), but the client's copy was avoidable
+ * and is gone: a field added to the SDK reaches every component here without
+ * anyone remembering to re-type it. The names below are unchanged, so no call
+ * site moved.
+ *
+ * Query names live here for the same reason they do in `swarm-api.ts` — a
+ * backend rename is chased through one file, not every component.
  *
  * The distinction the whole surface exists to preserve: a finding is only a
  * SERVER REPAIR TASK when the backend's promotion gate said so
@@ -16,151 +22,51 @@
  * "fix your MCP server".
  */
 
+export type {
+  PlatformSwarmJourneyFinding as SwarmJourneyFinding,
+  PlatformSwarmJourneyFindings as SwarmJourneyFindings,
+} from "@mcpjam/sdk/platform";
+import type {
+  PlatformActionableFinding,
+  PlatformActionableFindingEvidence,
+  PlatformInsightActionTarget,
+  PlatformInsightActionability,
+  PlatformInsightAttribution,
+  PlatformInsightsEnvelope,
+  PlatformInsightsFindingProvenance,
+  PlatformInsightsObservationCoverage,
+  PlatformInsightsObservationState,
+  PlatformInsightsStatus,
+  PlatformUnifiedFindings,
+} from "@mcpjam/sdk/platform";
+
+export type InsightsEnvelopeStatus = PlatformInsightsStatus;
+export type InsightAttribution = PlatformInsightAttribution;
+export type InsightActionTarget = PlatformInsightActionTarget;
+export type InsightActionability = PlatformInsightActionability;
+export type InsightFindingCategory = PlatformActionableFinding["category"];
+export type InsightTargetSurface = NonNullable<
+  PlatformActionableFinding["target"]
+>["surface"];
+export type ActionableFindingEvidence = PlatformActionableFindingEvidence;
+export type ActionableFinding = PlatformActionableFinding;
+export type InsightsEnvelope = PlatformInsightsEnvelope;
+
+// ── findings (additive; absent on a backend that predates them) ─────────────
+
+export type InsightsObservationState = PlatformInsightsObservationState;
+export type InsightsObservationCoverage = PlatformInsightsObservationCoverage;
+export type InsightsFindingProvenance = PlatformInsightsFindingProvenance;
+export type UnifiedFindings = PlatformUnifiedFindings;
+
 export const INSIGHTS_ENVELOPE_QUERIES = {
   /** Eval run → serverQuality projected into the common envelope. */
   evalRun: "serverQuality:getEvalRunInsightsEnvelope",
   /** Journey run → resolved through its wave; carries `runHealth`. */
   journeyRun: "swarmWaveInsights:getJourneyRunInsightsEnvelope",
   /** Scenario → its latest frozen window. Workspace MEMBERS only. */
-  scenario: "chatboxWindowInsights:getScenarioInsightsEnvelope",
+  scenario: "scenarioWindowInsights:getScenarioInsightsEnvelope",
 } as const;
-
-export type InsightsEnvelopeStatus =
-  | "not_available"
-  | "not_requested"
-  | "pending"
-  | "completed"
-  | "failed";
-
-export type InsightAttribution =
-  | "unknown"
-  | "server_contract"
-  | "server_runtime"
-  | "server_capability"
-  | "agent_or_prompt"
-  | "test_design"
-  | "environment";
-
-export type InsightActionTarget =
-  | "investigate"
-  | "mcp_server"
-  | "agent_configuration"
-  | "eval_case"
-  | "environment";
-
-export type InsightActionability = "informational" | "investigate" | "ready";
-
-export type InsightFindingCategory =
-  | "unknown"
-  | "tool_contract"
-  | "tool_runtime"
-  | "capability_gap"
-  | "workflow"
-  | "agent_behavior"
-  | "test_design"
-  | "environment";
-
-export type InsightTargetSurface =
-  | "description"
-  | "input_schema"
-  | "output_schema"
-  | "handler"
-  | "server_instructions"
-  | "capability";
-
-export interface ActionableFindingEvidence {
-  sessionId?: string;
-  iterationId?: string;
-  kind: "tool_error" | "transcript" | "feedback" | "judge" | "contrast";
-  /** Already scrubbed and clipped by the producer. Still UNTRUSTED text —
-   * it came from the server under test. Fence it before it reaches a model. */
-  excerpt: string;
-  toolName?: string;
-  errorCode?: string;
-}
-
-export interface ActionableFinding {
-  id: string;
-  signalFingerprint: string;
-  title: string;
-  category: InsightFindingCategory;
-  attribution: InsightAttribution;
-  actionTarget: InsightActionTarget;
-  actionability: InsightActionability;
-  severity: "info" | "low" | "medium" | "high";
-  confidence: "low" | "medium" | "high";
-  /** Deterministic — counts and identities, never model prose. Renders even
-   * when everything model-authored is withheld. */
-  observed: string;
-  rootCause?: string;
-  recommendation: string;
-  acceptanceCriteria: string[];
-  affected: { count: number; total: number; unit: "iterations" | "sessions" };
-  patternSlug?: string;
-  target?: {
-    serverId: string;
-    toolName?: string;
-    surface: InsightTargetSurface;
-    fieldPath?: string;
-    snapshotHash: string;
-    currentDefinition?: {
-      description?: string;
-      inputSchemaJson?: string;
-      outputSchemaJson?: string;
-      truncated: boolean;
-    };
-  };
-  evidence: ActionableFindingEvidence[];
-}
-
-export interface InsightsEnvelope {
-  schemaVersion: 1;
-  scope:
-    | { kind: "eval_run"; id: string }
-    | { kind: "swarm_wave"; id: string; runId: string }
-    | {
-        kind: "user_testing_window";
-        id: string;
-        scenarioId: string;
-        windowStartAt: number;
-        windowEndAt: number;
-      };
-  status: InsightsEnvelopeStatus;
-  reasonCode: string | null;
-  retryable: boolean;
-  error: { code: string; message: string } | null;
-  generatedAt: number | null;
-  updatedAt: number | null;
-  summary: string | null;
-  coverage: {
-    unit: "iterations" | "sessions";
-    analyzed: number;
-    total: number;
-    gradedCount?: number;
-    feedbackCount?: number;
-    truncated: boolean;
-    lowConfidence: boolean;
-  };
-  findings: ActionableFinding[];
-  /** Swarm only. Launch outcomes — never findings. */
-  runHealth?: {
-    targets: Array<{
-      subjectKind: "environment" | "host";
-      subjectId: string;
-      subjectLabel: string;
-      attempted: number;
-      succeeded: number;
-      failed: number;
-      rateLimited: number;
-    }>;
-  };
-  truncation: {
-    truncated: boolean;
-    omittedFindings: number;
-    omittedEvidence: number;
-    contractTruncated: boolean;
-  };
-}
 
 /** The one predicate that authorizes a server-fix affordance. Exported so
  * every call site asks the same question — a component that checks only
@@ -204,4 +110,37 @@ export function sortFindingsForDisplay(
     (a, b) =>
       (GROUP_RANK[findingGroup(a)] ?? 9) - (GROUP_RANK[findingGroup(b)] ?? 9),
   );
+}
+
+/**
+ * The ONE selector that decides which findings a surface renders.
+ *
+ * `currentFindings ?? findings`, and nothing cleverer. The `??` is
+ * load-bearing in both directions:
+ *
+ *  - a server that predates the experiment omits `currentFindings`, so the
+ *    legacy generated array is what there is;
+ *  - a server that HAS it and sends `[]` is saying "nothing here needs a
+ *    change", and falling back to stale generated findings would turn a real
+ *    clean answer into yesterday's complaints.
+ *
+ * Every call site asks through this function so that rule is stated once.
+ */
+export function selectCurrentFindings(
+  envelope: Pick<InsightsEnvelope, "findings" | "currentFindings">,
+): ActionableFinding[] {
+  return envelope.currentFindings ?? envelope.findings;
+}
+
+/**
+ * The findings payload, or `null` when the backend does not serve it.
+ *
+ * A client talking to a backend that predates findings must keep working and
+ * must SAY the pairing is incomplete — never retry a missing function.
+ */
+export function unifiedFindingsOf(
+  envelope: InsightsEnvelope | null | undefined,
+): UnifiedFindings | null {
+  const payload = envelope?.unifiedFindings;
+  return payload?.capability === "unified_findings_v1" ? payload : null;
 }

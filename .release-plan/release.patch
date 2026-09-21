@@ -1,137 +1,146 @@
-diff --git a/.changeset/inspector-release-2026-08-13.md b/.changeset/inspector-release-2026-08-13.md
+diff --git a/.changeset/eval-suite-iteration-model.md b/.changeset/eval-suite-iteration-model.md
 deleted file mode 100644
-index 51726514b..000000000
---- a/.changeset/inspector-release-2026-08-13.md
+index f5ff1a894..000000000
+--- a/.changeset/eval-suite-iteration-model.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-Report the model on every iteration an `EvalSuite` or `EvalTest` run uploads. A run started with `runWithClient` showed an empty MODEL column, because only the `promptsToEvalResult` path stamped the provider and model that the run had already recorded. When a case fails in setup and never reaches the model, the run now names the model it was configured with — the saved client's, for a `runWithClient` run.
+-
+-Report per-step verdicts too (`metadata.stepResults`), the same rows the hosted runner writes. An SDK case whose tool call matched still read "0 of 1 assertion passed" on the Steps tab, with a grey unknown icon, because no step ever carried a verdict.
+diff --git a/.changeset/release-inspector-cli-sdk.md b/.changeset/release-inspector-cli-sdk.md
+deleted file mode 100644
+index 8a8502011..000000000
+--- a/.changeset/release-inspector-cli-sdk.md
 +++ /dev/null
 @@ -1,8 +0,0 @@
 ----
--"@mcpjam/inspector": minor
+-"@mcpjam/inspector": patch
+-"@mcpjam/cli": patch
+-"@mcpjam/sdk": patch
 ----
 -
--Release the latest Inspector updates.
--
--- Group scorecards and recommendations under Findings, and keep Insights visible when queries fail.
--- Default guest multi-host Playground sessions to ChatGPT, Claude, and Cursor.
-diff --git a/.changeset/project-crud-mcp-and-organizations-read.md b/.changeset/project-crud-mcp-and-organizations-read.md
-deleted file mode 100644
-index 5a773314e..000000000
---- a/.changeset/project-crud-mcp-and-organizations-read.md
-+++ /dev/null
-@@ -1,19 +0,0 @@
-----
--"@mcpjam/inspector": minor
--"@mcpjam/sdk": minor
--"@mcpjam/cli": minor
-----
--
--Organizations are discoverable, and projects can be created and renamed from MCP.
--
--`GET /v1/organizations` closes a hole rather than adding a capability. `GET /v1/projects` has always taken an `organizationId` filter and `POST /v1/projects` has always accepted one in its body, but no machine surface could produce such an id: `/v1/me` returns none, there was no SDK method, no route, and no CLI command, and the only reader of the backing query was the browser app shell. The endpoint is read-only and reaches REST, the SDK (`listOrganizations`), the CLI (`mcpjam organizations list`) and the MCP catalog (`list_organizations`). `mcpjam projects list` gains the `--organization-id` flag the operation already supported, so the round trip — list organizations, then filter projects by one — is finally typeable.
--
--The response is a hand-written DTO (`id`, `name`, `plan`, `myRole`, `isCreator`, `logoUrl`, `createdAt`), not the query's payload. That payload is shaped for the org switcher and carries Stripe ids, seat counts, trial and dunning clocks; listing the public fields explicitly means a column added to the organizations table cannot become part of an API response by default.
--
--The security-relevant piece is the org-scope clamp. Unlike every other v1 read, the backing query takes no organization argument — it answers for the acting human — so a delegated `sk_` token, which is org-scoped by construction everywhere else, would otherwise carry every sibling organization of whoever minted the key straight through. The route intersects the result with the token's organization, mirroring how the Convex `/v1/projects` route rejects a filter outside the key's scope. A session-JWT caller is confined to nothing and still sees all of theirs. Guests are default-denied, like `/me`.
--
--`create_project` and `update_project` move into the MCP catalog. The previous exclusion — "project lifecycle writes are intentionally outside the unattended MCP catalog" — was stricter than what the enterprise MCP servers it was modelled on actually ship: of sixteen surveyed, eleven expose container creation, including GitHub (`create_repository`) and Sentry (`create_project` / `update_project`). Both operations are cheap, both are visible in the UI immediately, and neither destroys anything: `update_project`'s schema has no `servers` key at all, so the backend's destructive server-map replace is unreachable from this surface. They announce as plain writes — `readOnlyHint: false`, `destructiveHint: false` — and their descriptions were rewritten to read as tool descriptions, since that is what they now are.
--
--`delete_project` stays off MCP, and its exclusion reason no longer borrows the blanket one its siblings shared: deleting cascades across every project-owned resource and cannot be undone, which is the same line GitHub draws by omitting `delete_repository`. It remains available on REST and the CLI. The workspace chat and Slack/Discord agent surfaces are unchanged — their project-lifecycle exclusions are about a turn already being pinned to one project, which the MCP catalog is not — and organization, member, role, invite and billing writes stay off every machine surface.
--
--The project WRITE routes gain the org clamp they never had. This is a pre-existing gap the MCP flip would otherwise have widened: the backend resolves project access from the acting USER — `createProject` calls `requireOrgRole` against the requested organization, the update and delete mutations resolve access the same way, and `userMutation` never reads the delegated-org claim — so a key bound to organization A, minted by someone who also belongs to B, could create in B or rename and delete B's projects. The gateway now enforces what the key promises: `POST /v1/projects` rejects a mismatched `organizationId` and, more importantly, FILLS IN the key's organization when none is given, since the backend's fallback is the user's default organization and that need not be the key's. `PATCH` and `DELETE` answer 404 — not 403, which would confirm the project exists to a caller who may not see it — for a project outside the key's organization. Session-JWT callers are untouched throughout: they are confined to nothing and keep full access to every organization they belong to. The underlying Convex mutations remain unclamped for anything that reaches them without going through `/api/v1`.
+-Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the
+-work already merged into main reaches npm. Version bump only — no code changes.
 diff --git a/cli/package.json b/cli/package.json
-index b983cbefa..8e803110f 100644
+index 19f14eee0..38ebf293b 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "3.21.0",
-+  "version": "3.22.0",
+-  "version": "5.10.1",
++  "version": "5.10.2",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
-@@ -17,7 +17,7 @@
+@@ -20,7 +20,7 @@
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^4.1.0",
-+    "@mcpjam/sdk": "^4.2.0",
+-    "@mcpjam/sdk": "^8.10.1",
++    "@mcpjam/sdk": "^8.11.1",
      "@modelcontextprotocol/server": "2.0.0",
-     "commander": "^12.1.0",
+     "commander": "^14.0.3",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 8e1094b9e..fa0dbeffa 100644
+index 03558faf5..c7b754fad 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.37.0",
-+  "version": "2.38.0",
+-  "version": "3.8.0",
++  "version": "3.8.1",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -132,7 +132,7 @@
+@@ -147,7 +147,7 @@
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^4.1.0",
-+    "@mcpjam/sdk": "^4.2.0",
+-    "@mcpjam/sdk": "^8.11.0",
++    "@mcpjam/sdk": "^8.11.1",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
-     "@openrouter/ai-sdk-provider": "^2.0.2",
+     "@novnc/novnc": "^1.7.0",
 diff --git a/package-lock.json b/package-lock.json
-index 21b530fb7..155edc2bb 100644
+index 00ae09596..8bf110326 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -60,9 +60,9 @@
+@@ -64,9 +64,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "3.21.0",
-+      "version": "3.22.0",
+-      "version": "5.10.1",
++      "version": "5.10.2",
        "dependencies": {
--        "@mcpjam/sdk": "^4.1.0",
-+        "@mcpjam/sdk": "^4.2.0",
+-        "@mcpjam/sdk": "^8.10.1",
++        "@mcpjam/sdk": "^8.11.1",
          "@modelcontextprotocol/server": "2.0.0",
-         "commander": "^12.1.0",
+         "commander": "^14.0.3",
          "posthog-node": "^5.24.10",
-@@ -389,7 +389,7 @@
+@@ -426,7 +426,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.37.0",
-+      "version": "2.38.0",
+-      "version": "3.8.0",
++      "version": "3.8.1",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
-@@ -422,7 +422,7 @@
+@@ -461,7 +461,7 @@
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^4.1.0",
-+        "@mcpjam/sdk": "^4.2.0",
+-        "@mcpjam/sdk": "^8.11.0",
++        "@mcpjam/sdk": "^8.11.1",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
-         "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -37839,7 +37839,7 @@
+         "@novnc/novnc": "^1.7.0",
+@@ -39230,7 +39230,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "4.1.0",
-+      "version": "4.2.0",
+-      "version": "8.11.0",
++      "version": "8.11.1",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
+diff --git a/sdk/CHANGELOG.md b/sdk/CHANGELOG.md
+index 5a57500a2..5c655f327 100644
+--- a/sdk/CHANGELOG.md
++++ b/sdk/CHANGELOG.md
+@@ -1,5 +1,16 @@
+ # `@mcpjam/sdk` changelog
+ 
++## 8.11.1
++
++### Patch Changes
++
++- [#5300](https://github.com/MCPJam/inspector/pull/5300) [`42c058f`](https://github.com/MCPJam/inspector/commit/42c058f0cd41078ee28533f0589bd0af3c7cbf7e) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Report the model on every iteration an `EvalSuite` or `EvalTest` run uploads. A run started with `runWithClient` showed an empty MODEL column, because only the `promptsToEvalResult` path stamped the provider and model that the run had already recorded. When a case fails in setup and never reaches the model, the run now names the model it was configured with — the saved client's, for a `runWithClient` run.
++
++  Report per-step verdicts too (`metadata.stepResults`), the same rows the hosted runner writes. An SDK case whose tool call matched still read "0 of 1 assertion passed" on the Steps tab, with a grey unknown icon, because no step ever carried a verdict.
++
++- [#5330](https://github.com/MCPJam/inspector/pull/5330) [`1ad2342`](https://github.com/MCPJam/inspector/commit/1ad2342d2c7bd7ec9ff4051ad1536dba1a37466f) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the
++  work already merged into main reaches npm. Version bump only — no code changes.
++
+ ## 8.11.0
+ 
+ ### Minor Changes
 diff --git a/sdk/package.json b/sdk/package.json
-index 6d9bfa65f..d71d0e50b 100644
+index f99083fc9..5e2bc9398 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "4.1.0",
-+  "version": "4.2.0",
+-  "version": "8.11.0",
++  "version": "8.11.1",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",

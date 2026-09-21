@@ -16,6 +16,9 @@ vi.mock("convex/react", () => ({
     return undefined;
   },
   useMutation: () => setSuiteConfig,
+  // No Convex identity: nothing to wait on, so `useActorCanQuery` lets the
+  // suite-config read through exactly as it did before it was gated.
+  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
 }));
 
 vi.mock("sonner", () => ({
@@ -41,7 +44,7 @@ function projectDefaultWithComputer() {
     serverIds: [],
     optionalServerIds: [],
     builtInToolIds: ["web_search", "bash"],
-    // A project default may legitimately attach a computer (for chatbox
+    // A project default may legitimately attach a computer (for scenario
     // hosts). Resetting an eval suite to it must NOT carry the computer over.
     computer: { kind: "personal", workdir: "/srv" },
     connectionDefaults: { headers: {}, requestTimeout: 10000 },

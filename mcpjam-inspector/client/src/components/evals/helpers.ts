@@ -2,9 +2,12 @@ import {
   CommitGroup,
   EvalCase,
   EvalIteration,
+  EvalIterationCostBasis,
   EvalSuite,
   EvalSuiteOverviewEntry,
   EvalSuiteRun,
+  EvalSuiteConfigTest,
+  RunClientDescriptor,
   SuiteAggregate,
   TagGroupAggregate,
 } from "./types";
@@ -12,6 +15,12 @@ import { computeIterationResult } from "./pass-criteria";
 import { toast } from "sonner";
 import { RESULT_STATUS } from "./constants";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { clientDisplayName } from "@/lib/client-display-name";
+import { findHostStyle, type HostThemeMode } from "@/lib/client-styles";
+import {
+  getScenarioHostLabel,
+  getScenarioHostLogo,
+} from "@/lib/scenario-client-style";
 
 /**
  * What servers can this suite see at run-time? Mirrors the precedence
@@ -41,17 +50,17 @@ export function getEffectiveSuiteServers(
     environment?: { servers?: string[] } | undefined;
     hostAttachments?: EvalSuite["hostAttachments"];
     serverAttachment?: EvalSuite["serverAttachment"];
-  }
+  },
 ): string[] {
   if (suite.serverAttachment) {
     return Array.from(
-      new Set(suite.serverAttachment.resolvedServerNames ?? [])
+      new Set(suite.serverAttachment.resolvedServerNames ?? []),
     );
   }
   const flatServers = suite.environment?.servers ?? [];
   const hostAttachmentServers =
     suite.hostAttachments?.flatMap(
-      (attachment) => attachment.resolvedServerNames ?? []
+      (attachment) => attachment.resolvedServerNames ?? [],
     ) ?? [];
   if (hostAttachmentServers.length === 0) {
     return flatServers;
@@ -66,6 +75,7 @@ export type SuiteHostRunPlan = {
 };
 
 function suiteDefaultRunPlan(serverIds: string[]): SuiteHostRunPlan {
+  // Defensive mixed-version fallback; the backend now attaches a default client.
   return {
     namedHostId: undefined,
     hostName: null,
@@ -76,7 +86,7 @@ function suiteDefaultRunPlan(serverIds: string[]): SuiteHostRunPlan {
 function hostAttachmentRunPlan(
   attachment: NonNullable<EvalSuite["hostAttachments"]>[number],
   fallbackServerIds: string[],
-  useAttachmentServerIds = true
+  useAttachmentServerIds = true,
 ): SuiteHostRunPlan {
   return {
     namedHostId: attachment.namedHostId,
@@ -94,7 +104,7 @@ export function buildSuiteHostRunPlans(
     hostAttachments?: EvalSuite["hostAttachments"];
     serverAttachment?: EvalSuite["serverAttachment"];
   },
-  fallbackServerIds = getEffectiveSuiteServers(suite)
+  fallbackServerIds = getEffectiveSuiteServers(suite),
 ): SuiteHostRunPlan[] {
   const suiteServerIds = fallbackServerIds;
   const attachments = suite.hostAttachments ?? [];
@@ -103,7 +113,7 @@ export function buildSuiteHostRunPlans(
     return [suiteDefaultRunPlan(suiteServerIds)];
   }
   return attachments.map((attachment) =>
-    hostAttachmentRunPlan(attachment, suiteServerIds, useAttachmentServerIds)
+    hostAttachmentRunPlan(attachment, suiteServerIds, useAttachmentServerIds),
   );
 }
 
@@ -133,7 +143,7 @@ export function buildSuiteRunPlans(
     environmentIds?: string[];
   },
   environments?: Array<{ environmentId: string; name: string }>,
-  fallbackServerIds?: string[]
+  fallbackServerIds?: string[],
 ): SuiteRunPlan[] {
   const envIds = suite.environmentIds ?? [];
   if (envIds.length > 0) {
@@ -168,7 +178,7 @@ export function countSuiteRunPlans(
     environmentIds?: string[];
   },
   environments?: Array<{ environmentId: string; name: string }>,
-  fallbackServerIds?: string[]
+  fallbackServerIds?: string[],
 ): number {
   return buildSuiteRunPlans(suite, environments, fallbackServerIds).length;
 }
@@ -179,12 +189,12 @@ export function getSelectedSuiteHostRunPlan(
     hostAttachments?: EvalSuite["hostAttachments"];
     serverAttachment?: EvalSuite["serverAttachment"];
   },
-  namedHostId: string | undefined
+  namedHostId: string | undefined,
 ): SuiteHostRunPlan {
   const suiteServerIds = getEffectiveSuiteServers(suite);
   const attachment = namedHostId
     ? suite.hostAttachments?.find(
-        (candidate) => candidate.namedHostId === namedHostId
+        (candidate) => candidate.namedHostId === namedHostId,
       )
     : null;
   if (!attachment) {
@@ -193,7 +203,7 @@ export function getSelectedSuiteHostRunPlan(
   return hostAttachmentRunPlan(
     attachment,
     suiteServerIds,
-    !suite.serverAttachment
+    !suite.serverAttachment,
   );
 }
 
@@ -202,7 +212,7 @@ export function formatTime(ts?: number) {
 }
 
 export function getIterationRecencyTimestamp(
-  iteration: Pick<EvalIteration, "updatedAt" | "startedAt" | "createdAt">
+  iteration: Pick<EvalIteration, "updatedAt" | "startedAt" | "createdAt">,
 ) {
   return iteration.updatedAt ?? iteration.startedAt ?? iteration.createdAt ?? 0;
 }
@@ -238,7 +248,7 @@ export function formatRunId(runId: string): string {
 /**
  * The launch provenance the context helpers below read. Structurally narrower
  * than `EvalSuiteRun` on purpose: case-history and rail code carries partial
- * run rows, and every call site only ever needs these two fields.
+ * run rows, and callers only need the descriptor and launch context.
  *
  * NOTE `configSnapshot.environment` (the flat `{ servers }` bag) is a THIRD,
  * unrelated meaning of the word "environment" — a raw server-name list. It is
@@ -247,6 +257,7 @@ export function formatRunId(runId: string): string {
  */
 export type RunContextSource = {
   namedHostId?: string;
+  client?: RunClientDescriptor | null;
   configSnapshot?: {
     environmentRef?: {
       environmentId: string;
@@ -258,7 +269,7 @@ export type RunContextSource = {
 
 /** The Project Environment this run resolved at start, or `null` (legacy run). */
 export function runEnvironmentRef(
-  run: RunContextSource
+  run: RunContextSource,
 ): NonNullable<
   NonNullable<RunContextSource["configSnapshot"]>["environmentRef"]
 > | null {
@@ -266,46 +277,112 @@ export function runEnvironmentRef(
 }
 
 /**
- * Canonical identity for "which context produced this run" — the unit every
- * user-visible run grouping/labelling keys on.
- *
- * Keyed by the environment ID, **never** the revision. An environment is
- * live-editable, so every edit bumps `revision`; keying on it would shatter a
- * suite's history into singletons on each edit. Two environments that resolve
- * to the SAME host stay distinct because the ids differ. Legacy/host-backed
- * runs key on `namedHostId` exactly as before.
- *
- * This is NOT the host dimension: cross-host comparison code that deliberately
- * compares resolved hosts must keep using `namedHostId`.
+ * Execution-client identity, independent of the environment that selected it.
+ * A historical style or SDK harness is a valid comparison key without a host ID.
  */
+export type RunClientIdentity = {
+  name: string;
+  hostStyle?: string;
+  key: string;
+  source: RunClientDescriptor["source"] | "unknown";
+  namedHostId?: string;
+};
+
+export function runClientIdentity(
+  run: RunContextSource,
+  hostNamesById?: ReadonlyMap<string, string | null>,
+): RunClientIdentity {
+  const client = run.client;
+  const namedHostId = client?.namedHostId ?? run.namedHostId;
+  if (client) {
+    const hostStyle = client.hostStyle?.trim();
+    // Use the persisted style, not the inspector's default: the backend's
+    // historical fallback is Claude while the inspector defaults to MCPJam.
+    const name =
+      (client.versionId
+        ? client.name.trim()
+        : namedHostId && hostNamesById?.get(namedHostId)?.trim()) ||
+      (client.source === "suite_default" && findHostStyle(hostStyle)
+        ? getScenarioHostLabel(hostStyle!)
+        : client.name.trim()) ||
+      "Client";
+    return {
+      name,
+      hostStyle,
+      namedHostId,
+      source: client.source,
+      key: namedHostId
+        ? `host:${namedHostId}`
+        : client.source === "sdk"
+          ? "sdk"
+          : `style:${hostStyle || "unknown"}`,
+    };
+  }
+  if (namedHostId)
+    return {
+      name: hostNamesById?.get(namedHostId)?.trim() || formatRunId(namedHostId),
+      namedHostId,
+      key: `host:${namedHostId}`,
+      source: "unknown",
+    };
+  return { name: "Suite default", key: "style:unknown", source: "unknown" };
+}
+
+export function runClientLogo(
+  run: RunContextSource,
+  theme?: HostThemeMode,
+): string | undefined {
+  const style = runClientIdentity(run).hostStyle;
+  return style && findHostStyle(style)
+    ? getScenarioHostLogo(style, undefined, theme)
+    : undefined;
+}
+
+export function snapshotTestModels(
+  test: Pick<EvalSuiteConfigTest, "models" | "model" | "provider">,
+): Array<{ model: string; provider: string }> {
+  if (Array.isArray(test.models))
+    return test.models.filter((entry) => Boolean(entry.model));
+  return test.model
+    ? [{ model: test.model, provider: test.provider ?? "" }]
+    : [];
+}
+
+/** Context groups retain environment identity, never its mutable revision. */
 export function runContextKey(run: RunContextSource): string {
   const ref = runEnvironmentRef(run);
-  return ref
-    ? `environment:${ref.environmentId}`
-    : `host:${run.namedHostId ?? "none"}`;
+  return ref ? `environment:${ref.environmentId}` : runClientIdentity(run).key;
 }
 
 /**
  * The run's resolved HOST name only — never its environment name. Falls back to
- * a truncated host id, and returns `null` when the run names no host.
+ * a truncated host id or the descriptor's durable name for historical runs.
  *
  * This is the branch the `project-environments-enabled` kill-switch falls back
- * to. An environment-backed run carries no `namedHostId`, so with the flag off
- * it yields `null` here and the caller shows a neutral placeholder rather than
- * leaking the environment name through a host-shaped chip.
+ * to. An old environment-backed run without a resolved host or descriptor
+ * yields `null` so its environment name cannot leak through a host chip.
  */
 export function runHostLabel(
   run: RunContextSource,
-  hostNamesById?: Map<string, string | null>
+  hostNamesById?: Map<string, string | null>,
 ): string | null {
-  if (!run.namedHostId) return null;
-  return hostNamesById?.get(run.namedHostId) ?? formatRunId(run.namedHostId);
+  // A run that names no client at all stays null rather than borrowing
+  // `runClientIdentity`'s "Suite default" placeholder. That string is a label
+  // for a client the run DOES have and could not name; handing it back here
+  // would invent a host for rows that never recorded one, and callers read a
+  // non-null label as "this run ran somewhere nameable" — one of them turns it
+  // into a client filter option.
+  if (!run.client && !run.namedHostId) return null;
+  return runClientIdentity(run, hostNamesById).name;
 }
 
 /**
  * Display name for a run's context: the environment name for environment-backed
  * runs, the resolved host name (falling back to a truncated id) for legacy runs.
- * `null` when the run names neither — the caller decides what to show instead.
+ * A run that names neither gets the neutral "Suite default" placeholder rather
+ * than `null` — a context chip always says something. Callers that want to show
+ * their own text instead (a count, say) must read {@link runHostLabel}, which
+ * DOES return `null` there.
  *
  * This CAN return environment identity, so every call site must sit behind
  * `project-environments-enabled`; the flag-off branch uses
@@ -313,11 +390,17 @@ export function runHostLabel(
  */
 export function runContextLabel(
   run: RunContextSource,
-  hostNamesById?: Map<string, string | null>
+  hostNamesById?: Map<string, string | null>,
 ): string | null {
   const ref = runEnvironmentRef(run);
   if (ref) return ref.name;
-  return runHostLabel(run, hostNamesById);
+  // A context chip always says something, so a run that names no client falls
+  // back to the neutral placeholder. `runHostLabel` deliberately does not —
+  // see the note there.
+  return (
+    runHostLabel(run, hostNamesById) ??
+    runClientIdentity(run, hostNamesById).name
+  );
 }
 
 /**
@@ -338,18 +421,28 @@ export function runRevisionLabel(run: RunContextSource): string | null {
  */
 export function buildHostNamesById(
   attachments:
-    | Array<{ namedHostId: string; hostName: string | null }>
-    | undefined,
-  projectHosts: Array<{ hostId: string; name: string }> | undefined
+    Array<{ namedHostId: string; hostName: string | null }> | undefined,
+  projectHosts:
+    Array<{ hostId: string; name: string; displayName?: string }> | undefined,
 ): Map<string, string | null> {
   const map = new Map<string, string | null>();
+  const projectHostById = new Map(
+    (projectHosts ?? []).map((host) => [host.hostId, host]),
+  );
   for (const host of projectHosts ?? []) {
-    map.set(host.hostId, host.name);
+    map.set(host.hostId, clientDisplayName(host));
   }
   for (const attachment of attachments ?? []) {
+    const projectHost = projectHostById.get(attachment.namedHostId);
+    const attachmentMatchesRawName =
+      projectHost !== undefined &&
+      attachment.hostName?.trim().toLowerCase() ===
+        projectHost.name.trim().toLowerCase();
     map.set(
       attachment.namedHostId,
-      attachment.hostName ?? map.get(attachment.namedHostId) ?? null
+      projectHost && (attachment.hostName === null || attachmentMatchesRawName)
+        ? clientDisplayName(projectHost)
+        : (attachment.hostName ?? map.get(attachment.namedHostId) ?? null),
     );
   }
   return map;
@@ -379,7 +472,7 @@ export function hasEnvironmentRun(runs: RunContextSource[]): boolean {
  * `"rev 2–7"` when they span. `null` when the group has no environment runs.
  */
 export function runContextRevisionSummary(
-  runs: RunContextSource[]
+  runs: RunContextSource[],
 ): string | null {
   const revisions = runs
     .map((run) => runEnvironmentRef(run)?.revision)
@@ -467,7 +560,7 @@ export function getTemplateKey(test: {
 export function aggregateSuite(
   _suite: EvalSuite,
   cases: EvalCase[],
-  iterations: EvalIteration[]
+  iterations: EvalIteration[],
 ): SuiteAggregate {
   // Backend already filters iterations by suite, so we use them directly
   const totals = iterations.reduce(
@@ -485,7 +578,7 @@ export function aggregateSuite(
       acc.tokens += it.tokensUsed || 0;
       return acc;
     },
-    { passed: 0, failed: 0, cancelled: 0, pending: 0, tokens: 0 }
+    { passed: 0, failed: 0, cancelled: 0, pending: 0, tokens: 0 },
   );
 
   const byCaseMap = new Map<string, SuiteAggregate["byCase"][number]>();
@@ -495,12 +588,12 @@ export function aggregateSuite(
     if (!byCaseMap.has(id)) {
       const c = cases.find((x) => x._id === id);
       const caseIterations = iterations.filter(
-        (iter) => iter.testCaseId === id
+        (iter) => iter.testCaseId === id,
       );
       const snapshots = caseIterations
         .map((iter) => iter.testCaseSnapshot)
         .filter((snapshot): snapshot is NonNullable<typeof snapshot> =>
-          Boolean(snapshot?.model || snapshot?.provider)
+          Boolean(snapshot?.model || snapshot?.provider),
         );
       // ONE representative iteration for the whole row. Title and model must be
       // read from the SAME iteration: sourcing the title from the first
@@ -525,9 +618,9 @@ export function aggregateSuite(
           return JSON.stringify(
             snapshot?.model || snapshot?.provider
               ? [snapshot.provider ?? "", snapshot.model ?? ""]
-              : [c?.models?.[0]?.provider ?? "", c?.models?.[0]?.model ?? ""]
+              : [c?.models?.[0]?.provider ?? "", c?.models?.[0]?.model ?? ""],
           );
-        })
+        }),
       );
       const hasMixedModels = modelKeys.size > 1;
       // Count total iterations for this test case
@@ -600,19 +693,19 @@ export function aggregateSuite(
 export function sortExploreCasesBySignal(
   cases: EvalCase[],
   aggregate: SuiteAggregate | null,
-  iterations: EvalIteration[]
+  iterations: EvalIteration[],
 ): EvalCase[] {
   const byCaseId = new Map(
-    aggregate?.byCase.map((row) => [row.testCaseId, row]) ?? []
+    aggregate?.byCase.map((row) => [row.testCaseId, row]) ?? [],
   );
 
   const latestIterationForCase = (
-    testCaseId: string
+    testCaseId: string,
   ): EvalIteration | undefined => {
     const forCase = iterations.filter((i) => i.testCaseId === testCaseId);
     if (forCase.length === 0) return undefined;
     return forCase.reduce((a, b) =>
-      (a.updatedAt ?? 0) >= (b.updatedAt ?? 0) ? a : b
+      (a.updatedAt ?? 0) >= (b.updatedAt ?? 0) ? a : b,
     );
   };
 
@@ -680,10 +773,14 @@ export function evalStatusLeftBorderClasses(result: string): string {
       return "border-l-destructive/50";
     case RESULT_STATUS.PENDING:
     case "running":
+    case "grading":
       return "border-l-warning/50";
     case RESULT_STATUS.CANCELLED:
       return "border-l-muted";
     case "mixed":
+    // Amber, alongside the other "no verdict" states: an unmeasurable run is
+    // not a failing one.
+    case "inconclusive":
       return "border-l-warning/50";
     default:
       return "border-l-muted-foreground/50";
@@ -702,6 +799,7 @@ export function evalStatusMiniBarClasses(result: string): string {
       return "bg-destructive/50";
     case RESULT_STATUS.PENDING:
     case "running":
+    case "grading":
       return "bg-warning/50 animate-pulse";
     case RESULT_STATUS.CANCELLED:
       return "bg-muted-foreground/50";
@@ -714,7 +812,7 @@ export function evalStatusMiniBarClasses(result: string): string {
 
 /** Left `border-l-*` for a suite overview row from `latestRun`. */
 export function evalOverviewEntryLeftBorderClass(
-  entry: EvalSuiteOverviewEntry
+  entry: EvalSuiteOverviewEntry,
 ): string {
   const r = entry.latestRun;
   if (!r) return "border-l-transparent";
@@ -727,11 +825,14 @@ export function evalOverviewEntryLeftBorderClass(
   if (r.result === "failed") {
     return evalStatusLeftBorderClasses(RESULT_STATUS.FAILED);
   }
+  if (r.result === "inconclusive") {
+    return evalStatusLeftBorderClasses("inconclusive");
+  }
   return "border-l-muted-foreground/35";
 }
 
 export function evalOverviewEntryMiniBarClass(
-  entry: EvalSuiteOverviewEntry
+  entry: EvalSuiteOverviewEntry,
 ): string {
   const r = entry.latestRun;
   if (!r) return "bg-muted-foreground/25";
@@ -742,6 +843,7 @@ export function evalOverviewEntryMiniBarClass(
     return "bg-success/50";
   }
   if (r.result === "failed") return "bg-destructive/50";
+  if (r.result === "inconclusive") return "bg-warning/50";
   return "bg-muted-foreground/50";
 }
 
@@ -751,7 +853,7 @@ export function evalOverviewEntryMiniBarClass(
  */
 /** Selected nested row: inset ring + tint so left status border stays the outcome rail. */
 export function evalOverviewEntrySelectedRowClass(
-  entry: EvalSuiteOverviewEntry
+  entry: EvalSuiteOverviewEntry,
 ): string {
   const r = entry.latestRun;
   if (!r) {
@@ -770,7 +872,7 @@ export function evalOverviewEntrySelectedRowClass(
 }
 
 export function evalOverviewEntryOutcomeTitle(
-  entry: EvalSuiteOverviewEntry
+  entry: EvalSuiteOverviewEntry,
 ): string {
   const r = entry.latestRun;
   if (!r) return "No runs yet";
@@ -779,17 +881,20 @@ export function evalOverviewEntryOutcomeTitle(
   }
   if (r.result === "passed") return "Last run passed";
   if (r.result === "failed") return "Last run failed";
+  // Deliberately not "failed": the last run did not measure enough to decide.
+  if (r.result === "inconclusive") return "Last run inconclusive";
   return `Last run: ${r.status}`;
 }
 
 /** Short status label for compact list rows (sidebar). */
 export function evalOverviewEntryLastRunStatusLabel(
-  entry: EvalSuiteOverviewEntry
+  entry: EvalSuiteOverviewEntry,
 ): string {
   const r = entry.latestRun;
   if (!r) return "No runs yet";
   if (r.status === "running" || r.status === "pending") return "Running";
   if (r.result === "passed") return "Passed";
+  if (r.result === "inconclusive") return "Inconclusive";
   if (r.result === "failed" || r.status === "failed") return "Failed";
   if (r.result === "cancelled" || r.status === "cancelled") {
     return "Cancelled";
@@ -800,7 +905,7 @@ export function evalOverviewEntryLastRunStatusLabel(
 
 /** Tailwind classes for {@link evalOverviewEntryLastRunStatusLabel}. */
 export function evalOverviewEntryLastRunStatusClass(
-  entry: EvalSuiteOverviewEntry
+  entry: EvalSuiteOverviewEntry,
 ): string {
   const r = entry.latestRun;
   if (!r) return "text-muted-foreground";
@@ -808,6 +913,7 @@ export function evalOverviewEntryLastRunStatusClass(
     return "text-warning";
   }
   if (r.result === "passed") return "text-success";
+  if (r.result === "inconclusive") return "text-warning";
   if (r.result === "failed" || r.status === "failed") {
     return "text-destructive";
   }
@@ -840,7 +946,7 @@ export type SuitePassRateTrendDisplay = {
  * Prepare pass-rate trend for sidebar sparklines: last N segments, optional overflow badge, summary text.
  */
 export function formatSuitePassRateTrendForDisplay(
-  rawTrend: number[] | undefined | null
+  rawTrend: number[] | undefined | null,
 ): SuitePassRateTrendDisplay | null {
   if (!rawTrend?.length) return null;
   const len = rawTrend.length;
@@ -848,7 +954,7 @@ export function formatSuitePassRateTrendForDisplay(
   const percents = slice.map(toPercentEvalTrend);
   const olderHiddenCount = Math.max(
     0,
-    len - SUITE_PASS_RATE_TREND_VISIBLE_SEGMENTS
+    len - SUITE_PASS_RATE_TREND_VISIBLE_SEGMENTS,
   );
   const showOlderRunsBadge = len > SUITE_PASS_RATE_TREND_BADGE_THRESHOLD;
   let good = 0;
@@ -924,13 +1030,16 @@ export const formatters = {
 
 /**
  * Order runs for commit drilldown: failed first, then running/pending, then
- * passed, then other (same ordering as the former in-panel suite list).
+ * inconclusive, then passed, then other (same ordering as the former in-panel
+ * suite list, with the undecided runs ahead of the green ones because they are
+ * the ones still asking for attention).
  */
 export function orderCommitGroupRunsByOutcome(
-  runs: EvalSuiteRun[]
+  runs: EvalSuiteRun[],
 ): EvalSuiteRun[] {
   const failed: EvalSuiteRun[] = [];
   const running: EvalSuiteRun[] = [];
+  const inconclusive: EvalSuiteRun[] = [];
   const passed: EvalSuiteRun[] = [];
   const notRun: EvalSuiteRun[] = [];
 
@@ -939,13 +1048,15 @@ export function orderCommitGroupRunsByOutcome(
       running.push(run);
     } else if (run.result === "failed") {
       failed.push(run);
+    } else if (run.result === "inconclusive") {
+      inconclusive.push(run);
     } else if (run.result === "passed") {
       passed.push(run);
     } else {
       notRun.push(run);
     }
   }
-  return [...failed, ...running, ...passed, ...notRun];
+  return [...failed, ...running, ...inconclusive, ...passed, ...notRun];
 }
 
 /**
@@ -956,7 +1067,7 @@ export function orderCommitGroupRunsByOutcome(
  */
 export function getRunMetricSource(
   run: { source?: EvalSuiteRun["source"] } | null | undefined,
-  suiteSource?: "ui" | "sdk"
+  suiteSource?: "ui" | "sdk",
 ): "ui" | "sdk" {
   return (run?.source ?? suiteSource) === "sdk" ? "sdk" : "ui";
 }
@@ -967,7 +1078,7 @@ export function getRunMetricSource(
  */
 export function getLatestRunMetricSource(
   runs: EvalSuiteRun[],
-  suiteSource?: "ui" | "sdk"
+  suiteSource?: "ui" | "sdk",
 ): "ui" | "sdk" {
   let latest: EvalSuiteRun | null = null;
   let latestTs = -1;
@@ -986,7 +1097,7 @@ export function getLatestRunMetricSource(
  * Runs without a commitSha go into a "manual" group.
  */
 export function groupRunsByCommit(
-  overview: EvalSuiteOverviewEntry[]
+  overview: EvalSuiteOverviewEntry[],
 ): CommitGroup[] {
   const buckets = new Map<
     string,
@@ -1010,7 +1121,13 @@ export function groupRunsByCommit(
   const groups: CommitGroup[] = [];
   for (const [key, { runs, suiteMap }] of buckets) {
     const isManual = key.startsWith("__manual__");
-    const summary = { total: runs.length, passed: 0, failed: 0, running: 0 };
+    const summary = {
+      total: runs.length,
+      passed: 0,
+      failed: 0,
+      running: 0,
+      inconclusive: 0,
+    };
     let latestTimestamp = 0;
     let branch: string | null = null;
 
@@ -1018,16 +1135,29 @@ export function groupRunsByCommit(
       const ts = run.completedAt ?? run.createdAt;
       if (ts > latestTimestamp) latestTimestamp = ts;
       if (!branch && run.ciMetadata?.branch) branch = run.ciMetadata.branch;
-      if (run.status === "running" || run.status === "pending")
+      // `grading` counts as running: the trials are done but the verdict is
+      // not, and a commit whose only run is held must not fall through every
+      // bucket to `passed` below.
+      if (
+        run.status === "running" ||
+        run.status === "pending" ||
+        run.status === "grading"
+      )
         summary.running++;
       else if (run.result === "passed") summary.passed++;
       else if (run.result === "failed") summary.failed++;
+      else if (run.result === "inconclusive") summary.inconclusive++;
     }
 
     let status: CommitGroup["status"];
     if (summary.running > 0) status = "running";
     else if (summary.failed > 0 && summary.passed > 0) status = "mixed";
     else if (summary.failed > 0) status = "failed";
+    // Nothing failed AND nothing passed, but something was undecided: the
+    // commit has no verdict. Falling through to `passed` here is how an
+    // unmeasurable commit gets a green rail it never earned.
+    else if (summary.inconclusive > 0 && summary.passed === 0)
+      status = "inconclusive";
     else status = "passed";
 
     // For manual runs, use a unique ID so each gets its own page
@@ -1076,7 +1206,7 @@ export function formatRelativeTime(timestamp?: number): string {
  * Group overview entries by tag and compute aggregated stats per tag.
  */
 export function groupSuitesByTag(
-  overview: EvalSuiteOverviewEntry[]
+  overview: EvalSuiteOverviewEntry[],
 ): TagGroupAggregate[] {
   const buckets = new Map<string, EvalSuiteOverviewEntry[]>();
 
@@ -1193,21 +1323,21 @@ export function iterationTokensP95(items: EvalIteration[]): number | null {
 /** Total ordering on runs: `runNumber` primary, `createdAt` as tiebreaker. */
 export function compareRunsBySequence(
   a: EvalSuiteRun,
-  b: EvalSuiteRun
+  b: EvalSuiteRun,
 ): number {
   return a.runNumber - b.runNumber || a.createdAt - b.createdAt;
 }
 
 /** Highest `runNumber` among completed runs (Convex `listTestSuiteRuns` is newest-first but we still sort defensively). */
 export function pickLatestCompletedRun(
-  runs: EvalSuiteRun[]
+  runs: EvalSuiteRun[],
 ): EvalSuiteRun | null {
   const completed = runs.filter((r) => r.status === "completed");
   if (completed.length === 0) {
     return null;
   }
   return completed.reduce((best, r) =>
-    r.runNumber > best.runNumber ? r : best
+    r.runNumber > best.runNumber ? r : best,
   );
 }
 
@@ -1226,14 +1356,224 @@ export function evalSuitePinsSandboxImage(
   suite: Pick<EvalSuite, "environment" | "environmentIds">,
   attachedEnvironments:
     | Array<{ environmentId: string; computerEnvironmentId?: string | null }>
-    | undefined
+    | undefined,
 ): boolean {
   if (suite.environment?.computerEnvironmentId) return true;
   return (suite.environmentIds ?? []).some((environmentId) =>
     Boolean(
       (attachedEnvironments ?? []).find(
-        (environment) => environment.environmentId === environmentId
-      )?.computerEnvironmentId
-    )
+        (environment) => environment.environmentId === environmentId,
+      )?.computerEnvironmentId,
+    ),
   );
+}
+
+// ── Cost ────────────────────────────────────────────────────────────────────
+//
+// One formatter, one em dash rule, one place to change either. Hoisted out of
+// `run-diff-view.tsx` when cost stopped being a diff-only concern and became
+// result data on iterations, cases, runs and the metric strip.
+
+/** The em dash every surface shows when no cost was observed. */
+export const COST_UNAVAILABLE = "—";
+
+/** The smallest amount four decimals can state without rounding to zero. */
+const SMALLEST_SHOWN_COST = 0.0001;
+
+/**
+ * A cost, in dollars.
+ *
+ * Sub-cent amounts get four decimals rather than rounding to `$0.00`: a
+ * single eval iteration frequently costs a fraction of a cent, and showing it
+ * as zero is the same lie as showing an unpriced one as zero.
+ *
+ * Below what four decimals can state, the answer is a BOUND (`<$0.0001`), not
+ * a rounded zero. Four decimals alone would print `$0.0000` for a real
+ * fraction of a cent — the same lie one decimal place further down, and the
+ * one place this surface must never tell. A bound stays true at any
+ * magnitude and stays short enough for a table cell, which chasing the first
+ * significant digit of, say, 1e-9 would not.
+ */
+export function formatCost(value: number): string {
+  const sign = value < 0 ? "-" : "";
+  const abs = Math.abs(value);
+  if (abs > 0 && abs < SMALLEST_SHOWN_COST) {
+    // The bound points the way the number lies: a tiny negative is GREATER
+    // than -$0.0001, and `-<$0.0001` would read as neither.
+    const bound = `$${SMALLEST_SHOWN_COST.toFixed(4)}`;
+    return sign === "-" ? `>-${bound}` : `<${bound}`;
+  }
+  if (abs > 0 && abs < 0.01) {
+    return `${sign}$${abs.toFixed(4)}`;
+  }
+  return `${sign}$${abs.toFixed(2)}`;
+}
+
+/**
+ * A cost that may not exist. `undefined` / `null` render as an em dash,
+ * NEVER as `$0.00`.
+ *
+ * This is the single rule that keeps the whole surface honest, and it is the
+ * same one the organization Usage card already applies: a cost we did not
+ * observe must not be presented as a cost of nothing.
+ */
+export function formatCostOrDash(value: number | null | undefined): string {
+  return typeof value === "number" ? formatCost(value) : COST_UNAVAILABLE;
+}
+
+/**
+ * Mean of the values that WERE measured, or `null` when none were. Callers
+ * decide which iterations count as measured before handing them over — a
+ * missing reading is not a zero.
+ */
+export function average(values: readonly number[]): number | null {
+  return values.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : null;
+}
+
+/**
+ * Compact metric numbers for the run matrix and case workspace tiles:
+ * `1240` → `1.2k`, `2000` → `2k`, `1500000` → `1.5m`, `18` → `18`,
+ * `1.75` → `1.8`.
+ *
+ * Lowercase units on purpose (the matrix toggle's design), which is why this
+ * is not `Intl.NumberFormat`'s compact notation. It still has to carry the
+ * millions step the way that formatter did: without it a long agent run's
+ * token average renders as `1500k` and overflows the fixed-width tile.
+ */
+export function compactMetric(value: number): string {
+  const unit = (divisor: number, suffix: string) =>
+    `${(value / divisor).toFixed(1).replace(/\.0$/, "")}${suffix}`;
+  return value >= 1_000_000_000
+    ? unit(1_000_000_000, "b")
+    : value >= 1_000_000
+      ? unit(1_000_000, "m")
+      : value >= 1000
+        ? unit(1000, "k")
+        : Number.isInteger(value)
+          ? value.toLocaleString()
+          : value.toFixed(1);
+}
+
+/**
+ * Why this row has no cost, phrased for the person reading it.
+ *
+ * Returns `null` when a cost IS present and needs no explanation — except for
+ * a runner-reported one, which is real but not ours, and says so.
+ */
+export function costUnavailableReason(
+  basis: EvalIterationCostBasis | undefined,
+  /**
+   * The cost that IS on screen, when there is one.
+   *
+   * Without it a trial priced by an older writer — a number, but no basis
+   * recorded — got "No cost was recorded for this trial." hovering over its
+   * own price. The runner note still applies to a present cost, because that
+   * one explains whose measurement it is rather than why it is missing.
+   */
+  cost?: number | null,
+): string | null {
+  if (basis?.source === "sdk_runner") {
+    return "Reported by your runner — MCPJam did not price this run.";
+  }
+  if (typeof cost === "number") return null;
+  if (basis?.status === "estimated") return null;
+  switch (basis?.reason) {
+    case "no_pricing":
+      return "Not an MCPJam-billed model, so there is no cost to report.";
+    case "harness_mixed_models":
+      return "Harness runs mix models within a turn; their cost arrives with billed attribution.";
+    case "no_tokens":
+      return "This iteration reported no token usage.";
+    default:
+      return "No cost was recorded for this iteration.";
+  }
+}
+
+/** True when a cost figure came from a customer's runner, not from MCPJam. */
+export function isRunnerReportedCost(
+  basis: EvalIterationCostBasis | undefined,
+): boolean {
+  return basis?.source === "sdk_runner";
+}
+
+/**
+ * Total cost across iterations, with the COVERAGE that produced it.
+ *
+ * Coverage travels with the sum because the two are only meaningful
+ * together: summing the priced iterations and skipping the rest yields a
+ * number indistinguishable from a complete one, which is exactly how a
+ * partially-priced run reads as a cheap run.
+ *
+ * `totalUsd` is null when nothing was priced — not 0.
+ *
+ * A RUNNER-REPORTED iteration is INCLUDED in the total and flagged, rather
+ * than dropped. The money was spent, so excluding it would understate what
+ * the run cost — and would make the total disagree with the very rows a
+ * reader can see summing to it. What it must not do is pass silently as
+ * MCPJam's own measurement, which is what `hasRunnerReported` is for.
+ */
+export function sumIterationCost(
+  iterations: Array<Pick<EvalIteration, "usage">>,
+): {
+  totalUsd: number | null;
+  costedIterations: number;
+  totalIterations: number;
+  /** True when any contributing figure came from a customer's own runner. */
+  hasRunnerReported: boolean;
+} {
+  let totalUsd: number | null = null;
+  let costedIterations = 0;
+  let hasRunnerReported = false;
+  for (const iteration of iterations) {
+    const cost = iteration.usage?.estimatedCostUsd;
+    if (typeof cost !== "number") continue;
+    totalUsd = (totalUsd ?? 0) + cost;
+    costedIterations += 1;
+    if (isRunnerReportedCost(iteration.usage?.costBasis)) {
+      hasRunnerReported = true;
+    }
+  }
+  return {
+    totalUsd,
+    costedIterations,
+    totalIterations: iterations.length,
+    hasRunnerReported,
+  };
+}
+
+/** Per-iteration costs, for percentiles. Uncosted iterations are omitted. */
+export function iterationCosts(
+  iterations: Array<Pick<EvalIteration, "usage">>,
+): number[] {
+  return iterations
+    .map((iteration) => iteration.usage?.estimatedCostUsd)
+    .filter((value): value is number => typeof value === "number");
+}
+
+/**
+ * Statuses a run can still be cancelled from.
+ *
+ * Mirrors the backend gate in `cancelSuiteRunRows` (Convex `testSuites.ts`),
+ * which rejects anything else with `Cannot cancel run with status: …`.
+ * `grading` counts: the trials are done but the gating judge is still billing.
+ */
+export function isRunCancellable(run: { status?: string | null }): boolean {
+  return (
+    run.status === "pending" ||
+    run.status === "running" ||
+    run.status === "grading"
+  );
+}
+
+/**
+ * Ids of every still-cancellable run in `runs` — what a Cancel button hands to
+ * `handleCancelRun`. A launch fans out into one run per client-model pairing,
+ * so cancelling a launch means cancelling all of them.
+ */
+export function cancellableRunIds(
+  runs: readonly { _id: string; status?: string | null }[],
+): string[] {
+  return runs.filter(isRunCancellable).map((run) => run._id);
 }

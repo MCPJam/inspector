@@ -1,10 +1,10 @@
 /**
  * Generic session filter dimensions — surface-agnostic.
  *
- * The chatbox usage panel has its own rich, `SharedChatThread`-coupled filter
- * model (`hooks/chatbox-usage-filters.ts`). The Swarms surface needs a much
+ * The scenario usage panel has its own rich, `SharedChatThread`-coupled filter
+ * model (`hooks/scenario-usage-filters.ts`). The Swarms surface needs a much
  * smaller, generic host/persona filter over synthetic session rows, so rather
- * than grow the chatbox-named module with swarm concerns this holds the generic
+ * than grow the scenario-named module with swarm concerns this holds the generic
  * primitive: an AND-of-dimensions predicate over any row exposing `hostId` /
  * `personaId`. Other surfaces can widen `SessionFilterDimension` as needed.
  */

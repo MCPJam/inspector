@@ -1,0 +1,464 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  EVAL_SUITE_SETTINGS_MANIFEST,
+  SETTINGS_PAGE_HIDDEN_KEYS,
+  EVAL_SUITE_SETTING_KEYS,
+  type EvalSuiteSettingKey,
+} from "@/shared/eval-suite-settings-manifest";
+import { LEGACY_CLIENTS_ROW_LABEL } from "../suite-settings-groups";
+import {
+  renderSettingsSheet,
+  v2Suite,
+  baseSuite,
+  collectAllSettingKeys,
+  showSettingsKey,
+} from "./settings-sheet-harness";
+
+/**
+ * The RENDER half of the settings-parity ratchet.
+ *
+ * The manifest declares how every settings row is reachable from the SDK / CLI
+ * / MCP. `SettingsSection` takes a manifest key and stamps `data-setting-key`,
+ * so an unlisted row does not typecheck — but a type error can be cast away,
+ * and the delete row is stamped by hand rather than through the component.
+ * This test closes both gaps by reading what actually rendered.
+ *
+ * Its companion (`server/routes/v1/__tests__/eval-suite-settings-parity.test.ts`)
+ * checks the other direction: that each entry's `api:` path is really accepted
+ * by the public PATCH schema and each `op:` names a real operation.
+ */
+
+const mocks = vi.hoisted(() => ({
+  useMutation: vi.fn(() => vi.fn()),
+  useQuery: vi.fn(),
+  availability: vi.fn(),
+  reportBoundaryError: vi.fn(),
+  featureEnabled: vi.fn(),
+  capabilities: vi.fn(),
+}));
+
+vi.mock("convex/react", () => ({
+  useMutation: (name: any) => (mocks.useMutation as any)(name),
+  useQuery: (name: any, args: any) => (mocks.useQuery as any)(name, args),
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+}));
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: null, isLoading: false, signIn: vi.fn() }),
+}));
+
+vi.mock("@/hooks/useGithubChecksSettings", () => ({
+  useGithubChecksAvailability: (organizationId: unknown) =>
+    mocks.availability(organizationId),
+  useGithubChecksSettings: () => ({
+    availability: { state: "enabled" },
+    repos: [],
+  }),
+}));
+
+vi.mock("../suite-github-checks-section", () => ({
+  SuiteGithubChecksSection: () => <div data-testid="github-checks-section" />,
+}));
+
+vi.mock("@/lib/error-reporting", () => ({
+  reportBoundaryError: (...args: unknown[]) =>
+    mocks.reportBoundaryError(...args),
+}));
+
+vi.mock("@/hooks/useProjectComputer", () => ({
+  useEphemeralCloudAvailable: () => true,
+}));
+
+// Every gate held OPEN. The ratchet is about what this sheet can render, not
+// about which flags happen to be on for one organization: a row hidden behind
+// a gate is still a row someone has to reach from an agent.
+vi.mock("@/hooks/useComputersEnabled", () => ({
+  useComputersEnabled: () => true,
+}));
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => true,
+}));
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => true,
+}));
+vi.mock("@/hooks/useProjectEnvironments", () => ({
+  useProjectEnvironments: () => [],
+}));
+
+vi.mock("../use-suite-data", () => ({
+  useSuiteData: () => ({ runTrendData: [], modelStats: [] }),
+  useRunDetailData: () => ({ caseGroupsForSelectedRun: [] }),
+}));
+
+vi.mock("../suite-header", () => ({
+  SuiteHeader: () => (
+    <div data-testid="suite-header">
+      <div data-setting-key="name">
+        <span className="sr-only">Name</span>
+        <button type="button">Test Suite</button>
+        <input aria-label="Suite name" />
+      </div>
+    </div>
+  ),
+}));
+
+vi.mock("@/components/evals/suite-clients-settings", () => ({
+  SuiteClientsSettings: () => (
+    <div data-testid="suite-clients-table">Client table</div>
+  ),
+}));
+vi.mock("@/components/evals/suite-environment-composer-bar", () => ({
+  SuiteEnvironmentComposerBar: () => (
+    <div data-testid="suite-environment-bar">composer</div>
+  ),
+}));
+
+vi.mock("../eval-export-modal", () => ({ EvalExportModal: () => null }));
+
+vi.mock("@/state/app-state-context", () => ({
+  useSharedAppState: () => ({ servers: {} }),
+}));
+
+vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/hooks/use-suite-capabilities")>();
+  return {
+    ...actual,
+    useSuiteCapabilities: () => mocks.capabilities(),
+  };
+});
+
+function renderedSettingKeys(container: HTMLElement): string[] {
+  return Array.from(container.querySelectorAll("[data-setting-key]")).map(
+    (node) => node.getAttribute("data-setting-key") ?? "",
+  );
+}
+
+describe("eval suite settings manifest — render parity", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.useMutation.mockReturnValue(vi.fn());
+    mocks.useQuery.mockImplementation(() => undefined);
+    // Every gate OPEN: the ratchet is about what the sheet can render, not
+    // about which flags happen to be on for one org. A row hidden behind a
+    // gate is still a row someone has to reach from an agent.
+    mocks.availability.mockReturnValue({ state: "enabled" });
+    // `unavailable` is the pre-capabilities behaviour, so the coverage checks
+    // above measure the sheet an old backend produces — the one that has to
+    // keep working. The capability-specific tests below opt into `ready`.
+    mocks.capabilities.mockReturnValue({
+      state: "unavailable",
+      capabilities: null,
+    });
+  });
+
+  /** A capabilities answer with everything on, patched per test. */
+  function readyCapabilities(patch: Record<string, unknown> = {}) {
+    return {
+      state: "ready" as const,
+      capabilities: {
+        suiteId: "suite-1",
+        organizationId: "org-1",
+        permissions: {
+          "suite.view": true,
+          "suite.edit": true,
+          "suite.configure": true,
+          "suite.delete": true,
+          "suite.schedule": true,
+          "suite.environments": true,
+          "run.launch": true,
+          "gate.waive": true,
+          "judge.review": true,
+        },
+        features: {
+          computers: { enabled: true },
+          environments: { enabled: true },
+          skills: { enabled: true },
+          "claude-code-harness": { enabled: true },
+          "codex-harness": { enabled: true },
+          "cursor-harness": { enabled: true },
+          "grading-engine-mode": { enabled: true },
+          scheduledEvals: { enabled: true },
+        },
+        verdictPolicyV2: {
+          deploymentMode: "enforce",
+          suiteMode: null,
+          canUpgrade: true,
+        },
+        judge: {
+          gating: { enabled: false, reason: "not_enabled_on_deployment" },
+          role: "advisory",
+          hasRubric: false,
+          agreement: {
+            reviews: 0,
+            agreements: 0,
+            rate: null,
+            lowerBound: null,
+            threshold: 0.8,
+            minReviews: 20,
+            eligible: false,
+            reasons: ["insufficient_reviews"],
+          },
+          acknowledgement: null,
+        },
+        revisionNumber: 1,
+        ...patch,
+      },
+    };
+  }
+
+  it("gives every rendered row a manifest entry", () => {
+    for (const overrides of [{}, { suite: v2Suite }]) {
+      const { container, unmount } = renderSettingsSheet(overrides);
+      const rendered = collectAllSettingKeys(
+        container,
+        overrides.suite ?? undefined,
+      );
+      expect(rendered.length).toBeGreaterThan(0);
+      const unlisted = rendered.filter(
+        (key) => !EVAL_SUITE_SETTING_KEYS.includes(key as never),
+      );
+      expect(
+        unlisted,
+        `Settings rows rendered with no manifest entry — declare how an agent reaches them in shared/eval-suite-settings-manifest.ts:\n  ${unlisted.join(
+          "\n  ",
+        )}`,
+      ).toEqual([]);
+      unmount();
+    }
+  });
+
+  it("renders no key twice", () => {
+    for (const overrides of [{}, { suite: v2Suite }]) {
+      const { container, unmount } = renderSettingsSheet(overrides);
+      const rendered = collectAllSettingKeys(
+        container,
+        overrides.suite ?? undefined,
+      );
+      expect(rendered).toEqual([...new Set(rendered)]);
+      unmount();
+    }
+  });
+
+  it("still corresponds to a real row for every manifest entry", () => {
+    // The other direction, and the one that keeps an `excluded:` reason from
+    // outliving the row it excuses: a manifest entry whose row was deleted is
+    // a claim about a screen that no longer exists.
+    //
+    // The UNION across both policies, because no single suite renders every
+    // row: a legacy suite has no repetitions and a v2 suite has no minimum
+    // accuracy, and demanding both from one render would force the sheet to
+    // show a reader two policies at once.
+    const rendered = new Set<string>();
+    for (const overrides of [{}, { suite: v2Suite }]) {
+      const { container, unmount } = renderSettingsSheet(overrides);
+      for (const key of collectAllSettingKeys(
+        container,
+        overrides.suite ?? undefined,
+      )) {
+        rendered.add(key);
+      }
+      unmount();
+    }
+    const orphaned = EVAL_SUITE_SETTINGS_MANIFEST.filter(
+      (row) =>
+        !("excluded" in row) &&
+        !(row.key in SETTINGS_PAGE_HIDDEN_KEYS) &&
+        !rendered.has(row.key),
+    ).map((row) => `${row.key} (${row.label})`);
+    expect(
+      orphaned,
+      `Manifest entries with no rendered row — the row moved or was removed, so the entry is stale:\n  ${orphaned.join(
+        "\n  ",
+      )}`,
+    ).toEqual([]);
+  });
+
+  it("leaves no ledger row collapsed shut once it has been navigated to", () => {
+    // WAS "exposes aria-expanded on every ledger row trigger". The tabbed page
+    // renders each section EXPANDED, so most rows no longer have a disclosure
+    // control at all and asserting one exists pinned the old shape rather than
+    // the property that mattered: that navigating to a row shows you its
+    // editor. Both designs satisfy the form below — a row with no toggle is
+    // reachable by construction, and one that still has a toggle must be open
+    // rather than announcing `aria-expanded="false"` at a reader who just
+    // asked for it.
+    const { container } = renderSettingsSheet();
+    for (const key of ["policy", "environments"] as const) {
+      showSettingsKey(container, key);
+      const row = container.querySelector(`[data-setting-key="${key}"]`);
+      expect(row, key).toBeTruthy();
+      // Scoped to the DISCLOSURE control, not to `[aria-expanded]` at large:
+      // that attribute is also on every Radix select and menu inside a row's
+      // editor, and a closed dropdown is not a collapsed section.
+      const trigger = row?.querySelector('[data-slot="collapsible-trigger"]');
+      if (trigger) {
+        expect(trigger.getAttribute("aria-expanded"), key).toBe("true");
+      }
+    }
+  });
+
+  it("labels each row the way the manifest says it does", () => {
+    // Keeps the manifest READABLE next to the screen: an entry a maintainer
+    // cannot match to a row is one they will not maintain.
+    const seen = new Map<string, string>();
+    for (const overrides of [{}, { suite: v2Suite }]) {
+      const { container, unmount } = renderSettingsSheet(overrides);
+      const suite = overrides.suite ?? undefined;
+      for (const row of EVAL_SUITE_SETTINGS_MANIFEST) {
+        if ("excluded" in row || row.key in SETTINGS_PAGE_HIDDEN_KEYS) continue;
+        const suite = overrides.suite ?? baseSuite;
+        const isV2 = suite.verdictPolicyVersion === 2;
+        if (
+          (row.key === "validity" ||
+            row.key === "repetitions" ||
+            row.key === "passThreshold") &&
+          !isV2
+        ) {
+          continue;
+        }
+        if (
+          (row.key === "minimumAccuracy" || row.key === "minimumIterations") &&
+          isV2
+        ) {
+          continue;
+        }
+        showSettingsKey(container, row.key as EvalSuiteSettingKey, {}, suite);
+        const node = container.querySelector(`[data-setting-key="${row.key}"]`);
+        if (node) seen.set(row.key, node.textContent ?? "");
+      }
+      unmount();
+    }
+    for (const row of EVAL_SUITE_SETTINGS_MANIFEST) {
+      if ("excluded" in row || row.key in SETTINGS_PAGE_HIDDEN_KEYS) continue;
+      const text = seen.get(row.key);
+      expect(text, `no rendered row for ${row.key}`).toBeDefined();
+      // The environments row is titled for the axes it actually edits: the
+      // manifest label with project environments on, "Clients" with them off.
+      const accepted =
+        row.key === "environments"
+          ? [row.label, LEGACY_CLIENTS_ROW_LABEL]
+          : [row.label];
+      expect(
+        accepted.some((label) => (text ?? "").includes(label)),
+        `row ${row.key} is not labelled ${accepted.join(" or ")}`,
+      ).toBe(true);
+    }
+  });
+
+  /**
+   * S2 — the two policies are ALTERNATIVES, and the sheet shows one.
+   *
+   * A page that showed a legacy percent beside a v2 fraction would ask a
+   * reader to work out which one their runs are actually decided by, and the
+   * honest answer ("only one of these does anything") is not something a
+   * screen full of controls can convey.
+   */
+  it("shows the legacy policy's fields only on a legacy suite", () => {
+    const { container } = renderSettingsSheet();
+    const legacy = new Set(collectAllSettingKeys(container));
+    expect(legacy.has("minimumAccuracy")).toBe(true);
+    expect(legacy.has("minimumIterations")).toBe(true);
+    expect(legacy.has("repetitions")).toBe(false);
+    expect(legacy.has("passThreshold")).toBe(false);
+    expect(legacy.has("validity")).toBe(false);
+  });
+
+  it("shows the v2 policy's fields only on a v2 suite", () => {
+    const { container } = renderSettingsSheet({ suite: v2Suite });
+    const v2 = new Set(collectAllSettingKeys(container, v2Suite));
+    expect(v2.has("repetitions")).toBe(true);
+    expect(v2.has("passThreshold")).toBe(true);
+    expect(v2.has("validity")).toBe(true);
+    expect(v2.has("minimumAccuracy")).toBe(false);
+    expect(v2.has("minimumIterations")).toBe(false);
+    expect(v2.has("qualityGateBaseline")).toBe(false);
+    expect(v2.has("qualityGateNoGatingScoreErrors")).toBe(true);
+  });
+
+  it("shows quality-gate rows on a legacy suite as well", () => {
+    const { container } = renderSettingsSheet();
+    const legacy = new Set(collectAllSettingKeys(container));
+    expect(legacy.has("qualityGateNoGatingScoreErrors")).toBe(true);
+    // Baseline comparison left the page; nothing stored on this suite means
+    // there is no read-only row for it either.
+    expect(legacy.has("qualityGateBaseline")).toBe(false);
+    expect(legacy.has("qualityGateAllowedDrop")).toBe(false);
+    expect(legacy.has("qualityGateNoDeterministicRegressions")).toBe(false);
+    expect(legacy.has("qualityGateMaximumP95LatencyIncreaseMs")).toBe(false);
+    expect(legacy.has("validity")).toBe(false);
+  });
+
+  /**
+   * S3 — a row you cannot use SAYS SO, rather than vanishing.
+   *
+   * The three states a hidden row used to collapse into — no permission, a
+   * feature this organization does not have, and a flag service that could not
+   * be reached — are three different problems with three different next steps.
+   * A person looking at a page that simply does not mention the setting they
+   * were told to configure cannot tell which one they have.
+   */
+  it("keeps the computer environment control on the Clients tab", () => {
+    // It edits `computerEnvironmentId`, which still reaches the backend and
+    // still decides which image every trial boots. Unmounting it left the field
+    // writable only through the API.
+    const { container } = renderSettingsSheet();
+    showSettingsKey(container, "computerEnvironment");
+    expect(
+      container.querySelector('[data-setting-key="computerEnvironment"]'),
+    ).toBeTruthy();
+  });
+
+  it("keeps triggers hidden without schedule permission", () => {
+    mocks.capabilities.mockReturnValue(
+      readyCapabilities({
+        permissions: {
+          "suite.view": true,
+          "suite.edit": true,
+          "suite.configure": true,
+          "suite.delete": false,
+          "suite.schedule": false,
+          "suite.environments": true,
+          "run.launch": true,
+          "gate.waive": true,
+          "judge.review": true,
+        },
+      }),
+    );
+    const { container } = renderSettingsSheet();
+    expect(container.querySelector('[data-setting-key="schedule"]')).toBeNull();
+    expect(
+      container.querySelector('nav[aria-label="Settings sections"]'),
+    ).toBeNull();
+  });
+
+  it("behaves exactly as before when capabilities are unavailable", () => {
+    // The regression guard for every deployment that predates the query. Rows
+    // keep their original gates and carry no reason, because nothing refused
+    // them — we simply could not ask.
+    const { container } = renderSettingsSheet();
+    expect(container.querySelectorAll("[data-disabled-reason]")).toHaveLength(
+      0,
+    );
+    const keys = collectAllSettingKeys(container);
+    // Restored to its pre-#4739 assertion: the image row keeps its ORIGINAL
+    // flag gate when capabilities cannot be read, so it renders exactly as it
+    // did before capabilities existed rather than disappearing.
+    expect(keys).toContain("computerEnvironment");
+    // `schedule` stays absent, and NOT because a capability refused it: the
+    // triggers group is filtered out of the visible tabs, and its row is also
+    // gated on a PostHog flag that does not exist in the project. See the note
+    // on VISIBLE_SUITE_SETTINGS_GROUPS.
+    expect(keys).not.toContain("schedule");
+  });
+
+  it("puts the setup client table on the Clients row", () => {
+    const { container } = renderSettingsSheet();
+    showSettingsKey(container, "environments");
+    const row = container.querySelector('[data-setting-key="environments"]');
+    expect(row).toBeTruthy();
+    expect(
+      row?.querySelector('[data-testid="suite-clients-table"]'),
+    ).toBeTruthy();
+  });
+});

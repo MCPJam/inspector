@@ -2,7 +2,7 @@
  * Resources-screen tools: read a resource (or a resolved resource template)
  * from the currently-selected server.
  *
- * Mount-scoped like the registry/evals/chatboxes groups: `ResourcesTab` owns
+ * Mount-scoped like the registry/evals/scenarios groups: `ResourcesTab` owns
  * the command handler and the resource/template lists it resolves against, so
  * `ui_read_resource` exists exactly while `/resources` is mounted. There is no
  * target server in the payload — the read acts on the server selected on the
@@ -23,6 +23,7 @@ import {
   dispatchInspectorCommand,
 } from "../ui-actions";
 import {
+  PUBLISH_NATIVE_UNTRUSTED,
   asOptionalString,
   asStringRecord,
   errorResult,
@@ -62,6 +63,7 @@ export function buildResourcesUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: true,
       },
+      nativePublication: PUBLISH_NATIVE_UNTRUSTED,
       execute: async (args) => {
         const resource = asOptionalString(args.resource);
         if (!resource) {

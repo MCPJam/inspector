@@ -112,6 +112,22 @@ describe("seedAttachmentsIntoSandbox", () => {
 });
 
 describe("buildAttachmentsNote", () => {
+  it("names the tool the READER actually holds", () => {
+    // A desktop box has no shell — a browser and a shell do not share an image
+    // unless the deployment accepted the co-tenancy boundary — so a harness
+    // run there reaches its files through its own file tools. Naming `bash`
+    // anyway costs the model a turn calling something it was never given.
+    expect(
+      buildAttachmentsNote([att({ name: "a.csv", path: "/x/a.csv" })])
+    ).toContain("use the bash tool to read them");
+    expect(
+      buildAttachmentsNote(
+        [att({ name: "a.csv", path: "/x/a.csv" })],
+        "your file tools"
+      )
+    ).toContain("use your file tools to read them");
+  });
+
   it("formats the COMP-14 note (name → path per line)", () => {
     const note = buildAttachmentsNote([
       att({ name: "a.csv", path: "/home/user/attachments/a.csv" }),

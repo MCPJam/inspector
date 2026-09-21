@@ -6,6 +6,99 @@ import {
 } from "../recorder.js";
 
 describe("startSuiteRunWithRecorder", () => {
+  it("forwards the GitHub server replacement and omits undefined overrides", async () => {
+    const mutation = vi.fn().mockResolvedValue({ runId: "run-1", testCases: [] });
+    const githubCheckServerOverride = [
+      { serverName: "gh-check-trigger-1", projectServerId: "server-1" },
+    ];
+
+    await startSuiteRunWithRecorder({
+      convexClient: { mutation } as any,
+      suiteId: "suite-1",
+      source: "github_check",
+      githubCheckServerOverride,
+    });
+    expect(mutation.mock.calls[0][1]).toMatchObject({
+      source: "github_check",
+      githubCheckServerOverride,
+    });
+    expect(mutation.mock.calls[0][1]).not.toHaveProperty("environmentOverride");
+
+    mutation.mockClear();
+    await startSuiteRunWithRecorder({
+      convexClient: { mutation } as any,
+      suiteId: "suite-1",
+    });
+    expect(mutation.mock.calls[0][1]).not.toHaveProperty(
+      "githubCheckServerOverride"
+    );
+  });
+
+  it("forwards per-run import approvals, and omits the key when there are none", async () => {
+    // The mutation args are RECONSTRUCTED field by field in this function, so
+    // a field nobody names here never reaches Convex — and an approval that
+    // never arrives surfaces to the caller as the backend refusing a run they
+    // did approve. Asserting the exact args is the only thing that catches it.
+    const mutation = vi.fn().mockResolvedValue({ runId: "run-1", testCases: [] });
+    const convexClient = { mutation } as any;
+    const importApprovals = [
+      { testCaseId: "tc-1", reason: "Reviewed against the upstream rubric." },
+    ];
+
+    await startSuiteRunWithRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      serverIds: ["alpha"],
+      importApprovals,
+    });
+    expect(mutation.mock.calls[0][1]).toMatchObject({ importApprovals });
+
+    mutation.mockClear();
+    await startSuiteRunWithRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      serverIds: ["alpha"],
+    });
+    // Absent rather than `[]`: an empty array is a claim ("I approved
+    // nothing"), and the backend reads the two differently.
+    expect("importApprovals" in mutation.mock.calls[0][1]).toBe(false);
+  });
+
+  it("forwards the benchmark parent id that licenses the hidden source", async () => {
+    // Same reconstruction hazard as the approvals above, with a sharper edge:
+    // `startTestSuiteRun` refuses `source: 'benchmark'` unless it also receives
+    // the `benchmarkRunId` of a live parent run (mcpjam-backend#1160). A field
+    // nobody names here never reaches Convex, and dropping THIS one fails every
+    // benchmark child at the mutation.
+    const mutation = vi
+      .fn()
+      .mockResolvedValue({ runId: "run-1", testCases: [] });
+    const convexClient = { mutation } as any;
+
+    await startSuiteRunWithRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      serverIds: ["alpha"],
+      source: "benchmark",
+      benchmarkRunId: "brun-1",
+    });
+    expect(mutation.mock.calls[0][1]).toMatchObject({
+      source: "benchmark",
+      benchmarkRunId: "brun-1",
+    });
+
+    mutation.mockClear();
+    await startSuiteRunWithRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      serverIds: ["alpha"],
+      source: "api",
+    });
+    // Meaningless without the hidden source, so it is absent rather than
+    // `undefined` — the mutation takes an id, not a placeholder.
+    expect("benchmarkRunId" in mutation.mock.calls[0][1]).toBe(false);
+  });
+
   it("forwards tool snapshot metadata when creating a suite run", async () => {
     const mutationMock = vi
       .fn()
@@ -19,6 +112,7 @@ describe("startSuiteRunWithRecorder", () => {
             model: "gpt-5",
             provider: "openai",
             runs: 1,
+            intent: "Bootstrap task search",
             steps: [
               {
                 id: "s1",
@@ -143,6 +237,7 @@ describe("startSuiteRunWithRecorder", () => {
               model: "gpt-5",
               provider: "openai",
               runs: 1,
+              intent: "Bootstrap task search",
               expectedToolCalls: [
                 {
                   toolName: "bootstrap",
@@ -395,6 +490,195 @@ describe("startSuiteRunWithRecorder", () => {
 });
 
 describe("createSuiteRunRecorder", () => {
+  it("does not delay result persistence when runtime timing writes hang", async () => {
+    vi.useFakeTimers();
+    try {
+      const query = vi.fn(async (ref: string) => {
+        if (ref === "testSuites:getTestSuiteRun") return { status: "running" };
+        if (ref === "testSuites:getTestSuiteRunDetails") {
+          return {
+            iterations: [
+              { _id: "iter1", testCaseId: "tc1", iterationNumber: 1 },
+            ],
+          };
+        }
+        if (ref === "testSuites:getTestIteration") {
+          return { status: "running" };
+        }
+        throw new Error(`unexpected query ${ref}`);
+      });
+      const mutation = vi.fn((ref: string) => {
+        if (
+          ref === "testSuites:recordEvalIterationRuntimeStart" ||
+          ref === "testSuites:recordEvalIterationRuntimeEnd"
+        ) {
+          return new Promise(() => {});
+        }
+        return Promise.resolve(undefined);
+      });
+      const action = vi.fn(async (ref: string) => {
+        if (ref === "testSuites:appendEvalTurnTrace") {
+          return { skipped: false };
+        }
+        if (ref === "testSuites:updateTestIteration") return {};
+        if (ref === "testSuites:lockEvalSession") {
+          return { skipped: false, locked: true, alreadyLocked: false };
+        }
+        throw new Error(`unexpected action ${ref}`);
+      });
+      const recorder = createSuiteRunRecorder({
+        convexClient: { query, mutation, action } as any,
+        suiteId: "suite-1",
+        runId: "run-1",
+      });
+
+      await recorder.beginExecutionAttempt?.({
+        caseCount: 1,
+        repetitionCount: 1,
+        renderConcurrencyLimit: 2,
+        modelIdentifiers: [],
+      });
+      const iterationId = await recorder.startIteration({
+        testCaseId: "tc1",
+        iterationNumber: 1,
+        startedAt: Date.now(),
+      });
+      await recorder.finishIteration({
+        iterationId,
+        passed: true,
+        status: "completed",
+        toolsCalled: [],
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        messages: [{ role: "user", content: "hi" } as ModelMessage],
+      });
+
+      expect(action).toHaveBeenCalledWith(
+        "testSuites:updateTestIteration",
+        expect.any(Object)
+      );
+      await vi.advanceTimersByTimeAsync(2_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps execution available when runtime telemetry cannot start", async () => {
+    const query = vi.fn(async (ref: string) => {
+      if (ref === "testSuites:getTestSuiteRun") return { status: "running" };
+      if (ref === "testSuites:getTestSuiteRunDetails") {
+        return {
+          iterations: [
+            { _id: "iter1", testCaseId: "tc1", iterationNumber: 1 },
+          ],
+        };
+      }
+      throw new Error(`unexpected query ${ref}`);
+    });
+    const mutation = vi.fn(async (ref: string) => {
+      if (ref === "testSuites:beginEvalRuntimeAttempt") {
+        throw new Error("telemetry unavailable");
+      }
+      return undefined;
+    });
+    const recorder = createSuiteRunRecorder({
+      convexClient: { query, mutation } as any,
+      suiteId: "suite-1",
+      runId: "run-1",
+    });
+
+    await expect(
+      recorder.beginExecutionAttempt?.({
+        caseCount: 1,
+        repetitionCount: 1,
+        renderConcurrencyLimit: 2,
+        modelIdentifiers: [],
+      })
+    ).resolves.toBeUndefined();
+    await expect(
+      recorder.startIteration({
+        testCaseId: "tc1",
+        iterationNumber: 1,
+        startedAt: Date.now(),
+      })
+    ).resolves.toBe("iter1");
+    expect(
+      mutation.mock.calls.some(
+        ([ref]) => ref === "testSuites:recordEvalIterationRuntimeStart"
+      )
+    ).toBe(false);
+  });
+
+  it("records one attempt and closes timing before uploading iteration results", async () => {
+    const query = vi.fn(async (ref: string) => {
+      if (ref === "testSuites:getTestSuiteRun") return { status: "running" };
+      if (ref === "testSuites:getTestSuiteRunDetails") {
+        return {
+          iterations: [
+            { _id: "iter1", testCaseId: "tc1", iterationNumber: 1 },
+          ],
+        };
+      }
+      if (ref === "testSuites:getTestIteration") return { status: "running" };
+      throw new Error(`unexpected query ${ref}`);
+    });
+    const mutation = vi.fn(async () => undefined);
+    const action = vi.fn(async (ref: string) => {
+      if (ref === "testSuites:appendEvalTurnTrace") return { skipped: false };
+      if (ref === "testSuites:updateTestIteration") return {};
+      if (ref === "testSuites:lockEvalSession") {
+        return { skipped: false, locked: true, alreadyLocked: false };
+      }
+      throw new Error(`unexpected action ${ref}`);
+    });
+    const recorder = createSuiteRunRecorder({
+      convexClient: { query, mutation, action } as any,
+      suiteId: "suite-1",
+      runId: "run-1",
+    });
+
+    await recorder.beginExecutionAttempt?.({
+      caseCount: 1,
+      repetitionCount: 1,
+      renderConcurrencyLimit: 2,
+      modelIdentifiers: [{ provider: "openai", model: "gpt-5" }],
+    });
+    const iterationId = await recorder.startIteration({
+      testCaseId: "tc1",
+      iterationNumber: 1,
+      startedAt: Date.now(),
+      executionType: "model",
+    });
+    await recorder.finishIteration({
+      iterationId,
+      passed: true,
+      status: "completed",
+      toolsCalled: [],
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      messages: [{ role: "user", content: "hi" } as ModelMessage],
+    });
+    await recorder.finalize({ status: "completed" });
+
+    const refs = mutation.mock.calls.map(([ref]) => ref);
+    expect(refs).toContain("testSuites:beginEvalRuntimeAttempt");
+    expect(refs).toContain("testSuites:recordEvalIterationRuntimeStart");
+    expect(refs).toContain("testSuites:recordEvalIterationRuntimeEnd");
+    expect(refs).toContain("testSuites:finalizeEvalRuntimeAttempt");
+    expect(refs.indexOf("testSuites:finalizeEvalRuntimeAttempt")).toBeLessThan(
+      refs.indexOf("testSuites:updateTestSuiteRun")
+    );
+    const endCall = mutation.mock.calls.find(
+      ([ref]) => ref === "testSuites:recordEvalIterationRuntimeEnd"
+    );
+    expect(endCall?.[1]).toMatchObject({
+      iterationId: "iter1",
+      executionType: "model",
+      executionOutcome: "completed",
+    });
+    expect((endCall?.[1] as any).endOffsetMs).toBeGreaterThanOrEqual(
+      (endCall?.[1] as any).startOffsetMs
+    );
+  });
+
   it("flips runDeleted when finishIteration's shared finalize sees 'not found', short-circuiting subsequent startIteration", async () => {
     // Pre-check getTestIteration returns running; updateTestIteration throws
     // "not found" → shared finalizeEvalIteration fires `onRunDeleted` →
@@ -430,6 +714,7 @@ describe("createSuiteRunRecorder", () => {
     await recorder.finishIteration({
       iterationId: "iter1",
       passed: true,
+      status: "completed",
       toolsCalled: [],
       usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       messages: [{ role: "user", content: "hi" } as ModelMessage],

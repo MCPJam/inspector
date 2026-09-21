@@ -1,41 +1,30 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router";
 import { ChevronsUpDown, Plus, Trash2 } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { toast } from "@/lib/toast";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
-import { buildHostsPath } from "@/lib/app-navigation";
+import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { track } from "@/lib/analytics";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { getCatalogHost } from "@mcpjam/sdk/host-compat";
+import { clientDisplayName } from "@/lib/client-display-name";
 
-/**
- * Client selector for the Connect host canvas, mounted in the canvas nav row
- * beside the Servers|Client view selector (it used to float over the flow —
- * one nav row reads as chrome instead of covering canvas content).
- *
- * Replaces the header `HostOverlayBar` while the canvas is open (the header
- * instance hides itself — see `GlobalHostBar`). Layout settled in the #3269
- * review round: two pills —
- *   1. an "Add client" pill (left-most) carrying the quick-add template
- *      logos, and
- *   2. a switcher pill (to its right) that opens the full client list.
- * The add action lives only in the left pill; the switcher menu no longer
- * duplicates it. The menu opens downward, under its trigger.
- */
+/** Shared client controls for Connect's Servers and Client views. */
 
 const QUICK_ADD_TEMPLATES = ["claude", "chatgpt", "copilot"] as const;
 
@@ -54,14 +43,18 @@ const CONTROL_HEIGHT = "h-8";
 
 interface HostCanvasSelectorProps {
   projectId: string;
-  activeHostId: string;
+  activeHostId: string | null;
+  navigateOnSwitch?: boolean;
+  showAddClient?: boolean;
 }
 
 export function HostCanvasSelector({
   projectId,
   activeHostId,
+  navigateOnSwitch = true,
+  showAddClient = true,
 }: HostCanvasSelectorProps) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { isAuthenticated } = useConvexAuth();
   const catalogState = useHostCatalog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -70,7 +63,7 @@ export function HostCanvasSelector({
   const [, setPreviewedHostId] = usePreviewedHostId(projectId);
   const [showCreate, setShowCreate] = useState(false);
   const [createTemplateId, setCreateTemplateId] = useState<string | undefined>(
-    undefined
+    undefined,
   );
   const [isDeleting, setIsDeleting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -89,7 +82,7 @@ export function HostCanvasSelector({
 
   const activeIndex = useMemo(
     () => sortedHosts.findIndex((h) => h.hostId === activeHostId),
-    [sortedHosts, activeHostId]
+    [sortedHosts, activeHostId],
   );
   const active = activeIndex >= 0 ? sortedHosts[activeIndex] : null;
 
@@ -105,7 +98,7 @@ export function HostCanvasSelector({
     // The URL is the source of truth for which host the canvas renders
     // (see App's hosts-route sync) — replace so switching doesn't pile
     // history entries.
-    navigate(buildHostsPath(hostId), { replace: true });
+    if (navigateOnSwitch) navigate(buildHostsPath(hostId), { replace: true });
   };
 
   const openCreateWithTemplate = (templateId?: string) => {
@@ -128,7 +121,7 @@ export function HostCanvasSelector({
     setIsDeleting(true);
     try {
       await deleteHost({ hostId });
-      toast.success(`Host "${host.name}" deleted`);
+      toast.success(`Host "${clientDisplayName(host)}" deleted`);
       // Deleting the host the canvas is rendering would leave it pointing
       // at a dead id until HostsTab's reconcile kicks the user back to the
       // browse view — jump to a surviving host instead.
@@ -152,7 +145,7 @@ export function HostCanvasSelector({
       const msg = err instanceof Error ? err.message : "Failed to delete host";
       if (msg.includes("consumer")) {
         toast.error(
-          `${msg} — use force delete or remove dependent user testing scenarios/evals first`
+          `${msg} — use force delete or remove dependent user testing scenarios/evals first`,
         );
       } else {
         toast.error(msg);
@@ -164,7 +157,7 @@ export function HostCanvasSelector({
 
   const logoFor = (name: string) => resolveHostLogoByName(name, themeMode);
 
-  if (isLoading || !active) {
+  if (isLoading) {
     return (
       <div className="flex items-center gap-1.5">
         <div className="h-9 w-32 animate-pulse rounded-xl border border-border/60 bg-card/80" />
@@ -172,69 +165,76 @@ export function HostCanvasSelector({
       </div>
     );
   }
+  // Only a load in flight earns the skeleton above. No active host is a
+  // SETTLED answer — no clients yet, or an `activeHostId` pointing at a
+  // deleted one — and pulsing at the reader forever is a worse lie than
+  // showing nothing. `activeHostId` is nullable since the Servers view
+  // started passing its previewed id straight through.
+  if (!active) return null;
 
   return (
     <div
       className="flex min-w-0 items-center gap-1.5"
       data-testid="host-canvas-selector"
     >
-      {/* Add client — left-most. Carries the quick-add template logos so the
-          add path stays a single control (the switcher menu no longer has its
-          own add action). */}
-      <div className={cn(PILL_CLASS, "shrink-0")}>
-        <button
-          type="button"
-          data-testid="host-canvas-add"
-          onClick={() => {
-            track("connect_host_overlay_add_clicked", {
-              location: ANALYTICS_LOCATION,
-              host_count: hosts.length,
-            });
-            openCreateWithTemplate(undefined);
-          }}
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-primary transition-colors",
-            CONTROL_HEIGHT,
-            "hover:bg-primary/10",
-            "focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none"
-          )}
-        >
-          <Plus className="size-4" />
-          Add client
-        </button>
-        <span
-          className="ml-0.5 flex shrink-0 items-center gap-0.5 pr-0.5"
-          data-testid="host-canvas-quick-add"
-        >
-          {QUICK_ADD_TEMPLATES.map((id) => {
-            const catalogHost =
-              catalogState.status === "live"
-                ? getCatalogHost(catalogState.catalog, id)
-                : undefined;
-            const label = catalogHost?.label ?? id;
-            return (
-              <button
-                key={id}
-                type="button"
-                aria-label={`Add ${label} client`}
-                title={`Add ${label}`}
-                data-testid={`host-canvas-quick-add-${id}`}
-                onClick={() => openCreateWithTemplate(id)}
-                className={cn(
-                  "inline-flex size-6 items-center justify-center rounded-md transition-colors",
-                  "hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-                )}
-              >
-                <img
-                  src={getHostLogoSrc(id, themeMode)}
-                  alt=""
-                  className="size-4 object-contain"
-                />
-              </button>
-            );
-          })}
-        </span>
-      </div>
+      {/* Add client pill — Client view only. Servers hides this pill so the
+          header stays a switcher; Add clients still lives in the menu. */}
+      {showAddClient && (
+        <div className={cn(PILL_CLASS, "shrink-0")}>
+          <button
+            type="button"
+            data-testid="host-canvas-add"
+            onClick={() => {
+              track("connect_host_overlay_add_clicked", {
+                location: ANALYTICS_LOCATION,
+                host_count: hosts.length,
+              });
+              openCreateWithTemplate(undefined);
+            }}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-primary transition-colors",
+              CONTROL_HEIGHT,
+              "hover:bg-primary/10",
+              "focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none",
+            )}
+          >
+            <Plus className="size-4" />
+            Add client
+          </button>
+          <span
+            className="ml-0.5 flex shrink-0 items-center gap-0.5 pr-0.5"
+            data-testid="host-canvas-quick-add"
+          >
+            {QUICK_ADD_TEMPLATES.map((id) => {
+              const catalogHost =
+                catalogState.status === "live"
+                  ? getCatalogHost(catalogState.catalog, id)
+                  : undefined;
+              const label = catalogHost?.label ?? id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  aria-label={`Add ${label} client`}
+                  title={`Add ${label}`}
+                  data-testid={`host-canvas-quick-add-${id}`}
+                  onClick={() => openCreateWithTemplate(id)}
+                  className={cn(
+                    "inline-flex size-6 items-center justify-center rounded-md transition-colors",
+                    "hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
+                  )}
+                >
+                  <img
+                    src={getHostLogoSrc(id, themeMode)}
+                    alt=""
+                    className="size-4 object-contain"
+                  />
+                </button>
+              );
+            })}
+          </span>
+        </div>
+      )}
 
       {/* Switcher — to the right of Add client. Click to see all clients and
           switch between them; per-client delete lives on hover. */}
@@ -249,7 +249,7 @@ export function HostCanvasSelector({
                 "flex min-w-0 items-center gap-1.5 rounded-lg pr-1.5 pl-2 outline-none transition-colors",
                 CONTROL_HEIGHT,
                 "hover:bg-muted/50 data-[state=open]:bg-muted/50",
-                "focus-visible:ring-2 focus-visible:ring-ring/45"
+                "focus-visible:ring-2 focus-visible:ring-ring/45",
               )}
             >
               <img
@@ -258,7 +258,7 @@ export function HostCanvasSelector({
                 className="size-4 shrink-0 object-contain"
               />
               <span className="max-w-[10rem] truncate text-sm font-semibold">
-                {active.name}
+                {clientDisplayName(active)}
               </span>
               <span className="shrink-0 rounded-full border border-border/60 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
                 {activeIndex + 1} / {sortedHosts.length}
@@ -274,7 +274,7 @@ export function HostCanvasSelector({
             className="min-w-[15rem]"
           >
             <DropdownMenuRadioGroup
-              value={activeHostId}
+              value={active.hostId}
               onValueChange={switchTo}
             >
               {sortedHosts.map((host) => (
@@ -293,12 +293,12 @@ export function HostCanvasSelector({
                     className="flex-1 truncate"
                     data-testid={`host-canvas-label-${host.hostId}`}
                   >
-                    {host.name}
+                    {clientDisplayName(host)}
                   </span>
                   <span className="ml-2 flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-data-[highlighted]:opacity-100">
                     <button
                       type="button"
-                      aria-label={`Delete ${host.name}`}
+                      aria-label={`Delete ${clientDisplayName(host)}`}
                       data-testid={`host-canvas-delete-${host.hostId}`}
                       disabled={isDeleting || !canDelete}
                       title={!canDelete ? LAST_HOST_DELETE_REASON : undefined}
@@ -323,6 +323,20 @@ export function HostCanvasSelector({
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              data-testid="host-canvas-menu-add"
+              onSelect={() => {
+                track("connect_host_overlay_add_clicked", {
+                  location: ANALYTICS_LOCATION,
+                  host_count: hosts.length,
+                });
+                openCreateWithTemplate(undefined);
+              }}
+            >
+              <Plus className="size-3.5 shrink-0 text-muted-foreground" />
+              Add clients
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

@@ -1,3 +1,5 @@
+import { handleMarkdownImport } from "../shared/markdown-case-import.js";
+import { handleEvalAuthoring } from "../shared/eval-authoring.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
@@ -13,11 +15,15 @@ import {
   RunTestCaseRequestSchema,
   generateEvalTestsWithManager,
   generateNegativeEvalTestsWithManager,
+  passCriteriaSchema,
   prepareEvalRun,
   runEvalTestCaseWithManager,
   streamEvalTestCaseWithManager,
 } from "../shared/evals.js";
-import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
+import {
+  reportRouteFailure,
+  readRequestJson,
+} from "../../utils/route-error-report.js";
 
 const evals = new Hono();
 
@@ -30,6 +36,14 @@ function jsonRouteError(c: any, error: unknown) {
         ...(error.details ? { details: error.details } : {}),
       },
       error.status,
+      // `Retry-After` on a forwarded 429 — the local surface carried the
+      // status and the code but dropped the one thing that says WHEN, which
+      // is what a retrying client actually reads. Omitted entirely when
+      // there is nothing to send: several route tests pass a context double
+      // whose `json` takes two arguments.
+      error.headers && Object.keys(error.headers).length > 0
+        ? error.headers
+        : undefined,
     );
   }
 
@@ -42,11 +56,12 @@ const ReplayRunRequestSchema = z.object({
   convexAuthToken: z.string(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   notes: z.string().optional(),
-  passCriteria: z
-    .object({
-      minimumPassRate: z.number(),
-    })
-    .optional(),
+  // The SHARED pass-criteria schema, so a replay is bounded and speaks the same
+  // vocabulary as every other write. As a bare `z.object` this both STRIPPED
+  // `minimumPassRatePercent` silently — a replay losing the very override it
+  // was sent to apply — and accepted an unbounded number, so `0.8` meant 0.8%
+  // and the gate it produced could never fail.
+  passCriteria: passCriteriaSchema.optional(),
 });
 
 const TraceRepairStartSchema = z.discriminatedUnion("scope", [
@@ -72,6 +87,12 @@ const TraceRepairStopSchema = z.object({
   jobId: z.string().min(1),
   convexAuthToken: z.string(),
 });
+
+evals.post("/extract-markdown", (c) =>
+  handleMarkdownImport(c, "extract", true),
+);
+evals.post("/import-markdown", (c) => handleMarkdownImport(c, "save", true));
+evals.post("/authoring-v1", (c) => handleEvalAuthoring(c, true));
 
 evals.post("/run", async (c) => {
   try {

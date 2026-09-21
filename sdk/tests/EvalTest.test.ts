@@ -69,6 +69,7 @@ describe("EvalTest", () => {
   describe("constructor", () => {
     it("should create an instance with name", () => {
       const test = new EvalTest({
+        id: "c_case_1",
         name: "test-name",
         test: async (agent) => {
           await agent.run("Test prompt");
@@ -78,12 +79,178 @@ describe("EvalTest", () => {
       expect(test.getName()).toBe("test-name");
     });
 
+    describe("declared identity", () => {
+      it("exposes the declared id", () => {
+        const test = new EvalTest({
+          id: "c_declared",
+          name: "test-name",
+          test: async () => true,
+        });
+        expect(test.getId()).toBe("c_declared");
+      });
+
+      it("throws without an id, and the message carries a mintable one", () => {
+        // Fail-fast with the fix in the message. Deriving an id from `name`
+        // would recreate the exact bug the field retires — rename the test,
+        // fork its hosted history — while looking like it worked.
+        expect(
+          () =>
+            new EvalTest({
+              name: "no-id",
+              test: async () => true,
+            } as unknown as ConstructorParameters<typeof EvalTest>[0])
+        ).toThrow(/has no `id`/);
+
+        let message = "";
+        try {
+          new EvalTest({
+            name: "no-id",
+            test: async () => true,
+          } as unknown as ConstructorParameters<typeof EvalTest>[0]);
+        } catch (error) {
+          message = error instanceof Error ? error.message : String(error);
+        }
+        expect(message).toContain("identity is declared, not derived");
+        expect(message).toMatch(/id: "c_[A-Za-z0-9_-]{21}"/);
+      });
+
+      it("throws on an id that cannot travel in a URL or a path", () => {
+        expect(
+          () =>
+            new EvalTest({
+              id: "refund flow/1",
+              name: "bad-id",
+              test: async () => true,
+            })
+        ).toThrow(/invalid `id`/);
+      });
+
+      it("gives a non-conforming externalCaseId the WHOLE migration at once", () => {
+        // A pre-6 config with an `externalCaseId` that cannot be an id and no
+        // `id` at all. Suggesting a bare mint here would prescribe a change
+        // that fails on the very next construction — the minted id beside the
+        // unchanged external id is exactly the pair `assertSingleCaseIdentity`
+        // rejects — so this error has to state both halves.
+        let message = "";
+        try {
+          new EvalTest({
+            externalCaseId: "refund flow/1",
+            name: "pre-6 config",
+            test: async () => true,
+          } as unknown as ConstructorParameters<typeof EvalTest>[0]);
+        } catch (error) {
+          message = error instanceof Error ? error.message : String(error);
+        }
+        expect(message).toContain("has no `id`");
+        expect(message).toContain("cannot itself be an id");
+        expect(message).toContain("BOTH fields");
+
+        // And the fix it prescribes must actually construct.
+        const suggested = message.match(/id: "([^"]+)"/)?.[1];
+        expect(suggested).toMatch(/^c_[A-Za-z0-9_-]+$/);
+        expect(
+          () =>
+            new EvalTest({
+              id: suggested!,
+              externalCaseId: suggested!,
+              name: "pre-6 config",
+              test: async () => true,
+            })
+        ).not.toThrow();
+      });
+
+      it("refuses two disagreeing identity claims, naming the migration", () => {
+        // `id` and `externalCaseId` both ride the wire now, so a differing
+        // pair is a hard error rather than a silent precedence — the same
+        // rule the backend applies at ingest, applied a run earlier.
+        let message = "";
+        try {
+          new EvalTest({
+            id: "c_minted",
+            externalCaseId: "legacy_case_7",
+            name: "two-identities",
+            test: async () => true,
+          });
+        } catch (error) {
+          message = error instanceof Error ? error.message : String(error);
+        }
+        expect(message).toContain("declares two different identities");
+        expect(message).toContain('id "c_minted"');
+        expect(message).toContain('externalCaseId "legacy_case_7"');
+        // The migration rule, stated as the fix: id := externalCaseId.
+        expect(message).toContain("external:legacy_case_7");
+        expect(message).toContain('id: "legacy_case_7"');
+        // And why shipping it anyway is not an option.
+        expect(message).toContain("rejected at ingest");
+      });
+
+      it("accepts the migrated pair, and an empty externalCaseId", () => {
+        expect(
+          () =>
+            new EvalTest({
+              id: "legacy_case_7",
+              externalCaseId: "legacy_case_7",
+              name: "migrated",
+              test: async () => true,
+            })
+        ).not.toThrow();
+        // `""` is absent, not a second claim — `getCaseKey` and the backend's
+        // equality rule both read it as "no external id".
+        expect(
+          () =>
+            new EvalTest({
+              id: "c_minted",
+              externalCaseId: "",
+              name: "empty-external",
+              test: async () => true,
+            })
+        ).not.toThrow();
+      });
+
+      it("tells a non-conforming externalCaseId to rename, not to migrate", () => {
+        // The one behavior break in this step. W0.1a suggested a freshly
+        // MINTED id for these configs (`suggestedCaseId` only reuses an
+        // `externalCaseId` that can BE an id), so the pair it produced now
+        // throws — and no `id` can equal a value outside the charset, so the
+        // fix cannot be `id := externalCaseId`.
+        let message = "";
+        try {
+          new EvalTest({
+            id: "c_minted",
+            externalCaseId: "refund flow/1",
+            name: "unmintable-external",
+            test: async () => true,
+          });
+        } catch (error) {
+          message = error instanceof Error ? error.message : String(error);
+        }
+        expect(message).toContain("declares two different identities");
+        expect(message).toContain("cannot itself be an id");
+        expect(message).toContain("Rename the external id");
+        // Never the migration that the very next construction would reject.
+        expect(message).not.toContain('id: "refund flow/1"');
+      });
+
+      it("accepts ids the platform already issues", () => {
+        for (const id of [
+          "jd7fk3m2q9x5p1v8s4t6w0y2z",
+          "ui_V1StGXR8Z5jdHi",
+          "a",
+        ]) {
+          expect(
+            () => new EvalTest({ id, name: id, test: async () => true })
+          ).not.toThrow();
+        }
+      });
+    });
+
     it("should store config", () => {
       const testFn = async (agent: HostRunner) => {
         const r = await agent.run("Test prompt");
         return r.hasToolCall("add");
       };
       const config = {
+        id: "c_case_stored",
         name: "test",
         test: testFn,
       };
@@ -97,6 +264,7 @@ describe("EvalTest", () => {
         { toolName: "format" },
       ];
       const test = new EvalTest({
+        id: "c_case_2",
         name: "with-expected",
         test: async (agent) => {
           await agent.run("Test");
@@ -109,6 +277,7 @@ describe("EvalTest", () => {
 
     it("should have undefined expectedToolCalls when not provided", () => {
       const test = new EvalTest({
+        id: "c_case_3",
         name: "without-expected",
         test: async (agent) => {
           await agent.run("Test");
@@ -122,6 +291,7 @@ describe("EvalTest", () => {
       expect(
         () =>
           new EvalTest({
+            id: "c_case_4",
             name: "invalid-match-options",
             matchOptions: { maxExtraToolCalls: -1 },
             test: async () => true,
@@ -132,9 +302,12 @@ describe("EvalTest", () => {
     it("should throw if no test function provided", () => {
       expect(() => {
         new EvalTest({
+          id: "c_case_5",
           name: "invalid-config",
         } as any);
-      }).toThrow("Invalid config: must provide 'test' function");
+      }).toThrow(
+        "Invalid config: must provide 'execute' (or the legacy 'test') function"
+      );
     });
 
     it.each([
@@ -149,6 +322,7 @@ describe("EvalTest", () => {
       expect(
         () =>
           new EvalTest({
+            id: "c_case_6",
             name: `widget-${type}`,
             predicates: [{ type, toolName: "render" } as any],
             test: async () => true,
@@ -160,6 +334,7 @@ describe("EvalTest", () => {
       expect(
         () =>
           new EvalTest({
+            id: "c_case_7",
             name: "ok-predicates",
             predicates: [
               { type: "toolCalledAtLeastOnce", toolName: "finish" },
@@ -177,6 +352,7 @@ describe("EvalTest", () => {
         createMockPromptResult({ toolsCalled: ["actual"] })
       );
       const test = new EvalTest({
+        id: "c_case_8",
         name: "expected-tools",
         expectedToolCalls: [{ toolName: "expected" }],
         test: async (executor) => {
@@ -200,6 +376,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_9",
         name: "addition",
         test: async (agent) => {
           const r = await agent.run("Add 2 and 3");
@@ -221,6 +398,7 @@ describe("EvalTest", () => {
         createMockPromptResult({ text: "done", toolsCalled: ["finish"] })
       );
       const test = new EvalTest({
+        id: "c_case_10",
         name: "predicate-gate",
         predicates: [
           { type: "toolCalledAtLeastOnce", toolName: "finish" },
@@ -251,6 +429,7 @@ describe("EvalTest", () => {
         })
       );
       const test = new EvalTest({
+        id: "c_case_11",
         name: "no-tool-errors",
         predicates: [{ type: "noToolErrors" }],
         test: async (executor) => {
@@ -276,6 +455,7 @@ describe("EvalTest", () => {
         return result;
       });
       const test = new EvalTest({
+        id: "c_case_12",
         name: "failure-path-predicates",
         predicates: [{ type: "toolCalledAtLeastOnce", toolName: "finish" }],
         test: async (executor) => {
@@ -298,6 +478,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_13",
         name: "test",
         test: async (agent) => {
           const r = await agent.run("Add and multiply");
@@ -317,6 +498,7 @@ describe("EvalTest", () => {
 
       // Wrong order - fails
       const test1 = new EvalTest({
+        id: "c_case_14",
         name: "wrong-order",
         test: async (agent) => {
           const r = await agent.run("Test");
@@ -329,6 +511,7 @@ describe("EvalTest", () => {
 
       // Correct order - passes
       const test2 = new EvalTest({
+        id: "c_case_15",
         name: "correct-order",
         test: async (agent) => {
           const r = await agent.run("Test");
@@ -346,6 +529,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_16",
         name: "any-tool",
         test: async (agent) => {
           const r = await agent.run("Test");
@@ -364,6 +548,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_17",
         name: "no-tools",
         test: async (agent) => {
           const r = await agent.run("Just respond");
@@ -384,6 +569,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_18",
         name: "custom-test",
         test: async (agent) => {
           const r = await agent.run("Test");
@@ -401,6 +587,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_19",
         name: "async-test",
         test: async (agent) => {
           const r = await agent.run("Test");
@@ -419,6 +606,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_20",
         name: "with-error",
         test: async (agent) => {
           const r = await agent.run("Test");
@@ -438,6 +626,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_21",
         name: "conversation",
         test: async (agent) => {
           const r1 = await agent.run("Search for X");
@@ -459,6 +648,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_22",
         name: "failing-test",
         test: async (agent) => {
           const r1 = await agent.run("Search");
@@ -485,6 +675,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_23",
         name: "concurrency-test",
         test: async (agent) => {
           await agent.run("Test");
@@ -513,6 +704,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_24",
         name: "default-concurrency",
         test: async (agent) => {
           await agent.run("Test");
@@ -539,6 +731,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_25",
         name: "retry-test",
         test: async (agent) => {
           await agent.run("Test");
@@ -565,6 +758,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_26",
         name: "exhausted-retries",
         test: async (agent) => {
           await agent.run("Test");
@@ -595,6 +789,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_27",
         name: "retry-count-test",
         test: async (agent) => {
           await agent.run("Test");
@@ -620,6 +815,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_28",
         name: "timeout-test",
         test: async (agent) => {
           await agent.run("Test");
@@ -644,6 +840,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_29",
         name: "default-timeout",
         test: async (agent) => {
           await agent.run("Test");
@@ -672,6 +869,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_30",
         name: "timeout-partial-pass",
         test: async (agent) => {
           const result = await agent.run("Add 2 and 3");
@@ -726,6 +924,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_31",
         name: "multi-turn-timeout",
         test: async (agent) => {
           const first = await agent.run("First");
@@ -781,6 +980,7 @@ describe("EvalTest", () => {
       };
 
       const test = new EvalTest({
+        id: "c_case_32",
         name: "hung-timeout",
         test: async (agent) => {
           const result = await agent.run("Add 2 and 3");
@@ -812,6 +1012,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_33",
         name: "progress-test",
         test: async (agent) => {
           await agent.run("Test");
@@ -849,6 +1050,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_34",
         name: "latency-test",
         test: async (agent) => {
           await agent.run("Test");
@@ -875,6 +1077,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_35",
         name: "multi-turn-latency",
         test: async (agent) => {
           await agent.run("First");
@@ -902,6 +1105,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_36",
         name: "token-test",
         test: async (agent) => {
           await agent.run("Test");
@@ -929,6 +1133,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_37",
         name: "multi-turn-tokens",
         test: async (agent) => {
           await agent.run("First");
@@ -963,6 +1168,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_38",
         name: "accuracy-test",
         test: async (agent) => {
           const r = await agent.run("Test");
@@ -980,6 +1186,7 @@ describe("EvalTest", () => {
 
     it("should throw if metrics called before run", () => {
       const test = new EvalTest({
+        id: "c_case_39",
         name: "no-run",
         test: async (agent) => {
           await agent.run("Test");
@@ -1010,6 +1217,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_40",
         name: "fpr-test",
         test: async (agent) => {
           const r = await agent.run("Test");
@@ -1028,6 +1236,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_41",
         name: "avg-tokens",
         test: async (agent) => {
           await agent.run("Test");
@@ -1044,6 +1253,7 @@ describe("EvalTest", () => {
   describe("getResults", () => {
     it("should return null before run", () => {
       const test = new EvalTest({
+        id: "c_case_42",
         name: "no-results",
         test: async (agent) => {
           await agent.run("Test");
@@ -1059,6 +1269,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_43",
         name: "with-results",
         test: async (agent) => {
           await agent.run("Test");
@@ -1078,6 +1289,7 @@ describe("EvalTest", () => {
   describe("iteration getters", () => {
     it("should throw if getAllIterations called before run", () => {
       const test = new EvalTest({
+        id: "c_case_44",
         name: "no-run",
         test: async (agent) => {
           await agent.run("Test");
@@ -1091,6 +1303,7 @@ describe("EvalTest", () => {
 
     it("should throw if getFailedIterations called before run", () => {
       const test = new EvalTest({
+        id: "c_case_45",
         name: "no-run",
         test: async (agent) => {
           await agent.run("Test");
@@ -1104,6 +1317,7 @@ describe("EvalTest", () => {
 
     it("should throw if getSuccessfulIterations called before run", () => {
       const test = new EvalTest({
+        id: "c_case_46",
         name: "no-run",
         test: async (agent) => {
           await agent.run("Test");
@@ -1121,6 +1335,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_47",
         name: "all-iterations",
         test: async (agent) => {
           await agent.run("Test");
@@ -1144,6 +1359,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_48",
         name: "failed-iterations",
         test: async (agent) => {
           const r = await agent.run("Test");
@@ -1168,6 +1384,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_49",
         name: "successful-iterations",
         test: async (agent) => {
           const r = await agent.run("Test");
@@ -1188,6 +1405,7 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
+        id: "c_case_50",
         name: "copy-test",
         test: async (agent) => {
           await agent.run("Test");

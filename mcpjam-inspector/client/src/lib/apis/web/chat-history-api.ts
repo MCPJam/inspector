@@ -1,4 +1,6 @@
+import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import { authFetch } from "@/lib/session-token";
+import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import { WebApiError } from "./base";
 import type {
   McpToolResultImageRenderingPolicy,
@@ -50,6 +52,8 @@ export interface ChatHistoryListResponse {
 }
 
 export interface ResumeConfig {
+  /** Destination of the last saved turn; re-authorized when resumed. */
+  executionTarget?: ResumeExecutionTarget;
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;
@@ -57,12 +61,29 @@ export interface ResumeConfig {
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServers?: string[];
+  /** Legacy environment pin; target-aware writers also record executionTarget. */
+  environmentId?: string;
 }
 
+/**
+ * The `/direct-chat/detail` proxy returns the whole `chatSessions` document
+ * spread into `session`, so this interface is a hand-mirror of the fields we
+ * consume — narrower than what arrives. Adding a field here is a read, not a
+ * contract change.
+ */
 export interface ChatHistoryDetailSession extends ChatHistorySession {
+  origin?: string;
+  browser?: { browserSessionId: string; state: string } | null;
   messagesBlobUrl: string | null;
   usedServerIds?: string[];
   resumeConfig?: ResumeConfig;
+  /**
+   * Host attribution stamped at ingest. Present for scenario- and swarm-sourced
+   * rows; the direct-chat read only ever serves `sourceType: "direct"` rows,
+   * which are not stamped today, so treat absence as "unrecorded" rather than
+   * "no host".
+   */
+  hostId?: string;
 }
 
 export interface ChatHistoryWidgetSnapshot {
@@ -95,6 +116,13 @@ export interface ChatHistoryTurnTrace {
   spanCount: number;
   modelId?: string;
   spansBlobUrl?: string | null;
+  requestPayloadsBlobUrl?: string | null;
+  /**
+   * The `webmcp_*` page tools this turn actually advertised, when the backend
+   * projected them (`mintedPageTool.ts`). A fact about the turn, not the live
+   * browser — see `resolvePageToolAttribution`'s header for why that matters.
+   */
+  pageToolsAtTurn?: MintedPageToolRecord[];
 }
 
 export interface ChatHistoryDetailResponse {

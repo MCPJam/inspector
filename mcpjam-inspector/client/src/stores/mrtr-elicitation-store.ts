@@ -184,8 +184,7 @@ export const useMrtrElicitationStore = create<MrtrElicitationState>(
       }
     },
 
-    __ingest: (event) =>
-      set((s) => ({ rounds: reduceEvent(s.rounds, event) })),
+    __ingest: (event) => set((s) => ({ rounds: reduceEvent(s.rounds, event) })),
 
     __reset: () => set({ rounds: [], responding: false, collection: null }),
   }),

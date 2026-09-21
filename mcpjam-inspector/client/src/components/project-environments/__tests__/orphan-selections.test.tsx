@@ -2,9 +2,11 @@
  * Orphaned-selection rows for both environment pickers.
  *
  * Both surfaces persist a list of ids and render rows from a LIVE query. An id
- * the query doesn't return — hard-deleted, unshared, or moved out of the
- * project — otherwise renders no row at all: invisible, unremovable, and still
- * shipped on every save. Each picker must surface those ids as detach-only
+ * the query doesn't return — hard-deleted, or moved out of the project —
+ * otherwise renders no row at all: invisible, unremovable, and still shipped
+ * on every save. (A skill that was merely UNSHARED is no longer one of these:
+ * the picker lists personal skills too, so it comes back as a checked,
+ * ineligible row that names its own reason.) Each picker must surface those ids as detach-only
  * rows. (The archived-but-present case was already handled; this covers the
  * genuinely-missing case.)
  */
@@ -95,7 +97,7 @@ describe("SuiteProjectEnvironmentsPicker — unresolvable attached ids", () => {
 });
 
 describe("ProjectEnvironmentSkillsPicker — unresolvable pinned ids", () => {
-  it("renders a removable row for a pinned skill missing from the shared list", async () => {
+  it("renders a removable row for a pinned skill missing from the library list", async () => {
     mockListSkills.mockResolvedValue([
       { skillId: "sk-live", name: "Live skill", description: "d" },
     ]);
@@ -119,7 +121,7 @@ describe("ProjectEnvironmentSkillsPicker — unresolvable pinned ids", () => {
     });
   });
 
-  it("still surfaces orphaned pins when the project has NO shared skills", async () => {
+  it("still surfaces orphaned pins when the project library is empty", async () => {
     // The empty-list early return would otherwise swallow the pins entirely,
     // leaving them invisible AND unremovable while still counted + saved.
     mockListSkills.mockResolvedValue([]);
@@ -137,7 +139,7 @@ describe("ProjectEnvironmentSkillsPicker — unresolvable pinned ids", () => {
       /Unavailable skill sk-gone \(remove\)/i
     );
     expect(
-      screen.queryByText(/No shared skills in this project yet/i)
+      screen.queryByText(/No skills in the project library yet/i)
     ).not.toBeInTheDocument();
 
     // Clearing the last pin emits null, never an empty array.

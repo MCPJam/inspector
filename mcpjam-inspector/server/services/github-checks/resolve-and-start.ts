@@ -75,6 +75,7 @@ import {
   cloneAndCheckout,
   killCheckSandbox,
   provisionCheckSandbox,
+  redactCloneCredential,
   type CheckSandbox,
   type SpawnIdentity,
   type StartedServer,
@@ -170,6 +171,17 @@ export type ResolveAndStartArgs = {
   repoFullName: string;
   prNumber: number;
   headSha: string;
+  /**
+   * The clone credential for a PRIVATE repository, minted by the worker between
+   * `/plan/begin` and the first provision. Absent for a public one, which is
+   * cloned anonymously exactly as before.
+   *
+   * It lives on the ARGS and not on the recipe or the plan types on purpose:
+   * every candidate re-clones into a fresh box, so this is a property of the
+   * CHECKOUT, and widening a recipe or a plan candidate to carry a secret would
+   * put it on types that are logged, digested and sent to the backend.
+   */
+  cloneToken?: string;
 };
 
 function provenanceOf(recipe: ResolvedRecipe): RecipeProvenance {
@@ -297,6 +309,7 @@ export async function resolveAndStart(
         repoFullName: args.repoFullName,
         prNumber: args.prNumber,
         headSha: args.headSha,
+        ...(args.cloneToken ? { cloneToken: args.cloneToken } : {}),
       });
     } catch (error) {
       await plan.attempt({
@@ -305,7 +318,11 @@ export async function resolveAndStart(
         ok: false,
         failureKind: "clone_failed",
         durationMs: deps.now() - cloneStartedAt,
-        detailsClamped: errorDetail(error),
+        // The one attempt detail that can carry a credential. `sandbox.ts`
+        // already redacts at the boundary it owns; this is the second, at the
+        // boundary where the text leaves the process for the corpus, because a
+        // detail that reaches the backend is a detail nobody can un-store.
+        detailsClamped: redactedErrorDetail(error, args.cloneToken),
       });
       throw new CheckStoppedByPlan("clone_failed");
     }
@@ -385,6 +402,12 @@ export async function resolveAndStart(
           start: candidate.start,
           port: candidate.port,
           mcpPath: candidate.mcpPath,
+          // Only a DECLARED (or operator-override) recipe carries one, and only
+          // when it is non-empty. The key is omitted rather than sent as
+          // `undefined` or `{}`: the backend refuses `env` on a cacheable rung,
+          // so an empty map riding along on a detected candidate would be a 400
+          // on a candidate that was otherwise fine.
+          ...envField(candidate.env),
         },
         rung: candidate.rung,
         evidence: candidate.evidence,
@@ -554,16 +577,77 @@ export async function resolveAndStart(
   }
 }
 
+/**
+ * `{ env }` when there is an environment, and NOTHING otherwise.
+ *
+ * ONE rule for both directions this module carries an environment across — the
+ * candidates we report to the plan, and the candidate the plan hands back. They
+ * had the rule written out twice and it drifted immediately: `{}` is truthy, so
+ * "copy it when it is there" quietly admits the empty map that "copy it when
+ * there is something in it" rejects.
+ *
+ * The distinction is not cosmetic on the outbound side. An empty map is still a
+ * VALUE, and the backend refuses `env` on a cacheable rung — so an empty one
+ * riding along on a detected candidate is a 400 on a candidate that was
+ * otherwise fine. Inbound it is a shape the rest of the pipeline should never
+ * have to recognise as a second spelling of absence.
+ */
+function envField(env: Record<string, string> | undefined): {
+  env?: Record<string, string>;
+} {
+  return env && Object.keys(env).length > 0 ? { env } : {};
+}
+
 function recipeOf(planned: PlannedCandidate): ResolvedRecipe {
   return {
     build: planned.recipe.build,
     start: planned.recipe.start,
     port: planned.recipe.port,
     mcpPath: planned.recipe.mcpPath,
+    // The PLAN's environment, not the one we proposed — the backend owns the
+    // plan, and a candidate it issued must execute exactly as issued. Through
+    // `envField` so an env-free plan candidate stays env-free rather than
+    // acquiring a key later code would have to know to ignore.
+    ...envField(planned.recipe.env),
     rung: planned.rung,
     ownershipProof: planned.ownershipProof,
     evidence: planned.evidence ?? [],
   };
+}
+
+/**
+ * `errorDetail`, with any clone credential removed BEFORE the 500-character
+ * bound is applied.
+ *
+ * The ordering is the same one `sandbox.ts` makes for `errorMessage`, for the
+ * same reason: a slice that lands mid-token leaves half a token in the corpus,
+ * and a halved token no longer matches the literal the replacement is looking
+ * for. So this redacts the UNCLAMPED text and clamps last — which is why it
+ * cannot simply wrap `errorDetail`.
+ *
+ * Separate from `errorDetail` rather than folded into it so the redaction is
+ * visible at the call site that needs it: the clone is the only phase whose
+ * failure text can have touched a secret.
+ */
+function redactedErrorDetail(
+  error: unknown,
+  cloneToken?: string
+): string | undefined {
+  // Mirrors `errorDetail`'s branches and its BOUNDS exactly — `detailsMarkdown`
+  // arrives already clamped and fenced from `sandbox.ts` and is not re-bounded,
+  // while a bare message is. What differs is only the ORDER: redact, then clamp.
+  if (error instanceof CheckStepError && error.detailsMarkdown !== undefined) {
+    return (
+      redactCloneCredential(error.detailsMarkdown, cloneToken) || undefined
+    );
+  }
+  if (error instanceof Error) {
+    return (
+      redactCloneCredential(error.message, cloneToken).slice(0, 500) ||
+      undefined
+    );
+  }
+  return undefined;
 }
 
 function errorDetail(error: unknown): string | undefined {

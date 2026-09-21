@@ -10,8 +10,16 @@
  * `convex/journeyExecution/*` + `convex/{personas,journeys,journeyRuns}` by
  * hand (two-repo layout).
  */
-
+import type {
+  SwarmSessionVerdict,
+  JourneyRunVerdictSummary,
+  SwarmReport,
+} from "@mcpjam/sdk/contract";
 import { authFetch } from "@/lib/session-token";
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
+import { WebApiError } from "@/lib/apis/web/base";
+import type { NormalizedError } from "@mcpjam/sdk/browser";
+import { isNormalizedError } from "@mcpjam/sdk/browser";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 import type { SwarmStreamEvent } from "@/shared/swarm-stream-events";
 
@@ -79,6 +87,13 @@ export const SWARM_MUTATIONS = {
   /** Sentry-ignore a finding; survives the finding re-firing in later waves. */
   dismissFinding: "swarmWaveInsights:dismissFinding",
   undismissFinding: "swarmWaveInsights:undismissFinding",
+  /**
+   * Stop an in-flight run. Membership-gated backend-side; idempotent, and it
+   * throws `CONFLICT` for a run that already settled on its own. Shipped in the
+   * backend with no caller — the Swarms UI had no stop control at all, so a run
+   * launched by mistake could only be waited out.
+   */
+  cancelJourneyRun: "journeyRuns:cancelJourneyRun",
 } as const;
 
 // ── Convex action names (string-keyed calls) ────────────────────────────────
@@ -207,6 +222,8 @@ export interface JourneyRunAttempt {
 }
 
 export interface JourneyRun {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   _id: string;
   status: JourneyRunStatus | string;
   /**
@@ -245,6 +262,13 @@ export interface JourneyRun {
  * `goalScore` are the server-denormalized subsets the badges read.
  */
 export interface JourneySessionRow {
+  verdict?: SwarmSessionVerdict;
+  observations?: Array<{
+    evaluatorId: string;
+    predicateType: string;
+    role: "advisory" | "required";
+    status: "passed" | "failed" | "pending" | "unavailable";
+  }>;
   /** `s._id` — the id `ShareUsageThreadDetail` opens + the deep-link threadId. */
   id: string;
   chatSessionId: string;
@@ -349,6 +373,8 @@ export interface SwarmOverviewTarget {
 }
 
 export interface SwarmOverviewRun {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   runId: string;
   journeyRefId: string;
   journeyName: string;
@@ -362,6 +388,12 @@ export interface SwarmOverviewRun {
    * only for runs without one, so legacy rows render exactly as before.
    */
   swarmRunGroupId?: string;
+  /**
+   * Authored swarm name, present once the backend carries it. Absent for runs
+   * launched outside a swarm and on older backends, so the wave title keeps its
+   * short-id fallback rather than rendering an empty heading.
+   */
+  swarmName?: string;
   status: string;
   summary: JourneyRunSummary;
   goalScoreSummary?: GoalScoreRollup;
@@ -642,12 +674,12 @@ export interface SwarmSessionMetrics {
 
 /**
  * Map a journey session list row into the shape `ShareUsageThreadList` /
- * chatbox Sessions cards expect. Swarm sessions are always synthetic for
+ * scenario Sessions cards expect. Swarm sessions are always synthetic for
  * badge purposes even if an older row omitted the flag.
  */
 export function journeySessionRowToThread(
   row: JourneySessionRow,
-  fallbackPersonaName?: string
+  fallbackPersonaName?: string,
 ): SharedChatThread {
   const displayName =
     row.visitorDisplayName ??
@@ -684,7 +716,7 @@ export type SwarmSessionRunGroup = {
 
 function groupSwarmSessionsByKey(
   rows: JourneySessionRow[],
-  keyFor: (row: JourneySessionRow) => string | null | undefined
+  keyFor: (row: JourneySessionRow) => string | null | undefined,
 ): SwarmSessionRunGroup[] {
   const byKey = new Map<string | null, JourneySessionRow[]>();
   for (const row of rows) {
@@ -698,13 +730,13 @@ function groupSwarmSessionsByKey(
     .map(([runId, groupRows]) => {
       const sorted = [...groupRows].sort(
         (a, b) =>
-          (b.lastActivityAt ?? b.startedAt) - (a.lastActivityAt ?? a.startedAt)
+          (b.lastActivityAt ?? b.startedAt) - (a.lastActivityAt ?? a.startedAt),
       );
       return {
         runId,
         rows: sorted,
         latestActivityAt: Math.max(
-          ...sorted.map((row) => row.lastActivityAt ?? row.startedAt)
+          ...sorted.map((row) => row.lastActivityAt ?? row.startedAt),
         ),
       };
     })
@@ -713,14 +745,14 @@ function groupSwarmSessionsByKey(
 
 /** Cluster flat session pages by parent journey run (newest run first). */
 export function groupSwarmSessionsByRun(
-  rows: JourneySessionRow[]
+  rows: JourneySessionRow[],
 ): SwarmSessionRunGroup[] {
   return groupSwarmSessionsByKey(rows, (row) => row.journeyRunId);
 }
 
 /** Cluster flat session pages by goal (`journeyRefId`, newest group first). */
 export function groupSwarmSessionsByGoal(
-  rows: JourneySessionRow[]
+  rows: JourneySessionRow[],
 ): SwarmSessionRunGroup[] {
   return groupSwarmSessionsByKey(rows, (row) => row.journeyRefId);
 }
@@ -746,7 +778,7 @@ export interface SwarmSessionPromoteDetail {
   /**
    * The session row's recorded host attribution. Display/compat — prefer
    * `suggestedHostAttachment.namedHostId` when seeding, because on
-   * environment-backed chatboxes this records the PUBLISH-TIME host while
+   * environment-backed scenarios this records the PUBLISH-TIME host while
    * the environment may since have been re-pointed.
    */
   hostId: string | null;
@@ -763,6 +795,19 @@ export interface SwarmSessionPromoteDetail {
     selectedServerIds: string[];
     serverNames: string[];
   } | null;
+  /**
+   * D8f1. True when promoting this session copies a THIRD PARTY's real words
+   * — a real User Testing transcript — into a durable, member-owned artifact.
+   * Server-derived; the synthetic carve-out is a policy decision and lives
+   * with the policy, not here.
+   *
+   * Optional on the wire so the dialog keeps working against a backend that
+   * predates the field, in which case nothing is asked and nothing is
+   * stamped.
+   */
+  requiresContentTransferAcknowledgement?: boolean;
+  /** The policy version an acknowledgement given now is recorded against. */
+  contentTransferPolicyVersion?: number;
 }
 
 /**
@@ -830,6 +875,12 @@ export interface LaunchJourneyRunArgs {
    */
   launchKey: string;
   /**
+   * Iterations for THIS run, overriding the journey's stored
+   * `sessionsPerTarget` without rewriting it. Sent for a reused persona whose
+   * saved fan-out differs from what Confirm chose.
+   */
+  sessionsPerTarget?: number;
+  /**
    * Opaque id shared by every run of ONE co-launched wave, so the Overview can
    * group them without inferring a batch from `createdAt` proximity. A solo
    * "Run again" mints its own and is simply a wave of one. Omitted against a
@@ -857,10 +908,20 @@ export interface LaunchJourneyRunResult {
  */
 export class LaunchJourneyRunError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /** A model limit the dialog took over. The caller must not also render this
+   * message inline — the modal already carries it, with the actions. */
+  readonly limitDialogRaised: boolean;
+  constructor(
+    status: number,
+    message: string,
+    limitDialogRaised = false,
+    readonly code?: string,
+    readonly details?: unknown,
+  ) {
     super(message);
     this.name = "LaunchJourneyRunError";
     this.status = status;
+    this.limitDialogRaised = limitDialogRaised;
   }
 }
 
@@ -870,7 +931,7 @@ export class LaunchJourneyRunError extends Error {
  * caller can branch on `.status`.
  */
 export async function launchJourneyRun(
-  args: LaunchJourneyRunArgs
+  args: LaunchJourneyRunArgs,
 ): Promise<LaunchJourneyRunResult> {
   const response = await authFetch(
     `/api/web/swarm/journeys/${encodeURIComponent(args.journeyId)}/runs`,
@@ -886,8 +947,11 @@ export async function launchJourneyRun(
         ...(args.environmentIds?.length
           ? { environmentIds: args.environmentIds }
           : {}),
+        ...(args.sessionsPerTarget !== undefined
+          ? { sessionsPerTarget: args.sessionsPerTarget }
+          : {}),
       }),
-    }
+    },
   );
 
   let body: unknown = undefined;
@@ -898,15 +962,43 @@ export async function launchJourneyRun(
   }
 
   if (!response.ok) {
-    const rawMessage =
+    const parsed =
       body && typeof body === "object"
-        ? (body as { message?: unknown }).message
-        : undefined;
+        ? (body as Record<string, unknown>)
+        : null;
+    const rawMessage = parsed?.message;
     const message =
       typeof rawMessage === "string" && rawMessage.length > 0
         ? rawMessage
         : `Failed to launch goal run (${response.status})`;
-    throw new LaunchJourneyRunError(response.status, message);
+    // `code` first, `error` as the fallback: the limit body sets both, and the
+    // generic fallback message above would otherwise be all the classifier
+    // sees.
+    const code =
+      typeof parsed?.code === "string"
+        ? parsed.code
+        : typeof parsed?.error === "string"
+        ? parsed.error
+        : null;
+    // Raise the wall HERE, while the body still carries the route's `code` —
+    // same reasoning as `postGenerate`. Launching a goal run spends model
+    // budget like every other action that already shows this dialog.
+    const limitDialogRaised = notifyMCPJamLimitError({
+      ...(code ? { code } : {}),
+      details: body,
+      message,
+      surface: "swarm",
+    });
+    throw new LaunchJourneyRunError(
+      response.status,
+      message,
+      limitDialogRaised,
+      typeof (parsed?.details as Record<string, unknown> | undefined)?.code ===
+      "string"
+        ? (parsed!.details as { code: string }).code
+        : code ?? undefined,
+      parsed?.details,
+    );
   }
 
   const runId =
@@ -916,7 +1008,7 @@ export async function launchJourneyRun(
   if (typeof runId !== "string" || runId.length === 0) {
     throw new LaunchJourneyRunError(
       response.status,
-      "Launch accepted but the backend returned no run id"
+      "Launch accepted but the backend returned no run id",
     );
   }
   return { runId };
@@ -924,20 +1016,9 @@ export async function launchJourneyRun(
 
 // ── REST generation ─────────────────────────────────────────────────────────
 
-/**
- * A deterministic check generation suggests for this journey — predicate wire
- * shape, tool name already allowlisted against the grounding snapshot
- * backend-side. Only `toolCalledAtLeastOnce` is ever suggested.
- */
-export interface SwarmSuggestedCheck {
-  type: "toolCalledAtLeastOnce";
-  toolName: string;
-}
-
 export interface SwarmGeneratedJourney {
   name?: string;
   goal: string;
-  suggestedChecks?: SwarmSuggestedCheck[];
 }
 
 export interface SwarmGeneratedPersona {
@@ -953,17 +1034,27 @@ export interface SwarmGeneratedPersona {
  */
 export class SwarmGenerateError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /** A model limit the dialog took over. The caller must not also render this
+   * message inline — the modal already carries it, with the actions. */
+  readonly limitDialogRaised: boolean;
+  constructor(
+    status: number,
+    message: string,
+    limitDialogRaised = false,
+    readonly code?: string,
+    readonly details?: unknown,
+  ) {
     super(message);
     this.name = "SwarmGenerateError";
     this.status = status;
+    this.limitDialogRaised = limitDialogRaised;
   }
 }
 
 async function postGenerate<T>(
   path: string,
   body: unknown,
-  fallbackMessage: string
+  fallbackMessage: string,
 ): Promise<T> {
   const response = await authFetch(path, {
     method: "POST",
@@ -977,14 +1068,52 @@ async function postGenerate<T>(
     parsed = undefined;
   }
   if (!response.ok) {
-    const rawMessage =
+    const body =
       parsed && typeof parsed === "object"
-        ? (parsed as { message?: unknown }).message
-        : undefined;
+        ? (parsed as Record<string, unknown>)
+        : null;
+    const rawMessage = body?.message;
     const message =
       typeof rawMessage === "string" && rawMessage.length > 0
         ? rawMessage
         : `${fallbackMessage} (${response.status})`;
+    const code =
+      typeof body?.code === "string"
+        ? body.code
+        : typeof body?.error === "string"
+        ? body.error
+        : null;
+    const normalized = isNormalizedError(body?.normalized)
+      ? (body.normalized as NormalizedError)
+      : undefined;
+    const details =
+      body?.details && typeof body.details === "object"
+        ? (body.details as Record<string, unknown>)
+        : undefined;
+    // Raise the top-up dialog HERE, where the body still carries the route's
+    // `code`. `SwarmGenerateError` keeps only status + message, so by the time
+    // the create flow catches this the limit is no longer identifiable — and
+    // it renders as the catalog's "Unknown error" instead.
+    const limitDialogRaised = notifyMCPJamLimitError({
+      ...(code ? { code } : {}),
+      details: parsed,
+      message,
+      surface: "swarm",
+    });
+    // The dialog owns this failure, so the error only has to carry the flag
+    // that suppresses the card — `normalized` exists to feed that same card.
+    if (limitDialogRaised) {
+      throw new SwarmGenerateError(response.status, message, true);
+    }
+    if (normalized) {
+      throw new WebApiError(
+        response.status,
+        code,
+        message,
+        normalized,
+        details,
+      );
+    }
     throw new SwarmGenerateError(response.status, message);
   }
   return parsed as T;
@@ -1008,7 +1137,7 @@ export async function generateSwarmPersona(
   args: {
     projectId: string;
     journeyCount: number;
-  } & SwarmGenerationGrounding
+  } & SwarmGenerationGrounding,
 ): Promise<{
   persona: SwarmGeneratedPersona;
   journeys: SwarmGeneratedJourney[];
@@ -1016,7 +1145,7 @@ export async function generateSwarmPersona(
   return postGenerate(
     "/api/web/swarm/generate/persona",
     args,
-    "Failed to generate persona"
+    "Failed to generate persona",
   );
 }
 
@@ -1041,7 +1170,7 @@ export async function generateSwarmPersonaBatch(
     journeyCount: number;
     description?: string;
     existingPersonas?: { name: string; role: string }[];
-  } & SwarmGenerationGrounding
+  } & SwarmGenerationGrounding,
 ): Promise<{
   personas: {
     persona: SwarmGeneratedPersona;
@@ -1051,7 +1180,7 @@ export async function generateSwarmPersonaBatch(
   return postGenerate(
     "/api/web/swarm/generate/persona",
     args,
-    "Failed to generate personas"
+    "Failed to generate personas",
   );
 }
 
@@ -1059,14 +1188,15 @@ export async function generateSwarmPersonaBatch(
 export async function generateSwarmJourneys(
   args: {
     projectId: string;
+    swarmRefId?: string;
     journeyCount: number;
     persona: SwarmGeneratedPersona;
-  } & SwarmGenerationGrounding
+  } & SwarmGenerationGrounding,
 ): Promise<{ journeys: SwarmGeneratedJourney[] }> {
   return postGenerate(
     "/api/web/swarm/generate/journeys",
     args,
-    "Failed to generate goals"
+    "Failed to generate goals",
   );
 }
 
@@ -1078,7 +1208,7 @@ export async function generateSwarmJourneys(
 export async function streamJourneyRun(
   runId: string,
   onEvent: (event: SwarmStreamEvent) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<void> {
   const response = await authFetch(
     `/api/web/swarm/runs/${encodeURIComponent(runId)}/stream`,
@@ -1086,7 +1216,7 @@ export async function streamJourneyRun(
       method: "GET",
       headers: { Accept: "text/event-stream" },
       signal,
-    }
+    },
   );
 
   if (!response.ok) {

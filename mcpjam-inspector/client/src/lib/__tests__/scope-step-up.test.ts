@@ -280,7 +280,7 @@ describe("chat turn step-up deferral", () => {
 
   it("never queues an unactionable challenge or an unresolved server", () => {
     const hold = beginChatTurnScopeStepUpHold();
-    // A share-link chatbox turn resolves to no server; it must stay inert
+    // A share-link scenario turn resolves to no server; it must stay inert
     // rather than authorize on the host's behalf after the turn.
     driveChatScopeStepUp(undefined, challenge);
     driveChatScopeStepUp(server, { errorDescription: "nope" });

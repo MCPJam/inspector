@@ -70,7 +70,7 @@ vi.mock("@/hooks/useViews", () => ({
   useProjectServers: () => ({ servers: [], isLoading: false }),
   useDbUserReady: () => true,
 }));
-vi.mock("@/lib/chatbox-session", () => ({
+vi.mock("@/lib/scenario-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
 vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
@@ -153,6 +153,28 @@ describe("SwarmsTab — Run journey launch", () => {
         screen.getByText("This journey has no pinned hosts to run")
       ).toBeInTheDocument()
     );
+  });
+
+  /**
+   * The limit dialog already carries this sentence plus the actions that clear
+   * it. The inline banner under the goal would repeat it with nothing to act
+   * on, so the launch handler skips it on the flag.
+   */
+  it("leaves the message to the dialog when the limit wall was raised", async () => {
+    launchJourneyRunMock.mockRejectedValue(
+      new LaunchJourneyRunError(
+        429,
+        "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        true
+      )
+    );
+
+    const runBtn = selectPersonaAndRun();
+    fireEvent.click(runBtn);
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(runBtn).toBeEnabled());
+    expect(screen.queryByText(/MCPJam (model )?limit reached\./)).toBeNull();
   });
 
   it("reuses the SAME launchKey on retry after a 5xx/network failure, and only clears it after a confirmed 2xx", async () => {

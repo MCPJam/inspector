@@ -11,6 +11,7 @@
  */
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
+import { redactForLog, redactedErrorForCapture } from "./redact-log-message.js";
 
 /**
  * The refusal messages the backend's authorization helpers throw:
@@ -20,9 +21,18 @@ import { logger } from "../../utils/logger.js";
  *   `requireWorkspaceRole`: "Not a member of this workspace"
  *                           "Insufficient workspace permissions: requires <role>"
  *   `resolveAuthorizedChatSession`: "ChatSession not found or unauthorized"
+ *   the rest of that helper family: "<Resource> not found or unauthorized" —
+ *                           "Suite not found or unauthorized", "Test suite run
+ *                           not found or unauthorized". Matched on the COMPOUND
+ *                           phrase with no resource name, which is why the
+ *                           ChatSession entry is no longer special:
+ *                           `routes/mcp/evals.ts:361` already tests the same
+ *                           phrase resource-agnostically, and the alternative is
+ *                           an enumeration that answers 502 — and pages — for
+ *                           every resource nobody remembered to add.
  *
  * The workspace wordings matter because the user-testing reads
- * (`chatboxes:getChatbox`, `chatSessions:getSession`) authorize at WORKSPACE
+ * (`scenarios:getScenario`, `chatSessions:getSession`) authorize at WORKSPACE
  * scope — before they were matched here, a cross-workspace probe classified
  * as `upstream` and answered 502, which both paged Sentry and told the prober
  * the id exists somewhere they cannot see (404 = missing, 502 = exists).
@@ -30,10 +40,14 @@ import { logger } from "../../utils/logger.js";
  * Deliberately NOT a loose "unauthorized"/"not found" match. Those words also
  * appear in failures that are OURS — an expired credential, a renamed or
  * undeployed function — and answering 404 to those tells a caller their
- * resource is gone during an outage.
+ * resource is gone during an outage. The compound "not found or unauthorized"
+ * is safe where the bare words are not: no Convex or transport failure phrases
+ * itself that way ("Could not find public function", "Unauthenticated",
+ * "Server Error", "fetch failed"), and only an authorization helper joins the
+ * two.
  */
 const MEMBERSHIP_REFUSAL =
-  /not a member of this (?:project|workspace)|insufficient (?:project|workspace) permissions|chatsession not found or unauthorized/i;
+  /not a member of this (?:project|workspace|organization)|insufficient (?:project|workspace|organization) permissions|not found or unauthorized/i;
 
 /**
  * Convex rejected the ARGUMENTS before the handler ran — a caller-shaped id
@@ -94,36 +108,6 @@ export function classifyConvexReadError(error: unknown): ConvexReadFailure {
  * it, and request ids that mean nothing to a caller and are a free read of our
  * internals to anyone else. The detail goes to the log instead.
  */
-/**
- * What we are willing to put in a log line.
- *
- * Convex's failure text is written for us, and an argument-validator failure
- * quotes the ARGUMENTS — which on these routes can include ids and, on a
- * write, whatever the caller sent. Sentry and Axiom are a wider audience than
- * a server console, so the obvious credential shapes come out and the rest is
- * capped: a validator dump is long, and the first few hundred characters are
- * the part anyone reads.
- *
- * NOT a general PII scrubber, and not sold as one — it removes the things that
- * are recognizable as secrets by shape. The real protection is that this text
- * never reaches the RESPONSE; this only narrows what an operator's tooling
- * accumulates.
- */
-const LOG_MESSAGE_MAX = 400;
-
-function redactForLog(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  const scrubbed = raw
-    // `Bearer <token>`, and the token on its own if it has a known prefix.
-    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
-    .replace(/\b(sk|slk|dsc|api)_[A-Za-z0-9._-]+/g, "$1_[redacted]")
-    // Anything JWT-shaped.
-    .replace(/\beyJ[A-Za-z0-9._-]{10,}/g, "[redacted-jwt]");
-  return scrubbed.length > LOG_MESSAGE_MAX
-    ? `${scrubbed.slice(0, LOG_MESSAGE_MAX)}… [truncated]`
-    : scrubbed;
-}
-
 export function translateConvexReadError(
   error: unknown,
   options: {
@@ -152,12 +136,35 @@ export function translateConvexReadError(
 ): WebRouteError {
   if (error instanceof WebRouteError) return error;
   const failure = classifyConvexReadError(error);
+  // A caller-shaped id Convex's validator rejected cannot name a resource the
+  // caller may see; not an incident, so no Sentry — see
+  // ARGUMENT_VALIDATION_FAILURE.
+  //
+  // But not silent either. The 404 has a second, much less benign cause:
+  // DEPLOY SKEW. A backend validator that gains a required argument, tightens
+  // a union, or renames a field makes this route answer 404 to EVERY caller,
+  // and — classified as the caller's stale id — it does so with no log line, no
+  // Sentry event, and a status no 5xx monitor watches. The warn is Axiom-only
+  // (`logger.warn` does not capture), so the stale-id retry loops that motivated
+  // the 404 still cost nothing, while a route that has started answering 404
+  // uniformly becomes something an operator can see and rate-alert on.
+  if (failure.kind === "invalid-argument") {
+    // `detail`, NOT `message`: `ingestToAxiom` spreads the context and THEN
+    // sets `message` from its first argument, so a `message` key here is
+    // silently overwritten and the diagnosis — the whole point of the line —
+    // never reaches Axiom.
+    logger.warn(`[${options.scope}] convex rejected read arguments`, {
+      scope: options.scope,
+      detail: redactForLog(error),
+    });
+    return new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      options.notFoundMessage ?? "Not found"
+    );
+  }
   if (
     failure.kind === "membership" ||
-    // A caller-shaped id Convex's validator rejected cannot name a resource
-    // the caller may see; not an incident, so no Sentry — see
-    // ARGUMENT_VALIDATION_FAILURE.
-    failure.kind === "invalid-argument" ||
     (failure.kind === "redacted" && options.redactedIsRefusal === true)
   ) {
     return new WebRouteError(
@@ -173,25 +180,8 @@ export function translateConvexReadError(
       "Invalid or expired credentials."
     );
   }
-  // The REDACTED error, not the original. `logger.error` hands its second
-  // argument to `Sentry.captureException`, which reads `.message` off it — so
-  // redacting only the structured field left the raw text going to Sentry
-  // anyway and made the scrubbing decorative.
-  //
-  // AND the stack has to be rebuilt, not copied. A JS stack string BEGINS with
-  // `Error: <message>`, so transplanting the original stack onto a redacted
-  // error puts the unredacted message straight back as its first line — the
-  // same leak, one field over. Only the frames come across; the header is the
-  // redacted message.
-  const redacted = new Error(redactForLog(error));
-  if (error instanceof Error && error.stack) {
-    const frames = error.stack
-      .split("\n")
-      .filter((line) => /^\s+at\s/.test(line));
-    if (frames.length > 0) {
-      redacted.stack = [`Error: ${redacted.message}`, ...frames].join("\n");
-    }
-  }
+  // The REDACTED error, not the original — see `redactedErrorForCapture`.
+  const redacted = redactedErrorForCapture(error);
   logger.error(`[${options.scope}] upstream read failed`, redacted, {
     message: redacted.message,
   });

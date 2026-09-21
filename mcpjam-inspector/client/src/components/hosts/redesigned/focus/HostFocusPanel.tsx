@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
+import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import { cn } from "@/lib/utils";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import type { ThemeMode } from "@/types/preferences/theme";
@@ -13,6 +13,7 @@ import { fieldsWithIssues } from "./useHostDraftValidation";
 import { AppearanceTab } from "./AppearanceTab";
 import { BehaviorTab } from "./BehaviorTab";
 import { ToolsTab } from "./ToolsTab";
+import { BrowserTab } from "./BrowserTab";
 import { ComputerTab } from "./ComputerTab";
 import { ProtocolTab } from "./ProtocolTab";
 import { AppsExtensionTab } from "./AppsExtensionTab";
@@ -23,6 +24,7 @@ import {
 } from "./host-focus-tab-defs";
 import { HostIdentityRow } from "./HostIdentityRow";
 import { UpdateHostToLatestButton } from "./UpdateHostToLatestButton";
+import { HostVerifiedAtStamp } from "./HostVerifiedAtStamp";
 import {
   hostFocusShellHeaderRowClass,
   hostFocusShellRootClass,
@@ -30,6 +32,7 @@ import {
 } from "./host-focus-shell";
 
 interface HostFocusPanelProps {
+  projectId?: string;
   /**
    * Stable host identifier. Used as a React key on the JSON-native tabs so
    * they hard-remount when the user switches hosts — otherwise the
@@ -52,8 +55,11 @@ interface HostFocusPanelProps {
   draft: HostConfigInputV2;
   savedDraft?: HostConfigInputV2;
   onDraftChange: (
-    updater: (prev: HostConfigInputV2) => HostConfigInputV2
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2,
   ) => void;
+  onSaveLatest: (name: string, draft: HostConfigInputV2) => Promise<boolean>;
+  hostLoaded: boolean;
+  saveInFlight: boolean;
   attention: ReadonlyArray<HostAttentionIssue>;
   onClose: () => void;
   // `availableServers`, `onAddServer`, and `initialSelectedServerId`
@@ -64,6 +70,7 @@ interface HostFocusPanelProps {
 }
 
 export function HostFocusPanel({
+  projectId,
   hostId,
   tab,
   onTabChange,
@@ -75,6 +82,9 @@ export function HostFocusPanel({
   draft,
   savedDraft,
   onDraftChange,
+  onSaveLatest,
+  hostLoaded,
+  saveInFlight,
   attention,
   onClose,
 }: HostFocusPanelProps) {
@@ -83,7 +93,7 @@ export function HostFocusPanel({
   // identity-row indicator follows the new tag so the input still lights
   // up red when empty.
   const behaviorIssues = fieldsWithIssues(attention, "behavior");
-  const logoSrc = getChatboxHostLogo(draft.hostStyle, draft.chatUiOverride);
+  const logoSrc = getScenarioHostLogo(draft.hostStyle, draft.chatUiOverride);
 
   // Tools is GA; Computer is flag-gated (or shown when already attached).
   const visibleTabs = useVisibleHostFocusTabs(draft);
@@ -92,37 +102,51 @@ export function HostFocusPanel({
   const activeTab = activeHostFocusTab(tab, visibleTabs);
 
   return (
-    <div className={hostFocusShellRootClass}>
-      <HostIdentityRow
-        className={cn(hostFocusShellHeaderRowClass, "py-2")}
-        hostDisplayName={hostDisplayName}
-        onHostDisplayNameChange={onHostDisplayNameChange}
-        hasNameIssue={behaviorIssues.has("hostDisplayName")}
-        logoSrc={logoSrc}
-        action={
-          <UpdateHostToLatestButton
-            hostId={hostId}
-            draft={draft}
-            savedDraft={savedDraft}
-            hostDisplayName={hostDisplayName}
-            savedHostDisplayName={savedHostDisplayName}
-            onHostDisplayNameChange={onHostDisplayNameChange}
-            themeMode={themeMode}
-            onDraftChange={onDraftChange}
-          />
-        }
-      />
+    <div className={hostFocusShellRootClass} aria-busy={saveInFlight}>
+      <div className="contents" inert={saveInFlight || undefined}>
+        <HostIdentityRow
+          className={cn(hostFocusShellHeaderRowClass, "py-2")}
+          hostDisplayName={hostDisplayName}
+          onHostDisplayNameChange={onHostDisplayNameChange}
+          hasNameIssue={behaviorIssues.has("hostDisplayName")}
+          logoSrc={logoSrc}
+          action={
+            // The stamp sits left of the button on purpose: it says how old the
+            // profile is, the button is what fixes that. No wrapper here —
+            // `HostIdentityRow` lays the action out so it can restyle the group
+            // when it wraps to its own line.
+            <>
+              <HostVerifiedAtStamp hostStyle={draft.hostStyle} />
+              <UpdateHostToLatestButton
+                hostId={hostId}
+                draft={draft}
+                savedDraft={savedDraft}
+                hostDisplayName={hostDisplayName}
+                savedHostDisplayName={savedHostDisplayName}
+                onHostDisplayNameChange={onHostDisplayNameChange}
+                themeMode={themeMode}
+                onDraftChange={onDraftChange}
+                onSaveLatest={onSaveLatest}
+                hostLoaded={hostLoaded}
+                saveInFlight={saveInFlight}
+              />
+            </>
+          }
+        />
+      </div>
       <header
         className={cn(
           hostFocusShellHeaderRowClass,
-          "items-stretch gap-2 py-1 sm:items-center"
+          "items-stretch gap-2 py-1 sm:items-center",
         )}
       >
-        <HostFocusTabBar
-          tab={activeTab}
-          onTabChange={onTabChange}
-          tabs={visibleTabs}
-        />
+        <div className="contents" inert={saveInFlight || undefined}>
+          <HostFocusTabBar
+            tab={activeTab}
+            onTabChange={onTabChange}
+            tabs={visibleTabs}
+          />
+        </div>
         <Button
           size="icon"
           variant="ghost"
@@ -135,7 +159,10 @@ export function HostFocusPanel({
         </Button>
       </header>
 
-      <div className={hostFocusShellScrollClass}>
+      <div
+        className={hostFocusShellScrollClass}
+        inert={saveInFlight || undefined}
+      >
         {activeTab === "behavior" ? (
           <BehaviorTab
             draft={draft}
@@ -144,10 +171,25 @@ export function HostFocusPanel({
           />
         ) : null}
         {activeTab === "tools" ? (
-          <ToolsTab draft={draft} onDraftChange={onDraftChange} />
+          <ToolsTab
+            projectId={projectId}
+            draft={draft}
+            onDraftChange={onDraftChange}
+          />
+        ) : null}
+        {activeTab === "browser" ? (
+          <BrowserTab
+            projectId={projectId}
+            draft={draft}
+            onDraftChange={onDraftChange}
+          />
         ) : null}
         {activeTab === "computer" ? (
-          <ComputerTab draft={draft} onDraftChange={onDraftChange} />
+          <ComputerTab
+            projectId={projectId}
+            draft={draft}
+            onDraftChange={onDraftChange}
+          />
         ) : null}
         {activeTab === "appearance" ? (
           <AppearanceTab draft={draft} onDraftChange={onDraftChange} />

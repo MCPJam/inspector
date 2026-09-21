@@ -5,22 +5,22 @@
  *
  *   - "project"  — the signed-in app. Return paths are normalized through the
  *                  known app-tab segments.
- *   - "chatbox"  — a published chatbox link. Guest completion is keyed on
- *                  `chatboxId` + `sessionId`.
+ *   - "scenario"  — a published scenario link. Guest completion is keyed on
+ *                  `scenarioId` + `sessionId`.
  *   - "score"    — score.mcpjam.com. A guest with a `projectId`/`serverId` and
- *                  no chatbox, returning to `/embed/score`. It needs its own
+ *                  no scenario, returning to `/embed/score`. It needs its own
  *                  value because neither of the others fits: "project" would
  *                  collapse `/embed/score` to `/servers` (the segment isn't an
- *                  app tab) and lose the run, and "chatbox" would demand a
- *                  chatbox id it does not have.
+ *                  app tab) and lose the run, and "scenario" would demand a
+ *                  scenario id it does not have.
  */
-export type HostedOAuthSurface = "chatbox" | "project" | "score";
+export type HostedOAuthSurface = "scenario" | "project" | "score";
 
 /** Cheap guard so both marker validators agree on what a surface can be. */
 export function isHostedOAuthSurface(
   value: unknown
 ): value is HostedOAuthSurface {
-  return value === "chatbox" || value === "project" || value === "score";
+  return value === "scenario" || value === "project" || value === "score";
 }
 
 export type HostedOAuthStatus =

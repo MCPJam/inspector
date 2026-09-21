@@ -7,6 +7,7 @@ export const HOST_VERIFY_TAB_PARAM = "hostTab";
 type HostVerifyTabParam =
   | "agent"
   | "tools"
+  | "browser"
   | "computer"
   | "protocol"
   | "apps"
@@ -18,6 +19,7 @@ const HOST_VERIFY_TAB_TO_FOCUS_TAB: Record<
 > = {
   agent: "behavior",
   tools: "tools",
+  browser: "browser",
   computer: "computer",
   protocol: "protocol",
   apps: "apps",
@@ -29,6 +31,7 @@ const FOCUS_TAB_TO_HOST_VERIFY_TAB: Partial<
 > = {
   behavior: "agent",
   tools: "tools",
+  browser: "browser",
   computer: "computer",
   protocol: "protocol",
   apps: "apps",

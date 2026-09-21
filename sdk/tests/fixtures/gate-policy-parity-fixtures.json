@@ -1,0 +1,1481 @@
+{
+  "evaluate": [
+    {
+      "id": "no-conditions",
+      "policy": {},
+      "evidence": {
+        "subject": { "runId": "run_subject", "final": true }
+      },
+      "expected": { "outcome": "not_configured", "conditions": [] }
+    },
+    {
+      "id": "baseline-only",
+      "policy": { "baseline": { "kind": "run", "runId": "run_base" } },
+      "evidence": {
+        "subject": { "runId": "run_subject", "final": true }
+      },
+      "expected": { "outcome": "not_configured", "conditions": [] }
+    },
+    {
+      "id": "absolute-only-pass",
+      "policy": { "noGatingScoreErrors": true },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "evaluationConfig": {
+            "definitions": [
+              {
+                "scorerId": "refund",
+                "idSource": "explicit",
+                "scorerVersion": "1",
+                "implementationHash": "impl-refund",
+                "deterministic": true,
+                "passThreshold": 1,
+                "role": "gating",
+                "onError": "fail",
+                "onSkipped": "fail"
+              }
+            ]
+          },
+          "scores": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "status": "scored",
+              "passed": true
+            }
+          ]
+        }
+      },
+      "expected": {
+        "outcome": "passed",
+        "conditions": [
+          {
+            "condition": "noGatingScoreErrors",
+            "status": "passed",
+            "observed": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "absolute-only-error",
+      "policy": { "noGatingScoreErrors": true },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "evaluationConfig": {
+            "definitions": [
+              {
+                "scorerId": "refund",
+                "idSource": "explicit",
+                "scorerVersion": "1",
+                "implementationHash": "impl-refund",
+                "deterministic": true,
+                "passThreshold": 1,
+                "role": "gating",
+                "onError": "fail",
+                "onSkipped": "fail"
+              }
+            ]
+          },
+          "scores": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "status": "error"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "outcome": "failed",
+        "conditions": [
+          {
+            "condition": "noGatingScoreErrors",
+            "status": "failed",
+            "observed": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "absolute-only-unknown-integrity",
+      "policy": { "noGatingScoreErrors": true },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "captureComplete": true,
+          "evaluationConfig": {
+            "definitions": [
+              {
+                "scorerId": "refund",
+                "idSource": "explicit",
+                "scorerVersion": "1",
+                "implementationHash": "impl-refund",
+                "deterministic": true,
+                "passThreshold": 1,
+                "role": "gating",
+                "onError": "fail",
+                "onSkipped": "fail"
+              }
+            ]
+          },
+          "scores": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "status": "error"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "outcome": "non_gateable",
+        "conditions": [
+          {
+            "condition": "noGatingScoreErrors",
+            "status": "non_gateable",
+            "reason": "INTEGRITY_UNVERIFIED"
+          }
+        ]
+      }
+    },
+    {
+      "id": "absolute-generated-id-still-inspected",
+      "policy": { "noGatingScoreErrors": true },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "evaluationConfig": {
+            "definitions": [
+              {
+                "scorerId": "predicate:responseContains#0",
+                "idSource": "generated",
+                "scorerVersion": "1",
+                "implementationHash": "impl-generated",
+                "deterministic": true,
+                "passThreshold": 1,
+                "role": "gating",
+                "onError": "fail",
+                "onSkipped": "fail"
+              }
+            ]
+          },
+          "scores": [
+            {
+              "scorerId": "predicate:responseContains#0",
+              "definitionHash": "e30791f87f5271653ba61b74801bfe63341ffa5b8e0ce94046040cb31f830087",
+              "status": "error"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "outcome": "failed",
+        "conditions": [
+          {
+            "condition": "noGatingScoreErrors",
+            "status": "failed",
+            "observed": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "numeric-zero-drop-is-active",
+      "policy": {
+        "baseline": { "kind": "run", "runId": "run_base" },
+        "maximumPassRateDrop": 0
+      },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "scorerSummaries": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "idSource": "explicit",
+              "role": "gating",
+              "deterministic": true,
+              "countable": 10,
+              "passed": 10,
+              "passRate": 1
+            }
+          ]
+        },
+        "baseline": {
+          "selector": { "kind": "run", "runId": "run_base" },
+          "resolved": true,
+          "caseSetChanged": false,
+          "scenarioConfigChanged": false,
+          "evaluationConfigChanged": false,
+          "iterationWeightingEqual": true,
+          "configuredWeightsMatch": true,
+          "observedWeightsMatch": true,
+          "run": {
+            "runId": "run_base",
+            "final": true,
+            "scoreIntegrity": "valid",
+            "captureComplete": true,
+            "scorerSummaries": [
+              {
+                "scorerId": "refund",
+                "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+                "idSource": "explicit",
+                "role": "gating",
+                "deterministic": true,
+                "countable": 10,
+                "passed": 10,
+                "passRate": 1
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "outcome": "passed",
+        "conditions": [
+          {
+            "condition": "maximumPassRateDrop",
+            "status": "passed",
+            "observed": 0,
+            "threshold": 0,
+            "scorerId": "refund"
+          }
+        ]
+      }
+    },
+    {
+      "id": "drop-equality-passes",
+      "policy": {
+        "baseline": { "kind": "run", "runId": "run_base" },
+        "maximumPassRateDrop": 0.03
+      },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "scorerSummaries": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "idSource": "explicit",
+              "role": "gating",
+              "deterministic": true,
+              "countable": 100,
+              "passed": 97,
+              "passRate": 0.97
+            }
+          ]
+        },
+        "baseline": {
+          "selector": { "kind": "run", "runId": "run_base" },
+          "resolved": true,
+          "caseSetChanged": false,
+          "scenarioConfigChanged": false,
+          "evaluationConfigChanged": false,
+          "iterationWeightingEqual": true,
+          "configuredWeightsMatch": true,
+          "observedWeightsMatch": true,
+          "run": {
+            "runId": "run_base",
+            "final": true,
+            "scoreIntegrity": "valid",
+            "captureComplete": true,
+            "scorerSummaries": [
+              {
+                "scorerId": "refund",
+                "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+                "idSource": "explicit",
+                "role": "gating",
+                "deterministic": true,
+                "countable": 100,
+                "passed": 100,
+                "passRate": 1
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "outcome": "passed",
+        "conditions": [
+          {
+            "condition": "maximumPassRateDrop",
+            "status": "passed",
+            "observed": 0.03,
+            "threshold": 0.03,
+            "scorerId": "refund"
+          }
+        ]
+      }
+    },
+    {
+      "id": "drop-over-threshold-fails",
+      "policy": {
+        "baseline": { "kind": "run", "runId": "run_base" },
+        "maximumPassRateDrop": 0.03
+      },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "scorerSummaries": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "idSource": "explicit",
+              "role": "gating",
+              "deterministic": true,
+              "countable": 100,
+              "passed": 96,
+              "passRate": 0.96
+            }
+          ]
+        },
+        "baseline": {
+          "selector": { "kind": "run", "runId": "run_base" },
+          "resolved": true,
+          "caseSetChanged": false,
+          "scenarioConfigChanged": false,
+          "evaluationConfigChanged": false,
+          "iterationWeightingEqual": true,
+          "configuredWeightsMatch": true,
+          "observedWeightsMatch": true,
+          "run": {
+            "runId": "run_base",
+            "final": true,
+            "scoreIntegrity": "valid",
+            "captureComplete": true,
+            "scorerSummaries": [
+              {
+                "scorerId": "refund",
+                "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+                "idSource": "explicit",
+                "role": "gating",
+                "deterministic": true,
+                "countable": 100,
+                "passed": 100,
+                "passRate": 1
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "outcome": "failed",
+        "conditions": [
+          {
+            "condition": "maximumPassRateDrop",
+            "status": "failed",
+            "observed": 0.04,
+            "threshold": 0.03,
+            "scorerId": "refund"
+          }
+        ]
+      }
+    },
+    {
+      "id": "scorer-added",
+      "policy": {
+        "baseline": { "kind": "run", "runId": "run_base" },
+        "maximumPassRateDrop": 0.03
+      },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "scorerSummaries": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "idSource": "explicit",
+              "role": "gating",
+              "deterministic": true,
+              "countable": 10,
+              "passed": 10,
+              "passRate": 1
+            },
+            {
+              "scorerId": "novelty",
+              "definitionHash": "hash-novelty",
+              "idSource": "explicit",
+              "role": "gating",
+              "deterministic": true,
+              "countable": 10,
+              "passed": 10,
+              "passRate": 1
+            }
+          ]
+        },
+        "baseline": {
+          "selector": { "kind": "run", "runId": "run_base" },
+          "resolved": true,
+          "caseSetChanged": false,
+          "scenarioConfigChanged": false,
+          "evaluationConfigChanged": false,
+          "iterationWeightingEqual": true,
+          "configuredWeightsMatch": true,
+          "observedWeightsMatch": true,
+          "run": {
+            "runId": "run_base",
+            "final": true,
+            "scoreIntegrity": "valid",
+            "captureComplete": true,
+            "scorerSummaries": [
+              {
+                "scorerId": "refund",
+                "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+                "idSource": "explicit",
+                "role": "gating",
+                "deterministic": true,
+                "countable": 10,
+                "passed": 10,
+                "passRate": 1
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "outcome": "non_gateable",
+        "conditions": [
+          {
+            "condition": "maximumPassRateDrop",
+            "status": "non_gateable",
+            "reason": "SCORER_ADDED",
+            "threshold": 0.03,
+            "scorerId": "novelty"
+          }
+        ]
+      }
+    },
+    {
+      "id": "scorer-removed",
+      "policy": {
+        "baseline": { "kind": "run", "runId": "run_base" },
+        "maximumPassRateDrop": 0.03
+      },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "scorerSummaries": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "idSource": "explicit",
+              "role": "gating",
+              "deterministic": true,
+              "countable": 10,
+              "passed": 10,
+              "passRate": 1
+            }
+          ]
+        },
+        "baseline": {
+          "selector": { "kind": "run", "runId": "run_base" },
+          "resolved": true,
+          "caseSetChanged": false,
+          "scenarioConfigChanged": false,
+          "evaluationConfigChanged": false,
+          "iterationWeightingEqual": true,
+          "configuredWeightsMatch": true,
+          "observedWeightsMatch": true,
+          "run": {
+            "runId": "run_base",
+            "final": true,
+            "scoreIntegrity": "valid",
+            "captureComplete": true,
+            "scorerSummaries": [
+              {
+                "scorerId": "refund",
+                "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+                "idSource": "explicit",
+                "role": "gating",
+                "deterministic": true,
+                "countable": 10,
+                "passed": 10,
+                "passRate": 1
+              },
+              {
+                "scorerId": "tone",
+                "definitionHash": "91930732674ed12b9898cbef6c034d02f1c707a96385c3affb3eb70d765a1fa7",
+                "idSource": "explicit",
+                "role": "gating",
+                "deterministic": false,
+                "countable": 10,
+                "passed": 10,
+                "passRate": 1
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "outcome": "non_gateable",
+        "conditions": [
+          {
+            "condition": "maximumPassRateDrop",
+            "status": "non_gateable",
+            "reason": "SCORER_REMOVED",
+            "threshold": 0.03,
+            "scorerId": "tone"
+          }
+        ]
+      }
+    },
+    {
+      "id": "scorer-changed",
+      "policy": {
+        "baseline": { "kind": "run", "runId": "run_base" },
+        "maximumPassRateDrop": 0.03
+      },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "scorerSummaries": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "8acee9c0bc37e56dd8ee36c7896c6f70195b9f8cd8535142091e9506b8c7e787",
+              "idSource": "explicit",
+              "role": "gating",
+              "deterministic": true,
+              "countable": 10,
+              "passed": 10,
+              "passRate": 1
+            }
+          ]
+        },
+        "baseline": {
+          "selector": { "kind": "run", "runId": "run_base" },
+          "resolved": true,
+          "caseSetChanged": false,
+          "scenarioConfigChanged": false,
+          "evaluationConfigChanged": false,
+          "iterationWeightingEqual": true,
+          "configuredWeightsMatch": true,
+          "observedWeightsMatch": true,
+          "run": {
+            "runId": "run_base",
+            "final": true,
+            "scoreIntegrity": "valid",
+            "captureComplete": true,
+            "scorerSummaries": [
+              {
+                "scorerId": "refund",
+                "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+                "idSource": "explicit",
+                "role": "gating",
+                "deterministic": true,
+                "countable": 10,
+                "passed": 10,
+                "passRate": 1
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "outcome": "non_gateable",
+        "conditions": [
+          {
+            "condition": "maximumPassRateDrop",
+            "status": "non_gateable",
+            "reason": "SCORER_CHANGED",
+            "threshold": 0.03,
+            "scorerId": "refund"
+          }
+        ]
+      }
+    },
+    {
+      "id": "generated-id-blocks-drop",
+      "policy": {
+        "baseline": { "kind": "run", "runId": "run_base" },
+        "maximumPassRateDrop": 0.03
+      },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "scorerSummaries": [
+            {
+              "scorerId": "predicate:responseContains#0",
+              "definitionHash": "e30791f87f5271653ba61b74801bfe63341ffa5b8e0ce94046040cb31f830087",
+              "idSource": "generated",
+              "role": "gating",
+              "deterministic": true,
+              "countable": 10,
+              "passed": 10,
+              "passRate": 1
+            }
+          ]
+        },
+        "baseline": {
+          "selector": { "kind": "run", "runId": "run_base" },
+          "resolved": true,
+          "caseSetChanged": false,
+          "scenarioConfigChanged": false,
+          "evaluationConfigChanged": false,
+          "iterationWeightingEqual": true,
+          "configuredWeightsMatch": true,
+          "observedWeightsMatch": true,
+          "run": {
+            "runId": "run_base",
+            "final": true,
+            "scoreIntegrity": "valid",
+            "captureComplete": true,
+            "scorerSummaries": [
+              {
+                "scorerId": "predicate:responseContains#0",
+                "definitionHash": "e30791f87f5271653ba61b74801bfe63341ffa5b8e0ce94046040cb31f830087",
+                "idSource": "generated",
+                "role": "gating",
+                "deterministic": true,
+                "countable": 10,
+                "passed": 10,
+                "passRate": 1
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "outcome": "non_gateable",
+        "conditions": [
+          {
+            "condition": "maximumPassRateDrop",
+            "status": "non_gateable",
+            "reason": "GENERATED_SCORER_ID",
+            "threshold": 0.03,
+            "scorerId": "predicate:responseContains#0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "quarantined-population",
+      "policy": {
+        "baseline": { "kind": "run", "runId": "run_base" },
+        "maximumPassRateDrop": 0.03
+      },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "scorerSummaries": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "idSource": "explicit",
+              "role": "gating",
+              "deterministic": true,
+              "countable": 8,
+              "passed": 8,
+              "passRate": 1
+            }
+          ]
+        },
+        "baseline": {
+          "selector": { "kind": "run", "runId": "run_base" },
+          "resolved": true,
+          "caseSetChanged": false,
+          "scenarioConfigChanged": false,
+          "evaluationConfigChanged": false,
+          "iterationWeightingEqual": true,
+          "quarantined": true,
+          "run": {
+            "runId": "run_base",
+            "final": true,
+            "scoreIntegrity": "valid",
+            "captureComplete": true,
+            "scorerSummaries": [
+              {
+                "scorerId": "refund",
+                "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+                "idSource": "explicit",
+                "role": "gating",
+                "deterministic": true,
+                "countable": 10,
+                "passed": 10,
+                "passRate": 1
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "outcome": "non_gateable",
+        "conditions": [
+          {
+            "condition": "maximumPassRateDrop",
+            "status": "non_gateable",
+            "reason": "QUARANTINED",
+            "threshold": 0.03
+          }
+        ]
+      }
+    },
+    {
+      "id": "configured-weights-mismatch",
+      "policy": {
+        "baseline": { "kind": "run", "runId": "run_base" },
+        "maximumPassRateDrop": 0.03
+      },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "scorerSummaries": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "idSource": "explicit",
+              "role": "gating",
+              "deterministic": true,
+              "countable": 10,
+              "passed": 10,
+              "passRate": 1
+            }
+          ]
+        },
+        "baseline": {
+          "selector": { "kind": "run", "runId": "run_base" },
+          "resolved": true,
+          "caseSetChanged": false,
+          "scenarioConfigChanged": false,
+          "evaluationConfigChanged": false,
+          "iterationWeightingEqual": true,
+          "configuredWeightsMatch": false,
+          "observedWeightsMatch": true,
+          "run": {
+            "runId": "run_base",
+            "final": true,
+            "scoreIntegrity": "valid",
+            "captureComplete": true,
+            "scorerSummaries": [
+              {
+                "scorerId": "refund",
+                "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+                "idSource": "explicit",
+                "role": "gating",
+                "deterministic": true,
+                "countable": 10,
+                "passed": 10,
+                "passRate": 1
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "outcome": "non_gateable",
+        "conditions": [
+          {
+            "condition": "maximumPassRateDrop",
+            "status": "non_gateable",
+            "reason": "CONFIGURED_WEIGHTS_MISMATCH",
+            "threshold": 0.03
+          }
+        ]
+      }
+    },
+    {
+      "id": "observed-weights-mismatch",
+      "policy": {
+        "baseline": { "kind": "run", "runId": "run_base" },
+        "maximumPassRateDrop": 0.03
+      },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "scorerSummaries": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "idSource": "explicit",
+              "role": "gating",
+              "deterministic": true,
+              "countable": 8,
+              "passed": 8,
+              "passRate": 1
+            }
+          ]
+        },
+        "baseline": {
+          "selector": { "kind": "run", "runId": "run_base" },
+          "resolved": true,
+          "caseSetChanged": false,
+          "scenarioConfigChanged": false,
+          "evaluationConfigChanged": false,
+          "iterationWeightingEqual": true,
+          "configuredWeightsMatch": true,
+          "observedWeightsMatch": false,
+          "run": {
+            "runId": "run_base",
+            "final": true,
+            "scoreIntegrity": "valid",
+            "captureComplete": true,
+            "scorerSummaries": [
+              {
+                "scorerId": "refund",
+                "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+                "idSource": "explicit",
+                "role": "gating",
+                "deterministic": true,
+                "countable": 10,
+                "passed": 10,
+                "passRate": 1
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "outcome": "non_gateable",
+        "conditions": [
+          {
+            "condition": "maximumPassRateDrop",
+            "status": "non_gateable",
+            "reason": "OBSERVED_WEIGHTS_MISMATCH",
+            "threshold": 0.03
+          }
+        ]
+      }
+    },
+    {
+      "id": "missing-latency",
+      "policy": {
+        "baseline": { "kind": "run", "runId": "run_base" },
+        "maximumP95LatencyIncreaseMs": 50
+      },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "captureComplete": true
+        },
+        "baseline": {
+          "selector": { "kind": "run", "runId": "run_base" },
+          "resolved": true,
+          "caseSetChanged": false,
+          "scenarioConfigChanged": false,
+          "evaluationConfigChanged": false,
+          "iterationWeightingEqual": true,
+          "run": {
+            "runId": "run_base",
+            "final": true,
+            "captureComplete": true,
+            "e2eP95Ms": 100
+          }
+        }
+      },
+      "expected": {
+        "outcome": "non_gateable",
+        "conditions": [
+          {
+            "condition": "maximumP95LatencyIncreaseMs",
+            "status": "non_gateable",
+            "reason": "LATENCY_UNMEASURED",
+            "threshold": 50
+          }
+        ]
+      }
+    },
+    {
+      "id": "incomplete-capture",
+      "policy": { "noGatingScoreErrors": true },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": false,
+          "evaluationConfig": {
+            "definitions": [
+              {
+                "scorerId": "refund",
+                "idSource": "explicit",
+                "scorerVersion": "1",
+                "implementationHash": "impl-refund",
+                "deterministic": true,
+                "passThreshold": 1,
+                "role": "gating",
+                "onError": "fail",
+                "onSkipped": "fail"
+              }
+            ]
+          },
+          "scores": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "status": "error"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "outcome": "non_gateable",
+        "conditions": [
+          {
+            "condition": "noGatingScoreErrors",
+            "status": "non_gateable",
+            "reason": "INCOMPLETE_CAPTURE"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unfinished-subject-is-not-failure",
+      "policy": { "noGatingScoreErrors": true },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": false,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "evaluationConfig": {
+            "definitions": [
+              {
+                "scorerId": "refund",
+                "idSource": "explicit",
+                "scorerVersion": "1",
+                "implementationHash": "impl-refund",
+                "deterministic": true,
+                "passThreshold": 1,
+                "role": "gating",
+                "onError": "fail",
+                "onSkipped": "fail"
+              }
+            ]
+          },
+          "scores": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "status": "error"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "outcome": "non_gateable",
+        "conditions": [
+          {
+            "condition": "noGatingScoreErrors",
+            "status": "non_gateable",
+            "reason": "EVIDENCE_NOT_FINAL"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mixed-failed-and-non-gateable",
+      "policy": {
+        "baseline": { "kind": "run", "runId": "run_base" },
+        "noGatingScoreErrors": true,
+        "maximumPassRateDrop": 0.03
+      },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "evaluationConfig": {
+            "definitions": [
+              {
+                "scorerId": "refund",
+                "idSource": "explicit",
+                "scorerVersion": "1",
+                "implementationHash": "impl-refund",
+                "deterministic": true,
+                "passThreshold": 1,
+                "role": "gating",
+                "onError": "fail",
+                "onSkipped": "fail"
+              }
+            ]
+          },
+          "scores": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "status": "error"
+            }
+          ],
+          "scorerSummaries": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "idSource": "explicit",
+              "role": "gating",
+              "deterministic": true,
+              "countable": 10,
+              "passed": 9,
+              "passRate": 0.9
+            }
+          ]
+        },
+        "baseline": {
+          "selector": { "kind": "run", "runId": "run_base" },
+          "resolved": true,
+          "caseSetChanged": true,
+          "scenarioConfigChanged": false,
+          "evaluationConfigChanged": false,
+          "iterationWeightingEqual": true,
+          "run": {
+            "runId": "run_base",
+            "final": true,
+            "scoreIntegrity": "valid",
+            "captureComplete": true,
+            "scorerSummaries": [
+              {
+                "scorerId": "refund",
+                "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+                "idSource": "explicit",
+                "role": "gating",
+                "deterministic": true,
+                "countable": 10,
+                "passed": 10,
+                "passRate": 1
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "outcome": "failed",
+        "conditions": [
+          {
+            "condition": "noGatingScoreErrors",
+            "status": "failed",
+            "observed": 1
+          },
+          {
+            "condition": "maximumPassRateDrop",
+            "status": "non_gateable",
+            "reason": "POPULATION_INCOMPATIBLE",
+            "threshold": 0.03
+          }
+        ]
+      }
+    },
+    {
+      "id": "absolute-evaluates-without-baseline",
+      "policy": {
+        "noGatingScoreErrors": true,
+        "maximumPassRateDrop": 0.03
+      },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "evaluationConfig": {
+            "definitions": [
+              {
+                "scorerId": "refund",
+                "idSource": "explicit",
+                "scorerVersion": "1",
+                "implementationHash": "impl-refund",
+                "deterministic": true,
+                "passThreshold": 1,
+                "role": "gating",
+                "onError": "fail",
+                "onSkipped": "fail"
+              }
+            ]
+          },
+          "scores": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "status": "scored",
+              "passed": true
+            }
+          ]
+        }
+      },
+      "expected": {
+        "outcome": "non_gateable",
+        "conditions": [
+          {
+            "condition": "noGatingScoreErrors",
+            "status": "passed",
+            "observed": 0
+          },
+          {
+            "condition": "maximumPassRateDrop",
+            "status": "non_gateable",
+            "reason": "COMPARATIVE_WITHOUT_BASELINE",
+            "threshold": 0.03
+          }
+        ]
+      }
+    },
+    {
+      "id": "malformed-historical-policy",
+      "policy": { "maximumPassRateDrop": 3 },
+      "evidence": {
+        "subject": { "runId": "run_subject", "final": true }
+      },
+      "expected": {
+        "outcome": "non_gateable",
+        "policyError": { "reason": "POLICY_MALFORMED" }
+      }
+    },
+    {
+      "id": "previous-completed-read-is-non-gateable",
+      "policy": {
+        "baseline": { "kind": "previous_completed" },
+        "maximumPassRateDrop": 0.03
+      },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "scorerSummaries": [
+            {
+              "scorerId": "refund",
+              "definitionHash": "e297e99f3efdfd38aee158c0101e571a4168a791ea74a6f300c1c644eb106091",
+              "idSource": "explicit",
+              "role": "gating",
+              "deterministic": true,
+              "countable": 10,
+              "passed": 10,
+              "passRate": 1
+            }
+          ]
+        }
+      },
+      "expected": {
+        "outcome": "non_gateable",
+        "conditions": [
+          {
+            "condition": "maximumPassRateDrop",
+            "status": "non_gateable",
+            "reason": "PREVIOUS_COMPLETED_UNSUPPORTED",
+            "threshold": 0.03
+          }
+        ]
+      }
+    },
+    {
+      "id": "latency-within-budget",
+      "policy": {
+        "baseline": { "kind": "commit_sha", "commitSha": "abc123" },
+        "maximumP95LatencyIncreaseMs": 50
+      },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "captureComplete": true,
+          "e2eP95Ms": 140
+        },
+        "baseline": {
+          "selector": { "kind": "commit_sha", "commitSha": "abc123" },
+          "resolved": true,
+          "caseSetChanged": false,
+          "scenarioConfigChanged": false,
+          "evaluationConfigChanged": false,
+          "iterationWeightingEqual": true,
+          "run": {
+            "runId": "run_base",
+            "final": true,
+            "captureComplete": true,
+            "e2eP95Ms": 100
+          }
+        }
+      },
+      "expected": {
+        "outcome": "passed",
+        "conditions": [
+          {
+            "condition": "maximumP95LatencyIncreaseMs",
+            "status": "passed",
+            "observed": 40,
+            "threshold": 50
+          }
+        ]
+      }
+    },
+    {
+      "id": "deterministic-regression-fails",
+      "policy": {
+        "baseline": { "kind": "run", "runId": "run_base" },
+        "noDeterministicRegressions": true
+      },
+      "evidence": {
+        "subject": {
+          "runId": "run_subject",
+          "final": true,
+          "scoreIntegrity": "valid",
+          "captureComplete": true,
+          "evaluationConfig": {
+            "definitions": [
+              {
+                "scorerId": "refund",
+                "idSource": "explicit",
+                "scorerVersion": "1",
+                "implementationHash": "impl-refund",
+                "deterministic": true,
+                "passThreshold": 1,
+                "role": "gating",
+                "onError": "fail",
+                "onSkipped": "fail"
+              }
+            ]
+          }
+        },
+        "baseline": {
+          "selector": { "kind": "run", "runId": "run_base" },
+          "resolved": true,
+          "caseSetChanged": false,
+          "scenarioConfigChanged": false,
+          "evaluationConfigChanged": false,
+          "iterationWeightingEqual": true,
+          "scoreDeltasAvailable": true,
+          "deterministicScoreRegressions": [
+            { "caseKey": "ck_a", "scorerId": "refund" }
+          ],
+          "run": {
+            "runId": "run_base",
+            "final": true,
+            "scoreIntegrity": "valid",
+            "captureComplete": true,
+            "evaluationConfig": {
+              "definitions": [
+                {
+                  "scorerId": "refund",
+                  "idSource": "explicit",
+                  "scorerVersion": "1",
+                  "implementationHash": "impl-refund",
+                  "deterministic": true,
+                  "passThreshold": 1,
+                  "role": "gating",
+                  "onError": "fail",
+                  "onSkipped": "fail"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "expected": {
+        "outcome": "failed",
+        "conditions": [
+          {
+            "condition": "noDeterministicRegressions",
+            "status": "failed",
+            "observed": 1
+          }
+        ]
+      }
+    }
+  ],
+  "compose": [
+    {
+      "id": "passed-plus-passed",
+      "base": { "outcome": "passed" },
+      "suiteOutcome": "passed",
+      "expected": { "outcome": "passed" }
+    },
+    {
+      "id": "passed-plus-failed",
+      "base": { "outcome": "passed" },
+      "suiteOutcome": "failed",
+      "expected": { "outcome": "failed" }
+    },
+    {
+      "id": "passed-plus-non-gateable",
+      "base": { "outcome": "passed" },
+      "suiteOutcome": "non_gateable",
+      "expected": { "outcome": "incomplete" }
+    },
+    {
+      "id": "passed-plus-not-configured",
+      "base": { "outcome": "passed" },
+      "suiteOutcome": "not_configured",
+      "expected": { "outcome": "passed" }
+    },
+    {
+      "id": "waived-plus-passed",
+      "base": { "outcome": "waived" },
+      "suiteOutcome": "passed",
+      "expected": { "outcome": "waived" }
+    },
+    {
+      "id": "waived-plus-failed",
+      "base": { "outcome": "waived" },
+      "suiteOutcome": "failed",
+      "expected": { "outcome": "failed" }
+    },
+    {
+      "id": "waived-plus-non-gateable",
+      "base": { "outcome": "waived" },
+      "suiteOutcome": "non_gateable",
+      "expected": { "outcome": "incomplete" }
+    },
+    {
+      "id": "waived-plus-not-configured",
+      "base": { "outcome": "waived" },
+      "suiteOutcome": "not_configured",
+      "expected": { "outcome": "waived" }
+    },
+    {
+      "id": "failed-plus-passed",
+      "base": { "outcome": "failed" },
+      "suiteOutcome": "passed",
+      "expected": { "outcome": "failed" }
+    },
+    {
+      "id": "failed-plus-failed",
+      "base": { "outcome": "failed" },
+      "suiteOutcome": "failed",
+      "expected": { "outcome": "failed" }
+    },
+    {
+      "id": "failed-plus-non-gateable",
+      "base": { "outcome": "failed" },
+      "suiteOutcome": "non_gateable",
+      "expected": { "outcome": "failed" }
+    },
+    {
+      "id": "failed-plus-not-configured",
+      "base": { "outcome": "failed" },
+      "suiteOutcome": "not_configured",
+      "expected": { "outcome": "failed" }
+    },
+    {
+      "id": "incomplete-plus-passed",
+      "base": { "outcome": "incomplete" },
+      "suiteOutcome": "passed",
+      "expected": { "outcome": "incomplete" }
+    },
+    {
+      "id": "incomplete-plus-failed",
+      "base": { "outcome": "incomplete" },
+      "suiteOutcome": "failed",
+      "expected": { "outcome": "incomplete" }
+    },
+    {
+      "id": "incomplete-plus-non-gateable",
+      "base": { "outcome": "incomplete" },
+      "suiteOutcome": "non_gateable",
+      "expected": { "outcome": "incomplete" }
+    },
+    {
+      "id": "incomplete-plus-not-configured",
+      "base": { "outcome": "incomplete" },
+      "suiteOutcome": "not_configured",
+      "expected": { "outcome": "incomplete" }
+    },
+    {
+      "id": "usage-error-plus-passed",
+      "base": { "outcome": "usage_error" },
+      "suiteOutcome": "passed",
+      "expected": { "outcome": "usage_error" }
+    },
+    {
+      "id": "usage-error-plus-failed",
+      "base": { "outcome": "usage_error" },
+      "suiteOutcome": "failed",
+      "expected": { "outcome": "usage_error" }
+    },
+    {
+      "id": "unavailable-plus-passed",
+      "base": { "outcome": "unavailable" },
+      "suiteOutcome": "passed",
+      "expected": { "outcome": "unavailable" }
+    },
+    {
+      "id": "unavailable-plus-failed",
+      "base": { "outcome": "unavailable" },
+      "suiteOutcome": "failed",
+      "expected": { "outcome": "unavailable" }
+    },
+    {
+      "id": "unavailable-plus-not-configured",
+      "base": { "outcome": "unavailable" },
+      "suiteOutcome": "not_configured",
+      "expected": { "outcome": "unavailable" }
+    },
+    {
+      "id": "waiver-turns-failed-base-waived-when-suite-passes",
+      "base": { "outcome": "failed" },
+      "suiteOutcome": "passed",
+      "applyWaiver": true,
+      "expected": { "outcome": "waived", "baseOutcome": "waived" }
+    },
+    {
+      "id": "waiver-cannot-cover-suite-failure",
+      "base": { "outcome": "failed" },
+      "suiteOutcome": "failed",
+      "applyWaiver": true,
+      "expected": { "outcome": "failed", "baseOutcome": "waived" }
+    },
+    {
+      "id": "waiver-plus-suite-non-gateable",
+      "base": { "outcome": "failed" },
+      "suiteOutcome": "non_gateable",
+      "applyWaiver": true,
+      "expected": { "outcome": "incomplete", "baseOutcome": "waived" }
+    },
+    {
+      "id": "expired-waiver-leaves-failed-base",
+      "base": { "outcome": "failed" },
+      "suiteOutcome": "passed",
+      "applyWaiver": true,
+      "expired": true,
+      "expected": { "outcome": "failed", "baseOutcome": "failed" }
+    },
+    {
+      "id": "waiver-on-passed-base-stays-passed",
+      "base": { "outcome": "passed" },
+      "suiteOutcome": "passed",
+      "applyWaiver": true,
+      "expected": { "outcome": "passed", "baseOutcome": "passed" }
+    }
+  ]
+}

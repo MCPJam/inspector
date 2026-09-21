@@ -13,7 +13,7 @@
  *
  * {@link RawTasksWire} survives for the cases the real client CANNOT produce
  * by construction, each marked at its use site:
- *   - undeclared requests (`-32003`): our client always attaches the
+ *   - undeclared requests (`-32021`): our client always attaches the
  *     per-request eligibility declaration, so an undeclared extension request
  *     is unreachable through it;
  *   - payloads beta.4's decoder rewrites or refuses before `tasks-ext.ts` sees
@@ -641,7 +641,7 @@ describe("tasks extension wire — protocol errors", () => {
     ).rejects.toMatchObject({ code: -32603 });
   });
 
-  it("rejects undeclared tasks/get, tasks/update and tasks/cancel with -32003", async () => {
+  it("rejects undeclared tasks/get, tasks/update and tasks/cancel with -32021", async () => {
     // RAW BY CONSTRUCTION: `tasks-ext.ts` attaches the eligibility declaration
     // to every extension request, so the real client can never emit an
     // undeclared one. The server-side MUST is still worth pinning.
@@ -654,14 +654,14 @@ describe("tasks extension wire — protocol errors", () => {
         { taskId: "ext-task-1", inputResponses: {} },
         { declare: false, routeBy: "ext-task-1" }
       );
-      expect(response.error?.code, method).toBe(-32003);
+      expect(response.error?.code, method).toBe(-32021);
       expect(response.error?.data).toEqual({
         requiredCapabilities: { extensions: { [TASKS_EXTENSION_ID]: {} } },
       });
     }
   });
 
-  it("rejects an undeclared task-filtered subscriptions/listen with -32003", async () => {
+  it("rejects an undeclared task-filtered subscriptions/listen with -32021", async () => {
     // RAW BY CONSTRUCTION: same reason as above — the undeclared leg is
     // unreachable through our client.
     const fixture = await serve();
@@ -672,7 +672,7 @@ describe("tasks extension wire — protocol errors", () => {
       { notifications: { taskIds: ["ext-task-1"] } },
       { declare: false }
     );
-    expect(rejected.error?.code).toBe(-32003);
+    expect(rejected.error?.code).toBe(-32021);
 
     // A declaring listen is accepted…
     const declared = await wire.send("subscriptions/listen", {
@@ -700,7 +700,7 @@ describe("tasks extension wire — protocol errors", () => {
  * SDK's reaction IS the interesting property, the test uses the real client.
  */
 describe("tasks extension wire — misbehaving server", () => {
-  it("can answer an undeclared tasks/get (negative case for the -32003 rule)", async () => {
+  it("can answer an undeclared tasks/get (negative case for the -32021 rule)", async () => {
     const fixture = await serve({
       misbehave: { answerUndeclaredTaskRequests: true },
     });
@@ -855,7 +855,7 @@ describe("tasks extension wire — declared subscriptions/listen (real client)",
     // request but can never deliver notifications (nor the modern ack
     // notification), so the returned promise may not settle usefully.
     // What is pinned here is the WIRE: the request that reached the server
-    // carried the declaration. The fixture answers -32003 to an UNDECLARED
+    // carried the declaration. The fixture answers -32021 to an UNDECLARED
     // task-filtered listen (asserted above), so the recorded params are the
     // exact complement of that case.
     const pending = manager

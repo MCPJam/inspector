@@ -2,7 +2,7 @@
  * A raw `io.modelcontextprotocol/skills` (SEP-2640) fixture server, spoken
  * over Streamable HTTP on a real socket.
  *
- * PIN: modelcontextprotocol/docs @ d7490ec (`seps/2640-skills-extension.mdx`).
+ * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
  * Every wire shape below is copied from that commit — re-diff when re-syncing.
  *
  * Why hand-rolled JSON-RPC rather than `@modelcontextprotocol/server`:
@@ -96,6 +96,16 @@ export interface SkillsMisbehavior {
   repeatCursor?: boolean;
   /** Return a malformed entry (missing `uri`) in the listing. */
   malformedEntry?: boolean;
+  /**
+   * Advertise a `size` that does not match the bytes served, for the named
+   * skill root. Distinct from `digestMismatch`: the draft makes a length
+   * mismatch its own verification failure, catchable before hashing.
+   */
+  sizeMismatch?: string;
+  /** Advertise `"resources": "dynamic"` instead of an enumerated manifest. */
+  dynamicResources?: boolean;
+  /** Omit `size` from every manifest entry, as a pre-`size` server would. */
+  omitSizes?: boolean;
 }
 
 export interface SkillsFixtureOptions {
@@ -232,9 +242,27 @@ export async function startSkillsFixture(
     return sha256(text);
   }
 
+  /**
+   * The advertised `size` for some bytes, or `undefined` under `omitSizes`.
+   *
+   * A size-mismatch fixture advertises a length that is off by one rather than
+   * wildly wrong: an off-by-one is what a truncated read actually looks like,
+   * and it proves the host compares the number instead of sniffing for an
+   * obviously bogus one.
+   */
+  function sizeOf(text: string, skill: SkillFixtureSkill): number | undefined {
+    if (misbehavior.omitSizes) return undefined;
+    const actual = Buffer.byteLength(text, "utf8");
+    return misbehavior.sizeMismatch === skill.root ? actual + 1 : actual;
+  }
+
   function resourcesOf(
     skill: SkillFixtureSkill
-  ): Array<{ uri: string; digest: string }> | undefined {
+  ):
+    | Array<{ uri: string; digest: string; size?: number }>
+    | "dynamic"
+    | undefined {
+    if (misbehavior.dynamicResources) return "dynamic";
     if (skill.omitResources) return undefined;
     const markdown = renderMarkdown(skill);
     // A digest-mismatch fixture advertises the digest of DIFFERENT bytes; the
@@ -243,12 +271,31 @@ export async function startSkillsFixture(
       misbehavior.digestMismatch === skill.root
         ? `${markdown}\n<!-- tampered -->`
         : markdown;
+    const withSize = (
+      uri: string,
+      content: string
+    ): { uri: string; digest: string; size?: number } => {
+      const size = sizeOf(content, skill);
+      return {
+        uri,
+        digest: digestOf(content),
+        ...(size === undefined ? {} : { size }),
+      };
+    };
+    // The two tampering modes stay INDEPENDENT: the digest is taken from the
+    // possibly-tampered copy, the size from the bytes actually served. Sizing
+    // the tampered copy instead would make `digestMismatch` trip the size
+    // check first, and that test would then pass for the wrong reason.
+    const skillMdSize = sizeOf(markdown, skill);
     return [
-      { uri: uriFor(skill), digest: digestOf(advertisedMarkdown) },
-      ...(skill.files ?? []).map((file) => ({
-        uri: fileUriFor(skill, file.path),
-        digest: digestOf(file.content),
-      })),
+      {
+        uri: uriFor(skill),
+        digest: digestOf(advertisedMarkdown),
+        ...(skillMdSize === undefined ? {} : { size: skillMdSize }),
+      },
+      ...(skill.files ?? []).map((file) =>
+        withSize(fileUriFor(skill, file.path), file.content)
+      ),
     ];
   }
 

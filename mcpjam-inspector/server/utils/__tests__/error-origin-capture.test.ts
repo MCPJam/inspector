@@ -118,6 +118,59 @@ describe("mcpjam_internal boundary", () => {
   });
 });
 
+describe("mcpjam_request_construction boundary", () => {
+  it("promotes a header mismatch, which is a verdict on OUR wire format", () => {
+    // Per 2026-07-28 §Server Validation the server MUST answer -32020 when the
+    // mirrored headers disagree with the body, and MCPJam builds those headers.
+    // The slug stays `ambiguous` in the catalog because the same signal is a
+    // deliberate outcome under the non-conforming-client knob — only the call
+    // site can rule that out, so the promotion is a declaration, not a default.
+    const decision = maybeCaptureOriginError(
+      new Error("Header mismatch: Mcp-Name 'foo' does not match body 'bar'"),
+      normalizedFor("jsonrpc/header_mismatch"),
+      {
+        source: "route:mcp.bridge.rpc",
+        boundary: "mcpjam_request_construction",
+      },
+    );
+
+    expect(decision.origin).toBe("mcpjam");
+    expect(decision.captured).toBe(true);
+  });
+
+  it("tags the capture with its own boundary, not mcpjam_internal", () => {
+    // A triager must be able to tell "our infrastructure broke" from "our wire
+    // format was wrong" — they have different owners and different fixes.
+    maybeCaptureOriginError(
+      new Error("header mismatch"),
+      normalizedFor("jsonrpc/header_mismatch"),
+      {
+        source: "route:mcp.bridge.rpc",
+        boundary: "mcpjam_request_construction",
+      },
+    );
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(captureException.mock.calls[0][1]).toMatchObject({
+      tags: { error_boundary: "mcpjam_request_construction" },
+    });
+  });
+
+  it("does NOT overrule positive evidence either", () => {
+    const decision = maybeCaptureOriginError(
+      new Error("x"),
+      normalizedFor("transport/econnrefused"),
+      {
+        source: "route:mcp.bridge.rpc",
+        boundary: "mcpjam_request_construction",
+      },
+    );
+
+    expect(decision.captured).toBe(false);
+    expect(captureException).not.toHaveBeenCalled();
+  });
+});
+
 describe("capture dedupe", () => {
   it("captures an MCPJam error only once across repeated calls", () => {
     const error = new Error("ours");

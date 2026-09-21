@@ -7,9 +7,9 @@
  * safe to import from the Vite-bundled widget.
  */
 import type {
-  GetChatboxResult,
+  GetScenarioResult,
   GetEvalRunResult,
-  ListChatboxesResult,
+  ListScenariosResult,
   ListEvalRunIterationsResult,
   ListEvalSuiteRunsResult,
   ListEvalSuitesResult,
@@ -22,8 +22,8 @@ export type PlatformWidgetPayloadMap = {
   eval_suite_runs: ListEvalSuiteRunsResult;
   eval_run: GetEvalRunResult;
   eval_run_iterations: ListEvalRunIterationsResult;
-  chatboxes: ListChatboxesResult;
-  chatbox: GetChatboxResult;
+  scenarios: ListScenariosResult;
+  scenario: GetScenarioResult;
 };
 
 export type PlatformWidgetView = keyof PlatformWidgetPayloadMap;
@@ -44,8 +44,8 @@ export const PLATFORM_WIDGET_RESOURCE_URIS: Record<PlatformWidgetView, string> =
     eval_suite_runs: "ui://mcpjam/eval-suite-runs.html",
     eval_run: "ui://mcpjam/eval-run.html",
     eval_run_iterations: "ui://mcpjam/eval-run-iterations.html",
-    chatboxes: "ui://mcpjam/chatboxes.html",
-    chatbox: "ui://mcpjam/chatbox.html",
+    scenarios: "ui://mcpjam/scenarios.html",
+    scenario: "ui://mcpjam/scenario.html",
   };
 
 export function tagPlatformWidgetPayload(
@@ -76,10 +76,10 @@ const WIDGET_PAYLOAD_GUARDS: Record<
   eval_run: (payload) => isRecord(payload.project) && isRecord(payload.run),
   eval_run_iterations: (payload) =>
     isRecord(payload.project) && Array.isArray(payload.items),
-  chatboxes: (payload) =>
+  scenarios: (payload) =>
     isRecord(payload.project) && Array.isArray(payload.items),
-  chatbox: (payload) =>
-    isRecord(payload.project) && isRecord(payload.chatbox),
+  scenario: (payload) =>
+    isRecord(payload.project) && isRecord(payload.scenario),
 };
 
 /**

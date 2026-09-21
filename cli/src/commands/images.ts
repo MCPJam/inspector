@@ -12,64 +12,19 @@ import {
   resetComputerOperation,
   updateImageOperation,
   useImageOperation,
-  PlatformApiError,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import { usageError, writeResult } from "../lib/output.js";
-import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
+import {
+  platformOptionsOf,
+  runPlatformOperation as runPlatformCommand,
+  type PlatformOptions,
+} from "../lib/platform-command.js";
+import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
-type PlatformOptions = {
-  apiKey?: string;
-  apiUrl?: string;
-};
 
-function addPlatformOptions(command: Command): Command {
-  return command
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)"
-    );
-}
 
-async function runPlatformCommand<TOutput>(
-  options: PlatformOptions,
-  timeoutMs: number,
-  execute: (context: {
-    client: ReturnType<typeof buildPlatformClient>["client"];
-    signal: AbortSignal;
-  }) => Promise<TOutput>
-): Promise<TOutput> {
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => {
-    controller.abort(
-      new PlatformApiError(
-        `Request timed out after ${timeoutMs}ms`,
-        "TIMEOUT",
-        {
-          status: 0,
-        }
-      )
-    );
-  }, timeoutMs);
-  timeoutHandle.unref?.();
-
-  try {
-    const { client } = buildPlatformClient({ ...options, timeoutMs });
-    return await execute({ client, signal: controller.signal });
-  } catch (error) {
-    if (
-      controller.signal.aborted &&
-      controller.signal.reason instanceof PlatformApiError
-    ) {
-      throw toCliError(controller.signal.reason);
-    }
-    throw toCliError(error);
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
-}
 
 /** Read blueprint YAML TEXT (not JSON) from a path, or stdin when `--file -`. */
 function loadBlueprintText(file: string): string {
@@ -107,48 +62,44 @@ export function registerImagesCommands(program: Command): void {
       "List, build, and manage custom Computer sandbox images (blueprints) in your hosted MCPJam projects"
     );
 
-  addPlatformOptions(
-    env
+      env
       .command("list")
       .description("List the sandbox images in a project")
       .option(
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)"
-      )
-  ).action(async (options: PlatformOptions & { project?: string }, command) => {
+      ).action(async (options: PlatformOptions & { project?: string }, command) => {
     const globalOptions = getGlobalOptions(command);
     const result = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         listImagesOperation.execute(
-          { project: options.project },
+          { project: resolveCloudProjectArgs(options).project },
           { client, signal }
         )
     );
     writeResult(result, globalOptions.format);
   });
 
-  addPlatformOptions(
-    env
+      env
       .command("get")
       .description(
         "Show one sandbox image's blueprint and latest build status"
       )
       .requiredOption("--image <id-or-name>", "Sandbox image name or ID")
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & { project?: string; image: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           getImageOperation.execute(
-            { project: options.project, image: options.image },
+            { project: resolveCloudProjectArgs(options).project, image: options.image },
             { client, signal }
           )
       );
@@ -156,8 +107,7 @@ export function registerImagesCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    env
+      env
       .command("create")
       .description(
         "Create a sandbox image from a blueprint YAML file (--file, or - for stdin)"
@@ -167,8 +117,7 @@ export function registerImagesCommands(program: Command): void {
         "--file <path>",
         "Blueprint YAML path, or - to read it from stdin"
       )
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -180,12 +129,12 @@ export function registerImagesCommands(program: Command): void {
       const globalOptions = getGlobalOptions(command);
       const blueprint = loadBlueprintText(options.file);
       const input = validateInput(createImageOperation, {
-        project: options.project,
+        project: resolveCloudProjectArgs(options).project,
         name: options.name,
         blueprint,
       });
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           createImageOperation.execute(input, { client, signal })
@@ -194,18 +143,16 @@ export function registerImagesCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    env
+      env
       .command("validate")
       .description(
-        "Lint a blueprint YAML file without saving it (--file, or - for stdin)"
+        "Lint a blueprint YAML file with the MCPJam Cloud image linter without saving it (--file, or - for stdin)"
       )
       .requiredOption(
         "--file <path>",
         "Blueprint YAML path, or - to read it from stdin"
       )
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & { project?: string; file: string },
       command
@@ -213,11 +160,11 @@ export function registerImagesCommands(program: Command): void {
       const globalOptions = getGlobalOptions(command);
       const blueprint = loadBlueprintText(options.file);
       const input = validateInput(validateImageBlueprintOperation, {
-        project: options.project,
+        project: resolveCloudProjectArgs(options).project,
         blueprint,
       });
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           validateImageBlueprintOperation.execute(input, { client, signal })
@@ -226,15 +173,13 @@ export function registerImagesCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    env
+      env
       .command("edit")
       .description("Edit a sandbox image's name and/or blueprint")
       .requiredOption("--image <id-or-name>", "Sandbox image name or ID")
       .option("--project <id-or-name>", "Project name or ID")
       .option("--name <name>", "New display name")
-      .option("--file <path>", "Replacement blueprint YAML path (or - for stdin)")
-  ).action(
+      .option("--file <path>", "Replacement blueprint YAML path (or - for stdin)").action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -250,13 +195,13 @@ export function registerImagesCommands(program: Command): void {
           ? loadBlueprintText(options.file)
           : undefined;
       const input = validateInput(updateImageOperation, {
-        project: options.project,
+        project: resolveCloudProjectArgs(options).project,
         image: options.image,
         ...(options.name !== undefined ? { name: options.name } : {}),
         ...(blueprint !== undefined ? { blueprint } : {}),
       });
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           updateImageOperation.execute(input, { client, signal })
@@ -265,26 +210,24 @@ export function registerImagesCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    env
+      env
       .command("build")
       .description(
         "Build the sandbox image (async — poll `images logs` for status)"
       )
       .requiredOption("--image <id-or-name>", "Sandbox image name or ID")
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & { project?: string; image: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           buildImageOperation.execute(
-            { project: options.project, image: options.image },
+            { project: resolveCloudProjectArgs(options).project, image: options.image },
             { client, signal }
           )
       );
@@ -292,26 +235,24 @@ export function registerImagesCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    env
+      env
       .command("logs")
       .description(
         "Show a sandbox image's builds (newest first) with their log preview"
       )
       .requiredOption("--image <id-or-name>", "Sandbox image name or ID")
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & { project?: string; image: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           listImageBuildsOperation.execute(
-            { project: options.project, image: options.image },
+            { project: resolveCloudProjectArgs(options).project, image: options.image },
             { client, signal }
           )
       );
@@ -319,26 +260,24 @@ export function registerImagesCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    env
+      env
       .command("use")
       .description(
         "Boot your computer from this sandbox image (rebuilds it — installed files are wiped)"
       )
       .requiredOption("--image <id-or-name>", "Sandbox image name or ID")
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & { project?: string; image: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           useImageOperation.execute(
-            { project: options.project, image: options.image },
+            { project: resolveCloudProjectArgs(options).project, image: options.image },
             { client, signal }
           )
       );
@@ -346,47 +285,43 @@ export function registerImagesCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    env
+      env
       .command("reset")
       .description(
         "Reset your computer to its current image (wipes mutable state)"
       )
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(async (options: PlatformOptions & { project?: string }, command) => {
+      .option("--project <id-or-name>", "Project name or ID").action(async (options: PlatformOptions & { project?: string }, command) => {
     const globalOptions = getGlobalOptions(command);
     const result = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         resetComputerOperation.execute(
-          { project: options.project },
+          { project: resolveCloudProjectArgs(options).project },
           { client, signal }
         )
     );
     writeResult(result, globalOptions.format);
   });
 
-  addPlatformOptions(
-    env
+      env
       .command("promote")
       .description(
         "Share a personal-draft sandbox image with the whole project (admin only)"
       )
       .requiredOption("--image <id-or-name>", "Sandbox image name or ID")
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & { project?: string; image: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           promoteImageOperation.execute(
-            { project: options.project, image: options.image },
+            { project: resolveCloudProjectArgs(options).project, image: options.image },
             { client, signal }
           )
       );
@@ -394,24 +329,22 @@ export function registerImagesCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    env
+      env
       .command("delete")
       .description("Permanently delete a sandbox image from a project")
       .requiredOption("--image <id-or-name>", "Sandbox image name or ID")
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & { project?: string; image: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           deleteImageOperation.execute(
-            { project: options.project, image: options.image },
+            { project: resolveCloudProjectArgs(options).project, image: options.image },
             { client, signal }
           )
       );

@@ -278,7 +278,7 @@ describe("RedesignedHostCanvas", () => {
 });
 
 /**
- * Read-only mode — the surface the chatbox and environment canvas embeds ride
+ * Read-only mode — the surface the scenario and environment canvas embeds ride
  * on. Rendered identically to the editable canvas but inert: no add affordance,
  * and every click is a single "take me to a writable editor" gesture rather
  * than a selection.

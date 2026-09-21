@@ -1,3 +1,4 @@
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 /**
  * MCPJam Stream Handler
  *
@@ -5,7 +6,7 @@
  * The LLM lives in Convex (to protect the OpenRouter key),
  * while MCP tools execute locally in this Express server.
  */
-
+import { withPageToolAttributionMetadata } from "./page-tool-call-attribution";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -24,10 +25,15 @@ import type {
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { zodSchema } from "@ai-sdk/provider-utils";
-import type { MCPClientManager, Harness } from "@mcpjam/sdk";
+import type {
+  MCPClientManager,
+  Harness,
+  ToolTaskSeamOptions,
+} from "@mcpjam/sdk";
 import {
   describeAsSlug,
   describeError,
+  isNormalizedError,
   type NormalizedError,
 } from "@mcpjam/sdk";
 import {
@@ -44,6 +50,8 @@ import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
 import type { RuntimeSkill } from "./harness/runtime-skills.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
+import type { HarnessPolicyBlockRecord } from "./harness/harness-proxy-policy-enforcement.js";
+import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import type { InsufficientScopeInfo } from "../routes/web/hosted-elicitation.js";
 import type { ScopeStepUpRequiredEvent } from "@/shared/scope-step-up";
 import {
@@ -58,6 +66,7 @@ import {
 import { z } from "zod";
 import {
   hasUnresolvedToolCalls,
+  hasUnresolvedApprovalResponses,
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
 import { isMrtrSuspendSignalShape } from "@/shared/mrtr-continuation";
@@ -67,10 +76,7 @@ import {
   hasUnresolvedToolCall,
   type MrtrEngineResume,
 } from "./mrtr-hosted-chat.js";
-import {
-  isClientFulfilledToolName,
-  type UiToolApprovalClassification,
-} from "@/shared/client-fulfilled-tools";
+import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import {
   scrubUnavailableToolHistoryForBackend,
   scrubMcpAppsToolResultsForBackend,
@@ -92,7 +98,14 @@ import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
-import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
+import {
+  mergeMcpToolOriginMetadata,
+  mergeMcpToolConnectionMetadata,
+  toolConnectionAttribution,
+  mergePageToolBindingMetadata,
+} from "@/shared/mcp-tool-origin-metadata";
+import { isWebmcpPageToolName } from "@/shared/declared-tools";
+import { pageToolBindingOf } from "./built-in-tools/page-tools.js";
 
 function unwrapJsonEnvelope(value: unknown): unknown {
   let current = value;
@@ -139,62 +152,141 @@ function isModelVisibleImageOutput(value: unknown): boolean {
 }
 
 /**
- * Approval-free check for a tool-call name.
+ * Whether a tool-call name is one of this turn's discovery meta-tools.
  *
- * The progressive-discovery meta-tools (`search_mcp_tools`,
- * `load_mcp_tools`) are exempt from approval because gating discovery
- * itself behind N approvals defeats the point — see the module docstring.
- * But the exemption is name-only, and we cannot trust the name in
- * isolation: when progressive mode is **off** there are no meta-tools in
- * the toolset, but a real MCP server is free to expose a tool literally
- * named `search_mcp_tools`. Honoring the exemption in that case would
- * silently let a real, approval-required tool execute without the user's
- * confirmation.
+ * Its one remaining job is the DRAIN filter: before pausing for approval on a
+ * real tool, the step runs any meta-tool calls the model made in the same
+ * assistant message, so the resumed turn does not lose the discovery side
+ * effect. Approval itself no longer consults this — the meta-tools declare a
+ * `never` floor like every other family, and the gate reads declarations.
  *
- * Require `progressivePlan?.enabled` as a precondition — that's the only
- * mode in which the orchestrator actually mints the meta-tools (and it
- * also fails fast on real-tool name collisions in `prepareChatV2`, so a
- * matching name truly is one of our meta-tools).
+ * Still name-plus-plan rather than name alone: when progressive mode is off
+ * there are no meta-tools in the toolset, and a real MCP server is free to
+ * expose a tool literally named `search_mcp_tools`. Draining that one would
+ * execute a real tool while the turn was paused waiting to ask about it.
+ * `progressivePlan?.enabled` is the only mode in which the orchestrator mints
+ * the meta-tools, and it fails fast on real-tool name collisions in
+ * `prepareChatV2`, so a matching name truly is one of ours.
  */
 function isApprovalFreeMetaToolName(
   name: string,
-  progressivePlan: ProgressiveToolPlan | undefined
+  progressivePlan: ProgressiveToolPlan | undefined,
 ): boolean {
   if (!progressivePlan?.enabled) return false;
   return META_TOOL_NAMES.includes(name);
 }
 
 /**
+ * One decision per tool call, for the life of a turn.
+ *
+ * Keyed by `toolCallId` rather than by tool name because the SEP-2640
+ * declaration is a FUNCTION WITH SIDE EFFECTS: it resolves the skill's
+ * manifest and records the digest set the user is about to be asked about,
+ * which `execute` then re-checks. This engine asks the same question about the
+ * same call more than once — at the emit gate, then again on the unresolved
+ * and auto-deny re-scans, which re-walk the whole history — and a second
+ * evaluation would re-fetch the manifest and could overwrite the binding it
+ * exists to check. The AI SDK evaluates once per call; so does this.
+ *
+ * Promises, not booleans, so two concurrent askers share one evaluation rather
+ * than racing into two.
+ */
+export type ApprovalDecisionCache = Map<string, Promise<boolean>>;
+
+export function createApprovalDecisionCache(): ApprovalDecisionCache {
+  return new Map();
+}
+
+/**
  * Whether THIS tool call must pause for the user's approval.
  *
- * The turn's `requireToolApproval` flag is the rule for real MCP tools only.
- * WebMCP `ui_*` tools carry their own per-tool policy, pre-computed by the
- * caller into `uiToolApprovals` (from the VALIDATED snapshot's MCP
- * annotations — never from the raw name, which a third-party server could
- * spoof). A destructive UI tool must gate even when the flag is OFF, which is
- * the default: writing this as `requireToolApproval && !isApprovalFree(...)`
- * is what silently let destructive client-fulfilled calls through.
+ * READS THE TOOL. Every tool a turn advertises carries a `needsApproval`
+ * declaration, computed at build time from its family's floor and the host's
+ * switch (`shared/tool-approval.ts`), and this gate is one of its readers —
+ * the BYOK `streamText` path is the other. There is no second channel: a name
+ * set that said "these gate, those don't" was how bash on the user's own
+ * machine ran with no pill while `bash.ts` declared `needsApproval: true` two
+ * files away.
  *
- * Order matters. UI classification wins over the flag in both directions:
- *   - in `requiredNames` → approval, flag or no flag;
- *   - in `freeNames` → never (a read-only snapshot buys nothing by pausing);
- *   - unknown name → a real tool: follow the flag, exempting meta-tools.
+ * A MISSING declaration is FREE, not "follow the switch". That is the `never`
+ * floor spelled as silence, and it is what the AI SDK already means by an
+ * absent `needsApproval` — the two readers must agree or a turn strands.
+ * Every family that wants the switch says so by declaring `setting`, which is
+ * a value, not an omission.
+ *
+ * A FUNCTION is invoked the way the AI SDK invokes it, `(input, {toolCallId,
+ * messages})`, and awaited — see {@link ApprovalDecisionCache} for why exactly
+ * once. The whole resolution deliberately mirrors the SDK's
+ * `isApprovalNeeded` case for case: absent is free, a boolean is itself, a
+ * function is called. The two readers agreeing is not a nicety — the client
+ * decides whether to DEFER a client-fulfilled call from one of them and the
+ * server decides whether to SEND a pill from the other, and a disagreement
+ * strands the turn.
+ *
+ * EXPORTED as a test seam. `__tests__/tool-approval-matrix.test.ts` pins its
+ * contract directly next to the end-to-end rows that drive it through a whole
+ * turn — a divergence between the two is the bug the matrix exists to catch.
+ * No production caller outside this module.
  */
-function toolCallNeedsApproval(
-  name: string,
-  progressivePlan: ProgressiveToolPlan | undefined,
-  uiToolApprovals: UiToolApprovalClassification | undefined,
-  // `boolean | undefined`, not `boolean`: the callers thread through an
-  // optional `requireToolApproval`, and this file is server-side (not covered
-  // by the client typecheck), so a bare `boolean` param let `undefined` flow
-  // in and `return requireToolApproval` hand back `undefined` for a real
-  // tool. Coerce so the return is always a real boolean.
-  requireToolApproval: boolean | undefined
-): boolean {
-  if (uiToolApprovals?.requiredNames.has(name)) return true;
-  if (uiToolApprovals?.freeNames.has(name)) return false;
-  if (isApprovalFreeMetaToolName(name, progressivePlan)) return false;
-  return requireToolApproval === true;
+export function toolCallNeedsApproval(args: {
+  name: string;
+  input: unknown;
+  toolCallId: string;
+  tools: ToolSet;
+  messages: ModelMessage[];
+  decisions: ApprovalDecisionCache;
+}): Promise<boolean> {
+  const cached = args.decisions.get(args.toolCallId);
+  if (cached) return cached;
+  const decision = decideToolCallApproval(args);
+  args.decisions.set(args.toolCallId, decision);
+  return decision;
+}
+
+async function decideToolCallApproval(args: {
+  name: string;
+  input: unknown;
+  toolCallId: string;
+  tools: ToolSet;
+  messages: ModelMessage[];
+}): Promise<boolean> {
+  const declared = (
+    args.tools as Record<string, { needsApproval?: unknown } | undefined>
+  )[args.name]?.needsApproval;
+  if (declared == null) return false;
+  if (typeof declared === "boolean") return declared;
+  if (typeof declared !== "function") {
+    // Out of contract: the SDK would try to CALL this and throw. Ask rather
+    // than run, and say so — a malformed declaration is a bug to fix, not a
+    // tool to wave through.
+    logger.warn(
+      "[mcpjam-stream-handler] tool declared a non-boolean, non-function needsApproval; asking",
+      { toolName: args.name, declared: typeof declared },
+    );
+    return true;
+  }
+  try {
+    const evaluated = await (
+      declared as (
+        input: unknown,
+        options: { toolCallId: string; messages: ModelMessage[] },
+      ) => unknown
+    )(args.input, {
+      toolCallId: args.toolCallId,
+      messages: args.messages,
+    });
+    // Truthiness, as the SDK's caller reads its return.
+    return Boolean(evaluated);
+  } catch (error) {
+    // FAIL CLOSED. A function-form declaration is the shape used where consent
+    // is bound to something that had to be fetched, so "we could not work out
+    // whether to ask" is never a reason to run it unasked.
+    logger.warn("[mcpjam-stream-handler] approval gate threw; asking anyway", {
+      toolName: args.name,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return true;
+  }
 }
 import { logger } from "./logger";
 import {
@@ -205,10 +297,18 @@ import {
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { normalizeFinishReason } from "@/shared/eval-trace";
 import {
+  describeEmptyStepFailure,
+  hasSettledToolCallThisPrompt,
+} from "./empty-step-failure.js";
+import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
-import type { PersistedTurnTrace } from "./chat-ingestion";
+import {
+  writePersistReceipt,
+  type PersistChatOutcome,
+  type PersistedTurnTrace,
+} from "./chat-ingestion";
 import { StreamTurnDriver } from "./stream-turn-driver.js";
 import {
   pushAiSdkTrailingErrorSpan,
@@ -218,6 +318,8 @@ import {
   wrapBackendToolsForTrace,
 } from "../services/evals/eval-trace-capture";
 import {
+  capRequestPayloadsForPersist,
+  cloneTraceValue,
   emitRequestPayload,
   emitTraceSnapshot,
   generateLiveTraceTurnId,
@@ -232,7 +334,7 @@ import {
   buildResolvedModelRequestPayload,
   normalizeSystemPromptForProvider,
 } from "./model-request-payload";
-import { hashGuestSpendIp } from "./guest-spend-ip.js";
+import { guestIpForwardHeaders, hashGuestSpendIp } from "./guest-spend-ip.js";
 import { isAbortError } from "@/shared/abort-errors";
 
 const DEFAULT_MAX_STEPS = 30;
@@ -241,7 +343,7 @@ const STEP_LOG_THRESHOLD = 20;
 const GUEST_IP_HASH_HEADER = "x-mcpjam-guest-ip-hash";
 
 function readLinkedMcpResourceWithManager(
-  mcpClientManager: MCPClientManager
+  mcpClientManager: MCPClientManager,
 ): (params: {
   serverId: string;
   uri: string;
@@ -265,7 +367,7 @@ let warnedMissingAbortSignal = false;
  */
 export function warnIfChatAbortSignalMissing(
   signal: AbortSignal | undefined,
-  source: string
+  source: string,
 ): void {
   if (signal || warnedMissingAbortSignal) return;
   warnedMissingAbortSignal = true;
@@ -274,7 +376,7 @@ export function warnIfChatAbortSignalMissing(
   logger.warn(
     "[mcpjam-stream-handler] inbound chat request has no AbortSignal; " +
       "client disconnect will not cancel the agentic loop",
-    { source }
+    { source },
   );
 }
 
@@ -391,6 +493,10 @@ export interface MCPJamStepFinishEvent {
  *     only (anything else that escaped the per-step handlers).
  */
 export interface MCPJamEngineErrorEvent {
+  retryAfterMs?: number;
+  isRetryable?: boolean;
+  refusalReason?: string;
+  outstandingHolds?: number;
   /**
    * Human-readable display message. For site (1) when the body
    * parsed structured, this is `"<error> <details>"`; otherwise the
@@ -411,6 +517,27 @@ export interface MCPJamEngineErrorEvent {
   promptIndex: number;
   /** Step index when fired inside `processOneStep`; omitted for site (3). */
   stepIndex?: number;
+  /**
+   * WHICH LAYER was running when this fired — not what the message says.
+   *
+   * `"setup"` means the turn died before the model stream began. Both engines
+   * catch their own pre-stream preparation in the same block that catches a
+   * stream failure — the harness its missing `projectId` / auth bearer /
+   * sandbox, this file its trace-payload clone, message scrubbing and tool
+   * narrowing — and report both here. A consumer that assumed every engine
+   * error was a provider failure would file our own setup bug as the
+   * provider's outage.
+   *
+   * Derived from a flag the emitter already holds — whether the turn handed
+   * over to the model — never from reading the message.
+   *
+   * BOTH in-repo engines now populate it: `runHarnessTurn` from its own
+   * `modelInvoked`, and `runChatEngineLoop` from its (this file's two inner
+   * emitters are post-response and say `"stream"` outright). It stays
+   * optional for emitters outside those two, and a consumer must treat
+   * absence as unknown rather than as either answer.
+   */
+  phase?: "setup" | "stream";
   /**
    * Classified form of this failure, including its `origin` — whose fault the
    * turn dying was.
@@ -456,6 +583,13 @@ export interface MCPJamEngineErrorEvent {
  *   "callers that know the failure happened on an internal boundary escalate
  *   it themselves" case the catalog documents.
  */
+/**
+ * Backend refusal code for the free-allowance model gate (convex
+ * `stream/routes.ts`, `lib/llmCallShell.ts`, harness lease starts): the free
+ * daily bucket cannot buy frontier-priced models. Arrives as HTTP 403.
+ */
+const FREE_TIER_MODEL_RESTRICTED_CODE = "free_tier_model_restricted";
+
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
@@ -469,18 +603,69 @@ export function describeBackendStreamFailure(
   // matter which upstream status was mirrored onto it. The slug still comes
   // from the status so the user-facing copy stays accurate ("the provider
   // rejected the key" IS what happened — it was just our key).
+  if (code === "platform_free_budget_exhausted")
+    return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  if (code === "account_suspended")
+    return describeAsSlug("account/suspended", detail);
   if (isMcpjamOwnedFailureCode(code)) {
-    return {
-      ...describeBackendStreamFailureSlug(status, detail),
-      origin: "mcpjam",
-    };
+    return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
 
-  return describeBackendStreamFailureSlug(status, detail);
+  // A 403 carrying the free-allowance code is an account-state refusal, not a
+  // credential wall: read by status alone it would become `provider/auth_error`
+  // ("the provider rejected the key"), which is not what happened. The
+  // allowance slug's copy ("top up or upgrade") is the actual fix, and its
+  // catalog origin is `user_config`, so nothing here pages.
+  if (code === FREE_TIER_MODEL_RESTRICTED_CODE) {
+    return describeAsSlug("provider/mcpjam_limit", detail);
+  }
+
+  if (status !== undefined && status >= 500) {
+    return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
+  }
+
+  return backendFailureSlug(status, detail);
 }
 
-/** Status → slug, with the catalog's own origin. Shared by both paths above. */
-function describeBackendStreamFailureSlug(
+/**
+ * Classify a mid-stream `{type:"error"}` chunk from MCPJam's own `/stream`
+ * backend — the failure delivered as a stream PART, after the headers already
+ * said 200.
+ *
+ * Same code rule as {@link describeBackendStreamFailure}, and deliberately
+ * NOT the same status rule. There the status is our own backend's response
+ * status, so a 5xx is our outage. Here it is the field the backend copied off
+ * the UPSTREAM provider's error (`categorizeError`'s `statusCode`), so an
+ * Anthropic 503 arrives as `statusCode: 503` — reading that as "our backend
+ * answered 5xx" would page us for someone else's overloaded model. Identical
+ * number, opposite meaning; only the delivery path distinguishes them.
+ *
+ * So the code is the ONLY thing that can assert MCPJam ownership here. Without
+ * one the catalog's own verdict stands — which for an unrecognized provider
+ * failure is `ambiguous`: visible, measured, never paging.
+ */
+export function describeStreamErrorChunkFailure(
+  status: number | undefined,
+  rawText: string,
+  code?: string,
+): NormalizedError {
+  const detail = new Error(
+    status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
+  );
+
+  if (code === "platform_free_budget_exhausted")
+    return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  if (code === "account_suspended")
+    return describeAsSlug("account/suspended", detail);
+  if (isMcpjamOwnedFailureCode(code)) {
+    return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
+  }
+
+  return backendFailureSlug(status, detail);
+}
+
+/** Status → slug, carrying the catalog's own origin. Shared by both paths. */
+function backendFailureSlug(
   status: number | undefined,
   detail: Error,
 ): NormalizedError {
@@ -490,13 +675,88 @@ function describeBackendStreamFailureSlug(
   if (status === 429) {
     return describeAsSlug("provider/quota", detail);
   }
-  if (status !== undefined && status >= 500) {
-    return { ...describeAsSlug("internal/unknown", detail), origin: "mcpjam" };
-  }
   return describeAsSlug("internal/unknown", detail);
 }
 
+/**
+ * A tool-set change, as a mid-turn refresher describes it.
+ *
+ * ADD and RETIRE rather than "here is the new set", because the two are not
+ * symmetric. An added tool must arrive with its approval classification or it
+ * would execute ungated; a retired one must NOT simply vanish, because the
+ * model may already have decided to call it — an absent tool of any name
+ * throws "Tool not found" and the model has nothing to recover from. So a
+ * retired tool stays callable and answers with a sentence saying the page
+ * moved on, and only its DEFINITION is withdrawn.
+ */
+export interface ToolRefresh {
+  /** Tools to advertise from the next step. */
+  add?: ToolSet;
+  /**
+   * Names whose definitions are withdrawn. Their entries stay in `tools` as
+   * tombstones so a call already in flight gets a recoverable answer.
+   */
+  retire?: readonly string[];
+  /**
+   * The tombstones themselves, installed into `tools` WITHOUT being advertised.
+   *
+   * A retired name keeps whatever entry it had if none is supplied here, which
+   * is the honest fallback rather than the intended one: the old entry still
+   * answers, but with the daemon's `stale_binding` refusal instead of a
+   * sentence saying the page moved on.
+   */
+  tombstones?: ToolSet;
+}
+
+/**
+ * Apply one refresh to the live tool set and definitions. Every added tool
+ * carries its own `needsApproval`, which is the one channel the engine reads.
+ *
+ * Identity is preserved when nothing changed: an unchanged `toolDefs` array is
+ * what lets the per-step request stay byte-identical, which matters because
+ * every provider keys its prompt cache on the serialized tools.
+ */
+function applyToolRefresh(
+  refresh: ToolRefresh,
+  io: {
+    tools: ToolSet;
+    setToolDefs: (defs: ToolDefinition[]) => void;
+    currentToolDefs: () => ToolDefinition[];
+  },
+): void {
+  const added = Object.entries(refresh.add ?? {});
+  const retired = refresh.retire ?? [];
+  if (added.length === 0 && retired.length === 0) return;
+
+  for (const [name, definition] of added) io.tools[name] = definition;
+  // Tombstones are installed but never advertised, so a call the model had
+  // already decided on lands somewhere that can explain itself.
+  for (const [name, definition] of Object.entries(refresh.tombstones ?? {})) {
+    io.tools[name] = definition;
+  }
+
+  const retiredSet = new Set(retired);
+  const kept = io.currentToolDefs().filter(
+    (def) =>
+      !retiredSet.has(def.name) &&
+      // `hasOwn`, not `in`: a page tool called `constructor` or `toString`
+      // must not be mistaken for one the refresh re-added.
+      !Object.hasOwn(refresh.add ?? {}, def.name),
+  );
+  const addedDefs = serializeToolsForConvex(
+    Object.fromEntries(added) as ToolSet,
+  );
+  io.setToolDefs([...kept, ...addedDefs]);
+}
+
 export interface MCPJamHandlerOptions {
+  /** Durable callers must finish this write before the next external effect. */
+  durableCheckpoint?: (state: {
+    phase: "model" | "tools" | "ready" | "complete";
+    messages: ModelMessage[];
+    step: number;
+  }) => Promise<void>;
+  yieldAfterStep?: boolean;
   messages: ModelMessage[];
   modelId: string;
   /**
@@ -544,8 +804,39 @@ export interface MCPJamHandlerOptions {
    * because `runHarnessTurn` does not go through the tool resolver at all.
    */
   harnessSandboxBinding?: TrustedHarnessSandboxBinding;
+  /**
+   * Run this harness turn on the USER'S OWN MACHINE rather than in a cloud
+   * computer.
+   *
+   * Opaque ids only, and every one of them is RE-DERIVED or re-verified by
+   * `resolveLocalHarnessAvailability` before anything runs: the machine id
+   * against this installation's own, the runtime id against the digest of what
+   * is actually on disk, the workspace against its registered canonical path,
+   * and the whole set against the consent grant. The caller states which target
+   * it means; it does not state what that target may do.
+   *
+   * `grantToken` is the plaintext consent capability, read from the
+   * `x-mcpjam-local-harness-grant` HEADER and never from the body — a body
+   * field would enter persisted transcripts. It is never stored, never logged,
+   * and never leaves this process.
+   *
+   * Absent ⇒ the hosted path, byte for byte as before this existed.
+   */
+  harnessExecutionTarget?: {
+    kind: "local-native";
+    workspaceGrantId: string;
+    runtimeId: string;
+    machineId: string;
+    permissionProfile: "read-only" | "workspace-edits" | "unrestricted";
+    policyVersion: string;
+    grantToken: string;
+    /** The acting user, resolved by the ROUTE from the verified bearer — never
+     *  from the request body. Consent binds to a user, so a user the caller
+     *  names is a user the caller chose. */
+    actingUserId: string;
+  };
   authHeader?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   projectId?: string;
   chatSessionId?: string;
@@ -554,7 +845,7 @@ export interface MCPJamHandlerOptions {
    * Swarm (journey-execution) continuity identity. When `sourceType === "swarm"`
    * these key the harness `swarm-chat` owner lane (`journeyRunId` + `hostId` +
    * `chatSessionId`) so a multi-turn swarm harness session resumes only its own
-   * runtime sidecar and never collides with a Direct/Chatbox lane. Set by the
+   * runtime sidecar and never collides with a Direct/Scenario lane. Set by the
    * swarm runner; absent for every other surface. See
    * `mcpjam-backend/convex/harnessSessions.ts` (`swarm-chat` owner).
    */
@@ -594,7 +885,61 @@ export interface MCPJamHandlerOptions {
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
   /**
-   * Phase 3 execution scope from the server-resolved runtime config (chatbox OR
+   * The Project Environment this turn resolved — the GRANT BOUNDARY for project
+   * secrets, and the ONLY thing the harness turn needs to fetch them.
+   *
+   * An id, never a resolved spec carrying values: the resolved-environment
+   * types are read by previews, logs and telemetry, and a credential on one of
+   * them would be a credential in all three. The harness turn calls Convex with
+   * the end user's own bearer, so the backend — not this process — decides
+   * which of this environment's secrets that user's session receives.
+   *
+   * Absent ⇒ no grant. Normal, not a failure.
+   */
+  environmentId?: string;
+  /**
+   * Why {@link environmentId} is absent on a turn whose run DOES have one.
+   *
+   * Absent `environmentId` normally means "no environment, therefore no grant",
+   * and the harness refusal says exactly that. On EVAL REPLAY it would be a
+   * lie: the replay run inherits the source run's `configSnapshot.environmentRef`
+   * verbatim, so the box may genuinely carry a brokered transform — but no
+   * public backend read projects that ref back out, so this process cannot name
+   * the environment or check its selection.
+   *
+   * Set by such a caller to make the refusal honest. It changes no decision:
+   * an environment we cannot name is one whose grant we cannot verify, and the
+   * turn is refused either way. Only the copy differs, and only so a reader is
+   * not told to fix a selection that may already be correct.
+   */
+  environmentUnresolvedReason?: string;
+  /**
+   * This turn's MATERIALIZED project secrets, already resolved by the caller.
+   *
+   * THE ONLY SOURCE. The harness turn does not fetch secrets for itself, and
+   * that is deliberate: delivering a value into the box and scrubbing it out of
+   * the transcript are two uses of one list, and only the caller — which builds
+   * the persist callback — can wire the second. A turn that fetched its own
+   * would put the value in the box and then persist it verbatim.
+   *
+   * Absent ⇒ this turn delivers no materialized secrets. Fail-closed, and the
+   * state every caller that has not wired them is in.
+   */
+  runtimeSecrets?: { name: string; value: string }[];
+  /**
+   * The secrets fetch FAILED — distinct from "this turn has none", and handled
+   * differently: it forks the harness session rather than resuming one that may
+   * still hold values this turn cannot enumerate or scrub.
+   */
+  secretsUnavailable?: boolean;
+  /**
+   * Fired when this turn's materialized secrets actually reach an execution
+   * surface — a bash command that carries them, or a started harness session
+   * holding them. Used to stamp delivery honestly; see `sandbox-bash`.
+   */
+  onSecretEnvDelivered?: () => void;
+  /**
+   * Phase 3 execution scope from the server-resolved runtime config (scenario OR
    * host-by-id). Threaded into the harness path (sandbox reserve, runtime skills,
    * broker start, session-state, ingest commit) so the backend re-resolves live
    * access + per-swarm host-funded caps. Absent ⇒ legacy member path.
@@ -610,21 +955,88 @@ export interface MCPJamHandlerOptions {
    *  global env. Absent ⇒ harness runs without proxied MCP. See
    *  `harness-proxy-strategy.ts`. */
   harnessMcpProxy?: HarnessMcpProxyStrategy;
-  requireToolApproval?: boolean;
   /**
-   * Per-tool approval policy for the `ui_*` tools this turn advertised,
-   * classified by the caller from the validated snapshot's MCP annotations
-   * (see `classifyUiToolApprovals`). Overrides `requireToolApproval` in both
-   * directions for those names — destructive UI tools gate even when the flag
-   * is off; read-only ones never gate.
+   * Resolved `toolPolicy` decisions per selected server id, computed at launch
+   * from the annotation cache. Present ⇒ each policied server's `.mcp.json`
+   * entry carries a SEALED proxy token, and the hosted harness-MCP route
+   * enforces the snapshot on `tools/call` (the in-sandbox calls never pass
+   * through an in-process tool map, so the proxy is the only chokepoint).
+   * Absent ⇒ today's unpoliced bare-token path, byte-identical.
    */
-  uiToolApprovals?: UiToolApprovalClassification;
+  harnessToolPolicy?: Record<string, ToolPolicySnapshot>;
+  /**
+   * The eval ITERATION this harness turn is executing, when there is one.
+   *
+   * Present ⇒ the turn mints proxy tokens carrying an authorized iteration
+   * claim and puts its turn id on each `.mcp.json` entry, which is what lets
+   * the proxy record firsthand tool-call evidence. Absent ⇒ playground
+   * traffic, a quick run, or any turn with no run to attach evidence to — all
+   * of which mint and execute exactly as they did before evidence existed.
+   *
+   * An explicit typed field rather than a metadata bag: what it selects is a
+   * durable, purgeable record keyed on this id, and a caller that misspells a
+   * bag key should get a compile error, not a run that silently records
+   * nothing.
+   */
+  evalIterationId?: string;
+  /**
+   * Sink for the evidence decision the MINT reported for that iteration.
+   *
+   * The mint is the first place the run's FROZEN decision is visible to the
+   * turn, so this hands it back to the driver — which needs it to decide
+   * whether to read evidence at all, and whether to grade from it. It is a
+   * report, never a request: the runner cannot turn capture on with it.
+   */
+  onHarnessEvidenceDecision?: (decision: {
+    captureEnabled: boolean;
+    gradingSource: "narration" | "evidence";
+    turnId: string;
+  }) => void;
+  /**
+   * Sink for the calls the proxy refused, reported on THIS replica off the
+   * results the harness streams back. The eval driver hands them to
+   * `finalize-iteration` as the same policy blocks the in-process gate yields.
+   */
+  onHarnessPolicyBlocks?: (blocks: HarnessPolicyBlockRecord[]) => void;
+  /**
+   * The host's approval switch for this turn.
+   *
+   * NOT read by the emulated loop at all. Every tool in `tools` already
+   * carries the declaration this switch produced (`shared/tool-approval.ts`),
+   * and the gate reads that. It survives as an option because
+   * `handleMCPJamFreeChatModel` also dispatches the HARNESS engine, which
+   * builds its own MCP tool set rather than consuming `tools` and so needs the
+   * host's intent directly.
+   */
+  requireToolApproval?: boolean;
   /**
    * Host/client policy for eligible MCP tool-result content/resources.
    * Controls only model-facing tool output; raw results remain available to
    * UI/debug history.
    */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /**
+   * Host-level switch for SEP-1865 `_meta.ui.visibility` filtering — the same
+   * field `prepareChatV2` takes. `undefined`/`true` filter (spec default); only
+   * an explicit `false` opts out.
+   *
+   * Read ONLY by the HARNESS engine, which builds its own MCP tool set
+   * (`projectSelectedMcpServersAsHostTools`) instead of consuming the one
+   * `prepareChatV2` prepared. The emulated engine is handed `tools` already
+   * built, so it neither needs nor reads this.
+   */
+  respectToolVisibility?: boolean;
+  /**
+   * Resolved task-seam options, or absent for "tasks off". Same field and same
+   * rule as `PrepareChatV2Options.tasks`: the MODE is resolved by the CALLER
+   * (each surface is its own row in the policy matrix), never here.
+   *
+   * Read ONLY by the HARNESS engine, and for the same reason as
+   * `respectToolVisibility` — the emulated engine's seam already rode in
+   * through `prepareChatV2`. Absent keeps a harness turn on the pre-existing
+   * no-`_meta` path, byte-for-byte.
+   */
+  tasks?: ToolTaskSeamOptions;
   /**
    * Approval-pause policy. `"prompt"` (default) is the real-chat path:
    * approval-required tool calls pause the loop until the user answers
@@ -657,13 +1069,19 @@ export interface MCPJamHandlerOptions {
     toolName: string;
     toolInput: unknown;
   }) => ScopeStepUpRequiredEvent | Promise<ScopeStepUpRequiredEvent>;
+  /**
+   * Persist tap. May return the ingest's outcome so the engine can stream a
+   * `data-persist-receipt` before the stream closes — the client then KNOWS
+   * whether its turn was saved instead of inferring it from a version poll.
+   * Callers that persist headlessly (or not at all) keep returning void.
+   */
   onConversationComplete?: (
     fullHistory: ModelMessage[],
     turnTrace: PersistedTurnTrace,
     // §3: present only for chat-backed harness turns — the resume-state commit
     // to apply atomically with the transcript via /ingest-chat.
-    harnessSessionCommit?: HarnessSessionCommitPayload
-  ) => Promise<void> | void;
+    harnessSessionCommit?: HarnessSessionCommitPayload,
+  ) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
@@ -736,6 +1154,30 @@ export interface MCPJamHandlerOptions {
    */
   prepareAdvertisedTools?: PrepareAdvertisedTools;
   /**
+   * Let the tool set GROW between model steps.
+   *
+   * This engine is the only one that can. It re-sends the tool definitions on
+   * every step (the per-step Convex call is stateless) and re-reads the
+   * executable map from the live `tools` object each time — so a tool added
+   * after step one is advertised on step two with no further plumbing. BYOK
+   * cannot (the AI SDK's `PrepareStepResult` carries no `tools`), and the
+   * harness takes its toolset as a constructor argument.
+   *
+   * WHY IT IS WORTH THE COMPLEXITY. The agent browser's page tools belong to
+   * whatever page is open, and the page changes inside a turn: the model
+   * navigates on step one and the tools it needs exist only from step two. A
+   * turn-start-only set means the model must either spend a turn per page or
+   * fall back to clicking — both of which are what this whole program is for.
+   *
+   * Called after each continuing step. A refresh that returns nothing changes
+   * nothing; a throw is swallowed, because a failed tool-list read must never
+   * be the reason a conversation stops.
+   */
+  refreshTools?: (ctx: {
+    stepIndex: number;
+    signal?: AbortSignal;
+  }) => Promise<ToolRefresh | undefined>;
+  /**
    * Override the Convex endpoint path for the per-step LLM call.
    * Defaults to "/stream". Org BYOK chat uses "/stream/org".
    */
@@ -792,6 +1234,7 @@ export interface MCPJamHandlerOptions {
 }
 
 interface StepContext {
+  durableCheckpoint?: MCPJamHandlerOptions["durableCheckpoint"];
   writer: {
     write: (chunk: UIMessageChunk) => void;
   };
@@ -808,7 +1251,7 @@ interface StepContext {
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
   authHeader?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   projectId?: string;
   chatSessionId?: string;
@@ -820,8 +1263,8 @@ interface StepContext {
   temperature?: number;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
-  requireToolApproval?: boolean;
-  uiToolApprovals?: UiToolApprovalClassification;
+  /** One approval decision per tool call, shared across the whole turn. */
+  approvalDecisions: ApprovalDecisionCache;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   approvalMode?: "prompt" | "auto-deny";
   stepIndex: number;
@@ -843,6 +1286,16 @@ interface StepContext {
   // processOneStep, processStream/tool-execution catch, outer
   // agentic-loop catch). Optional.
   onEngineError?: (event: MCPJamEngineErrorEvent) => void;
+  /**
+   * Fired at the HANDOVER to the model, immediately before the `/stream`
+   * request leaves. Lets `runChatEngineLoop`'s outer catch — a different
+   * function, so it cannot see this one's locals — say whether a turn that
+   * threw had reached the model yet.
+   *
+   * A callback rather than a returned flag because the interesting case is
+   * the one where this function THROWS and returns nothing at all.
+   */
+  onModelHandover?: () => void;
   // Typed mid-stream failure telemetry; threaded from runChatEngineLoop
   // (already oncePerTurn-wrapped and fallback-resolved there).
   failureReporter: StreamFailureReporter;
@@ -854,6 +1307,7 @@ interface StepContext {
 type PersistedAssistantPart = TextPart | ToolCallPart | ReasoningUIPart;
 
 interface LiveTraceTurnContext {
+  recordedRequestPayloads: LiveChatTraceRequestPayloadEntry[];
   turnId: string;
   promptIndex: number;
   promptMessageStartIndex: number;
@@ -866,6 +1320,24 @@ interface StreamResult {
   contentParts: PersistedAssistantPart[];
   hasToolCalls: boolean;
   finishChunk: UIMessageChunk | null;
+  /**
+   * `errorText` of every `tool-input-error` chunk this step produced.
+   *
+   * A tool call whose input fails schema validation contributes NO
+   * `contentParts` entry, so a step whose only output was one of these is
+   * byte-for-byte indistinguishable from a model that said nothing at all.
+   * Keeping the reasons lets {@link describeEmptyStepFailure} name the one
+   * empty-step cause a caller can act on directly.
+   */
+  toolInputErrors: string[];
+  /**
+   * Name of every tool call this step STARTED but never finished: a
+   * `tool-input-start` with no `tool-input-available` or `tool-input-error`
+   * after it, which is what a stream cut off mid-call leaves behind. Like a
+   * rejected input it adds no `contentParts` entry, so without this an empty
+   * step would claim "no tool call" about a model that was writing one.
+   */
+  unfinishedToolNames: string[];
   /**
    * Absolute Date.now() of the first emitted stream chunk, for
    * time-to-first-chunk (OTel gen_ai.response.time_to_first_chunk). Undefined
@@ -918,7 +1390,7 @@ function collectUsedToolCallIds(messages: ModelMessage[]): Set<string> {
 
 function hasUnresolvedClientFulfilledToolCalls(
   messages: ModelMessage[],
-  tools: ToolSet
+  tools: ToolSet,
 ): boolean {
   const resultIds = new Set<string>();
   for (const msg of messages) {
@@ -956,7 +1428,7 @@ function hasUnresolvedClientFulfilledToolCalls(
 
 function generateUniqueToolCallId(
   usedToolCallIds: Set<string>,
-  prefix = "tc"
+  prefix = "tc",
 ): string {
   const MAX_ATTEMPTS = 100;
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
@@ -974,7 +1446,7 @@ function generateUniqueToolCallId(
 
 function createToolCallIdNormalizer(
   usedToolCallIds: Set<string>,
-  stepIndex: number
+  stepIndex: number,
 ): (rawToolCallId?: string) => string {
   const perStepMap = new Map<string, string>();
   let collisionCounter = 0;
@@ -1003,7 +1475,7 @@ function createToolCallIdNormalizer(
 
 function getPromptAssistantStepBaseIndex(
   messageHistory: ModelMessage[],
-  promptMessageStartIndex: number
+  promptMessageStartIndex: number,
 ): number {
   let assistantCount = 0;
   for (
@@ -1019,7 +1491,7 @@ function getPromptAssistantStepBaseIndex(
 }
 
 function readUsageFromFinishChunk(
-  finishChunk: UIMessageChunk | null
+  finishChunk: UIMessageChunk | null,
 ): LiveChatTraceUsage | undefined {
   if (!finishChunk || finishChunk.type !== "finish") {
     return undefined;
@@ -1065,7 +1537,7 @@ function readUsageFromFinishChunk(
  * capture never fabricates one.
  */
 function readFinishReasonFromChunk(
-  finishChunk: UIMessageChunk | null
+  finishChunk: UIMessageChunk | null,
 ): string | undefined {
   type FinishUIMessageChunk = Extract<UIMessageChunk, { type: "finish" }>;
   const source = finishChunk as Partial<FinishUIMessageChunk> | null;
@@ -1075,7 +1547,7 @@ function readFinishReasonFromChunk(
 function createClientFinishChunk(
   finishChunk: UIMessageChunk | null,
   traceTurn: LiveTraceTurnContext | null,
-  fallbackReason: "length" | "stop"
+  fallbackReason: "length" | "stop",
 ): UIMessageChunk {
   type FinishUIMessageChunk = Extract<UIMessageChunk, { type: "finish" }>;
   const source = finishChunk as Partial<FinishUIMessageChunk> | null;
@@ -1107,7 +1579,7 @@ function setStepSpanMessageRanges(
   promptIndex: number,
   stepIndex: number,
   messageStartIndex: number | undefined,
-  messageEndIndex: number | undefined
+  messageEndIndex: number | undefined,
 ): void {
   if (
     typeof messageStartIndex !== "number" ||
@@ -1175,7 +1647,7 @@ function scrubMessagesForBackend(
   tools: ToolSet,
   mcpClientManager: MCPClientManager,
   selectedServers?: string[],
-  preserveReasoningFromIndex?: number
+  preserveReasoningFromIndex?: number,
 ): ModelMessage[] {
   let pruned: ModelMessage[];
   if (
@@ -1206,7 +1678,7 @@ function scrubMessagesForBackend(
       const assistantMsg = msg as AssistantModelMessage;
       if (!Array.isArray(assistantMsg.content)) return msg;
       const filtered = assistantMsg.content.filter(
-        (part) => part.type !== "tool-approval-request"
+        (part) => part.type !== "tool-approval-request",
       );
       if (filtered.length === assistantMsg.content.length) return msg;
       return { ...msg, content: filtered } as ModelMessage;
@@ -1215,7 +1687,7 @@ function scrubMessagesForBackend(
     if (msg.role === "tool") {
       const toolMsg = msg as ToolModelMessage;
       const filtered = toolMsg.content.filter(
-        (part) => part.type !== "tool-approval-response"
+        (part) => part.type !== "tool-approval-response",
       );
       if (filtered.length === toolMsg.content.length) return msg;
       return { ...msg, content: filtered } as ModelMessage;
@@ -1226,28 +1698,31 @@ function scrubMessagesForBackend(
 
   const withoutUnavailableToolHistory = scrubUnavailableToolHistoryForBackend(
     stripped,
-    Object.keys(tools as Record<string, unknown>)
+    Object.keys(tools as Record<string, unknown>),
+    // A page's tools exist only while that page is open; what the model did
+    // with them is still what happened. See the parameter's doc.
+    isWebmcpPageToolName,
   );
 
   const scrubbed = scrubChatGPTAppsToolResultsForBackend(
     scrubMcpAppsToolResultsForBackend(
       withoutUnavailableToolHistory,
       mcpClientManager,
-      selectedServers
+      selectedServers,
     ),
     mcpClientManager,
-    selectedServers
+    selectedServers,
   );
   return normalizeModelMessagesForConvex(scrubbed);
 }
 
 function safelyEmitLiveTextDelta(
   onLiveTextDelta: ((delta: string) => void) | undefined,
-  delta: string
+  delta: string,
 ) {
   if (!onLiveTextDelta) return;
   safelyInvoke("[mcpjam-stream-handler] onLiveTextDelta", () =>
-    onLiveTextDelta(delta)
+    onLiveTextDelta(delta),
   );
 }
 
@@ -1266,14 +1741,23 @@ function safelyEmitLiveTextDelta(
  * here costs one investigated alert, while a permissive rule costs the
  * blindness this work exists to remove. Add codes as the backend adds them.
  */
-const USER_OWNED_DENIAL_CODES = new Set<string>([
+export const USER_OWNED_DENIAL_CODES: ReadonlySet<string> = new Set<string>([
   // convex `stream/routes.ts` + `lib/llmCallShell.ts` spend precheck
+  "platform_free_budget_exhausted",
+  "account_suspended",
+  "guest_model_not_allowed",
+  "guest_input_too_large",
   "user_rate_limit",
   "wallet_locked",
   "org_rate_limit",
   // convex billing guard
   "billing_limit_reached",
   "billing_feature_not_included",
+  // convex org spend budget (admin-set cap) — a refusal, not a fault
+  "spend_budget_reached",
+  // convex free-allowance model gate — the caller's plan, not our fault; see
+  // `describeBackendStreamFailure` for the slug it maps to.
+  FREE_TIER_MODEL_RESTRICTED_CODE,
 ]);
 
 /** Exported for the capture-policy tests; see {@link USER_OWNED_DENIAL_CODES}. */
@@ -1312,6 +1796,73 @@ export function isMcpjamOwnedFailureCode(code: string | undefined): boolean {
 }
 
 /**
+ * Parse the `errorText` of a mid-stream `{type:"error"}` chunk.
+ *
+ * SEPARATE from {@link parseEngineErrorBody} because the two shapes differ.
+ * The backend's non-OK path returns `{ok, code, error, details}` (parsed
+ * there); its mid-stream path is `toUIMessageStreamResponse({onError})`, which
+ * serializes `{code, message, statusCode, isRetryable, details}` — `message`,
+ * not `error`, and it carries the UPSTREAM `statusCode` that never reaches our
+ * own HTTP response. Feeding this shape to the other parser yields the raw JSON
+ * as the display text and drops the status.
+ *
+ * Non-JSON text (any other producer's error chunk) falls back to the text
+ * itself, which is what the client used to be handed verbatim.
+ */
+export function parseStreamErrorChunkText(errorText: string): {
+  message: string;
+  code?: string;
+  statusCode?: number;
+  details?: string;
+} {
+  try {
+    const body = JSON.parse(errorText) as {
+      code?: unknown;
+      message?: unknown;
+      statusCode?: unknown;
+      details?: unknown;
+    };
+    if (body && typeof body === "object") {
+      const message =
+        typeof body.message === "string" && body.message.trim().length > 0
+          ? body.message
+          : errorText;
+      return {
+        message,
+        ...(typeof body.code === "string" ? { code: body.code } : {}),
+        ...(typeof body.statusCode === "number"
+          ? { statusCode: body.statusCode }
+          : {}),
+        ...(typeof body.details === "string" ? { details: body.details } : {}),
+      };
+    }
+  } catch {
+    // Not JSON — fall through to the raw text.
+  }
+  return { message: errorText };
+}
+
+/**
+ * An error carrying a classification its thrower already made.
+ *
+ * Generalizes the convention `WebRouteError` already uses, so the engine's
+ * outer catch can prefer a verdict reached with the structured body in hand
+ * over `describeError`, which would only see the message string.
+ */
+function attachedNormalized(error: unknown): NormalizedError | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const candidate = (error as { normalized?: unknown }).normalized;
+  return isNormalizedError(candidate) ? candidate : undefined;
+}
+
+/** Guardrail code a thrower attached alongside {@link attachedNormalized}. */
+function attachedFailureCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const code = (error as { failureCode?: unknown }).failureCode;
+  return typeof code === "string" ? code : undefined;
+}
+
+/**
  * PR 5b-followup-2: parse a Convex `/stream` non-OK response body as
  * the standard guardrail JSON shape `{ code?, error, details? }`.
  * Falls back to a generic `<status> <text>` message when the body
@@ -1322,28 +1873,51 @@ export function isMcpjamOwnedFailureCode(code: string | undefined): boolean {
  */
 function parseEngineErrorBody(
   status: number | undefined,
-  bodyText: string
-): { message: string; code?: string; details?: string } {
-  let code: string | undefined;
+  bodyText: string,
+): Pick<
+  MCPJamEngineErrorEvent,
+  | "message"
+  | "code"
+  | "details"
+  | "retryAfterMs"
+  | "isRetryable"
+  | "refusalReason"
+  | "outstandingHolds"
+> {
   try {
     const body = JSON.parse(bodyText) as {
       code?: string;
       error?: string;
       details?: string;
+      retryAfter?: number;
+      isRetryable?: boolean;
+      refusalReason?: string;
+      outstandingHolds?: number;
     };
-    if (body?.error) {
+    if (body && typeof body === "object") {
       return {
-        message: body.details ? `${body.error} ${body.details}` : body.error,
+        message: body.error
+          ? body.details
+            ? `${body.error} ${body.details}`
+            : body.error
+          : `Backend stream error: ${status} ${bodyText}`,
         ...(body.code ? { code: body.code } : {}),
         ...(body.details ? { details: body.details } : {}),
+        ...(typeof body.retryAfter === "number" &&
+        Number.isFinite(body.retryAfter)
+          ? { retryAfterMs: body.retryAfter }
+          : {}),
+        ...(typeof body.isRetryable === "boolean"
+          ? { isRetryable: body.isRetryable }
+          : {}),
+        ...(typeof body.refusalReason === "string"
+          ? { refusalReason: body.refusalReason }
+          : {}),
+        ...(typeof body.outstandingHolds === "number"
+          ? { outstandingHolds: body.outstandingHolds }
+          : {}),
       };
     }
-    // Bodies without an `error` field can still carry a machine-readable
-    // `code` — the spend-precheck denial is `{ok:false, code:"user_rate_limit",
-    // isRetryable, retryAfter}` (issue #3708). Surface it alongside the
-    // generic message so consumers (agent route's rate-limit mapping) can
-    // branch on `code` instead of regexing the raw body text.
-    code = typeof body?.code === "string" ? body.code : undefined;
   } catch {
     // body wasn't JSON — fall through to generic shape
   }
@@ -1352,7 +1926,6 @@ function parseEngineErrorBody(
       status !== undefined
         ? `Backend stream error: ${status} ${bodyText}`
         : bodyText,
-    ...(code ? { code } : {}),
   };
 }
 
@@ -1363,11 +1936,11 @@ function parseEngineErrorBody(
  */
 function safelyEmitEngineError(
   onEngineError: ((event: MCPJamEngineErrorEvent) => void) | undefined,
-  event: MCPJamEngineErrorEvent
+  event: MCPJamEngineErrorEvent,
 ) {
   if (!onEngineError) return;
   safelyInvoke("[mcpjam-stream-handler] onEngineError", () =>
-    onEngineError(event)
+    onEngineError(event),
   );
 }
 
@@ -1382,17 +1955,24 @@ async function processStream(
   traceTurn: LiveTraceTurnContext,
   stepIndex: number,
   tools: ToolSet,
-  requireToolApproval?: boolean,
+  // The turn's approval decisions, and the history a function-form
+  // declaration is handed. Both REQUIRED and both positioned before the
+  // optional callbacks: the cache is what makes a SEP-2640 manifest resolve
+  // once per tool call rather than once per asker, so a default that quietly
+  // minted a fresh one per step would reintroduce the bug it exists to
+  // prevent, and it would do so silently.
+  approvalDecisions: ApprovalDecisionCache,
+  messageHistory: ModelMessage[],
   onLiveTextDelta?: (delta: string) => void,
   abortSignal?: AbortSignal,
-  progressivePlan?: ProgressiveToolPlan,
   // PR 5b-pre: chunk-level callbacks. Optional; only fired when
   // supplied. Chat / synthetic omit (handler still writes the UI
   // chunk + trace event unchanged).
   onToolCall?: (event: MCPJamToolCallEvent) => void,
-  uiToolApprovals?: UiToolApprovalClassification
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
+  const toolInputErrors: string[] = [];
+  const unfinishedTools = new Map<string, string>();
   let pendingText = "";
   let pendingReasoning = "";
   let pendingReasoningId: string | null = null;
@@ -1469,7 +2049,7 @@ async function processStream(
               "message" in parseErr &&
               typeof (parseErr as { message?: unknown }).message === "string"
                 ? (parseErr as { message: string }).message
-                : "stream parse failed"
+                : "stream parse failed",
             );
       }
 
@@ -1556,19 +2136,68 @@ async function processStream(
         case "tool-input-error": {
           flushText();
           flushReasoning();
+          // A tool call the model DID emit, rejected before it could run —
+          // `NoSuchToolError` / `InvalidToolInputError` on the backend's
+          // `streamText`. It is forwarded to the client but pushes nothing
+          // onto `contentParts`, so record why for the empty-step classifier.
+          // A call that starts and never resolves either way was cut off
+          // mid-input; remember its name until one of the two arrives.
+          if (chunk.type === "tool-input-start") {
+            unfinishedTools.set(String(chunk.toolCallId), chunk.toolName);
+          } else if (chunk.type === "tool-input-error") {
+            unfinishedTools.delete(String(chunk.toolCallId));
+          }
+          if (chunk.type === "tool-input-error") {
+            const toolInputErrorText = (chunk as { errorText?: unknown })
+              .errorText;
+            toolInputErrors.push(
+              typeof toolInputErrorText === "string" && toolInputErrorText
+                ? toolInputErrorText
+                : "the model's tool input failed schema validation",
+            );
+          }
           const toolCallId = normalizeToolCallId(chunk.toolCallId);
-          writer.write({ ...chunk, toolCallId });
+          const providerMetadata =
+            "toolName" in chunk && typeof chunk.toolName === "string"
+              ? withPageToolAttributionMetadata(
+                  chunk.providerMetadata,
+                  tools[chunk.toolName],
+                )
+              : undefined;
+          writer.write({
+            ...chunk,
+            toolCallId,
+            ...(providerMetadata ? { providerMetadata } : {}),
+          });
           break;
         }
 
         case "tool-input-available": {
           flushText();
           flushReasoning();
+          unfinishedTools.delete(String(chunk.toolCallId));
           const toolCallId = normalizeToolCallId(chunk.toolCallId);
           const serverIdForToolCall = readToolServerId(tools, chunk.toolName);
-          const providerMetadata = mergeMcpToolOriginMetadata(
-            chunk.providerMetadata,
-            serverIdForToolCall
+          // AND THE PAGE TOOL'S BINDING, on the same channel. It rides the
+          // tool-call part to the client and back, so an approval resumed in a
+          // later request can tell whether the page moved under it — see
+          // `mergePageToolBindingMetadata`.
+          const providerMetadata = mergePageToolBindingMetadata(
+            mergeMcpToolOriginMetadata(
+              withPageToolAttributionMetadata(
+                mergeMcpToolConnectionMetadata(
+                  chunk.providerMetadata,
+                  toolConnectionAttribution(
+                    tools[chunk.toolName],
+                    chunk.input,
+                    toolCallId,
+                  ),
+                ),
+                tools[chunk.toolName],
+              ),
+              serverIdForToolCall,
+            ),
+            pageToolBindingOf(tools[chunk.toolName]),
           );
           contentParts.push({
             type: "tool-call",
@@ -1611,18 +2240,20 @@ async function processStream(
                 "[mcpjam-stream-handler] onToolCall callback failed",
                 {
                   error: error instanceof Error ? error.message : String(error),
-                }
+                },
               );
             }
           }
 
           if (
-            toolCallNeedsApproval(
-              chunk.toolName,
-              progressivePlan,
-              uiToolApprovals,
-              requireToolApproval
-            )
+            await toolCallNeedsApproval({
+              name: chunk.toolName,
+              input: chunk.input ?? {},
+              toolCallId,
+              tools,
+              messages: messageHistory,
+              decisions: approvalDecisions,
+            })
           ) {
             emitToolApprovalRequest(writer, {
               approvalId: generateToolCallId(),
@@ -1642,6 +2273,48 @@ async function processStream(
           finishChunk = chunk;
           // Don't write finish yet - wait until we know we're done
           break;
+
+        case "error": {
+          // The backend's OTHER failure delivery path, and the one HTTP status
+          // can never see. `toUIMessageStreamResponse({onError})` categorizes
+          // the failure and serializes it into an error PART on a stream whose
+          // headers already said 200 — including `mcpjam_api_error` /
+          // `mcpjam_rate_limit`, i.e. OUR outage.
+          //
+          // This used to fall into `default:` and be forwarded verbatim.
+          // processStream then returned NORMALLY, processOneStep ran its
+          // success epilogue, and the outer loop set `runSucceeded = true`:
+          // the user saw an error while telemetry recorded a completed turn,
+          // and the turn was persisted as a good conversation. Exactly the
+          // bug already fixed for parser failures a few lines above — same
+          // remedy, same reason.
+          //
+          // Throw so it lands in `runChatEngineLoop`'s outer catch (site 3),
+          // which owns the whole failure ritual: error chunk, trace events,
+          // `onEngineError`, and the reporter. Deliberately NOT forwarded
+          // here — site 3's `emitError` writes the single error chunk, so the
+          // wire still carries exactly one.
+          const errorText =
+            typeof (chunk as { errorText?: unknown }).errorText === "string"
+              ? (chunk as { errorText: string }).errorText
+              : String((chunk as { errorText?: unknown }).errorText ?? "");
+          const parsed = parseStreamErrorChunkText(errorText);
+          // Classified HERE, where the structured body still exists. By the
+          // time site 3 sees this it is an Error whose message is a sentence;
+          // `describeError` could not recover the guardrail code, and the
+          // ownership verdict depends on it. NOT the non-OK classifier: this
+          // `statusCode` is the upstream provider's, not our backend's — see
+          // {@link describeStreamErrorChunkFailure}.
+          const normalized = describeStreamErrorChunkFailure(
+            parsed.statusCode,
+            errorText,
+            parsed.code,
+          );
+          throw Object.assign(new Error(parsed.message), {
+            normalized,
+            ...(parsed.code ? { failureCode: parsed.code } : {}),
+          });
+        }
 
         default:
           // Forward other chunks (step-start, etc.)
@@ -1664,7 +2337,14 @@ async function processStream(
       ? abortSignal.reason
       : Object.assign(new Error("Aborted"), { name: "AbortError" });
   }
-  return { contentParts, hasToolCalls, finishChunk, firstChunkAt };
+  return {
+    contentParts,
+    hasToolCalls,
+    finishChunk,
+    firstChunkAt,
+    toolInputErrors,
+    unfinishedToolNames: [...unfinishedTools.values()],
+  };
 }
 
 /**
@@ -1682,7 +2362,7 @@ async function emitToolResults(
   // synthetic don't supply this callback — the UI writer + trace event
   // still fire unchanged. PR 14: a returned promise is awaited so the
   // eval render hook completes before the engine's next step.
-  onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>
+  onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>,
 ): Promise<void> {
   for (const msg of newMessages) {
     if (msg?.role === "tool") {
@@ -1741,6 +2421,7 @@ async function emitToolResults(
           emitToolOutput(writer, {
             toolCallId: part.toolCallId,
             output: outputForUi,
+            providerMetadata: part.providerOptions,
           });
 
           if (traceTurn && typeof stepIndex === "number") {
@@ -1784,7 +2465,7 @@ async function emitToolResults(
                   {
                     error:
                       error instanceof Error ? error.message : String(error),
-                  }
+                  },
                 );
               }
             }
@@ -1812,7 +2493,7 @@ function emitInheritedToolCalls(
   tools?: ToolSet,
   traceTurn?: LiveTraceTurnContext,
   stepIndex?: number,
-  onToolCall?: (event: MCPJamToolCallEvent) => void
+  onToolCall?: (event: MCPJamToolCallEvent) => void,
 ) {
   // Collect existing tool result IDs
   const existingResultIds = new Set<string>();
@@ -1866,7 +2547,7 @@ function emitInheritedToolCalls(
                 "[mcpjam-stream-handler] onToolCall callback failed (inherited)",
                 {
                   error: error instanceof Error ? error.message : String(error),
-                }
+                },
               );
             }
           }
@@ -1898,7 +2579,7 @@ async function handlePendingApprovals(
   // PR 5b-pre review fix (Cursor Medium): resumed-approval branch
   // emits `tool-input-available` UI chunks — `onToolCall` must fire
   // here too so PR 5b's wiring doesn't see orphan `tool_result`.
-  onToolCall?: (event: MCPJamToolCallEvent) => void
+  onToolCall?: (event: MCPJamToolCallEvent) => void,
 ): Promise<boolean> {
   // Build approvalId → toolCallId map, toolCallId → toolName map,
   // and toolCallId → assistant message index map from assistant messages
@@ -1963,6 +2644,44 @@ async function handlePendingApprovals(
     }
   }
 
+  // RE-INTRODUCE EVERY UNRESOLVED CALL BEFORE ANY ANSWER GOES OUT.
+  //
+  // This response is a NEW one. The client's reducer looks for a tool part on
+  // the message it is currently building, so every chunk below that names a
+  // tool call from the PREVIOUS response — `tool-output-denied`, and the
+  // results `emitToolResults` writes — needs that call re-introduced first or
+  // the client throws `No tool invocation found for tool call ID "…"` and ends
+  // the turn with a red banner, after the tools have already run.
+  //
+  // EVERY unresolved call, not only the approved ones. Two of the three
+  // reasons a call is sitting here unresolved are not "it was approved":
+  //
+  //   - A DENIED call. Its `tool-output-denied` is written below, and nothing
+  //     had introduced it.
+  //   - A SIBLING that never needed approval. The approval pause is
+  //     whole-step: it drains only approval-free meta tools, so an ordinary
+  //     tool the model emitted in the same assistant message waits here too —
+  //     and `executeToolCallsFromMessages` below runs EVERY unresolved call,
+  //     so a result for that sibling is written whether or not anyone approved
+  //     anything.
+  //
+  // A MIXED STEP IS ORDINARY, and does not need two families on two floors to
+  // happen: the model emits several calls in one assistant message all the
+  // time, an `app_*` or read-only `ui_*` among them never pauses, and one
+  // gated call is enough to park every sibling here.
+  //
+  // Idempotent by construction: the helper skips any call that already has a
+  // result, so a second pass over the same history emits nothing.
+  emitInheritedToolCalls(
+    writer,
+    messageHistory,
+    messageHistory.length,
+    tools,
+    traceTurn,
+    stepIndex,
+    onToolCall,
+  );
+
   let didHandle = false;
 
   // Emit denied tool notifications to the client and add tool-result entries
@@ -2020,7 +2739,7 @@ async function handlePendingApprovals(
               "[mcpjam-stream-handler] onToolResult callback failed (denial path)",
               {
                 error: error instanceof Error ? error.message : String(error),
-              }
+              },
             );
           }
         }
@@ -2062,61 +2781,13 @@ async function handlePendingApprovals(
   // executeToolCallsFromMessages skips tool-call IDs that already have results
   // (via existingToolResultIds), so the denied results prevent double-execution.
   const needsExecution = [...approvedToolCallIds].some(
-    (id) => !existingResultIds.has(id)
+    (id) => !existingResultIds.has(id),
   );
 
   if (needsExecution) {
-    // Emit tool-input-available for approved tool calls so the AI SDK client
-    // can attach the upcoming tool-output-available chunks. Without this, the
-    // stream consumer throws "No tool invocation found for tool call ID …"
-    // because the matching tool-call was on a prior assistant message and
-    // this resumed stream hasn't introduced it yet.
-    for (const toolCallId of approvedToolCallIds) {
-      if (existingResultIds.has(toolCallId)) continue;
-      const assistantIdx = toolCallIdToAssistantIdx.get(toolCallId);
-      if (assistantIdx === undefined) continue;
-      const assistantMsg = messageHistory[
-        assistantIdx
-      ] as AssistantModelMessage;
-      if (!Array.isArray(assistantMsg.content)) continue;
-      for (const part of assistantMsg.content) {
-        if (part.type === "tool-call" && part.toolCallId === toolCallId) {
-          emitToolInput(writer, {
-            toolCallId: part.toolCallId,
-            toolName: part.toolName,
-            input: part.input ?? {},
-            ...(part.providerOptions
-              ? { providerMetadata: part.providerOptions }
-              : {}),
-          });
-          // PR 5b-pre review fix (Cursor Medium "Resumed approvals
-          // skip onToolCall"): fire `onToolCall` for resumed approved
-          // tools so PR 5b's eval wiring sees a matching `tool_call`
-          // before the `tool_result` `emitToolResults` produces below.
-          if (onToolCall && traceTurn && typeof stepIndex === "number") {
-            try {
-              onToolCall({
-                toolCallId: part.toolCallId,
-                toolName: part.toolName,
-                input: part.input,
-                stepIndex,
-                promptIndex: traceTurn.promptIndex,
-                serverId: readToolServerId(tools, part.toolName),
-              });
-            } catch (error) {
-              logger.warn(
-                "[mcpjam-stream-handler] onToolCall callback failed (approval)",
-                {
-                  error: error instanceof Error ? error.message : String(error),
-                }
-              );
-            }
-          }
-          break;
-        }
-      }
-    }
-
+    // The `tool-input-available` chunks these results attach to were written
+    // above, for every unresolved call rather than only the approved ones —
+    // see the comment there for why the difference matters.
     const newMessages = await executeToolCallsFromMessages(messageHistory, {
       tools: tools as Record<string, any>,
       modelVisibleMcpToolResults,
@@ -2137,7 +2808,7 @@ async function handlePendingApprovals(
       newMessages,
       traceTurn,
       stepIndex,
-      onToolResult
+      onToolResult,
     );
     didHandle = true;
   }
@@ -2150,7 +2821,7 @@ async function handlePendingApprovals(
  * Calls Convex, streams the response, and executes tools if needed.
  */
 async function processOneStep(
-  ctx: StepContext
+  ctx: StepContext,
 ): Promise<{ shouldContinue: boolean; didEmitFinish: boolean }> {
   const {
     writer,
@@ -2159,7 +2830,7 @@ async function processOneStep(
     toolDefsByName,
     tools,
     authHeader,
-    chatboxId,
+    scenarioId,
     accessVersion,
     projectId,
     modelId,
@@ -2168,8 +2839,7 @@ async function processOneStep(
     temperature,
     mcpClientManager,
     selectedServers,
-    requireToolApproval,
-    uiToolApprovals,
+    approvalDecisions,
     modelVisibleMcpToolResults,
     approvalMode,
     stepIndex,
@@ -2183,6 +2853,7 @@ async function processOneStep(
     onToolResult,
     // PR 5b-followup-2 structured-error callback.
     onEngineError,
+    onModelHandover,
     failureReporter,
     // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
     prepareAdvertisedTools,
@@ -2203,10 +2874,10 @@ async function processOneStep(
       ? (() => {
           const activeNames = resolveActiveToolNames(
             progressivePlan,
-            discoveryState
+            discoveryState,
           );
           const cataloged = new Set(
-            progressivePlan.catalog.map((entry) => entry.modelName)
+            progressivePlan.catalog.map((entry) => entry.modelName),
           );
           const seen = new Set(activeNames);
           for (const def of toolDefs) {
@@ -2236,7 +2907,7 @@ async function processOneStep(
         prepareAdvertisedTools,
         onWarn: (message, meta) =>
           logger.warn(`[mcpjam-stream-handler] ${message}`, meta),
-      })
+      }),
     );
     activeToolDefs = activeToolDefs.filter((def) => advertised.has(def.name));
   }
@@ -2267,12 +2938,12 @@ async function processOneStep(
     tools,
     mcpClientManager,
     selectedServers,
-    traceTurn.promptMessageStartIndex
+    traceTurn.promptMessageStartIndex,
   );
 
   const normalizeToolCallId = createToolCallIdNormalizer(
     usedToolCallIds,
-    stepIndex
+    stepIndex,
   );
 
   // The trace payload must reflect the *advertised* subset — `activeToolDefs`
@@ -2286,10 +2957,10 @@ async function processOneStep(
         const t = (tools as Record<string, unknown>)[def.name];
         return t === undefined ? null : [def.name, t];
       })
-      .filter((pair): pair is [string, unknown] => pair !== null)
+      .filter((pair): pair is [string, unknown] => pair !== null),
   ) as ToolSet;
 
-  emitRequestPayload(writer, {
+  const requestPayloadEntry: LiveChatTraceRequestPayloadEntry = {
     turnId: traceTurn.turnId,
     promptIndex: traceTurn.promptIndex,
     stepIndex,
@@ -2298,7 +2969,9 @@ async function processOneStep(
       tools: toolsForPayload,
       messages: scrubbedMessages,
     }),
-  });
+  };
+  traceTurn.recordedRequestPayloads.push(cloneTraceValue(requestPayloadEntry));
+  emitRequestPayload(writer, requestPayloadEntry);
 
   // Call the Convex streaming endpoint. The default endpoint is /stream
   // (MCPJam-provided models); org BYOK chat targets /stream/org and adds
@@ -2327,10 +3000,20 @@ async function processOneStep(
       delete convexHeaders[header];
     }
   }
-  if (ipHash) {
-    convexHeaders[GUEST_IP_HASH_HEADER] = ipHash;
+  Object.assign(convexHeaders, guestIpForwardHeaders(ipHash));
+  // Sponsored study inference must come through the trusted execution path
+  // that resolves the study's model and tools. This proof is required even
+  // when there is no client IP to forward. The viewer bearer remains intact.
+  const scenarioServiceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
+  if (scenarioId && scenarioServiceToken) {
+    convexHeaders["x-inspector-service-token"] = scenarioServiceToken;
   }
   let res: Response;
+  // Everything above this line is ours; everything at or below it is the
+  // model's turn. Marked HERE, at the handover, not once a response comes
+  // back: a provider that rejects the request outright still failed as the
+  // model, while a throw in the preparation above genuinely is ours.
+  onModelHandover?.();
   try {
     res = await fetch(`${process.env.CONVEX_HTTP_URL}${endpointPath}`, {
       method: "POST",
@@ -2345,8 +3028,8 @@ async function processOneStep(
         systemPrompt: providerSystemPrompt,
         ...(temperature !== undefined ? { temperature } : {}),
         tools: activeToolDefs,
-        ...(chatboxId ? { chatboxId } : {}),
-        ...(chatboxId && Number.isFinite(accessVersion)
+        ...(scenarioId ? { scenarioId } : {}),
+        ...(scenarioId && Number.isFinite(accessVersion)
           ? { accessVersion }
           : {}),
         ...(projectId ? { projectId } : {}),
@@ -2379,6 +3062,13 @@ async function processOneStep(
   // runner's tests stub `{ok, status, body, text}` with no `headers`, and an
   // unguarded `.get` throws a TypeError that the outer catch converts into a
   // failed turn (7 evals-runner / runner-parity tests).
+  if (res.headers?.get("x-mcpjam-platform-paid-fallback") === "1") {
+    writer.write({
+      type: "data-platform-paid-fallback",
+      data: { usingCredits: true },
+      transient: true,
+    });
+  }
   const isJsonDenial =
     res.ok &&
     !!res.body &&
@@ -2405,7 +3095,7 @@ async function processOneStep(
             ? traceTurn.promptMessageStartIndex
             : undefined,
         messageEndIndex: stepMessageEndIndex,
-      }
+      },
     );
     setStepSpanMessageRanges(
       traceTurn.turnSpans,
@@ -2414,7 +3104,7 @@ async function processOneStep(
       stepMessageEndIndex != null
         ? traceTurn.promptMessageStartIndex
         : undefined,
-      stepMessageEndIndex
+      stepMessageEndIndex,
     );
     emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
     writeTraceEvent(writer, {
@@ -2424,7 +3114,7 @@ async function processOneStep(
       stepIndex,
       errorText,
     });
-      emitError(writer, errorText);
+    emitError(writer, errorText);
     // PR 5b-followup-2: surface the structured guardrail body to
     // `streamSink: "none"` consumers (eval backend stream runner). The
     // writer-side `error` chunk above is fire-and-forget here; the
@@ -2495,7 +3185,7 @@ async function processOneStep(
       });
     }
     safelyEmitEngineError(onEngineError, {
-      message: parsed.message,
+      ...parsed,
       ...(parsed.code ? { code: parsed.code } : {}),
       ...(parsed.details ? { details: parsed.details } : {}),
       httpStatus: res.status,
@@ -2503,29 +3193,37 @@ async function processOneStep(
       promptIndex: traceTurn.promptIndex,
       stepIndex,
       normalized,
+      // A response is in hand, so this is unambiguously the model's leg —
+      // no flag needed to know it.
+      phase: "stream",
     });
     return { shouldContinue: false, didEmitFinish: false };
   }
 
   // Process the stream
-  const { contentParts, finishChunk, firstChunkAt } = await processStream(
+  const {
+    contentParts,
+    finishChunk,
+    firstChunkAt,
+    toolInputErrors,
+    unfinishedToolNames,
+  } = await processStream(
     res.body,
     writer,
     normalizeToolCallId,
     traceTurn,
     stepIndex,
     tools,
-    requireToolApproval,
+    approvalDecisions,
+    messageHistory,
     onLiveTextDelta,
     abortSignal,
-    progressivePlan,
     onToolCall,
-    uiToolApprovals
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
     traceTurn.turnUsage,
-    readUsageFromFinishChunk(finishChunk)
+    readUsageFromFinishChunk(finishChunk),
   );
 
   // Update message history with assistant response
@@ -2535,6 +3233,12 @@ async function processOneStep(
       content: contentParts,
     } as ModelMessage);
   }
+  if (contentParts.length > 0)
+    await ctx.durableCheckpoint?.({
+      phase: "tools",
+      messages: messageHistory,
+      step: stepIndex,
+    });
 
   const stepMessageEndIndex =
     messageHistory.length > traceTurn.promptMessageStartIndex
@@ -2561,12 +3265,15 @@ async function processOneStep(
   // Check for unresolved tool calls and execute them
   if (hasUnresolvedToolCalls(messageHistory)) {
     // We only pause when at least one unresolved tool call actually needs
-    // approval this turn (`toolCallNeedsApproval`): a real MCP tool while the
-    // flag is on, or a destructive `ui_*` tool in any mode. Meta-tools
-    // (search_mcp_tools / load_mcp_tools) never qualify — gating progressive
-    // discovery itself behind N approvals defeats the point — so pure-meta
-    // turns fall through to execute and continue the loop.
-    const hasUnresolvedApprovalRequiredToolCall = (() => {
+    // approval this turn (`toolCallNeedsApproval`): a tool whose declaration
+    // says so. Meta-tools declare `never` — gating progressive discovery
+    // itself behind N approvals defeats the point — so pure-meta turns fall
+    // through to execute and continue the loop.
+    //
+    // ASYNC because a declaration may be a function. It re-walks the whole
+    // history, so the decision cache is what keeps a SEP-2640 manifest from
+    // being fetched (and its binding rewritten) once per re-scan.
+    const hasUnresolvedApprovalRequiredToolCall = await (async () => {
       const resultIds = new Set<string>();
       for (const msg of messageHistory) {
         if (msg?.role !== "tool") continue;
@@ -2582,12 +3289,14 @@ async function processOneStep(
           if (
             part.type === "tool-call" &&
             !resultIds.has(part.toolCallId) &&
-            toolCallNeedsApproval(
-              part.toolName,
-              progressivePlan,
-              uiToolApprovals,
-              requireToolApproval
-            )
+            (await toolCallNeedsApproval({
+              name: part.toolName,
+              input: part.input ?? {},
+              toolCallId: part.toolCallId,
+              tools,
+              messages: messageHistory,
+              decisions: approvalDecisions,
+            }))
           ) {
             return true;
           }
@@ -2619,12 +3328,14 @@ async function processOneStep(
           if (
             part.type !== "tool-call" ||
             resultIds.has(part.toolCallId) ||
-            !toolCallNeedsApproval(
-              part.toolName,
-              progressivePlan,
-              uiToolApprovals,
-              requireToolApproval
-            )
+            !(await toolCallNeedsApproval({
+              name: part.toolName,
+              input: part.input ?? {},
+              toolCallId: part.toolCallId,
+              tools,
+              messages: messageHistory,
+              decisions: approvalDecisions,
+            }))
           ) {
             continue;
           }
@@ -2645,7 +3356,7 @@ async function processOneStep(
       if (deniedByAssistantIdx.size > 0) {
         const denialMessages: ModelMessage[] = [];
         const sortedKeys = [...deniedByAssistantIdx.keys()].sort(
-          (a, b) => b - a
+          (a, b) => b - a,
         );
         for (const idx of sortedKeys) {
           const denialContent = deniedByAssistantIdx.get(idx)!;
@@ -2662,7 +3373,7 @@ async function processOneStep(
           denialMessages,
           traceTurn,
           stepIndex,
-          onToolResult
+          onToolResult,
         );
       }
       // Fall through to the normal tool-execution branch below so
@@ -2685,7 +3396,7 @@ async function processOneStep(
           promptIndex: traceTurn.promptIndex,
           stepIndex,
           spans: traceTurn.turnSpans,
-        }
+        },
       );
       const metaMessages = await executeToolCallsFromMessages(messageHistory, {
         tools: metaTracedTools as Record<string, any>,
@@ -2702,7 +3413,7 @@ async function processOneStep(
           metaMessages,
           traceTurn,
           stepIndex,
-          onToolResult
+          onToolResult,
         );
         // Promote any ids the model just loaded so a subsequent
         // resumed-after-approval step sees them as loaded.
@@ -2728,14 +3439,14 @@ async function processOneStep(
           messageEndIndex: stepMessageEndIndex,
           status: "ok",
           ...harnessSpanMeta,
-        }
+        },
       );
       setStepSpanMessageRanges(
         traceTurn.turnSpans,
         traceTurn.promptIndex,
         stepIndex,
         stepMessageStartIndex,
-        stepMessageEndIndex
+        stepMessageEndIndex,
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
       if (finishChunk) {
@@ -2752,7 +3463,7 @@ async function processOneStep(
       tools,
       traceTurn,
       stepIndex,
-      onToolCall
+      onToolCall,
     );
 
     const toolsStartAbs = Date.now();
@@ -2764,7 +3475,7 @@ async function processOneStep(
           promptIndex: traceTurn.promptIndex,
           stepIndex,
           spans: traceTurn.turnSpans,
-        }
+        },
       );
 
       // Progressive mode: gate execution to the active subset. Visibility
@@ -2775,7 +3486,7 @@ async function processOneStep(
       let executableTools = gateToolsToActiveSubset(
         tracedTools as Record<string, unknown>,
         progressivePlan,
-        () => discoveryState
+        () => discoveryState,
       );
       // advertise = ENFORCE: when prepareAdvertisedTools narrowed the advertised
       // set (`activeToolDefs`), gate execution to it too so a remembered /
@@ -2785,11 +3496,12 @@ async function processOneStep(
         const advertised = new Set(activeToolDefs.map((def) => def.name));
         executableTools = gateToolsToAdvertisedSubset(
           executableTools,
-          () => advertised
+          () => advertised,
         );
       }
 
-      // Client-fulfilled tools (SEP-1865 app aliases + WebMCP `ui_*` tools)
+      // Client-fulfilled tools (SEP-1865 app aliases + WebMCP `ui_*` and
+      // `page_*` tools)
       // have no `execute` function because they run in the browser via
       // `useChat.onToolCall`. With `skipNonExecutableTools`, the helper
       // executes server tools in-place and leaves only registered
@@ -2825,7 +3537,7 @@ async function processOneStep(
         messageHistory,
         traceTurn.promptIndex,
         stepIndex,
-        newToolCallIds
+        newToolCallIds,
       );
       const stepMessageEndIndexAfterTools =
         messageHistory.length > traceTurn.promptMessageStartIndex
@@ -2857,14 +3569,14 @@ async function processOneStep(
           messageEndIndex: stepMessageEndIndexAfterTools,
           status: "ok",
           ...harnessSpanMeta,
-        }
+        },
       );
       setStepSpanMessageRanges(
         traceTurn.turnSpans,
         traceTurn.promptIndex,
         stepIndex,
         stepMessageStartIndexAfterTools,
-        stepMessageEndIndexAfterTools
+        stepMessageEndIndexAfterTools,
       );
 
       // Emit results for newly executed tools
@@ -2874,7 +3586,7 @@ async function processOneStep(
         newMessages,
         traceTurn,
         stepIndex,
-        onToolResult
+        onToolResult,
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
 
@@ -2887,7 +3599,7 @@ async function processOneStep(
         commitNewlyLoaded(discoveryState);
       }
 
-      // Client-fulfilled tools (app aliases + `ui_*`): pause only for
+      // Client-fulfilled tools (app aliases + `ui_*`/`page_*`): pause only for
       // unresolved registered client-fulfilled calls. Other unresolved calls
       // should keep the legacy loop behavior; in normal execution they have
       // already been converted to error tool-results above.
@@ -2941,14 +3653,14 @@ async function processOneStep(
           messageStartIndex: stepMessageStartIndex,
           messageEndIndex: stepMessageEndIndex,
           pushAggregateSpan: false,
-        }
+        },
       );
       setStepSpanMessageRanges(
         traceTurn.turnSpans,
         traceTurn.promptIndex,
         stepIndex,
         stepMessageStartIndex,
-        stepMessageEndIndex
+        stepMessageEndIndex,
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
 
@@ -2960,7 +3672,7 @@ async function processOneStep(
         stepIndex,
         errorText,
       });
-    emitError(writer, errorText);
+      emitError(writer, errorText);
       // Site (2) holds a real error. An earlier comment deferred capture to
       // "the chat route's stream onError" — but runChatEngineLoop's
       // createUIMessageStream passes only `execute`, so no such onError
@@ -2998,11 +3710,151 @@ async function processOneStep(
         promptIndex: traceTurn.promptIndex,
         stepIndex,
         normalized: stepNormalized,
+        // The enclosing `try` opens on tool wrapping and execution, which is
+        // reached only after the stream responded. Nothing pre-request can
+        // land here.
+        phase: "stream",
       });
       return { shouldContinue: false, didEmitFinish: false };
     }
 
     return { shouldContinue: true, didEmitFinish: false };
+  }
+
+  // AN EMPTY STEP IS A FAILURE — UNLESS THE TURN ALREADY ACTED.
+  //
+  // This point is reached only when nothing is left to execute — every path
+  // through the `hasUnresolvedToolCalls` branch above returns on its own — so
+  // zero content parts here means the step contributed NOTHING: no assistant
+  // message was pushed above, and none will be.
+  //
+  // THE CARVE-OUT. A model that already ran a tool THIS TURN and then closes
+  // with a clean `stop` has not failed — it has decided the tool's own output
+  // is the answer. That is ordinary behaviour for an MCP App host: the model
+  // calls `create_view`, the widget renders, and there is nothing left worth
+  // narrating. Measured on staging, `gpt-5.6-luna` on the ChatGPT profile did
+  // exactly this on 22 of 215 trials (widget rendered, 0 console errors) while
+  // haiku, sonnet, grok, glm and terra did it on none of ~600 — so it is a
+  // per-model habit, not an outage, and failing the trial hid a scorecard whose
+  // tool stages had all passed behind a red box about a "provider hiccup".
+  //
+  // The distinction that matters is ACTED vs NEVER ACTED, not which model:
+  // a turn that emitted nothing at all still has no answer in it from any
+  // source, and stays a failure below. Scoped per PROMPT, so a tool call from
+  // an earlier turn cannot excuse this one; gated on `stop` alone, because
+  // `tool-calls` with zero tool calls is a provider contradicting itself; and
+  // gated on no `toolInputErrors`, because a rejected tool input means the
+  // model tried to act and could not — the opposite of having acted.
+  //
+  // Falls through to the ordinary terminal path below, so the quiet finish is
+  // recorded as the success it is: `status: "ok"` spans, a trace snapshot and
+  // one finish chunk, with no error chunk, no trace error event, no
+  // `failureReporter` and no `onEngineError`.
+  const quietFinishAfterToolCall =
+    contentParts.length === 0 &&
+    toolInputErrors.length === 0 &&
+    harnessSpanMeta.finishReason === "stop" &&
+    hasSettledToolCallThisPrompt(
+      messageHistory,
+      traceTurn.promptMessageStartIndex,
+    );
+
+  // Everything the carve-out does not cover is still a failure, and the finish
+  // chunk has been holding the reason all along.
+  //
+  // Recording one as `status: "ok"` is what let a provider failure read as a
+  // clean turn to every consumer at once: the trace, the step-finish
+  // telemetry, and the eval runner, which was left to infer the failure from
+  // `newMessages.length === 0` and report a sentence naming no cause. Chat
+  // users got the same deal in a different costume — a blank assistant bubble.
+  //
+  // Handled exactly like this function's other two failure sites: llm-failure
+  // spans rather than success spans, a structured `onEngineError` (so the eval
+  // runner's `failTurn` prefers THIS message over its generic fallback), a
+  // trace error event, and one error chunk on the wire. Deliberately no finish
+  // chunk: `didEmitFinish: false` with `shouldContinue: false` is the pair the
+  // agentic loop reads as `settledWithError`.
+  if (contentParts.length === 0 && !quietFinishAfterToolCall) {
+    const emptyStepMessage = describeEmptyStepFailure({
+      finishReason: harnessSpanMeta.finishReason,
+      toolInputErrors,
+      unfinishedToolNames,
+      outputTokens: stepUsage?.outputTokens,
+    });
+    const emptyStepNormalized = describeError(emptyStepMessage);
+    pushBackendStepLlmFailureSpans(
+      traceTurn.turnSpans,
+      traceTurn.turnStartedAt,
+      traceTurn.promptIndex,
+      stepIndex,
+      stepStartAbs,
+      llmStartAbs,
+      llmEndAbs,
+      {
+        modelId,
+        inputTokens: stepUsage?.inputTokens,
+        outputTokens: stepUsage?.outputTokens,
+        totalTokens: stepUsage?.totalTokens,
+        messageStartIndex: stepMessageStartIndex,
+        messageEndIndex: stepMessageEndIndex,
+        ...harnessSpanMeta,
+      },
+    );
+    setStepSpanMessageRanges(
+      traceTurn.turnSpans,
+      traceTurn.promptIndex,
+      stepIndex,
+      stepMessageStartIndex,
+      stepMessageEndIndex,
+    );
+    emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
+    writeTraceEvent(writer, {
+      type: "error",
+      turnId: traceTurn.turnId,
+      promptIndex: traceTurn.promptIndex,
+      stepIndex,
+      errorText: emptyStepMessage,
+    });
+    emitError(writer, emptyStepMessage);
+    // Same silent-cancel guard as the sites above: an empty step that lands
+    // after the signal fired belongs to a turn the client already cancelled,
+    // and must not inflate the operation-failure rate.
+    if (!abortSignal?.aborted) {
+      failureReporter({
+        message: "[mcpjam-stream-handler] backend step returned no content",
+        error: new Error(emptyStepMessage),
+        source: "mcp.chat-v2.engine-step",
+        // The model rail is MCPJam's own hosted provider, not the user's MCP
+        // server. Filing this against `user_server_hop` would blame the server
+        // under test for its host's outage.
+        hop: "mcpjam_internal",
+        transport: "http_stream",
+        normalized: emptyStepNormalized,
+        context: {
+          promptIndex: traceTurn.promptIndex,
+          stepIndex,
+          finishReason: harnessSpanMeta.finishReason,
+          toolInputErrorCount: toolInputErrors.length,
+          unfinishedToolCallCount: unfinishedToolNames.length,
+          // Without these the row could not tell a small model that spent its
+          // budget reasoning from a provider outage, or say which model.
+          modelId,
+          outputTokens: stepUsage?.outputTokens,
+        },
+      });
+    }
+    safelyEmitEngineError(onEngineError, {
+      message: emptyStepMessage,
+      rawText: emptyStepMessage,
+      code: "provider_empty_response",
+      promptIndex: traceTurn.promptIndex,
+      stepIndex,
+      normalized: emptyStepNormalized,
+      // A response was streamed in full; only its content was missing. Never
+      // `setup` — the model leg unambiguously ran.
+      phase: "stream",
+    });
+    return { shouldContinue: false, didEmitFinish: false };
   }
 
   pushBackendStepSuccessSpans(
@@ -3022,14 +3874,14 @@ async function processOneStep(
       messageEndIndex: stepMessageEndIndex,
       status: "ok",
       ...harnessSpanMeta,
-    }
+    },
   );
   setStepSpanMessageRanges(
     traceTurn.turnSpans,
     traceTurn.promptIndex,
     stepIndex,
     stepMessageStartIndex,
-    stepMessageEndIndex
+    stepMessageEndIndex,
   );
   emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
 
@@ -3089,7 +3941,7 @@ export interface ChatEngineLoopResult {
  */
 export async function runChatEngineLoop(
   options: MCPJamHandlerOptions,
-  streamSink: "ui" | "none"
+  streamSink: "ui" | "none",
 ): Promise<ChatEngineLoopResult> {
   const {
     messages,
@@ -3099,13 +3951,11 @@ export async function runChatEngineLoop(
     temperature,
     tools,
     authHeader,
-    chatboxId,
+    scenarioId,
     accessVersion,
     projectId,
     mcpClientManager,
     selectedServers,
-    requireToolApproval,
-    uiToolApprovals,
     modelVisibleMcpToolResults,
     approvalMode,
     mrtrResume,
@@ -3129,6 +3979,7 @@ export async function runChatEngineLoop(
     failureReporter: failureReporterOption,
     // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
     prepareAdvertisedTools,
+    refreshTools,
     abortSignal,
     heartbeatIntervalMs,
     maxSteps,
@@ -3154,11 +4005,17 @@ export async function runChatEngineLoop(
       ? Math.floor(heartbeatIntervalMs)
       : DEFAULT_HEARTBEAT_INTERVAL_MS;
 
-  const toolDefs = serializeToolsForConvex(tools);
-  const toolDefsByName = new Map<string, ToolDefinition>();
+  // MUTABLE, because the tool set can grow between steps (`refreshTools`).
+  // `toolDefs` is re-sent on every step and the executable map is re-read from
+  // the live `tools` object, so replacing these two is the whole mechanism.
+  let toolDefs = serializeToolsForConvex(tools);
+  let toolDefsByName = new Map<string, ToolDefinition>();
   for (const def of toolDefs) {
     toolDefsByName.set(def.name, def);
   }
+  // A tool that appears mid-turn arrives WITH its gate: `needsApproval` is
+  // declared on the tool object itself, which is the one channel this engine
+  // reads (see `toolCallNeedsApproval`).
   const messageHistory = [...messages];
 
   // Seed the pending-approval set from history so resumed turns keep
@@ -3184,7 +4041,7 @@ export async function runChatEngineLoop(
         ) {
           const id = lookupToolIdByModelName(
             progressivePlan.catalog,
-            part.toolName
+            part.toolName,
           );
           if (id) discoveryState.pendingApprovalToolIds.add(id);
         }
@@ -3192,7 +4049,12 @@ export async function runChatEngineLoop(
     }
   }
   const usedToolCallIds = collectUsedToolCallIds(messageHistory);
+  // Per TURN, not per step: the emit gate runs on one step and the unresolved
+  // / auto-deny re-scans re-walk the whole history on later ones, and all
+  // three must reach the same answer about the same call — once.
+  const approvalDecisions = createApprovalDecisionCache();
   const traceTurn: LiveTraceTurnContext = {
+    recordedRequestPayloads: [],
     turnId: generateLiveTraceTurnId(),
     promptIndex: getPromptIndex(messageHistory),
     promptMessageStartIndex: getPromptMessageStartIndex(messageHistory),
@@ -3213,7 +4075,7 @@ export async function runChatEngineLoop(
   });
   const promptStepBaseIndex = getPromptAssistantStepBaseIndex(
     messageHistory,
-    traceTurn.promptMessageStartIndex
+    traceTurn.promptMessageStartIndex,
   );
   let steps = 0;
   let runSucceeded = false;
@@ -3249,7 +4111,7 @@ export async function runChatEngineLoop(
       // that must know a chunk ACTUALLY reached the browser: `write` below is
       // deliberately no-throw (a client disconnect must not bring down the
       // agentic loop), so a caller with only `write` cannot distinguish
-      // "delivered" from "silently dropped". The chatbox sandbox notices use
+      // "delivered" from "silently dropped". The scenario sandbox notices use
       // this to avoid acking — and therefore permanently consuming — a notice
       // that was written into a closed stream.
       isClosed: () => streamClosed,
@@ -3271,7 +4133,7 @@ export async function runChatEngineLoop(
                   writeError instanceof Error
                     ? writeError.message
                     : String(writeError),
-              }
+              },
             );
           }
         }
@@ -3323,6 +4185,24 @@ export async function runChatEngineLoop(
       }
     }
 
+    /**
+     * Has this turn handed over to the model yet?
+     *
+     * The `try` below covers the WHOLE turn, preparation included — the
+     * trace-payload clone, message scrubbing, the guest-IP hash, tool
+     * narrowing, `emitTurnStart`, pending-approval processing and the MRTR
+     * resume pre-phase all sit inside it. Without this flag its catch cannot
+     * tell an Inspector bug from a provider outage, and the consumer's
+     * no-phase default (`model`) then files ours as theirs — silently
+     * WITHDRAWING the eval failures a provider outage is supposed to excuse.
+     *
+     * Mirrors the harness's `modelInvoked` (`harness/run-harness-turn.ts`),
+     * including its timing rule: set at the handover, not on a successful
+     * response, so a provider rejecting the request outright still reads as
+     * the model's failure.
+     */
+    let modelInvoked = false;
+
     try {
       onStreamWriterReady?.(safeWriter);
 
@@ -3337,35 +4217,34 @@ export async function runChatEngineLoop(
 
       // Process any pending approval responses from a previous request.
       //
-      // The UI classification has to be honored here too, not just at the
-      // emit gate. With the flag off, a destructive `ui_*` call now pauses
-      // for approval — and DENYING it sends an approval response back (the
-      // approve path ships a tool-result instead). Gating this on
-      // `requireToolApproval` alone would leave that denial unprocessed and
-      // the tool call unresolved: the turn would hang forever, which is the
-      // exact failure the two-sided predicate exists to prevent.
-      if (
-        requireToolApproval ||
-        (uiToolApprovals?.requiredNames.size ?? 0) > 0
-      ) {
-        const handled = await handlePendingApprovals(
-          safeWriter,
-          messageHistory,
-          tools,
-          mcpClientManager,
-          traceTurn,
-          effectiveSteps(),
-          abortSignal,
-          modelVisibleMcpToolResults,
-          onToolResult,
-          onToolCall
-        );
-        if (handled) {
-          // Approvals were processed — if there are still unresolved tool
-          // calls (shouldn't happen normally), fall through to the loop.
-          // Otherwise the loop will call Convex with the new tool results.
-        }
+      // UNCONDITIONAL. `handlePendingApprovals` already returns `false` the
+      // moment the history carries no `tool-approval-request`, so an outer
+      // guess about whether this turn COULD have asked buys nothing — and
+      // every version of that guess has been wrong at least once. Gating it on
+      // `requireToolApproval` left a denied destructive `ui_*` call unresolved
+      // with the switch off (denial sends an approval response back; the
+      // approve path ships a tool-result instead), and the turn hung forever.
+      // A history that carries an approval request is the only fact that
+      // matters, and it is a fact this function can read for itself.
+      if (options.durableCheckpoint && hasUnresolvedApprovalResponses(messageHistory)) {
+        await options.durableCheckpoint({
+          phase: "tools",
+          messages: messageHistory,
+          step: effectiveSteps(),
+        });
       }
+      await handlePendingApprovals(
+        safeWriter,
+        messageHistory,
+        tools,
+        mcpClientManager,
+        traceTurn,
+        effectiveSteps(),
+        abortSignal,
+        modelVisibleMcpToolResults,
+        onToolResult,
+        onToolCall,
+      );
 
       // ── Hosted MRTR resume pre-phase (§12.5, PR5) ─────────────────────────
       // A fresh request resuming a suspended tool call drives ONE retry leg
@@ -3389,18 +4268,18 @@ export async function runChatEngineLoop(
         // Pause and let the client reconcile.
         logger.warn(
           "[mcpjam-stream-handler] MRTR resume: toolCallId is not an unresolved tool-call; skipping resume",
-          { toolCallId: operationResume.toolCallId }
+          { toolCallId: operationResume.toolCallId },
         );
         mrtrPaused = true;
       } else if (operationResume && !aborted) {
         const resolution = await operationResume.resolve((chunk) =>
-          safeWriter.write(chunk)
+          safeWriter.write(chunk),
         );
         if (resolution.kind === "complete" || resolution.kind === "recover") {
           const spliced = spliceMrtrToolResult(
             messageHistory,
             operationResume.toolCallId,
-            resolution.toolResultMessage
+            resolution.toolResultMessage,
           );
           if (spliced) {
             await emitToolResults(
@@ -3409,7 +4288,7 @@ export async function runChatEngineLoop(
               [resolution.toolResultMessage],
               traceTurn,
               effectiveSteps(),
-              onToolResult
+              onToolResult,
             );
             emitTraceSnapshot(safeWriter, messageHistory, tools, traceTurn);
             // Only run the model once EVERY tool-call in the resent history has
@@ -3430,7 +4309,7 @@ export async function runChatEngineLoop(
             // reconcile.
             logger.warn(
               "[mcpjam-stream-handler] MRTR resume: suspended tool-call not found in history; pausing",
-              { toolCallId: operationResume.toolCallId }
+              { toolCallId: operationResume.toolCallId },
             );
             mrtrPaused = true;
           }
@@ -3445,7 +4324,13 @@ export async function runChatEngineLoop(
 
       while (!mrtrPaused && effectiveSteps() < resolvedMaxSteps) {
         if (aborted) break;
+        await options.durableCheckpoint?.({
+          phase: "model",
+          messages: messageHistory,
+          step: effectiveSteps(),
+        });
         const { shouldContinue, didEmitFinish } = await processOneStep({
+          durableCheckpoint: options.durableCheckpoint,
           writer: safeWriter,
           messageHistory,
           toolDefs,
@@ -3454,7 +4339,7 @@ export async function runChatEngineLoop(
           progressivePlan,
           discoveryState,
           authHeader,
-          chatboxId,
+          scenarioId,
           accessVersion,
           projectId,
           chatSessionId,
@@ -3465,8 +4350,7 @@ export async function runChatEngineLoop(
           temperature,
           mcpClientManager,
           selectedServers,
-          requireToolApproval,
-          uiToolApprovals,
+          approvalDecisions,
           modelVisibleMcpToolResults,
           approvalMode,
           stepIndex: effectiveSteps(),
@@ -3486,6 +4370,9 @@ export async function runChatEngineLoop(
           // the two `processOneStep` error sites (non-OK Convex
           // response + processStream/tool catch).
           onEngineError,
+          onModelHandover: () => {
+            modelInvoked = true;
+          },
           failureReporter,
           // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
           prepareAdvertisedTools,
@@ -3493,6 +4380,15 @@ export async function runChatEngineLoop(
         });
 
         steps++;
+        await options.durableCheckpoint?.({
+          phase: shouldContinue
+            ? "ready"
+            : didEmitFinish
+            ? "complete"
+            : "model",
+          messages: messageHistory,
+          step: effectiveSteps(),
+        });
         if (didEmitFinish) {
           finishEmitted = true;
         }
@@ -3508,11 +4404,45 @@ export async function runChatEngineLoop(
         driver.usage = traceTurn.turnUsage;
         driver.fireStepFinish(
           effectiveSteps() - 1,
-          !didEmitFinish && !shouldContinue
+          !didEmitFinish && !shouldContinue,
         );
 
         if (!shouldContinue) {
           break;
+        }
+        if (options.yieldAfterStep) break;
+
+        // BETWEEN STEPS, and only on a step that continues: a turn that is
+        // finishing has nothing to advertise to. Placed after
+        // `fireStepFinish` so a runner watching the step boundary sees the
+        // step that ran, then the tools the next one will have.
+        if (refreshTools) {
+          try {
+            const refresh = await refreshTools({
+              stepIndex: effectiveSteps() - 1,
+              ...(abortSignal ? { signal: abortSignal } : {}),
+            });
+            if (refresh) {
+              applyToolRefresh(refresh, {
+                tools,
+                setToolDefs: (defs) => {
+                  toolDefs = defs;
+                  toolDefsByName = new Map(defs.map((def) => [def.name, def]));
+                },
+                currentToolDefs: () => toolDefs,
+              });
+            }
+          } catch (error) {
+            // SWALLOWED. This is a tool-list read; a browser that would not
+            // answer it is not a reason to end somebody's conversation, and
+            // the step that follows simply advertises what it already had.
+            logger.warn(
+              "[chat] mid-turn tool refresh failed; keeping the current set",
+              {
+                error: error instanceof Error ? error.message : String(error),
+              },
+            );
+          }
         }
       }
 
@@ -3547,8 +4477,8 @@ export async function runChatEngineLoop(
           createClientFinishChunk(
             null,
             traceTurn,
-            hitStepCap() ? "length" : "stop"
-          )
+            hitStepCap() ? "length" : "stop",
+          ),
         );
         finishEmitted = true;
       }
@@ -3571,7 +4501,13 @@ export async function runChatEngineLoop(
         const failAbs = Date.now();
         const errorText =
           error instanceof Error ? error.message : String(error);
-        const loopNormalized = describeError(error);
+        // A thrower that classified with the structured body in hand wins:
+        // a mid-stream error chunk reaches here as an Error whose message is
+        // a sentence, and re-describing it would throw away the guardrail
+        // code that settles ownership.
+        const loopFailureCode = attachedFailureCode(error);
+        const loopNormalized =
+          attachedNormalized(error) ?? describeError(error);
         // Reporter, not a bare logger.error: the old call captured to Sentry
         // unconditionally — paging on user-fault failures — and left no typed
         // record a monitor could read (the response is a 200 stream). The
@@ -3584,6 +4520,7 @@ export async function runChatEngineLoop(
           hop: "user_server_hop",
           transport: "http_stream",
           normalized: loopNormalized,
+          ...(loopFailureCode ? { errorCode: loopFailureCode } : {}),
           context: { promptIndex: traceTurn.promptIndex },
         });
         pushAiSdkTrailingErrorSpan(
@@ -3591,7 +4528,7 @@ export async function runChatEngineLoop(
           traceTurn.turnStartedAt,
           traceTurn.turnStartedAt,
           failAbs,
-          traceTurn.promptIndex
+          traceTurn.promptIndex,
         );
         emitTraceSnapshot(safeWriter, messageHistory, tools, traceTurn);
         writeTraceEvent(safeWriter, {
@@ -3612,9 +4549,13 @@ export async function runChatEngineLoop(
         // no stepIndex.
         safelyEmitEngineError(onEngineError, {
           message: errorText,
+          ...(loopFailureCode ? { code: loopFailureCode } : {}),
           rawText: errorText,
           promptIndex: traceTurn.promptIndex,
           normalized: loopNormalized,
+          // The only one of this file's three emitters that can fire on
+          // either side of the handover. See `modelInvoked`.
+          phase: modelInvoked ? "stream" : "setup",
         });
       }
     } finally {
@@ -3633,21 +4574,58 @@ export async function runChatEngineLoop(
   // `turnTrace` (if produced) so the engine result can surface it to
   // synthetic-runner callers via {@link ChatEngineLoopResult.turnTrace}.
   let capturedTurnTrace: PersistedTurnTrace | undefined;
-  const onFinishEngine = async () => {
+  // `receiptWriter` is the RAW stream writer, never `safeWriter`: the finally
+  // block above has already flipped `streamClosed`, so every safeWriter write
+  // from here on is silently dropped. The underlying stream is still open —
+  // `createUIMessageStream` does not close it until `execute` resolves.
+  const onFinishEngine = async (receiptWriter?: {
+    write: (chunk: UIMessageChunk) => void;
+  }) => {
     try {
       // Persist only successful, non-aborted turns. An aborted turn is
       // partial by definition — recording it as a completed conversation
       // would corrupt history and reverse the cost-safety win.
       if (runSucceeded && !aborted) {
-        const trace: PersistedTurnTrace = driver.buildPersistedTrace();
+        const trace: PersistedTurnTrace = {
+          ...driver.buildPersistedTrace(),
+          requestPayloads: capRequestPayloadsForPersist(
+            traceTurn.recordedRequestPayloads,
+          ),
+        };
         capturedTurnTrace = trace;
         try {
-          await onConversationComplete?.([...messageHistory], trace);
+          const persistOutcome = await onConversationComplete?.(
+            [...messageHistory],
+            trace,
+          );
+          // Costs no latency: `onConversationComplete` already awaited the
+          // ingest, which is what gates this stream's close in the first place.
+          if (persistOutcome && chatSessionId) {
+            writePersistReceipt(receiptWriter, persistOutcome, {
+              chatSessionId,
+              turnId: trace.turnId,
+            });
+          }
         } catch (persistenceError) {
           logger.error(
             "[mcpjam-stream-handler] Error while persisting conversation",
-            persistenceError
+            persistenceError,
           );
+          // A thrown persist is still an answer the client deserves. Without
+          // this the stream closes silent and the client waits out its whole
+          // no-receipt reconciliation window before saying anything.
+          if (chatSessionId) {
+            writePersistReceipt(
+              receiptWriter,
+              { outcome: "failed", failureKind: "exception" },
+              {
+                chatSessionId,
+                ...(capturedTurnTrace
+                  ? { turnId: capturedTurnTrace.turnId }
+                  : {}),
+              },
+            );
+          }
         }
       }
     } finally {
@@ -3656,7 +4634,7 @@ export async function runChatEngineLoop(
       } catch (cleanupError) {
         logger.error(
           "[mcpjam-stream-handler] Error while running stream cleanup",
-          cleanupError
+          cleanupError,
         );
       }
     }
@@ -3680,7 +4658,7 @@ export async function runChatEngineLoop(
         try {
           await executeEngine(context);
         } finally {
-          await onFinishEngine();
+          await onFinishEngine(context.writer);
         }
       },
     });
@@ -3732,7 +4710,7 @@ export async function runChatEngineLoop(
  * and `extraBodyFields: { providerKey }` without modification.
  */
 export async function handleMCPJamFreeChatModel(
-  options: MCPJamHandlerOptions
+  options: MCPJamHandlerOptions,
 ): Promise<Response> {
   // A host with a `harness` selected (claude-code | codex) runs the real runtime
   // via runHarnessTurn; otherwise the emulated engine. `harness` is already a
@@ -3747,7 +4725,7 @@ export async function handleMCPJamFreeChatModel(
     throw new Error(
       `${
         useHarness ? "runHarnessTurn" : "runChatEngineLoop"
-      }(streamSink: 'ui') returned no Response — internal invariant violated`
+      }(streamSink: 'ui') returned no Response — internal invariant violated`,
     );
   }
   return result.response;

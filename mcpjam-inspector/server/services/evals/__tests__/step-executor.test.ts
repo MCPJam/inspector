@@ -568,6 +568,40 @@ describe("step-executor", () => {
     expect(stepsVerdict(state).passed).toBe(false);
   });
 
+  it("advisory assert failure records the result and continues", async () => {
+    const steps: TestStep[] = [
+      { id: "p", kind: "prompt", prompt: "hi" },
+      {
+        id: "a1",
+        kind: "assert",
+        assertion: {
+          type: "toolCalledWith",
+          toolName: "never",
+          args: { args: {} },
+          role: "advisory",
+          severity: "warn",
+        },
+      },
+      {
+        id: "a2",
+        kind: "assert",
+        assertion: { type: "finalAssistantMessageNonEmpty" },
+      },
+    ];
+    const state = createStepExecutionState();
+    await executeSteps({
+      steps,
+      state,
+      browser: makeBrowser(),
+      handlers: makeHandlers(),
+    });
+    expect(state.assertionResults).toHaveLength(2);
+    expect(state.assertionResults[0]!.passed).toBe(false);
+    expect(state.assertionResults[1]!.passed).toBe(true);
+    expect(state.skippedSteps).toEqual([]);
+    expect(stepsVerdict(state).passed).toBe(true);
+  });
+
   it("emits per-step status: running → ok/fail, then skipped for the halted tail", async () => {
     const steps: TestStep[] = [
       { id: "p", kind: "prompt", prompt: "hi" },

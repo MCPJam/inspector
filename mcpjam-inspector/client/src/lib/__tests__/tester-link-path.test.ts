@@ -10,14 +10,24 @@ describe("tester-link-path", () => {
     expect(TESTER_LINK_PATH_SEGMENT).toBe("user-testing");
   });
 
-  it("keeps resolving links already handed to testers", () => {
-    // The `/chatbox/…` shape is live in shared links, in the Convex public
-    // API's `link.url`, and in already-delivered invite emails. Accepting it
-    // here is what keeps those working — there is no redirect behind it.
-    expect(extractTesterLinkToken("/chatbox/demo/tok_1")).toBe("tok_1");
+  it("no longer resolves the retired /chatbox shape", () => {
+    // `/chatbox/<slug>/<token>` was the pre-rename shape, kept alive only
+    // because the Convex public API and the invite email were still minting it
+    // while this app minted `/user-testing`. Both now agree, so nothing
+    // produces it and it resolves nowhere — asserted rather than assumed,
+    // because a matcher that silently kept accepting it would leave a second
+    // live entry point into the guest runtime.
+    expect(extractTesterLinkToken("/chatbox/demo/tok_1")).toBeNull();
     expect(TESTER_LINK_RUNTIME_PATH_PATTERN.test("/chatbox/demo/tok_1")).toBe(
-      true
+      false
     );
+  });
+
+  it("resolves the link shape testers are actually handed", () => {
+    expect(extractTesterLinkToken("/user-testing/demo/tok_1")).toBe("tok_1");
+    expect(
+      TESTER_LINK_RUNTIME_PATH_PATTERN.test("/user-testing/demo/tok_1")
+    ).toBe(true);
   });
 
   it("does not mistake the in-app scenario screen for a tester link", () => {
@@ -43,7 +53,6 @@ describe("tester-link-path", () => {
     for (const editPath of [
       "/user-testing/t97b0ae1gqfg5faczettv0zk7n8cem4j/edit",
       "/user-testing/t97b0ae1gqfg5faczettv0zk7n8cem4j/edit/",
-      "/chatbox/host_123/edit",
     ]) {
       expect(extractTesterLinkToken(editPath)).toBeNull();
       expect(TESTER_LINK_RUNTIME_PATH_PATTERN.test(editPath)).toBe(false);

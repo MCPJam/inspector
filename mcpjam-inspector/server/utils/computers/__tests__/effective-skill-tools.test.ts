@@ -25,6 +25,7 @@ function set(overrides: Partial<EffectiveCapabilitySet> = {}) {
     pluginSkills: [],
     standaloneSkills: [],
     serverSkills: [],
+    localSkills: [],
     pluginVersions: [],
     problems: [],
     ...overrides,
@@ -67,16 +68,21 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("listSkills", () => {
-  it("advertises refs and origins, not bare names", async () => {
-    const { tools } = getEffectiveSkillToolsAndPrompt(DUPLICATE_NAME_SET);
-    const listing = await run(tools.listSkills, {});
-    expect(listing).toContain("**alpha/summarize** (plugin alpha@aaaa1111)");
-    expect(listing).toContain("**beta/summarize** (plugin beta@bbbb2222)");
+describe("prompt catalog", () => {
+  it("advertises refs and origins, not bare names", () => {
+    const { tools, systemPromptSection } =
+      getEffectiveSkillToolsAndPrompt(DUPLICATE_NAME_SET);
+    expect(tools).not.toHaveProperty("listSkills");
+    expect(systemPromptSection).toContain(
+      "**alpha/summarize** (plugin alpha@aaaa1111)"
+    );
+    expect(systemPromptSection).toContain(
+      "**beta/summarize** (plugin beta@bbbb2222)"
+    );
   });
 
-  it("labels a standalone skill as a project skill", async () => {
-    const { tools } = getEffectiveSkillToolsAndPrompt(
+  it("labels a standalone skill as a project skill", () => {
+    const { systemPromptSection } = getEffectiveSkillToolsAndPrompt(
       set({
         standaloneSkills: [
           {
@@ -92,15 +98,13 @@ describe("listSkills", () => {
         ],
       })
     );
-    expect(await run(tools.listSkills, {})).toContain(
-      "**release-notes** (project)"
-    );
+    expect(systemPromptSection).toContain("**release-notes** (project)");
   });
 
-  it("still calls an unattributed plugin skill a plugin skill, not a project one", async () => {
+  it("still calls an unattributed plugin skill a plugin skill, not a project one", () => {
     // Mislabelling it "project" would be a false claim about where the model's
     // instructions came from.
-    const { tools } = getEffectiveSkillToolsAndPrompt(
+    const { systemPromptSection } = getEffectiveSkillToolsAndPrompt(
       set({
         pluginSkills: [
           {
@@ -115,17 +119,18 @@ describe("listSkills", () => {
         ],
       })
     );
-    expect(await run(tools.listSkills, {})).toContain("**summarize** (plugin)");
+    expect(systemPromptSection).toContain("**summarize** (plugin)");
   });
 
-  it("says the turn has no skills rather than inventing a project-wide list", async () => {
-    const { tools } = getEffectiveSkillToolsAndPrompt(set());
-    expect(await run(tools.listSkills, {})).toBe(
-      "No skills are available for this turn."
+  it("emits no tools and no stanza when the capability set is empty", () => {
+    const { tools, systemPromptSection } = getEffectiveSkillToolsAndPrompt(
+      set()
     );
+    expect(tools).toEqual({});
+    expect(systemPromptSection).toBe("");
   });
 
-  it("emits a listing that actually fits the budget, origin labels included", async () => {
+  it("emits a listing that actually fits the budget, origin labels included", () => {
     // The accounting is only worth having if the STRING obeys it. Plugin
     // origins ("plugin alpha@aaaa1111") are ~25 chars each, so an uncharged
     // origin overshoots by an amount that grows with the plugin-skill count.
@@ -141,23 +146,23 @@ describe("listSkills", () => {
     }));
     const modelContextTokens = 25_000; // 2% × 4 chars/token = 2,000 chars.
     const budgetChars = skillMetadataBudgetChars(modelContextTokens);
-    const { tools } = getEffectiveSkillToolsAndPrompt(
+    const { systemPromptSection } = getEffectiveSkillToolsAndPrompt(
       set({ pluginSkills: many }),
       { modelContextTokens }
     );
 
-    const listing = await run(tools.listSkills, {});
-    // The omission notice is deliberately outside the budget (it reports that
-    // the budget bit), as is the "Available skills:" header; measure the lines.
-    const body = listing
-      .replace(/^Available skills:\n\n/, "")
-      .replace(/\n\n\(\d+ more skills? could not be listed[^)]*\)$/, "");
+    // Measure the catalog lines only — header, trigger, and overflow notice
+    // sit outside the budget.
+    const body = systemPromptSection
+      .split("\n")
+      .filter((line) => line.startsWith("- **"))
+      .join("\n");
     expect(body.length).toBeLessThanOrEqual(budgetChars);
     // And the origin really is in the measured text, or the assertion is empty.
     expect(body).toContain("(plugin alpha@aaaa1111)");
   });
 
-  it("states that skills were dropped when the metadata budget omits them", async () => {
+  it("states that skills were dropped when the metadata budget omits them", () => {
     const many = Array.from({ length: 40 }, (_, index) => ({
       ref: `skill-${index}`,
       skillId: `sk_${index}`,
@@ -168,13 +173,12 @@ describe("listSkills", () => {
       files: [],
       channels: ["environment" as const],
     }));
-    const { tools } = getEffectiveSkillToolsAndPrompt(
+    const { systemPromptSection } = getEffectiveSkillToolsAndPrompt(
       set({ standaloneSkills: many }),
       // A tiny context makes the 2% budget bite deterministically.
       { modelContextTokens: 1_000 }
     );
-    const listing = await run(tools.listSkills, {});
-    expect(listing).toMatch(
+    expect(systemPromptSection).toMatch(
       /could not be listed within this model's skill-metadata budget/
     );
   });
@@ -182,7 +186,7 @@ describe("listSkills", () => {
 
 describe("loadSkill", () => {
   it("delivers captured MCP-server skills under their pinned ref and requires approval", async () => {
-    const { tools } = getEffectiveSkillToolsAndPrompt(
+    const { tools, systemPromptSection } = getEffectiveSkillToolsAndPrompt(
       set({
         serverSkills: [
           {
@@ -203,7 +207,7 @@ describe("loadSkill", () => {
         ],
       })
     );
-    expect(await run(tools.listSkills, {})).toContain(
+    expect(systemPromptSection).toContain(
       "**acme/refunds** (MCP server Acme Billing@v3)"
     );
     expect(await run(tools.loadSkill, { name: "acme/refunds" })).toContain(

@@ -757,7 +757,7 @@ describe("wire adapters", () => {
   it("recognizes the unknown-task error in both nested and flat shapes", () => {
     expect(isUnknownTaskError({ code: -32602 })).toBe(true);
     expect(isUnknownTaskError({ error: { code: -32602 } })).toBe(true);
-    expect(isUnknownTaskError({ code: -32003 })).toBe(false);
+    expect(isUnknownTaskError({ code: -32021 })).toBe(false);
     expect(isUnknownTaskError(null)).toBe(false);
   });
 

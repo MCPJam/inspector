@@ -41,6 +41,12 @@ describe("classifyConvexReadError", () => {
     "Insufficient workspace permissions: requires member",
     // `resolveAuthorizedChatSession`'s refusal, same oracle on session ids.
     "ChatSession not found or unauthorized",
+    // The same helper family on every other resource. Matched on the compound
+    // phrase rather than per-resource: `evals.ts` moved onto this translator
+    // and its reads refuse in exactly these words, and an enumeration would
+    // have answered 502 — and paged — for each resource nobody added.
+    "Suite not found or unauthorized",
+    "Test suite run not found or unauthorized",
   ])("reads %s as a membership refusal", (message) => {
     expect(classifyConvexReadError(new Error(message)).kind).toBe("membership");
   });
@@ -92,10 +98,35 @@ describe("classifyConvexReadError", () => {
   it("does NOT read a bare 'not found' as membership", () => {
     // A renamed or undeployed Convex function says this. Calling it membership
     // would answer 404 — telling a caller their resource is gone during an
-    // outage of ours.
+    // outage of ours. The compound "not found or unauthorized" above is a
+    // refusal; these words apart are not.
     expect(
       classifyConvexReadError(new Error("journeys:nope not found")).kind
     ).toBe("upstream");
+    expect(
+      classifyConvexReadError(
+        new Error("Could not find public function for testSuites:getTestSuite")
+      ).kind
+    ).toBe("upstream");
+  });
+
+  it("cannot see an ArgumentValidationError through prod's redaction", () => {
+    // The finding behind the eval-run id gate, pinned so it stops being
+    // folklore. In production, Convex rejecting `v.id("testSuiteRun")` arrives
+    // as this — verbatim from Axiom `inspector-logs`, request 182db601667cf972
+    // — with the validator text already stripped. So this classifier answers
+    // `redacted`, and a post-preflight read turns that into 502 and a page. No
+    // amount of message-matching here fixes the malformed-id case; only a shape
+    // check BEFORE the call does. See `convex-id-param.ts`.
+    const redacted = new Error("[Request ID: 182db601667cf972] Server Error");
+
+    expect(classifyConvexReadError(redacted).kind).toBe("redacted");
+    expect(
+      translateConvexReadError(redacted, {
+        scope: "v1.evals",
+        notFoundMessage: "Eval run not found",
+      }).status
+    ).toBe(502);
   });
 });
 
@@ -179,7 +210,11 @@ describe("translateConvexReadError", () => {
       (loggedError as Error).message,
       (context as { message: string }).message,
     ]) {
-      expect(seen).toContain("Bearer [redacted]");
+      // A bearer behind a header NAME is redacted by the key=value rule, which
+      // swallows the `Bearer ` prefix so the two rules cannot both fire and
+      // leave `authorization=[redacted] [redacted]`. A standalone `Bearer x`
+      // still reads `Bearer [redacted]` — see redact-log-message.test.ts.
+      expect(seen).toContain("Authorization=[redacted]");
       expect(seen).toContain("sk_[redacted]");
       expect(seen).not.toContain("abc.def.ghi");
       expect(seen).not.toContain("sk_live_1234");

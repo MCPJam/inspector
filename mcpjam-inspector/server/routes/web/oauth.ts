@@ -1,13 +1,18 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { describeError } from "@mcpjam/sdk";
 import {
   executeOAuthProxy,
   executeDebugOAuthProxy,
   fetchOAuthMetadata,
   OAuthProxyError,
 } from "../../utils/oauth-proxy.js";
-import { ErrorCode, WebRouteError, mapRuntimeError } from "./errors.js";
+import {
+  ErrorCode,
+  WebRouteError,
+  mapRuntimeError,
+  webErrorFromRoute,
+} from "./errors.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
@@ -43,28 +48,48 @@ function statusToErrorCode(status: number): ErrorCode {
 }
 
 function webErrorCompat(c: Context, routeError: WebRouteError) {
+  // Through `webErrorFromRoute`, NOT a hand-rolled `c.json`. The hand-rolled
+  // version never set `webErrorMeta`, so `requestLogContextMiddleware` had
+  // nothing to read: every failure on these routes logged as a bare
+  // `internal_error` with no message, no slug, and no origin. Measured on
+  // 2026-08-15 as 55 rows in 72h on `/api/web/oauth/metadata` alone — the
+  // single largest unattributed class on the whole surface, and structurally
+  // invisible to the MCPJam-fault monitor.
+  //
   // TODO(hosted-v1.1): Remove `error` once clients migrate to `{ code, message }`.
   // This compatibility key exists for one release to avoid breaking callers that
-  // still parse legacy `{ error }` payloads on oauth routes.
-  return c.json(
-    {
-      code: routeError.code,
-      message: routeError.message,
-      error: routeError.message,
-    },
-    routeError.status as ContentfulStatusCode,
-  );
+  // still parse legacy `{ error }` payloads on oauth routes. It rides as an
+  // `extras` key, which `webError` spreads into the body ahead of the canonical
+  // fields, so the wire shape is unchanged apart from the additions every other
+  // `/api/web/*` envelope already carries.
+  return webErrorFromRoute(c, routeError, { error: routeError.message });
 }
 
 function toRouteError(error: unknown): WebRouteError {
-  if (error instanceof WebRouteError) {
-    return error;
-  }
+  // Everything goes through `mapRuntimeError`, including errors that already
+  // ARE a `WebRouteError`. It backfills `normalized` and resolves the effective
+  // `origin`, and `webError` reports neither field unless `normalized` exists —
+  // so returning a hand-built `WebRouteError` unclassified, as both branches
+  // below used to, produced an envelope and a log row with no attribution at
+  // all. It never overrules an origin that is already set.
+  //
+  // NOTE: no `mcpjam_internal` boundary anywhere on this route, deliberately.
+  // These handlers reach the USER's authorization server — an unreachable
+  // `.well-known`, a refused connection, or a wrong issuer is theirs, and
+  // declaring an internal hop here would page us for exactly the class of
+  // third-party outage this program exists to stop paging on.
   if (error instanceof OAuthProxyError) {
-    return new WebRouteError(
-      error.status,
-      statusToErrorCode(error.status),
-      error.message,
+    return mapRuntimeError(
+      new WebRouteError(
+        error.status,
+        statusToErrorCode(error.status),
+        error.message,
+        undefined,
+        // Classify from the ORIGINAL, which carries `.status`. Describing the
+        // rebuilt `WebRouteError` instead would leave the describer nothing but
+        // a message string to pattern-match.
+        describeError(error),
+      ),
     );
   }
   return mapRuntimeError(error);

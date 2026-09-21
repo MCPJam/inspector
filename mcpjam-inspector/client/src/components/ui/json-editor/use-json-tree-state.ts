@@ -1,6 +1,11 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 
 interface UseJsonTreeStateOptions {
+  /**
+   * The value being rendered. Needed at hook-call time so the initial collapse
+   * state can be derived on the first render rather than after it.
+   */
+  value?: unknown;
   defaultExpandDepth?: number;
   initialCollapsedPaths?: Set<string>;
   onCollapseChange?: (paths: Set<string>) => void;
@@ -12,50 +17,61 @@ interface UseJsonTreeStateReturn {
   toggleCollapse: (path: string) => void;
   expandAll: () => void;
   collapseAll: (value: unknown) => void;
-  initializeFromValue: (value: unknown) => void;
 }
 
-function getPathsAtDepth(
-  value: unknown,
-  maxDepth: number,
-  currentPath = "root",
-  currentDepth = 0,
-): string[] {
-  const paths: string[] = [];
+// Each collapsed descendant costs a path string that grows with its depth, so
+// scanning a deeply nested value is quadratic in memory. Stop past this many
+// levels: anything deeper stays hidden behind a collapsed ancestor anyway.
+const MAX_COLLAPSE_SCAN_DEPTH = 100;
 
-  if (currentDepth >= maxDepth) {
-    if (
-      (typeof value === "object" &&
-        value !== null &&
-        Object.keys(value).length > 0) ||
-      (Array.isArray(value) && value.length > 0)
-    ) {
-      paths.push(currentPath);
-    }
+// Whether a container holds anything, without materializing its entries.
+function hasEntry(value: object): boolean {
+  for (const key in value) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) return true;
   }
+  return false;
+}
 
-  if (typeof value === "object" && value !== null) {
-    if (Array.isArray(value)) {
-      value.forEach((item, index) => {
-        paths.push(
-          ...getPathsAtDepth(
-            item,
-            maxDepth,
-            `${currentPath}.${index}`,
-            currentDepth + 1,
-          ),
-        );
-      });
-    } else {
-      Object.entries(value).forEach(([key, val]) => {
-        paths.push(
-          ...getPathsAtDepth(
-            val,
-            maxDepth,
-            `${currentPath}.${key}`,
-            currentDepth + 1,
-          ),
-        );
+// Walks iteratively rather than recursively: deeply nested values overflowed
+// the call stack (INSPECTOR-CLIENT-232).
+function getPathsAtDepth(value: unknown, requestedDepth: number): string[] {
+  // Clamped so the cap always lands on or past the expand depth: otherwise a
+  // requested depth beyond the cap collapses nothing and the whole deep value
+  // renders expanded, which is the crash this walk exists to avoid.
+  const maxDepth = Math.min(requestedDepth, MAX_COLLAPSE_SCAN_DEPTH);
+  const paths: string[] = [];
+  const stack: Array<{ value: unknown; path: string; depth: number }> = [
+    { value, path: "root", depth: 0 },
+  ];
+
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (typeof node.value !== "object" || node.value === null) continue;
+
+    // At the cap the children are never visited, so only collapsibility is
+    // still in question — answer it without enumerating a wide container.
+    if (node.depth >= MAX_COLLAPSE_SCAN_DEPTH) {
+      if (node.depth >= maxDepth && hasEntry(node.value)) {
+        paths.push(node.path);
+      }
+      continue;
+    }
+
+    // Object.entries covers arrays too, and yields only populated indexes: a
+    // sparse array costs nothing per hole, where mapping over one allocates a
+    // tuple per hole (and holes cannot be destructured in the loop below).
+    const entries: Array<[string, unknown]> = Object.entries(node.value);
+    if (entries.length === 0) continue;
+
+    if (node.depth >= maxDepth) {
+      paths.push(node.path);
+    }
+
+    for (const [key, child] of entries) {
+      stack.push({
+        value: child,
+        path: `${node.path}.${key}`,
+        depth: node.depth + 1,
       });
     }
   }
@@ -63,40 +79,32 @@ function getPathsAtDepth(
   return paths;
 }
 
-function getAllPaths(value: unknown, currentPath = "root"): string[] {
-  const paths: string[] = [];
-
-  if (typeof value === "object" && value !== null) {
-    if (Array.isArray(value)) {
-      if (value.length > 0) {
-        paths.push(currentPath);
-        value.forEach((item, index) => {
-          paths.push(...getAllPaths(item, `${currentPath}.${index}`));
-        });
-      }
-    } else {
-      const keys = Object.keys(value);
-      if (keys.length > 0) {
-        paths.push(currentPath);
-        Object.entries(value).forEach(([key, val]) => {
-          paths.push(...getAllPaths(val, `${currentPath}.${key}`));
-        });
-      }
-    }
-  }
-
-  return paths;
+// "Collapse everything" is the same walk with an expand depth of zero.
+function getAllPaths(value: unknown): string[] {
+  return getPathsAtDepth(value, 0);
 }
 
 export function useJsonTreeState({
+  value,
   defaultExpandDepth,
   initialCollapsedPaths,
   onCollapseChange,
 }: UseJsonTreeStateOptions = {}): UseJsonTreeStateReturn {
+  // Derived during the first render, not in a mount effect: an effect commits
+  // after that render, so the tree would paint fully expanded once before
+  // collapsing. That is wasted work on a large tool result and exhausts the
+  // renderer's heap on a deeply nested one (INSPECTOR-CLIENT-232).
+  // null means nothing was derived, so the effect below knows whether the
+  // parent still has to be told.
+  const [derivedCollapsedPaths] = useState<Set<string> | null>(() => {
+    if (initialCollapsedPaths !== undefined) return null;
+    if (defaultExpandDepth === undefined) return null;
+    return new Set(getPathsAtDepth(value, defaultExpandDepth));
+  });
+
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(
-    () => initialCollapsedPaths ?? new Set(),
+    () => derivedCollapsedPaths ?? initialCollapsedPaths ?? new Set(),
   );
-  const [initialized, setInitialized] = useState(false);
 
   const isCollapsed = useCallback(
     (path: string): boolean => collapsedPaths.has(path),
@@ -134,20 +142,14 @@ export function useJsonTreeState({
     [onCollapseChange],
   );
 
-  const initializeFromValue = useCallback(
-    (value: unknown) => {
-      if (initialized || initialCollapsedPaths !== undefined) return;
-
-      if (defaultExpandDepth !== undefined) {
-        const pathsToCollapse = getPathsAtDepth(value, defaultExpandDepth);
-        const newCollapsed = new Set(pathsToCollapse);
-        setCollapsedPaths(newCollapsed);
-        onCollapseChange?.(newCollapsed);
-      }
-      setInitialized(true);
-    },
-    [initialized, defaultExpandDepth, initialCollapsedPaths, onCollapseChange],
-  );
+  // onCollapseChange is a parent callback, so it cannot fire while the state
+  // above is being derived — announcing the derived set has to wait for commit.
+  const announcedInitial = useRef(false);
+  useEffect(() => {
+    if (announcedInitial.current || derivedCollapsedPaths === null) return;
+    announcedInitial.current = true;
+    onCollapseChange?.(derivedCollapsedPaths);
+  }, [derivedCollapsedPaths, onCollapseChange]);
 
   // Sync with external collapsed paths if controlled
   useEffect(() => {
@@ -163,15 +165,7 @@ export function useJsonTreeState({
       toggleCollapse,
       expandAll,
       collapseAll,
-      initializeFromValue,
     }),
-    [
-      collapsedPaths,
-      isCollapsed,
-      toggleCollapse,
-      expandAll,
-      collapseAll,
-      initializeFromValue,
-    ],
+    [collapsedPaths, isCollapsed, toggleCollapse, expandAll, collapseAll],
   );
 }

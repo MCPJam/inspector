@@ -48,8 +48,8 @@ function ResultDot({ result }: { result: Result }) {
     <span
       className={cn(
         "inline-block h-2 w-2 shrink-0 rounded-full",
-        result === "passed" && "bg-emerald-500",
-        result === "failed" && "bg-rose-500",
+        result === "passed" && "bg-success",
+        result === "failed" && "bg-destructive",
         result === "cancelled" && "bg-warning/60",
       )}
     />
@@ -125,7 +125,7 @@ function RunBatchGroup({
             replay: {
               label: "Replay",
               title: "Re-ran from a previous run",
-              className: "bg-amber-500/12 text-amber-700 dark:text-amber-300",
+              className: "bg-warning/10 text-warning",
             },
           }[trigger];
           return (
@@ -172,8 +172,8 @@ function RunBatchGroup({
           className={cn(
             "ml-auto rounded-full px-2 py-0.5 text-[11px] font-medium",
             allPass
-              ? "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400"
-              : "bg-amber-500/14 text-amber-700 dark:text-amber-400",
+              ? "bg-success/10 text-success"
+              : "bg-warning/15 text-warning",
           )}
         >
           {passed}/{total}

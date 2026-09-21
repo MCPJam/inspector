@@ -129,6 +129,56 @@ describe("isAuthError", () => {
     });
   });
 
+  describe("OAuthResponseError by name", () => {
+    // Shape built by `parseErrorResponse` in `oauth/browser-auth.ts`: the
+    // message is the authorization server's `error_description` verbatim and
+    // `code` is the OAuth error string, NOT an HTTP status.
+    const oauthResponseError = (message: string, code?: string) => {
+      const error = new Error(message) as Error & { code?: string };
+      error.name = "OAuthResponseError";
+      error.code = code;
+      return error;
+    };
+
+    const INCIDENT_MESSAGE =
+      "Request context not available — authentication or export lookup failed";
+
+    it("should detect an OAuth error response whose prose says nothing about auth", () => {
+      // The production sentence from the 2026-08-24 incident. It carries no
+      // word the message-pattern fallback looks for — "authentication" appears
+      // only inside "authentication or export lookup failed", which is not the
+      // "authentication failed" pattern — so before this branch existed it fell
+      // through to the inspector's 500 INTERNAL_ERROR catch-all and was
+      // reported as an MCPJam outage.
+      const error = oauthResponseError(INCIDENT_MESSAGE, "invalid_grant");
+
+      expect(isAuthError(error)).toEqual({ isAuth: true });
+    });
+
+    it("should not read the OAuth error code as an HTTP status", () => {
+      const error = oauthResponseError("Bad things", "invalid_client");
+
+      expect(isAuthError(error)).toEqual({ isAuth: true });
+    });
+
+    it("should detect it even with no OAuth error code at all", () => {
+      const error = oauthResponseError("Nope");
+
+      expect(isAuthError(error)).toEqual({ isAuth: true });
+    });
+
+    it("should not classify the same prose as auth without the class name", () => {
+      // The other half of the branch above: the verdict comes from the response
+      // SHAPE, not from the words. A plain Error carrying the identical
+      // sentence is still not an auth error — which is why the message-pattern
+      // fallback could never have caught the incident, and why widening that
+      // pattern list would have been the wrong fix.
+      expect(isAuthError(new Error(INCIDENT_MESSAGE))).toEqual({
+        isAuth: false,
+      });
+    });
+  });
+
   describe("errors with numeric code property", () => {
     it("should detect 401 status code", () => {
       const error = new Error("HTTP error") as Error & { code: number };

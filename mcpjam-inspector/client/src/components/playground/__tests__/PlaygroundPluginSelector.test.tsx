@@ -40,7 +40,7 @@ function renderSelector(props: Record<string, unknown> = {}) {
       onTogglePlugin={onTogglePlugin}
       onResetPlugins={onResetPlugins}
       {...props}
-    />
+    />,
   );
   return { onTogglePlugin, onResetPlugins };
 }
@@ -141,7 +141,7 @@ describe("PlaygroundPluginSelector", () => {
     };
     renderSelector();
     expect(
-      screen.getByTestId("playground-plugins-unavailable").textContent
+      screen.getByTestId("playground-plugins-unavailable").textContent,
     ).toContain("quarantined_by_future_backend");
   });
 });

@@ -1,3 +1,4 @@
+import { RunMetadataDisplay } from "./run-metadata-display";
 import {
   useCallback,
   useEffect,
@@ -15,7 +16,7 @@ import {
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
-import { formatRunId } from "./helpers";
+import { formatRunId, runClientIdentity, runClientLogo } from "./helpers";
 import {
   buildOpenAiSubmissionReport,
   renderOpenAiSubmissionReport,
@@ -24,9 +25,13 @@ import { buildSubmissionCasesFromRun } from "./run-submission";
 import { computeIterationPassed } from "./pass-criteria";
 import { EvalIteration, EvalJudgeConfig, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
+import { ImportEvidenceCard } from "./import-evidence-card";
+import { useRunImportEligibility } from "./use-run-import-eligibility";
 import { useRunInsights } from "./use-run-insights";
 import { useServerQuality } from "./use-server-quality";
 import { useGoalCompletion } from "./use-goal-completion";
+import { useGroundedness } from "./use-groundedness";
+import { GroundednessCard } from "./groundedness-card";
 import { AiTriageCard } from "./ai-triage-card";
 import {
   computeRunPassRatePercent,
@@ -41,9 +46,24 @@ import {
   type JudgeCase,
 } from "./goal-completion-presentation";
 import { RunInsightBand, type InsightSeverity } from "./run-insight-band";
+import {
+  SuiteRunStageFunnelAvailability,
+  SuiteRunStageFunnelPanel,
+} from "@/components/shared/user-value-chain/StageFunnelPanels";
+import {
+  RunUserValueChainSlot,
+  useRunUserValueChainChoice,
+} from "./run-user-value-chain-slot";
+import {
+  RunLevelFindingsLine,
+  StageFindingsCard,
+} from "@/components/evaluate/stage-findings-card";
+import { useStageFindings } from "@/components/evaluate/use-stage-findings";
+import { ExplanatoryFlowOptIn } from "@/components/shared/usage-insights/ExplanatoryFlowOptIn";
+import type { InsightsScope } from "@/hooks/useUsageInsights";
 import { useAvailableModels } from "@/hooks/use-available-models";
-import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
-import { ArrowUpDown, Download } from "lucide-react";
+import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
+import { ArrowUpDown, Download, Share2 } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
 import { computeRunDashboardKpis } from "./run-detail-kpis";
@@ -56,6 +76,7 @@ import { HostChip } from "@/components/hosts/host-chip";
 import {
   RunAccuracyHeroBand,
   RunInsightRail,
+  runHasInsightContent,
   shouldShowRunAccuracyHero,
   type RunTrendPoint,
 } from "./run-insight-rail";
@@ -165,6 +186,12 @@ interface RunDetailViewProps {
   /** Opens the OTLP trace-export modal for this run (rendered on the hero band). */
   onExportTraces?: () => void;
   /**
+   * Opens the share dialog. Owned by run-detail parents (not CI-embedded
+   * views). Widens the action-row guard so plugin-free runs still render
+   * the row when sharing is available.
+   */
+  onShare?: () => void;
+  /**
    * Navigate to another run on the accuracy hero's recent-run dot. Required for
    * CI/commit-detail callers so the jump stays on `/evals/runs/...` instead of
    * the default `buildEvalsPath` (`/evals/...`).
@@ -177,6 +204,49 @@ interface RunDetailViewProps {
    * Optional — CI/commit-detail parents don't have a live suite handle.
    */
   currentSuiteJudgeConfig?: EvalJudgeConfig | null;
+  /**
+   * The run's own canonical decision summary, as a slot.
+   *
+   * A SLOT rather than a fetch, because this view is shared: `/evals`, the CI
+   * commit detail and Evaluate all mount it, and only Evaluate opts into the
+   * D9 read. Passing the rendered node keeps the opt-in at the call site and
+   * keeps every non-Evaluate mount at exactly zero summary requests.
+   */
+  decisionSummarySlot?: React.ReactNode;
+  /**
+   * Join D9's per-trial diagnostics onto the canonical stage document.
+   *
+   * A BOOLEAN rather than a slot, unlike `decisionSummarySlot` above, because
+   * the evidence hangs off individual stage cards this view mounts — there is
+   * no single node a caller could hand in. The zero-request guarantee is kept
+   * the same way `RunDecisionSummarySection` keeps it: off by default, and a
+   * disabled read issues no request at all, so `/evals` and the CI commit
+   * detail stay at exactly zero.
+   */
+  stageFindingsEnabled?: boolean;
+  /**
+   * Focus one trial's evidence through the app's own routing.
+   *
+   * Same shape and same contract as the decision card's `onViewTrace`: called
+   * only with identities verified against the run on screen, and with the CASE
+   * the iteration belongs to, because that is what the viewer can open to.
+   */
+  onViewStageTrace?: (target: {
+    runId: string;
+    iterationId: string;
+    testCaseId: string;
+  }) => void;
+  /**
+   * The cohort the flow diagram would analyze, when this surface has one.
+   *
+   * A prop rather than something derived here, for the reason the funnel below
+   * it is not: the funnel reads a rollup that already exists for any run, and
+   * the diagram needs a cohort a paid analyzer pass can be filed against. Only
+   * a caller knows whether this run belongs to one. `null` (the default) means
+   * no cohort, and the panel renders nothing rather than offering a button
+   * that would spend nothing.
+   */
+  flowScope?: InsightsScope | null;
 }
 
 function runDetailSortLabel(sortBy: "model" | "test" | "result"): string {
@@ -252,6 +322,12 @@ export function RunIterationsSidebar({
         }
       );
     }
+    // B3b W4: `computeIterationPassed` now reads a row's STORED result when it
+    // has one, so this override no longer re-runs the tool-call matcher in the
+    // browser to second-guess a verdict the server already reached — which at
+    // grading mode `enforce` was reached from gating evidence (predicates,
+    // gates, tool errors) the browser cannot see at all. The matcher survives
+    // inside that helper for rows with no stored result; see its docblock.
     const passed = caseGroupsForSelectedRun.filter((i) =>
       computeIterationPassed(i),
     ).length;
@@ -395,18 +471,31 @@ export function RunDetailView({
   hideKpiStrip = false,
   hideAccuracyHero = false,
   onExportTraces,
+  onShare,
+  decisionSummarySlot,
+  stageFindingsEnabled = false,
+  onViewStageTrace,
+  flowScope = null,
 }: RunDetailViewProps) {
   const handleEditTestCase =
     onEditTestCaseProp ??
     ((testCaseId: string) =>
       navigateApp(
-        buildEvalsPath({
+        buildEvaluatePath({
           type: "test-edit",
           suiteId: selectedRunDetails.suiteId,
           testId: testCaseId,
         }),
       ));
   useRunInsights(selectedRunDetails, { autoRequest: true });
+
+  // The run's own eligibility, from the canonical single-run query. The list
+  // projection this screen's `selectedRunDetails` usually comes from does not
+  // carry one, so reading it off that object would render every converted run
+  // as though it had no imported cases.
+  const { eligibility: runImportEligibility } = useRunImportEligibility(
+    selectedRunDetails._id,
+  );
 
   const {
     result: serverQualityResult,
@@ -508,6 +597,16 @@ export function RunDetailView({
     unavailable: goalCompletionUnavailable,
   } = useGoalCompletion(selectedRunDetails);
 
+  const {
+    result: groundednessResult,
+    pending: groundednessPending,
+    requested: groundednessRequested,
+    failedGeneration: groundednessFailedGeneration,
+    error: groundednessError,
+    requestGroundedness,
+    unavailable: groundednessUnavailable,
+  } = useGroundedness(selectedRunDetails);
+
   const runDashboardKpis = useMemo(
     () =>
       kpiPlacement === "body"
@@ -522,6 +621,82 @@ export function RunDetailView({
 
   const embeddedInResultsSplit = hideKpiStrip;
 
+  /**
+   * Whether this run has a stage funnel to draw, reported by the probe below.
+   *
+   * Stored WITH the run it describes, and read only when that run is the one
+   * on screen. This component is reused across runs by the run selector, so a
+   * bare boolean would survive a switch and a stale `true` would open an empty
+   * rail on the run you moved to. Starting empty also means a run without a
+   * funnel never flashes one on the way to finding out.
+   */
+  const [stageFunnelFor, setStageFunnelFor] = useState<{
+    suiteRunId: string | undefined;
+    hasFunnel: boolean;
+  }>({ suiteRunId: undefined, hasFunnel: false });
+
+  const handleStageFunnelAvailability = useCallback(
+    (suiteRunId: string | undefined, hasFunnel: boolean) =>
+      setStageFunnelFor({ suiteRunId, hasFunnel }),
+    [],
+  );
+
+  const legacyStageFunnel =
+    stageFunnelFor.suiteRunId === selectedRunDetails._id &&
+    stageFunnelFor.hasFunnel;
+
+  /**
+   * What the chain slot will actually draw — resolved HERE, once, and handed
+   * both to the rail's emptiness check and to the slot itself.
+   *
+   * One call, not two. The rail has to know whether to open before it mounts
+   * what it would open around, and the slot needs the same answer to render;
+   * but this hook wraps a plain `fetch` rather than a Convex subscription, so
+   * calling it in both places would issue two HTTP requests per run with
+   * nothing de-duplicating them.
+   */
+  const runChain = useRunUserValueChainChoice({
+    projectId: selectedRunDetails.projectId ?? null,
+    runId: selectedRunDetails._id,
+    // A run opened while it is still going has no document yet. Passing the
+    // status lets the read happen again once it finishes, instead of the
+    // too-early "no document" answer standing until this view remounts.
+    runStatus: selectedRunDetails.status,
+  });
+
+  /**
+   * The trial evidence behind the canonical document's stage failures.
+   *
+   * Called unconditionally — hooks must be — but INERT unless the caller opted
+   * in: `enabled: false` makes the underlying decision-summary read issue no
+   * request, so the non-Evaluate mounts of this shared view stay at zero. When
+   * it is on, the read shares the LRU store with `RunDecisionSummarySection`'s
+   * identical target, so the two callers are one request.
+   */
+  const stageFindings = useStageFindings({
+    projectId: selectedRunDetails.projectId ?? null,
+    analytics: runChain.document,
+    run: selectedRunDetails,
+    enabled: stageFindingsEnabled,
+    canOpenTrial: Boolean(onViewStageTrace),
+  });
+
+  /**
+   * Either reading counts as content — but only the one the slot will draw.
+   *
+   * The probe below answers only for the LEGACY rollup, so on a run with a
+   * canonical document and no rollup it reports "no funnel" and would close a
+   * rail over content that is there.
+   */
+  const hasStageFunnel =
+    runChain.choice === "canonical" ||
+    (runChain.choice === "legacy" && legacyStageFunnel) ||
+    // A canonical read that really FAILED is content too. Without this, a run
+    // with no legacy rollup and no other insight card closes the rail over the
+    // service note written specifically to report that failure — the one case
+    // where the message is the only thing there is to say.
+    runChain.serviceNote !== null;
+
   const serverQualityTriage =
     selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (
       <AiTriageCard
@@ -534,6 +709,7 @@ export function RunDetailView({
         error={serverQualityError}
         onRetry={() => requestServerQuality(true)}
         source={source}
+        hostNamesById={hostNamesById}
         embedded={embeddedInResultsSplit}
       />
     ) : null;
@@ -624,11 +800,9 @@ export function RunDetailView({
   const badgeMetricLabel = source === "sdk" ? "Pass Rate" : "Accuracy";
 
   const runClient = useMemo(() => {
-    const hostId = selectedRunDetails.namedHostId;
-    if (!hostId) return null;
-    const displayName = hostNamesById?.get(hostId) ?? formatRunId(hostId);
-    return { hostId, displayName };
-  }, [selectedRunDetails.namedHostId, hostNamesById]);
+    const identity = runClientIdentity(selectedRunDetails, hostNamesById);
+    return { hostId: identity.namedHostId, displayName: identity.name, logoSrc: runClientLogo(selectedRunDetails) };
+  }, [selectedRunDetails, hostNamesById]);
 
   const accuracyHero = showAccuracyHero ? (
     <RunAccuracyHeroBand
@@ -650,7 +824,7 @@ export function RunDetailView({
           return;
         }
         navigateApp(
-          buildEvalsPath({
+          buildEvaluatePath({
             type: "run-detail",
             suiteId: selectedRunDetails.suiteId,
             runId,
@@ -660,6 +834,22 @@ export function RunDetailView({
       className="mb-4"
     />
   ) : null;
+
+  // Second named judge, same gating discipline as goal completion: shown once
+  // the run completes, never auto-spends, hidden against an older backend.
+  const groundednessPanel =
+    selectedRunDetails.status === "completed" && !groundednessUnavailable ? (
+      <GroundednessCard
+        key={`groundedness-${selectedRunDetails._id}`}
+        run={selectedRunDetails}
+        groundedness={groundednessResult ?? null}
+        pending={groundednessPending}
+        requested={groundednessRequested}
+        failedGeneration={groundednessFailedGeneration}
+        error={groundednessError}
+        onRun={(force) => requestGroundedness(force)}
+      />
+    ) : null;
 
   // The same actionable findings the swarm and user-testing surfaces render,
   // projected from THIS run's serverQuality by the backend. It sits above the
@@ -687,6 +877,58 @@ export function RunDetailView({
       </div>
     ) : null;
 
+  /**
+   * The free half and the paid half of the same traces, side by side.
+   *
+   * The funnel is mounted unconditionally because reading it costs nothing —
+   * the stage worker already derived those verdicts, and this is their rollup.
+   * The diagram beside it is a model's reading, bought per pass, and issues no
+   * query at all until somebody clicks. Auto-requesting it would put a charge
+   * on opening a tab.
+   *
+   * A fragment rather than a wrapper: each half suppresses itself when it has
+   * nothing, and a wrapping div would survive both of them to leave a padded
+   * empty box — and, in the embedded rail, a divider with nothing under it.
+   */
+  const userValueChainPanel = (
+    <>
+      {/* Canonical document or legacy rollup, never both — the slot decides.
+          Flag-off is today's page exactly: the legacy panel, unlabelled. */}
+      <RunUserValueChainSlot
+        chain={runChain}
+        className="m-3"
+        renderFindings={(stage) => (
+          <StageFindingsCard
+            state={stageFindings}
+            stage={stage}
+            {...(onViewStageTrace ? { onOpenTrial: onViewStageTrace } : {})}
+          />
+        )}
+        runLevelFindings={<RunLevelFindingsLine state={stageFindings} />}
+        legacy={
+          <SuiteRunStageFunnelPanel
+            suiteRunId={selectedRunDetails._id}
+            className="m-3"
+          />
+        }
+      />
+      <ExplanatoryFlowOptIn scope={flowScope} className="m-3" />
+    </>
+  );
+
+  /**
+   * Mounted unconditionally, and deliberately NOT inside the rail or the band
+   * it informs — it answers whether those should open, so it has to exist
+   * before they do. Renders nothing; costs one query, which Convex shares with
+   * the panel's own subscription.
+   */
+  const stageFunnelProbe = (
+    <SuiteRunStageFunnelAvailability
+      suiteRunId={selectedRunDetails._id}
+      onChange={handleStageFunnelAvailability}
+    />
+  );
+
   const insightRail = (
     <RunInsightRail
       triageCard={
@@ -700,13 +942,32 @@ export function RunDetailView({
         )
       }
       goalCompletionCard={goalCompletionPanel}
+      groundednessCard={groundednessPanel}
+      userValueChainCard={userValueChainPanel}
+      userValueChainHasContent={hasStageFunnel}
       embedded={embeddedInResultsSplit}
     />
   );
 
-  const hasInsightContent = Boolean(
-    serverQualityTriage || goalCompletionPanel || actionableFindingsPanel,
-  );
+  /**
+   * The chain counts toward "is there anything to show" — but only when it
+   * actually has a funnel to draw.
+   *
+   * Both gates below read this ONE boolean, and it comes from a probe rather
+   * than from the panel, because the panel cannot answer: neither gate mounts
+   * it until they have already decided to open. Counting the card itself
+   * instead would keep a rail alive on every run with no insight content at
+   * all, since the node is truthy whether or not it renders anything — which
+   * is why it was excluded from these checks in the first place, and why the
+   * fix has to be data-driven rather than a matter of adding the node.
+   */
+  const hasInsightContent = runHasInsightContent({
+    serverQualityTriage,
+    goalCompletionPanel,
+    groundednessPanel,
+    actionableFindingsPanel,
+    hasStageFunnel,
+  });
 
   const triageFixCount = useMemo(
     () =>
@@ -792,6 +1053,13 @@ export function RunDetailView({
 
   const runMetadataBlock = (
     <>
+      <RunMetadataDisplay run={selectedRunDetails} />
+      {/* FROZEN import evidence, from the run's own snapshot.
+          Fetched canonically rather than derived from the suite's current
+          cases: those get edited after runs finish, and recomputing would let
+          an edit rewrite what a finished run is shown to have decided. */}
+      <ImportEvidenceCard eligibility={runImportEligibility} className="mb-4" />
+
       {!hideCiMetadata &&
         (selectedRunDetails.ciMetadata?.branch ||
           selectedRunDetails.ciMetadata?.commitSha ||
@@ -809,7 +1077,7 @@ export function RunDetailView({
           pinned; grouping elsewhere keys on the environment id, never this. */}
       {runProjectEnvironmentRef ? (
         <div className="mb-4 flex flex-wrap items-center gap-2">
-          <span className={runDetailMetaLabelClass}>Environment</span>
+          <span className={runDetailMetaLabelClass}>Client</span>
           <span
             className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 text-xs"
             title={runProjectEnvironmentRef.environmentId}
@@ -833,6 +1101,12 @@ export function RunDetailView({
           selectedRunDetails.configSnapshot?.environmentPluginVersions
         }
         skillsExcluded={selectedRunDetails.configSnapshot?.skillsExcluded}
+        {...(selectedRunDetails.configSnapshot?.toolDescriptionOverride
+          ? {
+              toolDescriptionOverride:
+                selectedRunDetails.configSnapshot.toolDescriptionOverride,
+            }
+          : {})}
       />
 
       {runClient && !showAccuracyHero && !embeddedInResultsSplit ? (
@@ -937,10 +1211,25 @@ export function RunDetailView({
         omitIterationList && "px-3 py-3",
       )}
     >
-      {onExportTraces || pluginSubmissionVersions.length > 0 ? (
+      {/* Renders nothing. Sits above every layout branch below because all of
+          them gate on the answer it reports. */}
+      {stageFunnelProbe}
+      {onExportTraces || pluginSubmissionVersions.length > 0 || onShare ? (
         // Always-on run-level actions — placed here (not the accuracy hero) so
         // they survive the folded run-detail layout that hides the hero.
         <div className="mb-3 flex shrink-0 justify-end gap-2">
+          {onShare ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onShare}
+              className="gap-1.5"
+              data-testid="run-detail-share"
+            >
+              <Share2 className="h-3.5 w-3.5" />
+              Share
+            </Button>
+          ) : null}
           {pluginSubmissionVersions.length > 0 ? (
             // Offered only for a run that pinned a plugin. The document's
             // entire value is naming the bundle it is evidence about, so on a
@@ -971,7 +1260,16 @@ export function RunDetailView({
         </div>
       ) : null}
 
-      <div className="shrink-0">{runMetadataBlock}</div>
+      {/* The run's own answer, above the browser's derived KPIs: what the run
+          DECIDED comes before how its trials went. Absent (and unfetched) on
+          every surface that does not pass the slot. */}
+      {decisionSummarySlot ? (
+        <div className="shrink-0">{decisionSummarySlot}</div>
+      ) : null}
+
+      <div className="shrink-0" data-testid="run-detail-metadata">
+        {runMetadataBlock}
+      </div>
 
       {useTwoColumnLayout ? (
         <>

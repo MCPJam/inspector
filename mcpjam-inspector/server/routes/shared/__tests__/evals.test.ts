@@ -9,7 +9,10 @@ import {
   buildCapEntriesFromPersistedCases,
   buildUpsertCaseKey,
   probeIdentityKey,
+  shouldSkipExecution,
   assertTestCaseRunWithinCap,
+  authorEvalSuite,
+  buildGithubCheckServerOverride,
   buildManagerKeyToDisplayNameMap,
   fetchRunPinnedSkillsWithRetry,
   filterAndRemapReplayConfigs,
@@ -53,6 +56,42 @@ function buildTestCaseRequest(runs?: number): unknown {
   };
 }
 
+describe("GitHub check server override", () => {
+  it("pairs the ephemeral PR server name and project row", () => {
+    expect(
+      buildGithubCheckServerOverride({
+        source: "github_check",
+        persistedServerRefs: ["ephemeral-server-id"],
+        serverNames: ["gh-check-trigger-1"],
+      })
+    ).toEqual([
+      {
+        serverName: "gh-check-trigger-1",
+        projectServerId: "ephemeral-server-id",
+      },
+    ]);
+  });
+
+  it("does not override ordinary suite runs", () => {
+    expect(
+      buildGithubCheckServerOverride({
+        source: "ui",
+        persistedServerRefs: ["server-id"],
+        serverNames: ["server"],
+      })
+    ).toBeUndefined();
+  });
+
+  it("rejects incomplete PR server identity", () => {
+    expect(() =>
+      buildGithubCheckServerOverride({
+        source: "github_check",
+        persistedServerRefs: ["server-id"],
+      })
+    ).toThrow(WebRouteError);
+  });
+});
+
 describe("RunEvalsRequestSchema environmentId boundary", () => {
   it("accepts AND preserves environmentId (guards the silent-strip failure mode)", () => {
     const base = buildSuiteRequest() as Record<string, unknown>;
@@ -84,6 +123,17 @@ describe("RunEvalsRequestSchema environmentId boundary", () => {
     });
     expect(result.success).toBe(true);
     expect(result.success && result.data.runGroupId).toBe("group-1");
+  });
+
+  it("accepts AND preserves ephemeralEnvironment", () => {
+    const base = buildSuiteRequest() as Record<string, unknown>;
+    const result = RunEvalsRequestSchema.safeParse({
+      ...base,
+      environmentId: "env_123",
+      ephemeralEnvironment: true,
+    });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.ephemeralEnvironment).toBe(true);
   });
 });
 
@@ -190,6 +240,34 @@ describe("RunEvalsRequestSchema runs cap", () => {
     expect(result.success).toBe(true);
     const steps = result.success ? result.data.tests[0].steps : [];
     expect(steps).toEqual([{ id: "t0-s0", kind: "prompt", prompt: "q" }]);
+  });
+});
+
+describe("RunEvalsRequestSchema sourceHash", () => {
+  it("accepts a lowercase 64-char SHA-256 hex digest", () => {
+    const result = RunEvalsRequestSchema.safeParse({
+      ...buildSuiteRequest(),
+      sourceHash: "a".repeat(64),
+    });
+    expect(result.success).toBe(true);
+    expect(result.success ? result.data.sourceHash : undefined).toBe(
+      "a".repeat(64)
+    );
+  });
+
+  it("refuses uppercase or the wrong length", () => {
+    expect(
+      RunEvalsRequestSchema.safeParse({
+        ...buildSuiteRequest(),
+        sourceHash: "A".repeat(64),
+      }).success
+    ).toBe(false);
+    expect(
+      RunEvalsRequestSchema.safeParse({
+        ...buildSuiteRequest(),
+        sourceHash: "a".repeat(63),
+      }).success
+    ).toBe(false);
   });
 });
 
@@ -904,5 +982,196 @@ describe("fetchRunPinnedSkillsWithRetry (strict pin fetch)", () => {
       fetchRunPinnedSkillsWithRetry({ query }, "run_1", noSleep)
     ).rejects.toThrow(/pinned skills after 3 attempts/);
     expect(calls).toBe(3);
+  });
+});
+
+describe("shouldSkipExecution", () => {
+  it("skips ONLY a replay of a run that already finished", () => {
+    // The one case with a single right answer: the run is done, its results
+    // are recorded, and executing again would repeat every case and bill for
+    // it — the double-spend the caller sent a key to prevent.
+    for (const status of ["completed", "failed", "cancelled", "timed_out"]) {
+      expect(shouldSkipExecution({ deduped: true, status })).toBe(true);
+    }
+  });
+
+  it("executes a replay of a run still in flight", () => {
+    // In-flight and abandoned-mid-flight are indistinguishable here and want
+    // opposite treatments, so this keeps the behaviour that predates the
+    // check: a crashed run can still be driven to completion by a retry.
+    expect(shouldSkipExecution({ deduped: true, status: "running" })).toBe(
+      false
+    );
+    expect(shouldSkipExecution({ deduped: true, status: "pending" })).toBe(
+      false
+    );
+  });
+
+  it("executes a fresh start, whatever its status says", () => {
+    expect(shouldSkipExecution({ deduped: false, status: "running" })).toBe(
+      false
+    );
+    // A fresh start reporting a terminal status is nonsense, but it must not
+    // be read as licence to skip: `deduped` is the field that decides.
+    expect(shouldSkipExecution({ deduped: false, status: "completed" })).toBe(
+      false
+    );
+  });
+
+  it("executes when the backend does not report a replay at all", () => {
+    // Deploy skew. An older backend's silence is UNKNOWN, not "fresh" and not
+    // "replayed" — and unknown must never start refusing to run work.
+    expect(shouldSkipExecution({})).toBe(false);
+    expect(shouldSkipExecution({ status: "completed" })).toBe(false);
+  });
+});
+
+/**
+ * A plain rerun must not WRITE the suite.
+ *
+ * `authorEvalSuite` used to call `testSuites:updateTestSuite` on every launch
+ * that had a suite id. On a bare rerun that call carried nothing — no name, no
+ * description, and (by the snapshot rule above it) no environment — so it was a
+ * mutation whose entire argument list was `undefined`.
+ *
+ * Harmless while every suite was writable. Not harmless once a suite managed by
+ * CI refuses suite edits: it would make EVERY rerun of such a suite fail on a
+ * write it never needed to make, and running a CI-owned suite is precisely what
+ * the read-only lock is meant to keep working.
+ */
+describe("authorEvalSuite — the suite write a rerun does not need", () => {
+  function fakeConvex(overrides: Record<string, unknown> = {}) {
+    const mutations: Array<{ fn: string; args: any }> = [];
+    const client = {
+      mutation: async (fn: string, args: any) => {
+        mutations.push({ fn, args });
+        return { _id: "suite_1" };
+      },
+      query: async (fn: string) => {
+        if (fn === "testSuites:listTestCases") return [];
+        return null;
+      },
+      ...overrides,
+    };
+    return { client, mutations };
+  }
+
+  const BASE = {
+    tests: [] as never[],
+    resolvedServerIds: ["s1"],
+    persistedServerRefs: ["s1"],
+    serverNames: ["alpha"],
+    projectId: "p1",
+    suiteId: "suite_1",
+    suiteName: undefined,
+    suiteDescription: undefined,
+    passCriteria: undefined,
+  };
+
+  it("issues no updateTestSuite for a plain rerun", async () => {
+    const { client, mutations } = fakeConvex();
+    await authorEvalSuite({
+      ...BASE,
+      convexClient: client as never,
+      suiteRerun: true,
+      refreshSnapshot: undefined,
+    });
+    expect(mutations.map((m) => m.fn)).not.toContain(
+      "testSuites:updateTestSuite"
+    );
+  });
+
+  it("creates an inline suite with the resolved host attachments", async () => {
+    const { client, mutations } = fakeConvex();
+    const hostAttachments = [
+      { namedHostId: "host-1", selectedServerIds: ["s1"] },
+    ];
+    await authorEvalSuite({
+      ...BASE,
+      suiteId: null,
+      suiteName: "Inline",
+      convexClient: client as never,
+      hostAttachments,
+      suiteRerun: false,
+      refreshSnapshot: false,
+    });
+    expect(
+      mutations.find((mutation) => mutation.fn === "testSuites:createTestSuite")
+        ?.args,
+    ).toMatchObject({ hostAttachments });
+  });
+
+  it("still writes the suite when the caller asked to refresh the snapshot", async () => {
+    const { client, mutations } = fakeConvex();
+    await authorEvalSuite({
+      ...BASE,
+      convexClient: client as never,
+      suiteRerun: true,
+      refreshSnapshot: true,
+    });
+    // This one really does rewrite the suite's persisted configuration, which
+    // is the drift a CI-owned suite is right to refuse.
+    const write = mutations.find(
+      (m) => m.fn === "testSuites:updateTestSuite"
+    );
+    expect(write?.args).toMatchObject({
+      suiteId: "suite_1",
+      refreshHostConfigFromEnvironment: true,
+    });
+  });
+
+  it("still writes the suite on a non-rerun launch", async () => {
+    const { client, mutations } = fakeConvex();
+    await authorEvalSuite({
+      ...BASE,
+      convexClient: client as never,
+      suiteRerun: false,
+      refreshSnapshot: undefined,
+    });
+    const write = mutations.find(
+      (m) => m.fn === "testSuites:updateTestSuite"
+    );
+    expect(write?.args?.environment).toBeDefined();
+  });
+
+  it("ignores the name and description a rerun echoes back", async () => {
+    const { client, mutations } = fakeConvex();
+    await authorEvalSuite({
+      ...BASE,
+      convexClient: client as never,
+      // What the web client actually sends on a rerun: the suite's own name
+      // and description, read off the row it is looking at. Writing them back
+      // stores what is already stored — and on a CI-owned suite it is the
+      // difference between a rerun that works and a 409.
+      suiteName: "Billing smoke",
+      suiteDescription: "Nightly",
+      suiteRerun: true,
+      refreshSnapshot: undefined,
+    });
+    expect(mutations.map((m) => m.fn)).not.toContain(
+      "testSuites:updateTestSuite"
+    );
+  });
+
+  it("writes a name and description on a non-rerun launch", async () => {
+    const { client, mutations } = fakeConvex();
+    await authorEvalSuite({
+      ...BASE,
+      convexClient: client as never,
+      suiteName: "Billing smoke",
+      suiteDescription: "Nightly",
+      suiteRerun: false,
+      refreshSnapshot: undefined,
+    });
+    // Renaming has its own route; this is the authoring path, where the name
+    // arrives with the tests that define the suite.
+    const write = mutations.find(
+      (m) => m.fn === "testSuites:updateTestSuite"
+    );
+    expect(write?.args).toMatchObject({
+      suiteId: "suite_1",
+      name: "Billing smoke",
+      description: "Nightly",
+    });
   });
 });

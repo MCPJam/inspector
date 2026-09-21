@@ -173,8 +173,31 @@ describe("SuiteMetricStrip", () => {
     );
     render(<SuiteMetricStrip runs={runs} allIterations={iterations} />);
     const root = screen.getByTestId("suite-metric-strip");
-    // A sparkline on each trend card (verdict + latency + tokens + tool calls).
+    // A sparkline on each trend card EXCEPT cost: these iterations carry no
+    // usage, so no run in the window was priced. A cost line drawn over that
+    // would plot unpriced runs at zero and plunge on the runs we measured
+    // least — the headline em dash is the honest answer instead.
     expect(root.querySelectorAll("svg")).toHaveLength(4);
+  });
+
+  it("draws the cost trend once every run in the window is priced", () => {
+    const runs = [1, 2].map((n) =>
+      run({ _id: `run-${n}`, createdAt: n * 1000 }),
+    );
+    const iterations = runs.map((r, i) =>
+      iteration({
+        _id: `it-${i}`,
+        suiteRunId: r._id,
+        startedAt: 0,
+        updatedAt: (i + 1) * 1000,
+        usage: { estimatedCostUsd: 0.01 * (i + 1) },
+      } as Partial<EvalIteration>),
+    );
+    render(<SuiteMetricStrip runs={runs} allIterations={iterations} />);
+    const root = screen.getByTestId("suite-metric-strip");
+    // Now five: the cost card earns its line because every point behind it
+    // is a complete measurement.
+    expect(root.querySelectorAll("svg")).toHaveLength(5);
   });
 
   it("aggregate mode folds a multi-host group into one point with no trend", () => {

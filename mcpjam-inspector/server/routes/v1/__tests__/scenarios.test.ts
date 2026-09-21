@@ -53,9 +53,9 @@ function makeApp() {
   return app;
 }
 
-function call(method: "PUT" | "DELETE", body?: unknown) {
+function call(method: "PUT" | "DELETE", body?: unknown, query = "") {
   return makeApp().request(
-    `/api/v1/projects/${PROJECT}/environments/${ENV}/scenario`,
+    `/api/v1/projects/${PROJECT}/environments/${ENV}/scenario${query}`,
     {
       method,
       ...(body !== undefined
@@ -69,7 +69,7 @@ function call(method: "PUT" | "DELETE", body?: unknown) {
 }
 
 const published = (overrides: Record<string, unknown> = {}) => ({
-  chatboxId: "cb_1",
+  scenarioId: "cb_1",
   environmentId: ENV,
   name: "Checkout",
   mode: "anyone_with_link",
@@ -136,7 +136,7 @@ describe("mounted behind the v1 router", () => {
     );
     expect(res.status).toBe(201);
     expect(mutationMock).toHaveBeenCalledWith(
-      "chatboxes:publishEnvironmentChatbox",
+      "scenarios:publishEnvironmentScenario",
       { environmentId: ENV }
     );
   });
@@ -157,7 +157,7 @@ describe("PUT .../scenario", () => {
     });
     expect(body.link).toContain("https://");
     // The internal table name never reaches the wire.
-    expect(body).not.toHaveProperty("chatboxId");
+    expect(body).not.toHaveProperty("scenarioId");
   });
 
   it("returns 200 and created:false when the environment was ALREADY published", async () => {
@@ -186,7 +186,7 @@ describe("PUT .../scenario", () => {
     });
     expect(res.status).toBe(201);
     expect(mutationMock).toHaveBeenCalledWith(
-      "chatboxes:publishEnvironmentChatbox",
+      "scenarios:publishEnvironmentScenario",
       {
         environmentId: ENV,
         name: "Beta run",
@@ -283,11 +283,34 @@ describe("PUT .../scenario", () => {
     );
   });
 
+  it("surfaces a guest refusal as 401, not 403 or 404 (REEV-6)", async () => {
+    // A sibling of the branch above, and deliberately a DIFFERENT status. The
+    // beta gate's answer is "not for your organization" — nothing the caller
+    // can act on, so 403. This one's answer is "authenticate", which is both
+    // actionable and what a client library already knows how to handle.
+    mutationMock.mockRejectedValue(
+      convexError(
+        "SIGN_IN_REQUIRED",
+        "Sign in to use User testing — it's off for guests."
+      )
+    );
+
+    const res = await call("PUT");
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { code?: string; message?: string };
+    expect(body.code).toBe("UNAUTHORIZED");
+    // Forwarded verbatim — it names the surface, and rewriting it in the
+    // mapper would put that copy in two places.
+    expect(body.message).toBe(
+      "Sign in to use User testing — it's off for guests."
+    );
+  });
+
   it("surfaces the admin gate as 403", async () => {
     mutationMock.mockRejectedValue(
       convexError(
         "FORBIDDEN",
-        "Publishing an environment chatbox requires project admin (shared execution config)."
+        "Publishing an environment scenario requires project admin (shared execution config)."
       )
     );
     expect((await call("PUT")).status).toBe(403);
@@ -303,7 +326,7 @@ describe("PUT .../scenario", () => {
 
 describe("DELETE .../scenario", () => {
   it("unpublishes and reports the removed id", async () => {
-    mutationMock.mockResolvedValue({ deleted: true, chatboxId: "cb_1" });
+    mutationMock.mockResolvedValue({ deleted: true, scenarioId: "cb_1" });
 
     const res = await call("DELETE");
     expect(res.status).toBe(200);
@@ -323,6 +346,40 @@ describe("DELETE .../scenario", () => {
     expect((await res.json()) as Record<string, unknown>).toMatchObject({
       deleted: false,
     });
+  });
+
+  // An environment may back several studies, so "the scenario of this
+  // environment" stops naming one thing. `?scenarioId=` is how a caller says
+  // which; the backend refuses to guess rather than deleting whichever row an
+  // index yields first, so what reaches it has to be exactly what was asked.
+  it("names which study to take down when asked to", async () => {
+    mutationMock.mockResolvedValue({ deleted: true, scenarioId: "cb_2" });
+
+    await call("DELETE", undefined, "?scenarioId=cb_2");
+
+    expect(mutationMock).toHaveBeenCalledWith(
+      "scenarios:unpublishEnvironmentScenario",
+      { environmentId: ENV, scenarioId: "cb_2" }
+    );
+  });
+
+  it("sends no scenarioId at all when none was given", async () => {
+    // Not `undefined`, not "": the single-study contract is the ABSENCE of the
+    // key, and an empty one would be an id that matches nothing.
+    mutationMock.mockResolvedValue({ deleted: true, scenarioId: "cb_1" });
+
+    await call("DELETE");
+    expect(mutationMock).toHaveBeenCalledWith(
+      "scenarios:unpublishEnvironmentScenario",
+      { environmentId: ENV }
+    );
+
+    mutationMock.mockClear();
+    await call("DELETE", undefined, "?scenarioId=");
+    expect(mutationMock).toHaveBeenCalledWith(
+      "scenarios:unpublishEnvironmentScenario",
+      { environmentId: ENV }
+    );
   });
 
   it("enforces the same cross-project preflight as publish", async () => {

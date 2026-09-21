@@ -17,12 +17,15 @@ import { standardEventProps } from "./PosthogUtils";
  *
  * The posthog-js singleton is the same instance PostHogProvider initializes
  * (the provider is given an apiKey, which inits the global instance), and it
- * already honors VITE_DISABLE_POSTHOG_LOCAL via opt_out_capturing_by_default
- * — no disabled-state branching needed here.
+ * inherits the rich person created by usePostHogIdentify (WorkOS id, email,
+ * name, occupation, and deployment). Keep PII on that person profile instead
+ * of copying it onto every event payload.
+ * The client also honors VITE_DISABLE_POSTHOG_LOCAL via
+ * opt_out_capturing_by_default — no disabled-state branching needed here.
  */
 export function track(
   event: ClientAnalyticsEventName,
-  props: Record<string, unknown> & { location?: string } = {},
+  props: Record<string, unknown> & { location?: string } = {}
 ): void {
   // Drop platform/environment from the caller's props rather than relying
   // on spread order alone: standardEventProps() OMITS `environment` when
@@ -37,5 +40,13 @@ export function track(
     environment: _environment,
     ...rest
   } = props;
-  posthog.capture(event, { ...rest, ...standardEventProps(location) });
+  try {
+    posthog.capture(event, { ...rest, ...standardEventProps(location) });
+  } catch (error) {
+    // Product analytics is best-effort. Ad blockers, initialization races, or
+    // an SDK failure must never stop the user action that emitted the event.
+    // Keep the failure observable without including event props, which may
+    // contain sensitive product data.
+    console.warn(`[analytics] Failed to capture ${event}`, error);
+  }
 }

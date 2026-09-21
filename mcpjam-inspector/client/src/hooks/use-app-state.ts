@@ -28,6 +28,7 @@ import {
 import { clearPendingQuickConnect } from "@/lib/quick-connect-pending";
 import { shouldQueryProjectId } from "./useProjects";
 import { HOSTED_MODE } from "@/lib/config";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
 export type { ServerWithName } from "@/state/app-types";
 export type {
@@ -111,7 +112,7 @@ function readPendingDashboardOAuthFromStorage(): PendingDashboardOAuthState | nu
         startedAt?: unknown;
         surface?: unknown;
       } | null;
-      if (parsed?.surface === "chatbox" || parsed?.surface === "shared") {
+      if (parsed?.surface === "scenario" || parsed?.surface === "shared") {
         return null;
       }
       if (
@@ -145,7 +146,7 @@ function readPendingDashboardOAuthFromStorage(): PendingDashboardOAuthState | nu
   };
 }
 
-// Resolves dashboard/server-list OAuth callbacks only. Hosted chatbox/shared
+// Resolves dashboard/server-list OAuth callbacks only. Hosted scenario/shared
 // callbacks are handled by App.tsx and must not affect server-card state.
 function readPendingDashboardOAuth(): PendingDashboardOAuthState | null {
   if (!hasHostedOAuthCallbackParams()) return null;
@@ -198,6 +199,7 @@ export function useAppState({
   validOrganizations: Array<{ _id: string; myRole?: string }>;
   requestSignIn?: () => void | Promise<void>;
 }) {
+  const isUserReady = useDbUserReady();
   const logger = useLogger("Connections");
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
   const [isLoading, setIsLoading] = useState(true);
@@ -490,7 +492,11 @@ export function useAppState({
       ?.sharedProjectId;
   const activeProjectDefaultHostConfig = useQuery(
     "hostConfigsV2:getProjectDefault" as any,
-    activeSharedProjectId
+    // `shouldQueryProjectId`, not a bare truthiness check: the sentinel and
+    // local/placeholder ids this app uses for a project that is not a Convex
+    // row are all truthy, and `v.id("projects")` rejects them before the
+    // handler runs, where nothing downstream can catch it.
+    isUserReady && shouldQueryProjectId(activeSharedProjectId)
       ? { projectId: activeSharedProjectId as any }
       : "skip",
   ) as HostConfigDtoV2 | null | undefined;
@@ -623,7 +629,16 @@ export function useAppState({
   ]);
 
   const handleSwitchProject = useCallback(
-    async (projectId: string) => {
+    async (
+      projectId: string,
+      /**
+       * `silent` suppresses the confirmation toast. The URL-driven switch uses
+       * it: when the address bar is what selected the project, "Switched to
+       * project: X" is telling the user something they can already read — on
+       * every cold open of a shared link, every Back, every tab.
+       */
+      options?: { silent?: boolean }
+    ) => {
       const newProject = effectiveProjects[projectId];
       if (!newProject) {
         toast.error("Project not found");
@@ -651,7 +666,9 @@ export function useAppState({
       } else {
         dispatch({ type: "SWITCH_PROJECT", projectId });
       }
-      toast.success(`Switched to project: ${newProject.name}`);
+      if (!options?.silent) {
+        toast.success(`Switched to project: ${newProject.name}`);
+      }
     },
     [
       effectiveProjects,

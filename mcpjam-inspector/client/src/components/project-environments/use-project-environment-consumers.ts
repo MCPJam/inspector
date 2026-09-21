@@ -19,11 +19,11 @@ export function useProjectEnvironmentConsumers(
   suiteCount: number | null;
   journeyCount: number | null;
   /**
-   * Published chatboxes backed by this environment (0 or 1 — backend-enforced
+   * Published scenarios backed by this environment (0 or 1 — backend-enforced
    * one-per-environment). Unlike the advisory suite/journey scans this one is
-   * exact when settled: the chatbox list carries `environmentId` per row.
+   * exact when settled: the scenario list carries `environmentId` per row.
    */
-  chatboxCount: number | null;
+  scenarioCount: number | null;
 } {
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
@@ -43,14 +43,14 @@ export function useProjectEnvironmentConsumers(
     enableQuery ? ({ projectId } as any) : "skip"
   ) as Array<{ environmentIds?: string[] | null }> | undefined;
 
-  const chatboxes = useQuery(
-    "chatboxes:listChatboxes" as any,
+  const scenarios = useQuery(
+    "scenarios:listScenarios" as any,
     enableQuery ? ({ projectId } as any) : "skip"
   ) as Array<{ environmentId?: string | null }> | undefined;
 
   return useMemo(() => {
     if (!environmentId) {
-      return { suiteCount: null, journeyCount: null, chatboxCount: null };
+      return { suiteCount: null, journeyCount: null, scenarioCount: null };
     }
     const suiteCount =
       overview === undefined
@@ -64,11 +64,11 @@ export function useProjectEnvironmentConsumers(
         : journeys.filter((journey) =>
             (journey.environmentIds ?? []).includes(environmentId)
           ).length;
-    const chatboxCount =
-      chatboxes === undefined
+    const scenarioCount =
+      scenarios === undefined
         ? null
-        : chatboxes.filter((chatbox) => chatbox.environmentId === environmentId)
+        : scenarios.filter((scenario) => scenario.environmentId === environmentId)
             .length;
-    return { suiteCount, journeyCount, chatboxCount };
-  }, [overview, journeys, chatboxes, environmentId]);
+    return { suiteCount, journeyCount, scenarioCount };
+  }, [overview, journeys, scenarios, environmentId]);
 }

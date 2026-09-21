@@ -1,6 +1,13 @@
+import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { Navigate } from "react-router";
 import { useConvexAuth } from "convex/react";
-import { ChevronRight, Github, MessageSquare, Slack } from "lucide-react";
+import {
+  ChevronRight,
+  Github,
+  MessageSquare,
+  Radio,
+  Slack,
+} from "lucide-react";
 import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { ErrorCard } from "@/components/ui/error-card";
@@ -8,7 +15,13 @@ import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { useOrgSlackSettings } from "@/hooks/useOrgSlackSettings";
 import { SettingsPageShell } from "./SettingsPageShell";
 import { useGithubChecksSettings } from "@/hooks/useGithubChecksSettings";
+import { useIntegrationsTabFlag } from "@/hooks/useIntegrationsTabEnabled";
 import { useDiscordAgentEnabled } from "@/hooks/useDiscordAgentEnabled";
+import { useTraceDestinationsEnabled } from "@/hooks/useTraceDestinationsEnabled";
+import {
+  useOrgTraceDestinations,
+  useTraceDestinationsAvailability,
+} from "@/hooks/useOrgTraceDestinations";
 
 /**
  * `/settings/integrations` — the one place a connectable outside service is
@@ -21,10 +34,13 @@ import { useDiscordAgentEnabled } from "@/hooks/useDiscordAgentEnabled";
  * sentence about what the service does and its current state, and the
  * configuration itself lives on the service's own page.
  *
- * The TAB is unconditional — Slack exists for every org, so there is always at
- * least one card. The GITHUB CARD carries its own availability gate. That split
- * matters: gating the tab on GitHub would hide Slack from anyone without the
- * GitHub beta, which is the reachability bug in the other direction.
+ * The whole TAB sits behind `integrations-tab`, a beta gate on the container
+ * and nothing else. Inside it, each card still decides for itself: the GITHUB
+ * CARD carries its own availability gate, Discord and Observability their own
+ * flags, and Slack is unconditional — it exists for every org, so a flagged-in
+ * reader always sees at least one card. That split matters: gating the tab on
+ * GitHub would hide Slack from anyone without the GitHub beta, which is the
+ * reachability bug in the other direction.
  *
  * Slack is org-scoped, not per-project: notifications go to channels bound
  * from `organizations/:orgId/slack` (the Connections tab), which is also
@@ -86,6 +102,7 @@ function IntegrationCard({
         href={href}
         target="_blank"
         rel="noreferrer"
+        id={`setting-${testId.replace("integration-card-", "")}`}
         data-testid={testId}
         className={className}
       >
@@ -97,6 +114,7 @@ function IntegrationCard({
     <button
       type="button"
       onClick={onSelect}
+      id={`setting-${testId.replace("integration-card-", "")}`}
       data-testid={testId}
       className={className}
     >
@@ -129,10 +147,10 @@ function GithubChecksCard({
     repos === undefined
       ? ""
       : repos.length === 0
-      ? "Not connected"
-      : `${repos.length} ${
-          repos.length === 1 ? "repository" : "repositories"
-        } connected`;
+        ? "Not connected"
+        : `${repos.length} ${
+            repos.length === 1 ? "repository" : "repositories"
+          } connected`;
 
   return (
     <IntegrationCard
@@ -164,16 +182,16 @@ function SlackIntegrationCard({
   // repo count: reporting "Not connected" in that window would tell a
   // connected org their setup is gone.
   const installedCount = connections?.workspaces.filter(
-    (workspace) => workspace.installed
+    (workspace) => workspace.installed,
   ).length;
   const status =
     connections === undefined
       ? ""
       : !installedCount
-      ? "Not connected"
-      : `${installedCount} ${
-          installedCount === 1 ? "workspace" : "workspaces"
-        } connected`;
+        ? "Not connected"
+        : `${installedCount} ${
+            installedCount === 1 ? "workspace" : "workspaces"
+          } connected`;
 
   return (
     <IntegrationCard
@@ -218,7 +236,7 @@ function DiscordCard({
   // A null organization id is the hook's own documented skip.
   const { connections } = useOrgSlackSettings(
     enabled ? activeOrganizationId : null,
-    "discord"
+    "discord",
   );
 
   if (!enabled) return null;
@@ -227,14 +245,14 @@ function DiscordCard({
   // none-connected, and saying "Not connected" in that window tells a
   // connected org their setup is gone.
   const connectedCount = connections?.workspaces.filter(
-    (workspace) => workspace.installed
+    (workspace) => workspace.installed,
   ).length;
   const status =
     connections === undefined
       ? ""
       : !connectedCount
-      ? "Not connected"
-      : `${connectedCount} ${connectedCount === 1 ? "server" : "servers"} connected`;
+        ? "Not connected"
+        : `${connectedCount} ${connectedCount === 1 ? "server" : "servers"} connected`;
 
   return (
     <IntegrationCard
@@ -250,6 +268,73 @@ function DiscordCard({
   );
 }
 
+/**
+ * Trace destinations — where this organization's traces are streamed.
+ *
+ * Flag-gated for the same reason as Discord, and with the same care about
+ * WHERE the flag is applied: the client flag decides whether to query at all,
+ * because the availability read is signed-in and org-scoped and a backend
+ * deployed before it existed throws. That throw would hit this card's error
+ * boundary and render an ErrorCard to someone who should see no observability
+ * entry at all.
+ *
+ * The card still asks the SERVER before showing itself. The client flag is an
+ * advertising decision; `getAvailability` is the access one, and only it knows
+ * whether this particular organization is covered.
+ */
+function ObservabilityCard({
+  activeOrganizationId,
+}: {
+  activeOrganizationId: string;
+}) {
+  const appNavigate = useAppNavigate();
+  const enabled = useTraceDestinationsEnabled();
+  const availability = useTraceDestinationsAvailability(
+    enabled ? activeOrganizationId : null,
+  );
+  // GATED ON THE SERVER'S ANSWER, not just the flag. A flagged-in member of an
+  // organization the server has NOT covered would otherwise fire this
+  // org-scoped read for a feature they cannot use, and its refusal would reach
+  // the boundary as an ErrorCard for a card that should not be there at all.
+  const { destinations } = useOrgTraceDestinations(
+    availability?.state === "enabled" ? activeOrganizationId : null,
+  );
+
+  if (!enabled) return null;
+  // `undefined` is still-asking, and `disabled`/`unavailable` are answers.
+  // None of the three is a card.
+  if (availability?.state !== "enabled") return null;
+
+  // Same `undefined` reasoning as the other cards: still-asking is not
+  // none-configured, and saying "Not configured" in that window tells an org
+  // with a live destination that their setup is gone.
+  const paused = destinations?.some((d) => d.paused !== null);
+  const active = destinations?.filter((d) => d.enabled && !d.paused).length;
+  const status =
+    destinations === undefined
+      ? ""
+      : paused
+        ? "Paused — needs attention"
+        : !active
+          ? "Not configured"
+          : `${active} ${active === 1 ? "destination" : "destinations"} streaming`;
+
+  return (
+    <IntegrationCard
+      testId="integration-card-observability"
+      icon={<Radio className="size-4 text-primary" aria-hidden />}
+      title="Observability"
+      description="Stream traces to Coralogix, Honeycomb, or any OTLP endpoint."
+      status={status}
+      onSelect={() =>
+        appNavigate(
+          buildOrganizationPath(activeOrganizationId, "observability"),
+        )
+      }
+    />
+  );
+}
+
 export function IntegrationsRoute({
   activeOrganizationId,
 }: IntegrationsRouteProps = {}) {
@@ -260,6 +345,19 @@ export function IntegrationsRoute({
   const { isLoading: organizationsLoading } = useOrganizationQueries({
     isAuthenticated,
   });
+  // The tab is a beta gate over the whole page, not a card. The rail already
+  // hides the entry; this is the same decision applied to the URL, so a link
+  // kept from a flagged-out session lands on Settings rather than on a page
+  // that is supposed to be dark.
+  //
+  // The FLAG'S OWN loading state, not the rail's `=== true` reading of it. A
+  // redirect cannot be taken back, and every direct hit on this URL arrives
+  // before PostHog has answered — so `undefined` waits here, exactly like the
+  // auth and organization reads below, and only an answered `false` navigates.
+  const integrationsTabFlag = useIntegrationsTabFlag();
+
+  if (integrationsTabFlag === undefined) return null;
+  if (!integrationsTabFlag) return <Navigate to="/settings" replace />;
 
   if (!activeOrganizationId) {
     if (authLoading || organizationsLoading) return null;
@@ -267,13 +365,15 @@ export function IntegrationsRoute({
   }
 
   return (
-    <SettingsPageShell
-      active="integrations"
-      activeOrganizationId={activeOrganizationId}
-    >
-      <p className="max-w-prose text-sm text-muted-foreground">
-        Connect MCPJam to the services your team already uses.
-      </p>
+    <SettingsPageShell>
+      <header className="space-y-1">
+        <h1 className="text-2xl font-semibold text-accent-foreground">
+          Integrations
+        </h1>
+        <SettingsPageDescription>
+          Connect MCPJam to the services your team already uses.
+        </SettingsPageDescription>
+      </header>
 
       <div className="space-y-2">
         <ErrorBoundary
@@ -301,6 +401,22 @@ export function IntegrationsRoute({
           )}
         >
           <DiscordCard activeOrganizationId={activeOrganizationId} />
+        </ErrorBoundary>
+
+        {/*
+          RENDERS NOTHING ON A THROW, unlike its three siblings above.
+          Those surfaces are generally available, so an error card is the
+          honest answer when their backend misbehaves. This one is dark: the
+          ordinary way to reach this boundary is a client flagged on against a
+          backend that has not deployed `traceDestinations:getAvailability`
+          yet, and an error card there advertises a feature to someone who
+          cannot use it while telling them nothing they can act on. The
+          boundary is still required — without it the throw takes the whole
+          Integrations page down — and it still reports to Sentry, because
+          silent to the USER is a UI choice and never a telemetry one.
+        */}
+        <ErrorBoundary name="integrations_observability" fallback={null}>
+          <ObservabilityCard activeOrganizationId={activeOrganizationId} />
         </ErrorBoundary>
       </div>
     </SettingsPageShell>

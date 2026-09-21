@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   applySkillMetadataBudget,
+  formatSkillCatalogBody,
+  renderBudgetedSkillCatalog,
   SKILL_METADATA_FALLBACK_BUDGET_CHARS,
+  skillCatalogOverflowNotice,
   skillMetadataBudgetChars,
 } from "../skill-metadata-budget";
 
@@ -115,5 +118,44 @@ describe("applySkillMetadataBudget", () => {
       200
     );
     expect(result.entries[0].origin).toBe("plugin a");
+  });
+});
+
+describe("renderBudgetedSkillCatalog", () => {
+  it("omits origin punctuation when no origin is set", () => {
+    const { lines, omittedRefs } = renderBudgetedSkillCatalog(
+      [{ ref: "pdf-tools", description: "Process PDFs" }],
+      8_000
+    );
+    expect(lines).toEqual(["- **pdf-tools**: Process PDFs"]);
+    expect(omittedRefs).toEqual([]);
+  });
+
+  it("keeps the origin-labeled line for effective-path entries", () => {
+    const { lines } = renderBudgetedSkillCatalog(
+      [
+        {
+          ref: "alpha/summarize",
+          description: "Alpha's summarizer",
+          origin: "plugin alpha@aaaa1111",
+        },
+      ],
+      8_000
+    );
+    expect(lines).toEqual([
+      "- **alpha/summarize** (plugin alpha@aaaa1111): Alpha's summarizer",
+    ]);
+  });
+
+  it("appends the overflow notice outside the catalog lines", () => {
+    expect(skillCatalogOverflowNotice(2)).toBe(
+      "(2 more skills could not be listed within this model's skill-metadata budget.)"
+    );
+    const body = formatSkillCatalogBody(
+      ["- **a**: d"],
+      ["b"]
+    );
+    expect(body).toContain("- **a**: d");
+    expect(body).toContain(skillCatalogOverflowNotice(1));
   });
 });

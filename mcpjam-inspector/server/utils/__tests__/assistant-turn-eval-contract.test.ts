@@ -5,7 +5,7 @@
  * Purpose: lock in the configuration eval will rely on when PR 3 rewrites
  * `runIterationViaBackend` to drive `runAssistantTurn` directly. Eval's
  * needs are a strict subset of synthetic's, but the existing
- * `assistant-turn.test.ts` covers chatbox/direct surfaces — these tests
+ * `assistant-turn.test.ts` covers scenario/direct surfaces — these tests
  * exercise eval-only behavior (sourceType:"eval", hosted-org dispatch
  * shape, JAM-paid attribution, the open-ended `extraBodyFields` channel
  * for eval-run attribution) so PR 3's refactor has an explicit safety

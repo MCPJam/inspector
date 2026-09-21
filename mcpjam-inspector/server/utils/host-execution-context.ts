@@ -6,7 +6,7 @@
  * hostConfig-to-fields read inline. The reads drifted: chat-v2 (mcp +
  * web) routes resolved `systemPrompt` / `temperature` / `requireToolApproval`
  * / `respectToolVisibility` / `progressiveToolDiscovery` / `modelId` from
- * `fetchChatboxRuntimeConfig` for chatbox sessions; the eval runner only
+ * `fetchScenarioRuntimeConfig` for scenario sessions; the eval runner only
  * extracted policy fields (`extractHostExecutionPolicy`) from
  * `suiteHostConfig` and never read `systemPrompt` / `temperature` /
  * `selectedServerIds` — even though the suite hostConfig record carries
@@ -47,7 +47,7 @@ import { readTasksPolicy, type TasksPolicy } from "@mcpjam/sdk";
  * How the resolver picks a winner when both the hostConfig and the
  * caller-supplied overrides provide a value for the same field.
  *
- * - `host-wins`: hostConfig value beats override (chat chatbox security
+ * - `host-wins`: hostConfig value beats override (chat scenario security
  *   model — guest / share-link clients can't bypass the host's pinned
  *   config). Override only used when the host omits the field.
  * - `override-wins`: caller's override beats hostConfig value (eval
@@ -137,6 +137,18 @@ export interface ResolvedExecutionContext {
    * `built-in-tools/registry.ts` at the call site.
    */
   builtInToolIds: string[] | undefined;
+  /** Explicit saved browser profile pin from the host/eval config. */
+  browserProfileId: string | undefined;
+  /**
+   * What the hosted `browser_*` tools may do in an UNATTENDED run.
+   *
+   * HOST-ONLY, read here rather than from the request body, for exactly the
+   * reason `tasksPolicy` is: a share-link visitor owns the body, and a
+   * body-supplied policy that could widen what a browser may reach — which
+   * origins, which page tools — would be an authorization the host never
+   * granted. Absent ⇒ no browser tools in unattended runs at all.
+   */
+  browserToolPolicy: unknown | undefined;
   /** Raw model-visible MCP tool-result policy, before SDK defaults are applied. */
   modelVisibleMcpToolResults: ModelVisibleMcpToolResults | undefined;
   /** Human-facing MCP tool-result image rendering policy. */
@@ -151,7 +163,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readString(
   hostConfig: Record<string, unknown>,
-  key: string
+  key: string,
 ): string | undefined {
   const value = hostConfig[key];
   return typeof value === "string" ? value : undefined;
@@ -159,7 +171,7 @@ function readString(
 
 function readNumber(
   hostConfig: Record<string, unknown>,
-  key: string
+  key: string,
 ): number | undefined {
   const value = hostConfig[key];
   return typeof value === "number" ? value : undefined;
@@ -167,7 +179,7 @@ function readNumber(
 
 function readBoolean(
   hostConfig: Record<string, unknown>,
-  key: string
+  key: string,
 ): boolean | undefined {
   const value = hostConfig[key];
   return typeof value === "boolean" ? value : undefined;
@@ -175,7 +187,7 @@ function readBoolean(
 
 function readStringArray(
   hostConfig: Record<string, unknown>,
-  key: string
+  key: string,
 ): string[] | undefined {
   const value = hostConfig[key];
   if (!Array.isArray(value)) return undefined;
@@ -184,7 +196,7 @@ function readStringArray(
 }
 
 function readMcpToolResultImageRendering(
-  hostConfig: Record<string, unknown>
+  hostConfig: Record<string, unknown>,
 ): McpToolResultImageRenderingPolicy | undefined {
   const value = hostConfig.mcpToolResultImageRendering;
   return isRecord(value)
@@ -193,7 +205,7 @@ function readMcpToolResultImageRendering(
 }
 
 function readModelVisibleMcpToolResults(
-  hostConfig: Record<string, unknown>
+  hostConfig: Record<string, unknown>,
 ): ModelVisibleMcpToolResults | undefined {
   const value = hostConfig.modelVisibleMcpToolResults;
   return isRecord(value) ? (value as ModelVisibleMcpToolResults) : undefined;
@@ -206,7 +218,7 @@ function readModelVisibleMcpToolResults(
  * read so the resolver accepts both shapes.
  */
 function readProgressiveToolDiscovery(
-  hostConfig: Record<string, unknown>
+  hostConfig: Record<string, unknown>,
 ): boolean | undefined {
   const raw = hostConfig.progressiveToolDiscovery;
   if (typeof raw === "boolean") return raw;
@@ -239,7 +251,7 @@ function pickField<T>(
   field: keyof ExecutionOverrides,
   override: T | undefined,
   host: T | undefined,
-  precedence: ResolverPrecedence
+  precedence: ResolverPrecedence,
 ): { value: T | undefined; drift?: ExecutionDriftEntry } {
   const overrideDefined = override !== undefined;
   const hostDefined = host !== undefined;
@@ -318,6 +330,10 @@ export function resolveExecutionContext(args: {
       tasksPolicy: "unset",
       selectedServerIds: overrides.selectedServerIds,
       builtInToolIds: overrides.builtInToolIds,
+      browserProfileId: undefined,
+      // No host config ⇒ no host said what a browser may do ⇒ unattended runs
+      // get no browser tools. There is deliberately no override path.
+      browserToolPolicy: undefined,
       modelVisibleMcpToolResults: overrides.modelVisibleMcpToolResults,
       mcpToolResultImageRendering: overrides.mcpToolResultImageRendering,
       hostPolicy,
@@ -337,12 +353,17 @@ export function resolveExecutionContext(args: {
     selectedServerIds: readStringArray(hostConfig, "selectedServerIds"),
     builtInToolIds: readStringArray(hostConfig, "builtInToolIds"),
   };
+  const browserProfileId = readString(hostConfig, "browserProfileId");
+  // Host-only (see the field docs): never merged with an override.
+  const browserToolPolicy = isRecord(hostConfig)
+    ? hostConfig.browserToolPolicy
+    : undefined;
 
   const systemPrompt = pickField(
     "systemPrompt",
     overrides.systemPrompt,
     hostFields.systemPrompt,
-    precedence
+    precedence,
   );
   if (systemPrompt.drift) drift.push(systemPrompt.drift);
 
@@ -350,7 +371,7 @@ export function resolveExecutionContext(args: {
     "temperature",
     overrides.temperature,
     hostFields.temperature,
-    precedence
+    precedence,
   );
   if (temperature.drift) drift.push(temperature.drift);
 
@@ -358,7 +379,7 @@ export function resolveExecutionContext(args: {
     "requireToolApproval",
     overrides.requireToolApproval,
     hostFields.requireToolApproval,
-    precedence
+    precedence,
   );
   if (requireToolApprovalPick.drift) drift.push(requireToolApprovalPick.drift);
 
@@ -366,7 +387,7 @@ export function resolveExecutionContext(args: {
     "respectToolVisibility",
     overrides.respectToolVisibility,
     hostFields.respectToolVisibility,
-    precedence
+    precedence,
   );
   if (respectToolVisibility.drift) drift.push(respectToolVisibility.drift);
 
@@ -374,7 +395,7 @@ export function resolveExecutionContext(args: {
     "progressiveToolDiscovery",
     overrides.progressiveToolDiscovery,
     hostFields.progressiveToolDiscovery,
-    precedence
+    precedence,
   );
   if (progressiveToolDiscovery.drift)
     drift.push(progressiveToolDiscovery.drift);
@@ -383,7 +404,7 @@ export function resolveExecutionContext(args: {
     "modelVisibleMcpToolResults",
     overrides.modelVisibleMcpToolResults,
     hostFields.modelVisibleMcpToolResults,
-    precedence
+    precedence,
   );
   if (modelVisibleMcpToolResults.drift) {
     drift.push(modelVisibleMcpToolResults.drift);
@@ -393,7 +414,7 @@ export function resolveExecutionContext(args: {
     "mcpToolResultImageRendering",
     overrides.mcpToolResultImageRendering,
     hostFields.mcpToolResultImageRendering,
-    precedence
+    precedence,
   );
   if (mcpToolResultImageRendering.drift) {
     drift.push(mcpToolResultImageRendering.drift);
@@ -403,7 +424,7 @@ export function resolveExecutionContext(args: {
     "modelId",
     overrides.modelId,
     hostFields.modelId,
-    precedence
+    precedence,
   );
   if (modelId.drift) drift.push(modelId.drift);
 
@@ -411,7 +432,7 @@ export function resolveExecutionContext(args: {
     "selectedServerIds",
     overrides.selectedServerIds,
     hostFields.selectedServerIds,
-    precedence
+    precedence,
   );
   if (selectedServerIds.drift) drift.push(selectedServerIds.drift);
 
@@ -419,7 +440,7 @@ export function resolveExecutionContext(args: {
     "builtInToolIds",
     overrides.builtInToolIds,
     hostFields.builtInToolIds,
-    precedence
+    precedence,
   );
   if (builtInToolIds.drift) drift.push(builtInToolIds.drift);
 
@@ -438,7 +459,7 @@ export function resolveExecutionContext(args: {
             : {}),
         }
       : hostConfig,
-    namedHostId
+    namedHostId,
   );
 
   return {
@@ -450,9 +471,15 @@ export function resolveExecutionContext(args: {
     progressiveToolDiscovery: progressiveToolDiscovery.value,
     modelId: modelId.value,
     harness: readHarness(hostConfig),
-    tasksPolicy: readTasksPolicy(hostConfig as Parameters<typeof readTasksPolicy>[0]),
+    tasksPolicy: readTasksPolicy(
+      hostConfig as Parameters<typeof readTasksPolicy>[0],
+    ),
     selectedServerIds: selectedServerIds.value,
     builtInToolIds: builtInToolIds.value,
+    browserProfileId,
+    // Host-only, like `harness` and `tasksPolicy`: no override path exists,
+    // so a body-supplied policy can never widen what a browser may reach.
+    browserToolPolicy,
     modelVisibleMcpToolResults: modelVisibleMcpToolResults.value,
     mcpToolResultImageRendering: mcpToolResultImageRendering.value,
     hostPolicy,

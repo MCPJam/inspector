@@ -1,3 +1,25 @@
+import {
+  AdmissionWaitBudget,
+  withAdmissionRetry,
+  spendRefusalOf,
+  type SpendRefusal,
+} from "./admission-retry.js";
+import {
+  peekPageToolsForChatTurn,
+  pageToolsSnapshotFrom,
+} from "../browserd/page-tools-peek.js";
+import { webmcpPageToolsMode } from "../../config.js";
+import {
+  deadlineClockOf,
+  withDeadline,
+  type DeadlineHandle,
+} from "../../utils/run-supervisor/deadline.js";
+import type { ResolvedExecutionBudgets } from "@mcpjam/sdk/contract";
+import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
+import {
+  toMintedPageToolRecords,
+  type MintedDeclaredTool,
+} from "@/shared/declared-tools";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet } from "ai";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
@@ -9,13 +31,14 @@ import { ConvexHttpClient } from "convex/browser";
 import type { ModelDefinition } from "@/shared/types";
 // `getModelById` lookup is now wrapped by `buildSyntheticModelDefinition`
 // (org-model-config.ts) — that helper falls back to BYOK provider parsing
-// when the chatbox modelId isn't in SUPPORTED_MODELS, which is the common
-// case for org-BYOK chatboxes (Ollama, custom: providers, OpenRouter ids).
+// when the scenario modelId isn't in SUPPORTED_MODELS, which is the common
+// case for org-BYOK scenarios (Ollama, custom: providers, OpenRouter ids).
 import { logger } from "../../utils/logger.js";
 import type { MCPJamHandlerOptions } from "../../utils/mcpjam-stream-handler.js";
 import { resolveLocalOrgMaxSteps } from "../../utils/org-model-stream-handler.js";
 import type { DirectChatTurnTraceEvents } from "../../utils/direct-chat-turn.js";
 import type { SwarmStreamPayload } from "../../../shared/swarm-stream-events.js";
+import { getHostedTurnFailure } from "../../utils/hosted-turn-failure.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import {
   resolveTurnRuntime,
@@ -38,13 +61,58 @@ import {
 } from "../../utils/built-in-tools/registry.js";
 import type { TrustedHarnessSandboxBinding } from "../../utils/harness/resolve-sandbox.js";
 import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
-import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
+import { browserApprovalDeliveryFor } from "../evals/browser-tool-policy.js";
+import {
+  listCloudRuntimeSkills,
+  shouldEnableCloudSkillTools,
+  skillsFailureFrom,
+  type SkillsFetchFailure,
+} from "../../utils/computers/cloud-skill-tools.js";
+import type { RuntimeStandaloneSkill } from "../../services/environments/effective-capabilities.js";
+import {
+  buildLiveEffectiveCapabilities,
+  type EffectiveCapabilitySet,
+} from "../../services/environments/effective-capabilities.js";
 import {
   persistChatSessionToConvex,
+  type PersistChatOutcome,
   type PersistedTurnTrace,
   type ChatOrigin,
 } from "../../utils/chat-ingestion.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "../../utils/export-helpers.js";
+
+/**
+ * Headless runs have no stream to carry a `data-persist-receipt`, but the
+ * outcome still matters: a synthetic run whose transcripts never landed used to
+ * be indistinguishable from one that saved cleanly. `not-attempted` is silent —
+ * it means persistence was not configured for this run, which is expected.
+ */
+function warnIfSimulationPersistNotSaved(
+  outcome: PersistChatOutcome | undefined,
+  stage: "empty-session" | "turn",
+  chatSessionId: string,
+): void {
+  // This is observability, not control flow — it must never be the thing that
+  // takes a synthetic run down, so an absent outcome is simply nothing to say.
+  if (
+    !outcome ||
+    outcome.outcome === "saved" ||
+    outcome.outcome === "duplicate" ||
+    outcome.outcome === "not-attempted"
+  ) {
+    return;
+  }
+  logger.warn("[sessionSimulation] chat persist did not save", {
+    stage,
+    // Concurrent synthetic sessions interleave in the log, so the warning has
+    // to name the session it is about to be actionable at all.
+    chatSessionId,
+    outcome: outcome.outcome,
+    ...(outcome.outcome === "failed"
+      ? { failureKind: outcome.failureKind }
+      : {}),
+  });
+}
 import { captureMcpAppWidgetSnapshots } from "../../utils/mcp-app-widget-capture.js";
 import {
   createBrowserSessionContext,
@@ -62,11 +130,13 @@ import {
 } from "@/shared/widget-snapshot";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import type { HarnessSessionCommitPayload } from "../../utils/harness/harness-session-state.js";
+import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
+import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
 
 export interface SimulationManagerFactory {
   /**
    * Builds a fresh, fully-connected MCPClientManager for one session, scoped
-   * to the chatbox's `selectedServerIds`. The runner disposes it after the
+   * to the scenario's `selectedServerIds`. The runner disposes it after the
    * session completes (success or failure).
    *
    * Implemented by the route handler so the runner stays free of authorize
@@ -79,7 +149,7 @@ export interface SimulationManagerFactory {
     /**
      * Optional human-readable names aligned 1:1 with `connectedServerIds`.
      * Persisted into the session's `resumeConfig.selectedServers` so the
-     * Chatbox Sessions viewer can reconnect the right servers when the user
+     * Scenario Sessions viewer can reconnect the right servers when the user
      * opens the session later (live `readResource()` for MCP App widgets).
      */
     connectedServerNames?: string[];
@@ -125,10 +195,43 @@ const TERMINAL_ARTIFACT_FLUSH_TIMEOUT_MS = 30_000;
  * it just stops holding the caller. Rejections resolve to `fallback` too, so a
  * terminal path can't be broken by what it is only observing.
  */
-async function withDeadline<T>(
+/** Written for a human reading a failed session, not for a parser. */
+function formatBudgetMs(ms: number): string {
+  return ms % 60_000 === 0 ? `${ms / 60_000}m` : `${Math.round(ms / 1000)}s`;
+}
+
+function sessionTimeoutMessage(budgetMs: number, turn?: number): string {
+  const where = turn === undefined ? "" : ` (at turn ${turn + 1})`;
+  return `Session exceeded its ${formatBudgetMs(budgetMs)} budget${where}`;
+}
+
+function turnTimeoutMessage(budgetMs: number, turn?: number): string {
+  const where = turn === undefined ? "" : ` (turn ${turn + 1})`;
+  return `Turn exceeded its ${formatBudgetMs(budgetMs)} budget${where}`;
+}
+
+/**
+ * Rejects when `signal` aborts, and otherwise never settles.
+ *
+ * Its rejection carries the signal's REASON — the deadline's own stamped
+ * error when a clock fired — so the session's catch can tell a blown budget
+ * from a cancel rather than seeing a bare "aborted".
+ */
+function whenSessionAborted(signal: AbortSignal): Promise<never> {
+  return new Promise<never>((_resolve, reject) => {
+    const fail = () =>
+      reject(
+        signal.reason instanceof Error ? signal.reason : new Error("aborted"),
+      );
+    if (signal.aborted) fail();
+    else signal.addEventListener("abort", fail, { once: true });
+  });
+}
+
+async function settleWithin<T>(
   promise: Promise<T>,
   timeoutMs: number,
-  fallback: T
+  fallback: T,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -170,19 +273,20 @@ interface SessionResult {
   outcome: SessionOutcome;
   errorMessage?: string;
   errorReason?: string;
+  errorRefusal?: SpendRefusal;
 }
 
 // --- Shared synthetic host-session core ----------------------------------
 //
 // `runSyntheticHostSession` is the per-session host-turn machinery that is
-// IDENTICAL for the legacy chatbox session-simulation and the swarm
+// IDENTICAL for the legacy scenario session-simulation and the swarm
 // (journey-execution) runners: manager lifecycle + dispose, `resolveHostTools`
 // + cloud skills, `prepareChatV2`, the per-turn persona→`drainAssistantTurn`
 // loop, per-turn transcript persistence, browser/widget capture, empty-session
 // persistence, and failure classification. A surface adapter injects the three
-// pieces that differ between chatbox sim and swarm: (1) the persona-next-turn
+// pieces that differ between scenario sim and swarm: (1) the persona-next-turn
 // source, (2) the persistence attribution tags, and (3) the pinned host
-// runtime config (chatbox sim: chatbox runtime config; swarm: pinned snapshot
+// runtime config (scenario sim: scenario runtime config; swarm: pinned snapshot
 // host — NEVER a refetch of the live host config).
 
 /** Pinned host runtime a synthetic session executes against. */
@@ -190,10 +294,26 @@ export interface SyntheticHostRuntime {
   modelDefinition: ModelDefinition;
   systemPrompt: string;
   temperature?: number;
+  /**
+   * Tool-step cap for ONE assistant turn. Absent ⇒ the engine's own default
+   * (the Playground's 30). A synthetic persona turn resends every tool result
+   * of the turn on every step, so the cap bounds both wall clock and tokens;
+   * the swarm runner pins its own, the scenario runner keeps the default.
+   */
+  maxSteps?: number;
   requireToolApproval: boolean;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
   builtInToolIds?: string[];
+  /**
+   * What the hosted `browser_*` tools may do in this unattended run. A
+   * journey/swarm session never pauses, so approval does not exist here and a
+   * DECLARED policy is the only thing that can authorize them; absent or
+   * malformed ⇒ they are not advertised (fail-closed).
+   */
+  browserToolPolicy?: unknown;
+  /** Explicit profile pin for this unattended synthetic session. */
+  browserProfileId?: string;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   computer?: HostComputerResource;
@@ -247,39 +367,52 @@ export interface SyntheticHostRuntime {
   harnessSandboxBinding?: TrustedHarnessSandboxBinding;
   harness?: Harness;
   /**
-   * Chatbox-access version for the drain's `/stream/org/resolve` authorization
-   * and the chatbox-scoped widget capture. Set on the chatbox surface; the
+   * Scenario-access version for the drain's `/stream/org/resolve` authorization
+   * and the scenario-scoped widget capture. Set on the scenario surface; the
    * swarm surface uses project-member access and leaves it undefined.
    */
   accessVersion?: number;
   /**
-   * Chatbox id for chatbox-scoped access authorization on the drain. The swarm
+   * Scenario id for scenario-scoped access authorization on the drain. The swarm
    * surface authorizes via project membership and leaves it undefined.
    */
-  chatboxId?: string;
+  scenarioId?: string;
   /**
    * Authoritative pinned skills for an ENVIRONMENT-based swarm target
-   * (Project Environments, D3). `undefined` ⇒ legacy live-pool semantics
-   * (cloud skill tools / harness live fetch, unchanged). An array — possibly
-   * EMPTY, meaning deliberately skill-less — ⇒ skills come EXCLUSIVELY from
-   * these pinned artifacts: the emulated engine gets them via prepareChatV2
-   * `skillsSource` (never `cloudSkills`), and a harness turn gets them via the
-   * pinned harness path (never `fetchRuntimeSkills`, and NEVER through
+   * (Project Environments, D3). `undefined` ⇒ live-pool semantics: the project
+   * catalog as a resolved capability set, plus the connected servers' own
+   * skills. An array — possibly EMPTY, meaning deliberately skill-less — ⇒
+   * skills come EXCLUSIVELY from these pinned artifacts: the emulated engine
+   * gets them via prepareChatV2 `skillsSource`, and a harness turn gets them
+   * via the pinned harness path (never `fetchRuntimeSkills`, and NEVER through
    * prepareChatV2's pinned branch, which throws on harness).
    */
   pinnedSkills?: PinnedSkillArtifact[];
+  /**
+   * The Project Environment this target runs (`environmentRef.environmentId` on
+   * the pinned execution spec). Absent for a legacy host target, which has no
+   * environment and therefore no secret grant at all.
+   *
+   * Threaded for the harness path's EXTERNAL-ACCOUNT credential check: brokered
+   * project secrets are composed onto a box from its environment's
+   * `secretSelection`, so this is what separates "the run's environment grants
+   * this credential" from "some environment in the project does". Without it a
+   * bound-but-unselected secret reads as available and the attempt provisions a
+   * box that then fails vendor auth against a placeholder.
+   */
+  environmentId?: string;
 }
 
 /** Attribution tags stamped onto every transcript persist for this session. */
 export interface SyntheticPersistAttribution {
-  sourceType: "chatbox" | "swarm";
+  sourceType: "scenario" | "swarm";
   origin: ChatOrigin;
   surface?: "preview" | "share_link";
-  chatboxId?: string;
+  scenarioId?: string;
   journeyRunId?: string;
   hostId?: string;
   /** Opaque swarm execution-target id — echoed on chat ingestion so two
-   * same-host targets stay attributable. Absent for legacy/chatbox surfaces. */
+   * same-host targets stay attributable. Absent for legacy/scenario surfaces. */
   targetId?: string;
   personaId?: string;
   personaLabel?: string;
@@ -292,10 +425,17 @@ export interface SyntheticHostSessionAdapter {
   /** Deterministic chat session id — the claim key for swarm attempts. */
   chatSessionId: string;
   maxTurns: number;
+  /**
+   * The run's FROZEN execution budgets. A swarm session spends
+   * `unitTimeoutMs` on the whole conversation and `turnTimeoutMs` on each
+   * reply within it; `maxTurns` bounds the COUNT of turns, which is a
+   * different thing and never bounded their duration.
+   */
+  budgets: ResolvedExecutionBudgets;
   runtime: SyntheticHostRuntime;
   /**
    * Bearer used for the hosted drain + transcript persist. The persona driver
-   * and any surface-specific side-persistence (chatbox widget capture) hold
+   * and any surface-specific side-persistence (scenario widget capture) hold
    * their own auth tokens in their closures.
    */
   authHeader: string;
@@ -303,13 +443,13 @@ export interface SyntheticHostSessionAdapter {
   abortSignal?: AbortSignal;
   /** Surface persona driver: produce the next simulated user message. */
   nextPersonaTurn(
-    transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>
+    transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>,
   ): Promise<{ message: string; endSession: boolean }>;
-  /** Persistence attribution tags (chatbox vs swarm). */
+  /** Persistence attribution tags (scenario vs swarm). */
   persist: SyntheticPersistAttribution;
   /**
-   * Optional per-turn side-persistence — MCP App widget snapshots (the chatbox
-   * surface via chatbox-scoped auth; the swarm surface via the mutation's
+   * Optional per-turn side-persistence — MCP App widget snapshots (the scenario
+   * surface via scenario-scoped auth; the swarm surface via the mutation's
    * direct-session path). Browser-rendered artifacts do NOT go here: they ride
    * {@link browserArtifacts} instead, because their terminal flush has to be
    * ordered against browser teardown, which only this core can do.
@@ -341,13 +481,14 @@ export interface SyntheticHostSessionAdapter {
 }
 
 export async function runSyntheticHostSession(
-  adapter: SyntheticHostSessionAdapter
+  adapter: SyntheticHostSessionAdapter,
 ): Promise<SessionResult> {
   const {
     runId,
     projectId,
     chatSessionId,
     maxTurns,
+    budgets,
     runtime,
     authHeader,
     managerFactory,
@@ -362,10 +503,13 @@ export async function runSyntheticHostSession(
     modelDefinition,
     systemPrompt,
     temperature,
+    maxSteps,
     requireToolApproval,
     respectToolVisibility,
     progressiveToolDiscovery,
     builtInToolIds,
+    browserToolPolicy,
+    browserProfileId,
     modelVisibleMcpToolResults,
     mcpToolResultImageRendering,
     computer,
@@ -373,7 +517,8 @@ export async function runSyntheticHostSession(
     sandboxBinding,
     harnessSandboxBinding,
     accessVersion,
-    chatboxId,
+    scenarioId,
+    environmentId,
   } = runtime;
 
   // FAIL CLOSED before anything is built (B-isolation F4). `runHarnessTurn`
@@ -384,7 +529,7 @@ export async function runSyntheticHostSession(
   // B-isolation exists to remove.
   //
   // The SURFACE decides, and passes its decision in — this core is shared with
-  // the chatbox simulation, where a harness on the acting member's own computer
+  // the scenario simulation, where a harness on the acting member's own computer
   // is exactly right. Deliberately NOT re-derived here as "swarm + no binding":
   // the swarm runner knows whether the ephemeral regime is in force, and a
   // rule here that assumed it would refuse every harness on the legacy path
@@ -406,6 +551,37 @@ export async function runSyntheticHostSession(
   }
 
   const sessionStartedAt = Date.now();
+  // The session's clock, nested under whatever the caller passed (the run's
+  // stop signal, composed with cancel and the spend cap). `withDeadline`
+  // COMPOSES rather than replaces, so everything downstream still sees one
+  // signal and it fires on whichever bound trips first.
+  //
+  // Declared before the `try` because the `finally` disposes it, and because
+  // `sessionSignal` is what the turn loop reads instead of the raw
+  // `abortSignal` — reading the raw one would miss this session's own budget.
+  const sessionDeadline = withDeadline(
+    abortSignal,
+    budgets.unitTimeoutMs,
+    "session",
+  );
+  const sessionSignal = sessionDeadline.signal;
+  /** The turn currently in flight. Exactly one is armed at a time. */
+  let turnDeadline: DeadlineHandle | undefined;
+  const admissionBudget = new AdmissionWaitBudget();
+  const admissionOptions = {
+    budget: admissionBudget,
+    signal: sessionSignal,
+    onWait: () => {
+      turnDeadline?.dispose();
+      return () => {
+        turnDeadline = withDeadline(
+          sessionSignal,
+          budgets.turnTimeoutMs,
+          "turn",
+        );
+      };
+    },
+  };
   let manager: MCPClientManager | undefined;
   let dispose: (() => Promise<void>) | undefined;
   // Browser-rendered MCP App pipeline (same machinery as eval iterations):
@@ -430,7 +606,7 @@ export async function runSyntheticHostSession(
     | Parameters<typeof persistChatSessionToConvex>[0]["resumeConfig"]
     | undefined;
   // Captured from the first drained turn so per-session persist calls stamp the
-  // correct modelSource on chatSessions. The chatbox/target modelId is pinned at
+  // correct modelSource on chatSessions. The scenario/target modelId is pinned at
   // start, so this is stable across turns.
   let sessionModelSource: SyntheticModelSource | undefined;
   // The last turn the browser context was stamped with — the fallback bucket for
@@ -442,9 +618,10 @@ export async function runSyntheticHostSession(
    *
    * The flag records "the write was ATTEMPTED", not "the row exists":
    * `persistChatSessionToConvex` is fail-soft — an HTTP error, a timeout, or a
-   * missing `CONVEX_HTTP_URL`/auth header is logged and it returns normally. So a
-   * silently-failed write is not re-attempted from the terminal path. It only
-   * re-attempts a write that THREW. The outbox absorbs the rest:
+   * missing `CONVEX_HTTP_URL`/auth header returns a non-`saved` outcome rather
+   * than throwing (it is logged, and now also reported through the returned
+   * outcome). So a failed write is not re-attempted from the terminal path. It
+   * only re-attempts a write that THREW. The outbox absorbs the rest:
    * `recordBrowserArtifacts` returns `null` while the row is missing, and the
    * batch stays held.
    *
@@ -465,7 +642,7 @@ export async function runSyntheticHostSession(
         modelDefinition,
         projectId,
         authHeader,
-        chatboxId,
+        scenarioId,
         accessVersion,
         serverIds: selectedServerIds,
       });
@@ -473,7 +650,10 @@ export async function runSyntheticHostSession(
     } catch {
       emptySessionModelSource = "byok";
     }
-    await persistChatSessionToConvex({
+    // Headless: no stream to carry a receipt, but the outcome is still worth
+    // seeing — a synthetic run whose transcripts never landed used to look
+    // identical to one that saved cleanly.
+    const emptySessionPersist = await persistChatSessionToConvex({
       chatSessionId,
       modelId: String(modelDefinition.id),
       modelSource: emptySessionModelSource,
@@ -482,7 +662,7 @@ export async function runSyntheticHostSession(
       sourceType: persist.sourceType,
       origin: persist.origin,
       ...(persist.surface ? { surface: persist.surface } : {}),
-      ...(persist.chatboxId ? { chatboxId: persist.chatboxId } : {}),
+      ...(persist.scenarioId ? { scenarioId: persist.scenarioId } : {}),
       sessionMessages: messageHistory,
       startedAt: sessionStartedAt,
       lastActivityAt: Date.now(),
@@ -495,6 +675,11 @@ export async function runSyntheticHostSession(
       ...(persist.targetId ? { targetId: persist.targetId } : {}),
       resumeConfig,
     });
+    warnIfSimulationPersistNotSaved(
+      emptySessionPersist,
+      "empty-session",
+      chatSessionId,
+    );
     sessionRowEnsured = true;
   };
 
@@ -503,7 +688,24 @@ export async function runSyntheticHostSession(
   let messageHistory: ModelMessage[] = [];
 
   try {
-    const built = await managerFactory();
+    // Raced against the session clock, because the factory takes no signal:
+    // it awaits plugin re-gating, a bearer mint and `createAuthorizedManager`,
+    // and none of them observes `sessionSignal`. Without the race a factory
+    // that hangs parks execution here forever — the deadline fires, aborts the
+    // signal, and nothing is left running to notice, so the session never
+    // reaches the terminal timeout path the clock exists to provide.
+    const built = await Promise.race([
+      // A factory that settles LATE still owns a live manager and a browser
+      // context. Nothing downstream will dispose it, because the session has
+      // already unwound — so the loser of the race tears down its own work.
+      managerFactory().then((value) => {
+        if (sessionSignal.aborted) {
+          void Promise.resolve(value.dispose()).catch(() => undefined);
+        }
+        return value;
+      }),
+      whenSessionAborted(sessionSignal),
+    ]);
     manager = built.manager;
     dispose = built.dispose;
     selectedServerIds = built.connectedServerIds;
@@ -511,7 +713,7 @@ export async function runSyntheticHostSession(
     // Servers the session may USE but must not be told to RECONNECT later.
     const nonResumable = new Set(built.nonResumableServerIds ?? []);
 
-    // Mirror chat-v2's direct-chat resumeConfig shape so the Chatbox Sessions
+    // Mirror chat-v2's direct-chat resumeConfig shape so the Scenario Sessions
     // viewer can reconnect the same servers when the user opens this session
     // later. Without this, `readResource()` for MCP App widgets fails at
     // replay time and `create_view` collapses to a tool pill.
@@ -534,30 +736,101 @@ export async function runSyntheticHostSession(
         Array.isArray(selectedServerNames) &&
         selectedServerNames.length === selectedServerIds.length
           ? selectedServerNames.filter(
-              (_, i) => !nonResumable.has(selectedServerIds[i]!)
+              (_, i) => !nonResumable.has(selectedServerIds[i]!),
             )
           : selectedServerIds.filter((id) => !nonResumable.has(id)),
     };
 
-    // Built-in tools from the chatbox host config (e.g. web_search) resolve
+    // Built-in tools from the scenario host config (e.g. web_search) resolve
     // the same way a real visitor's chat-v2 turn would: billed via Convex
     // against this project, namespaced under the synthetic session id.
+    const browserApprovalDelivery = browserApprovalDeliveryFor(
+      browserToolPolicy,
+      { source: "sessionSimulation" },
+    );
+    // WHAT THE RUN'S OWN PAGE OFFERS, from the box this session provisioned.
+    // Read-only and fail-empty, and skipped entirely unless this session
+    // declared a browser policy AND brought a desktop box — a journey session
+    // with neither must not pay a daemon round trip to learn it has no browser.
+    // What this run advertised from the page, for the turn trace. A synthetic
+    // session's transcript is read back like any other, and a card in it wants
+    // the same answer: which tool on which page, as it was then.
+    let advertisedPageTools: MintedDeclaredTool[] = [];
+    const pageToolsSnapshot = pageToolsSnapshotFrom(
+      sandboxBinding?.runtimeKind === "desktop-browser" &&
+        browserApprovalDelivery
+        ? await peekPageToolsForChatTurn({
+            builtInToolIds,
+            browserToolId: BROWSER_BUILT_IN_TOOL_ID,
+            firstClass: webmcpPageToolsMode() === "first_class",
+            // A harness takes its toolset as a constructor argument and never
+            // re-reads it, so page tools it could not use are latency spent on
+            // definitions nothing will call.
+            isHarnessTurn: Boolean(harness),
+            hasV1PageTools: false,
+            engine: "hosted",
+            projectId,
+            bearer: authHeader,
+            sandboxRowId: sandboxBinding.sandboxRowId,
+          })
+        : undefined,
+    );
+    // Secrets the browser may type. They are substituted inside the daemon and
+    // never become env vars (see the `runtimeSecrets` note below).
+    const browserSecrets = browserApprovalDelivery
+      ? await resolveBrowserSecrets({
+          bearer: authHeader,
+          projectId,
+          ...(environmentId ? { environmentId } : {}),
+          chatSessionId,
+        })
+      : [];
     const builtInTools = resolveHostTools(
       { builtInToolIds, computer },
       {
         authHeader,
         projectId,
         chatSessionId,
-        isChatboxSession: true,
+        ...(browserSecrets.length > 0
+          ? {
+              browserSecrets,
+              onBrowserSecretDelivered: () => {
+                void markRuntimeSecretsDelivered(authHeader, {
+                  projectId,
+                  ...(environmentId ? { environmentId } : {}),
+                  secretCount: browserSecrets.length,
+                });
+              },
+            }
+          : {}),
+        isScenarioSession: true,
         // Journey (swarm) surface: WITHOUT a sandbox binding the resolver
         // suppresses computer-backed tools here, because every session in a run
         // would otherwise share the launcher's one project computer. See the
         // `bash` gate in registry.ts.
         isJourneySession: persist.sourceType === "swarm",
+        // Unattended: the run's declared policy is the only authorization
+        // browser tools can have here, since nothing can pause to ask.
+        ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
+        ...(browserProfileId ? { browserProfileId } : {}),
+        browserSessionScope: {
+          kind:
+            persist.sourceType === "swarm" ? "swarm_attempt" : "eval_iteration",
+          sessionId: chatSessionId,
+        },
+        // A swarm runs many sessions per run, so tag rows with both ids.
+        browserCorrelation: {
+          chatSessionId,
+          ...(persist.journeyRunId ? { swarmId: persist.journeyRunId } : {}),
+        },
         // …and WITH one, bash binds to this session's own disposable box. The
         // binding rides `ctx`, never `config`, so it cannot be forged from the
         // snapshot this runtime was built from.
         ...(sandboxBinding ? { sandboxBinding } : {}),
+        ...(pageToolsSnapshot ? { browserPageTools: pageToolsSnapshot } : {}),
+        onBrowserPageTools: ({ minted }) => {
+          advertisedPageTools = minted;
+        },
         requireToolApproval,
         // Surface the suppression in the run instead of letting the tool go
         // quietly missing (which reads as a host-config bug).
@@ -583,25 +856,26 @@ export async function runSyntheticHostSession(
             message,
           });
         },
-      }
+      },
     );
 
     // Cloud Skills parity with a real chat-v2 visitor: a synthetic session is
     // always member-initiated (the route authenticates the generator), so the
     // guest gate never trips here. Skills are delivered the same two ways chat
     // does — natively via the harness `skills` param when the turn runs the
-    // real Claude Code runtime, or as the emulated `listSkills`/`loadSkill`
-    // tools otherwise. `shouldEnableCloudSkillTools` returns false on the
+    // real Claude Code runtime, or as the emulated prompt-inlined catalog +
+    // `loadSkill` otherwise. `shouldEnableCloudSkillTools` returns false on the
     // harness path (it delivers skills itself), so this only wires the emulated
-    // tools, mirroring `web/chat-v2.ts`.
+    // path, mirroring `web/chat-v2.ts`. Zero skills → no tools/stanza.
     //
-    // BUT skip skills entirely when the chatbox requires tool approval. A
+    // BUT skip skills entirely when the scenario requires tool approval. A
     // synthetic visitor is headless and can't grant approval: the local-runtime
     // BYOK path fail-closes on ANY non-empty tool set when approval is on (see
     // `drainAssistantTurn` below), and the cloud/MCPJam paths auto-deny every
-    // call — so advertising the `listSkills`/`loadSkill` meta-tools (always 2
-    // tools, even for a project with no skills) would turn an otherwise-toolless
-    // approval simulation into one that fails every session for no benefit.
+    // call — so advertising `loadSkill` on a project that has skills would turn
+    // an otherwise-toolless approval simulation into one that fails every
+    // session for no benefit. The skip stays correct even though empty
+    // projects no longer advertise phantom tools.
     const pinnedSkills = runtime.pinnedSkills;
     const cloudSkillsEnabled =
       pinnedSkills === undefined &&
@@ -620,15 +894,59 @@ export async function runSyntheticHostSession(
     // gets frozen pinned tools via `skillsSource` — NEVER the live cloud-skill
     // tools. `kind: "none"` covers (a) a deliberately skill-less target, (b) the
     // approval-mode no-skills semantics (a headless visitor can't approve, same
-    // rationale as the cloudSkills gate above), and (c) HARNESS turns —
+    // rationale as the live-catalog gate above), and (c) HARNESS turns —
     // prepareChatV2 THROWS on harness+pinned, so a harness target's pinned
     // artifacts ride `pinnedHarnessSkills` on the drain instead.
+    // The live arm, for a run with no pins: the project pool as a capability
+    // set. Previously this was "pass nothing and let the orchestrator fall
+    // through to its cloud branch"; that fallback is gone, so the source is
+    // now stated here.
+    //
+    // A catalog failure degrades to a live set with no PROJECT skills — never
+    // to `{ kind: "none" }`. The source also carries `composeLiveServerSkills`,
+    // so collapsing it would take the connected servers' SEP-2640 skills down
+    // with the project's, and those never failed: losing skills we could not
+    // fetch is a degradation, losing skills we could is a bug. The failure is
+    // recorded here rather than read back off `prepared`, because the fetch now
+    // happens on this side of `prepareChatV2` and the orchestrator cannot know
+    // how it went.
+    let liveCapabilities: EffectiveCapabilitySet | undefined;
+    let skillsFetchFailed: SkillsFetchFailure | undefined;
+    // `!harness` explicitly, not just via `cloudSkillsEnabled`: that gate only
+    // suppresses a harness on a hosted-catalog model, so a harness on a BYOK
+    // model would otherwise build a live set and hit the disjointness refusal.
+    if (!harness && cloudSkillsEnabled && authHeader && projectId) {
+      const startedAt = Date.now();
+      let standaloneSkills: RuntimeStandaloneSkill[] = [];
+      try {
+        standaloneSkills = await listCloudRuntimeSkills({
+          authHeader,
+          projectId,
+        });
+      } catch (error) {
+        skillsFetchFailed = skillsFailureFrom(error, Date.now() - startedAt);
+      }
+      liveCapabilities = buildLiveEffectiveCapabilities({ standaloneSkills });
+    }
+
     const skillsSource:
       | { kind: "pinned"; skills: PinnableSkill[] }
       | { kind: "none" }
-      | undefined =
+      | {
+          kind: "resolved";
+          capabilities: EffectiveCapabilitySet;
+          composeLiveServerSkills?: boolean;
+        } =
       pinnedSkills === undefined
-        ? undefined
+        ? liveCapabilities
+          ? {
+              kind: "resolved",
+              capabilities: liveCapabilities,
+              // Live surface: server skills come from the connected servers,
+              // preserving what the fallthrough arm used to compose.
+              composeLiveServerSkills: true,
+            }
+          : { kind: "none" }
         : harness || requireToolApproval || pinnedSkills.length === 0
         ? { kind: "none" }
         : {
@@ -639,7 +957,7 @@ export async function runSyntheticHostSession(
                 description: a.description,
                 content: a.content,
                 contentHash: a.contentHash,
-              })
+              }),
             ),
           };
 
@@ -661,16 +979,31 @@ export async function runSyntheticHostSession(
           }
         : {}),
       ...(builtInTools ? { builtInTools } : {}),
-      ...(skillsSource ? { skillsSource } : {}),
-      ...(cloudSkillsEnabled ? { cloudSkills: { authHeader, projectId } } : {}),
+      skillsSource,
     });
+
+    if (skillsFetchFailed) {
+      logger.warn("[sessionSimulation.runner] skills catalog fetch failed", {
+        runId,
+        chatSessionId,
+        errorClass: skillsFetchFailed.errorClass,
+        status: skillsFetchFailed.status,
+        latencyMs: skillsFetchFailed.latencyMs,
+      });
+      emit?.({
+        type: "session_notice",
+        kind: "tool_suppressed",
+        toolId: "skills",
+        message: skillsFetchFailed.message,
+      });
+    }
 
     // One browser context per session: renders MCP App tool results in the
     // headless harness (render observations for every model) and, for assistant
     // models with vision + tool calling, adds the `computer` / `finish_widget` tools so the
     // simulated assistant can interact with rendered widgets (interaction
     // steps). `injectOpenAiCompat` is omitted to match the snapshot capture
-    // below — the chatbox runtime config doesn't carry the flag.
+    // below — the scenario runtime config doesn't carry the flag.
     browser = await createBrowserSessionContext({
       model: String(modelDefinition.id),
       // Session simulation is the ONE surface that opts into Computer Use: its
@@ -704,18 +1037,57 @@ export async function runSyntheticHostSession(
     emit?.({ type: "session_start" });
 
     for (let turn = 0; turn < maxTurns; turn++) {
-      if (abortSignal?.aborted) {
+      if (sessionSignal.aborted) {
+        // The session's OWN clock, told apart from a cancel the same way the
+        // eval runner does it: `firedClock()` reports only this handle's bound.
+        const sessionTimedOut = sessionDeadline.firedClock() === "session";
+        const errorMessage = sessionTimedOut
+          ? sessionTimeoutMessage(budgets.unitTimeoutMs, turn)
+          : "aborted";
         emit?.({
           type: "session_complete",
           status: "failed",
-          errorMessage: "aborted",
+          errorMessage,
         });
-        return { outcome: "failed" };
+        return {
+          outcome: "failed",
+          errorMessage,
+          ...(sessionTimedOut ? { errorReason: "session_timeout" } : {}),
+        };
       }
 
-      const next = await nextPersonaTurn(lastTranscript);
+      // One clock per reply, nested under the session's. Disposed at the top
+      // of the next iteration and in this function's `finally`, so exactly one
+      // is ever armed. Without it a single wedged turn holds the session until
+      // the SESSION budget expires — the whole remaining conversation spent on
+      // a reply that was never coming.
+      turnDeadline?.dispose();
+      turnDeadline = withDeadline(sessionSignal, budgets.turnTimeoutMs, "turn");
 
-      if (next.endSession) break;
+      const next = await withAdmissionRetry(
+        () => nextPersonaTurn(lastTranscript),
+        admissionOptions,
+      );
+
+      if (next.endSession) {
+        if (turn === 0) {
+          throw Object.assign(
+            new Error(
+              "The simulated user ended the session before sending the first message. The assistant was not tested. Re-run this attempt."
+            ),
+            { details: { reason: "persona_ended_before_start" } }
+          );
+        }
+        break;
+      }
+      if (!next.message.trim()) {
+        throw Object.assign(
+          new Error(
+            "The simulated user returned an empty message. No assistant turn was started for that message. Re-run this attempt."
+          ),
+          { details: { reason: "persona_empty_message" } }
+        );
+      }
 
       messageHistory.push({
         role: "user",
@@ -737,153 +1109,196 @@ export async function runSyntheticHostSession(
         prompt: next.message,
       });
 
+      let failedTurn: RecordedAssistantTurnError | undefined;
       const {
         history: updatedHistory,
         turnTrace,
         modelSource: turnModelSource,
         harnessSessionCommit,
-      } = await drainAssistantTurn({
-        messages: messageHistory,
-        modelId: String(modelDefinition.id),
-        modelDefinition,
-        chatSessionId,
-        // Tag the engine-facing turn (usage rows) with THIS surface's source:
-        // "chatbox" for the session-simulation surface, "swarm" for the
-        // journey-execution runner. The persist attribution already carries
-        // this; forwarding it keeps hosted + local-BYOK usage rows correctly
-        // sourced instead of hardcoding every journey turn as "chatbox".
-        sourceType: persist.sourceType,
-        systemPrompt: prepared.enhancedSystemPrompt,
-        temperature: prepared.resolvedTemperature,
-        // `computer` / `finish_widget` merge into the advertised set; the
-        // prepareAdvertisedTools hook hides them until a widget is mounted.
-        tools: { ...prepared.allTools, ...browser.computerWidgetTools },
-        hooks: {
-          onToolCall: (event) => {
-            browser!.noteToolCallInput(event);
-            const args =
-              event.input &&
-              typeof event.input === "object" &&
-              !Array.isArray(event.input)
-                ? (event.input as Record<string, unknown>)
-                : { value: event.input };
-            emit?.({
-              type: "tool_call",
-              toolName: event.toolName,
-              toolCallId: event.toolCallId,
-              args,
-            });
-          },
-          onToolResult: (event) => {
-            void browser!.handleEngineToolResult(event);
-            emit?.({
-              type: "tool_result",
-              toolCallId: event.toolCallId,
-              result: event.output,
-            });
-          },
-          ...(browser.prepareAdvertisedTools
-            ? { prepareAdvertisedTools: browser.prepareAdvertisedTools }
-            : {}),
-          onToolResultChunk: async (chunk) => {
-            await browser!.handleDirectToolResultChunk(chunk);
-            emit?.({
-              type: "tool_result",
-              toolCallId: chunk.toolCallId,
-              result: chunk.output,
-            });
-          },
-          onToolCallChunk: (chunk) => {
-            emit?.({
-              type: "tool_call",
-              toolName: chunk.toolName,
-              toolCallId: chunk.toolCallId,
-              args: chunk.input,
-            });
-          },
-          ...(emit
-            ? {
-                onLiveTextDelta: (content: string) => {
-                  emit({ type: "text_delta", content });
-                },
-                onStepFinish: (event: {
-                  stepIndex: number;
-                  turnUsage?: {
-                    inputTokens?: number;
-                    outputTokens?: number;
-                  };
-                }) => {
-                  emit({
-                    type: "step_finish",
-                    stepNumber: event.stepIndex,
-                    ...(event.turnUsage
-                      ? {
-                          usage: {
-                            inputTokens: event.turnUsage.inputTokens ?? 0,
-                            outputTokens: event.turnUsage.outputTokens ?? 0,
-                          },
-                        }
-                      : {}),
-                  });
-                },
-              }
-            : {}),
-        },
-        progressivePlan: prepared.progressivePlan,
-        discoveryState: prepared.discoveryState,
-        mcpClientManager: manager,
-        selectedServers: selectedServerIds,
-        requireToolApproval,
-        ...(harness ? { harness } : {}),
-        // Harness MCP-proxy plane (harness hosts with MCP servers) + swarm
-        // continuity identity (`swarm-chat` owner lane). `harnessMcpProxy` is
-        // resolved once above; `journeyRunId`/`hostId` are the swarm run + pinned
-        // host. All three are inert for the emulated engine / non-swarm surfaces.
-        ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
-        // Pinned harness skills (env-based swarm target running a real
-        // harness): the harness turn skips the live skills fetch and delivers
-        // exactly these artifacts (skillsHash derives from their fingerprints).
-        // Passed even when EMPTY — an empty authoritative set means the
-        // harness must run skill-less, not fall back to the live pool.
-        ...(harness && pinnedSkills !== undefined
-          ? { pinnedHarnessSkills: pinnedSkills }
-          : {}),
-        // The attempt's own disposable box for the HARNESS turn. Only meaningful
-        // when a harness is selected — the emulated engine's shell binds through
-        // `resolveHostTools` above instead.
-        ...(harness && harnessSandboxBinding ? { harnessSandboxBinding } : {}),
-        // Server-executed built-ins (`web_search`, …) for the HARNESS turn.
-        // The emulated engine already receives them merged into `tools` via
-        // prepareChatV2's `allTools`; the harness reads them off this separate
-        // option instead, because it hands them to the runtime as specs and
-        // executes them here, while MCP-server tools go via `.mcp.json`. Only
-        // for a harness target — passing them on the emulated path would
-        // duplicate what `allTools` already carries.
-        ...(harness && builtInTools && Object.keys(builtInTools).length > 0
-          ? { builtInTools }
-          : {}),
-        ...(persist.hostId ? { hostId: persist.hostId } : {}),
-        // Chatbox surface only. The chatbox runtime-config redeem returns an
-        // accessVersion that /stream/org/resolve uses to authorize the actor
-        // against the versioned chatbox; threading it (instead of undefined)
-        // matches what real-visitor synthetic-equivalent chats send. The swarm
-        // surface authorizes via project membership and leaves both undefined.
-        ...(chatboxId ? { chatboxId } : {}),
-        accessVersion,
-        projectId,
-        authHeader,
-        abortSignal,
-        // Threaded into the per-step /stream (or /stream/org) body and the
-        // /stream/org/local-usage writeback so the backend BYOK and JAM-paid
-        // writers can stamp the run id onto llmUsageRecord for per-run spend
-        // attribution.
-        ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
+      } = await withAdmissionRetry(
+        () =>
+          drainAssistantTurn({
+            messages: messageHistory,
+            modelId: String(modelDefinition.id),
+            modelDefinition,
+            chatSessionId,
+            // Tag the engine-facing turn (usage rows) with THIS surface's source:
+            // "scenario" for the session-simulation surface, "swarm" for the
+            // journey-execution runner. The persist attribution already carries
+            // this; forwarding it keeps hosted + local-BYOK usage rows correctly
+            // sourced instead of hardcoding every journey turn as "scenario".
+            sourceType: persist.sourceType,
+            systemPrompt: prepared.enhancedSystemPrompt,
+            temperature: prepared.resolvedTemperature,
+            ...(maxSteps !== undefined ? { maxSteps } : {}),
+            // `computer` / `finish_widget` merge into the advertised set; the
+            // prepareAdvertisedTools hook hides them until a widget is mounted.
+            tools: { ...prepared.allTools, ...browser!.computerWidgetTools },
+            hooks: {
+              onToolCall: (event) => {
+                browser!.noteToolCallInput(event);
+                const args =
+                  event.input &&
+                  typeof event.input === "object" &&
+                  !Array.isArray(event.input)
+                    ? (event.input as Record<string, unknown>)
+                    : { value: event.input };
+                emit?.({
+                  type: "tool_call",
+                  toolName: event.toolName,
+                  toolCallId: event.toolCallId,
+                  args,
+                });
+              },
+              onToolResult: (event) => {
+                void browser!.handleEngineToolResult(event);
+                emit?.({
+                  type: "tool_result",
+                  toolCallId: event.toolCallId,
+                  result: event.output,
+                });
+              },
+              ...(browser!.prepareAdvertisedTools
+                ? { prepareAdvertisedTools: browser!.prepareAdvertisedTools }
+                : {}),
+              onToolResultChunk: async (chunk) => {
+                await browser!.handleDirectToolResultChunk(chunk);
+                emit?.({
+                  type: "tool_result",
+                  toolCallId: chunk.toolCallId,
+                  result: chunk.output,
+                });
+              },
+              onToolCallChunk: (chunk) => {
+                emit?.({
+                  type: "tool_call",
+                  toolName: chunk.toolName,
+                  toolCallId: chunk.toolCallId,
+                  args: chunk.input,
+                });
+              },
+              ...(emit
+                ? {
+                    onLiveTextDelta: (content: string) => {
+                      emit({ type: "text_delta", content });
+                    },
+                    onStepFinish: (event: {
+                      stepIndex: number;
+                      turnUsage?: {
+                        inputTokens?: number;
+                        outputTokens?: number;
+                      };
+                    }) => {
+                      emit({
+                        type: "step_finish",
+                        stepNumber: event.stepIndex,
+                        ...(event.turnUsage
+                          ? {
+                              usage: {
+                                inputTokens: event.turnUsage.inputTokens ?? 0,
+                                outputTokens: event.turnUsage.outputTokens ?? 0,
+                              },
+                            }
+                          : {}),
+                      });
+                    },
+                  }
+                : {}),
+            },
+            progressivePlan: prepared.progressivePlan,
+            discoveryState: prepared.discoveryState,
+            mcpClientManager: manager!,
+            selectedServers: selectedServerIds,
+            requireToolApproval,
+            ...(harness ? { harness } : {}),
+            // Harness MCP-proxy plane (harness hosts with MCP servers) + swarm
+            // continuity identity (`swarm-chat` owner lane). `harnessMcpProxy` is
+            // resolved once above; `journeyRunId`/`hostId` are the swarm run + pinned
+            // host. All three are inert for the emulated engine / non-swarm surfaces.
+            ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+            // Pinned harness skills (env-based swarm target running a real
+            // harness): the harness turn skips the live skills fetch and delivers
+            // exactly these artifacts (skillsHash derives from their fingerprints).
+            // Passed even when EMPTY — an empty authoritative set means the
+            // harness must run skill-less, not fall back to the live pool.
+            ...(harness && pinnedSkills !== undefined
+              ? { pinnedHarnessSkills: pinnedSkills }
+              : {}),
+            // The attempt's own disposable box for the HARNESS turn. Only meaningful
+            // when a harness is selected — the emulated engine's shell binds through
+            // `resolveHostTools` above instead.
+            ...(harness && harnessSandboxBinding
+              ? { harnessSandboxBinding }
+              : {}),
+            // The target's Project Environment — the GRANT BOUNDARY the harness
+            // turn checks a BROKERED external-account credential against. Harness
+            // only: the emulated engine resolves no such credential, and this
+            // runner delivers no materialized secrets on either path (see the
+            // `runtimeSecrets` contract on `MCPJamHandlerOptions`), so brokered
+            // delivery is the only one a swarm attempt can use.
+            ...(harness && environmentId ? { environmentId } : {}),
+            // Server-executed built-ins (`web_search`, …) for the HARNESS turn.
+            // The emulated engine already receives them merged into `tools` via
+            // prepareChatV2's `allTools`; the harness reads them off this separate
+            // option instead, because it hands them to the runtime as specs and
+            // executes them here, while MCP-server tools go via `.mcp.json`. Only
+            // for a harness target — passing them on the emulated path would
+            // duplicate what `allTools` already carries.
+            ...(harness && builtInTools && Object.keys(builtInTools).length > 0
+              ? { builtInTools }
+              : {}),
+            ...(persist.hostId ? { hostId: persist.hostId } : {}),
+            // Scenario surface only. The scenario runtime-config redeem returns an
+            // accessVersion that /stream/org/resolve uses to authorize the actor
+            // against the versioned scenario; threading it (instead of undefined)
+            // matches what real-visitor synthetic-equivalent chats send. The swarm
+            // surface authorizes via project membership and leaves both undefined.
+            ...(scenarioId ? { scenarioId } : {}),
+            accessVersion,
+            projectId,
+            authHeader,
+            abortSignal: turnDeadline!.signal,
+            // Threaded into the per-step /stream (or /stream/org) body and the
+            // /stream/org/local-usage writeback so the backend BYOK and JAM-paid
+            // writers can stamp the run id onto llmUsageRecord for per-run spend
+            // attribution.
+            ...(persist.journeyRunId
+              ? { journeyRunId: persist.journeyRunId }
+              : {}),
+          }),
+        admissionOptions,
+      ).catch((error: unknown) => {
+        if (!(error instanceof RecordedAssistantTurnError)) throw error;
+        // Like evals, save the failed turn's evidence before terminating the
+        // session. Do not ask the persona to react to an absent reply.
+        failedTurn = error;
+        return error.turn;
       });
+
+      if (turnDeadline.firedClock() === "turn") {
+        // Ends the SESSION, not just the turn — and that asymmetry with the
+        // eval runner is deliberate. Eval prompt turns are independently
+        // authored and independently graded, so the next one still means
+        // something. A swarm session is one conversation: turn N+1 is the
+        // persona reacting to turn N's reply, and there is no reply to react
+        // to. Carrying on would feed the persona a hole in the transcript.
+        const errorMessage = turnTimeoutMessage(budgets.turnTimeoutMs, turn);
+        emit?.({
+          type: "session_complete",
+          status: "failed",
+          errorMessage,
+        });
+        return {
+          outcome: "failed",
+          errorMessage,
+          errorReason: "turn_timeout",
+        };
+      }
 
       emit?.({ type: "turn_finish", turnIndex: turn });
       // Track the first turn's modelSource for the per-session persist
       // calls. modelSource is stable across turns within a session because
-      // chatbox modelId is pinned by `fetchChatboxRuntimeConfig` at start.
+      // scenario modelId is pinned by `fetchScenarioRuntimeConfig` at start.
       if (sessionModelSource === undefined) {
         sessionModelSource = turnModelSource;
       }
@@ -893,6 +1308,7 @@ export async function runSyntheticHostSession(
       lastTranscript.push({ role: "assistant", content: assistantText });
 
       if (!turnTrace) {
+        if (failedTurn) throw failedTurn;
         // No-trace turns skip transcript persistence (today only the aborted
         // local-BYOK path reaches here — failed turns throw above). Their
         // browser artifacts must still leave the context's "new" window now: a
@@ -929,14 +1345,14 @@ export async function runSyntheticHostSession(
             await exportConnectedServerToolSnapshotForEvalAuthoring(
               liveManager,
               knownIds,
-              { logPrefix: "sessionSimulation.persist" }
+              { logPrefix: "sessionSimulation.persist" },
             );
         }
       } catch {
         toolSnapshot = undefined;
       }
 
-      await persistChatSessionToConvex({
+      const turnPersist = await persistChatSessionToConvex({
         chatSessionId,
         modelId: String(modelDefinition.id),
         modelSource: sessionModelSource ?? "mcpjam",
@@ -948,7 +1364,7 @@ export async function runSyntheticHostSession(
         // filters should combine `origin` with `synthetic !== true`.
         origin: persist.origin,
         ...(persist.surface ? { surface: persist.surface } : {}),
-        ...(persist.chatboxId ? { chatboxId: persist.chatboxId } : {}),
+        ...(persist.scenarioId ? { scenarioId: persist.scenarioId } : {}),
         sessionMessages: messageHistory,
         startedAt: sessionStartedAt,
         lastActivityAt: Date.now(),
@@ -959,7 +1375,18 @@ export async function runSyntheticHostSession(
         ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
         ...(persist.hostId ? { hostId: persist.hostId } : {}),
         ...(persist.targetId ? { targetId: persist.targetId } : {}),
-        turnTrace,
+        // An EMPTY array is meaningful and is written: "this turn advertised no
+        // page tools" is a different fact from "we do not know", and only the
+        // second is what an absent field means.
+        turnTrace: pageToolsSnapshot
+          ? {
+              ...turnTrace,
+              pageToolsAtTurn: toMintedPageToolRecords(
+                advertisedPageTools,
+                pageToolsSnapshot,
+              ),
+            }
+          : turnTrace,
         resumeConfig,
         ...(toolSnapshot ? { toolSnapshot } : {}),
         // §3: ride this turn's harness resume-state commit into /ingest-chat
@@ -970,6 +1397,7 @@ export async function runSyntheticHostSession(
         // attribution above. Undefined for the emulated engine.
         ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
       });
+      warnIfSimulationPersistNotSaved(turnPersist, "turn", chatSessionId);
       anyTurnPersisted = true;
 
       // MCP App widget snapshots so the Sessions viewer renders the actual
@@ -1005,28 +1433,59 @@ export async function runSyntheticHostSession(
               chatSessionId,
               promptIndex: turn,
               error: err instanceof Error ? err.message : String(err),
-            }
+            },
           );
         }
       }
+      if (failedTurn) throw failedTurn;
     }
 
-    // Session ended before any assistant turn completed (persona returned
-    // endSession on turn 0, or every turn aborted). Persist once with no trace
-    // so the chatSessions row exists and the run summary lines up. Kept on the
-    // success path (rather than deferred to the terminal) so a failure to write
-    // it still fails the session, as it always has.
+    // The success path must have exercised the assistant. In particular, an
+    // invalid zero-turn budget must not turn an empty simulation into success.
+    if (messageHistory.length === 0) {
+      throw Object.assign(
+        new Error(
+          "The simulation ended without starting a conversation. The assistant was not tested."
+        ),
+        { details: { reason: "simulation_no_conversation" } }
+      );
+    }
     await ensureSessionPersisted();
 
     emit?.({ type: "session_complete", status: "succeeded" });
     return { outcome: "succeeded" };
   } catch (error) {
+    // A deadline abort reaches here as an `AbortError` whose message is the
+    // runtime's ("This operation was aborted"), which tells a reader nothing.
+    // `deadlineClockOf` recovers WHICH bound tripped and says so.
+    const firedClock = deadlineClockOf(error);
+    if (firedClock === "session" || firedClock === "turn") {
+      const errorMessage =
+        firedClock === "session"
+          ? sessionTimeoutMessage(budgets.unitTimeoutMs)
+          : turnTimeoutMessage(budgets.turnTimeoutMs);
+      emit?.({
+        type: "session_complete",
+        status: "failed",
+        errorMessage,
+      });
+      return {
+        outcome: "failed",
+        errorMessage,
+        errorReason:
+          firedClock === "session" ? "session_timeout" : "turn_timeout",
+      };
+    }
     const message = error instanceof Error ? error.message : String(error);
+    const errorRefusal =
+      error instanceof RecordedAssistantTurnError
+        ? error.errorRefusal
+        : spendRefusalOf(error);
     // Single source of truth for the spend-cap / rate-limit fold — shared with
     // the per-runtime `classifyFailure` so the regex can't drift. Return the
     // message on the rate-limited branch too: the swarm fan-out runner inspects
     // it to distinguish a provider 429 (stop THIS host) from an org spend-cap
-    // breach (stop the WHOLE run). The chatbox runner ignores it for
+    // breach (stop the WHOLE run). The scenario runner ignores it for
     // rate-limited outcomes, so this is a safe additive change.
     if (classifyTurnFailure(message) === "rate_limited") {
       emit?.({
@@ -1034,7 +1493,7 @@ export async function runSyntheticHostSession(
         status: "rate_limited",
         errorMessage: message,
       });
-      return { outcome: "rate_limited", errorMessage: message };
+      return { outcome: "rate_limited", errorMessage: message, errorRefusal };
     }
     logger.warn("[sessionSimulation.runner] session failed", {
       runId,
@@ -1052,8 +1511,11 @@ export async function runSyntheticHostSession(
       outcome: "failed",
       errorMessage: message,
       ...(errorReason ? { errorReason } : {}),
+      errorRefusal,
     };
   } finally {
+    turnDeadline?.dispose();
+    sessionDeadline.dispose();
     // Tear down the browser harness (and its headless Chromium, if launched)
     // before the manager: the harness's widget bridge dispatches tools/call
     // through the manager, so it must die first.
@@ -1098,7 +1560,7 @@ export async function runSyntheticHostSession(
               runId,
               chatSessionId,
               error: err instanceof Error ? err.message : String(err),
-            }
+            },
           );
         }
       }
@@ -1140,7 +1602,7 @@ export async function runSyntheticHostSession(
                     runId,
                     chatSessionId,
                     error: err instanceof Error ? err.message : String(err),
-                  }
+                  },
                 );
               }
               if (videoBytes) await outbox.stageVideo(videoBytes);
@@ -1150,14 +1612,14 @@ export async function runSyntheticHostSession(
               // but a hung mutation would still hold a swarm worker slot while
               // contributing nothing. Whatever doesn't land stays unpersisted and
               // is reported by the `pending` warning below.
-              const result = await withDeadline(
+              const result = await settleWithin(
                 outbox.flush(),
                 TERMINAL_ARTIFACT_FLUSH_TIMEOUT_MS,
                 {
                   written: 0,
                   pending: outbox.pendingBatchCount,
                   videoAttached: false,
-                }
+                },
               );
               if (result.pending > 0) {
                 logger.warn(
@@ -1167,7 +1629,7 @@ export async function runSyntheticHostSession(
                     chatSessionId,
                     pending: result.pending,
                     videoAttached: result.videoAttached,
-                  }
+                  },
                 );
               }
             },
@@ -1192,7 +1654,7 @@ export async function runSyntheticHostSession(
  * Walk the synthetic session's message history for MCP App tool calls,
  * fetch each widget's HTML via `MCPClientManager.readResource()`, upload it
  * to Convex storage, and persist a `sharedChatWidgetSnapshots` row through
- * `chatSessions:createWidgetSnapshot`. Without this, the Chatbox Sessions
+ * `chatSessions:createWidgetSnapshot`. Without this, the Scenario Sessions
  * viewer's `getWidgetSnapshots` query returns empty for synthetic threads
  * and MCP App tool calls collapse to a plain pill instead of rendering the
  * actual widget (e.g. Excalidraw `create_view`).
@@ -1202,8 +1664,8 @@ export async function runSyntheticHostSession(
  * synthetic run. The Convex mutation patches existing rows on
  * `(sessionId, toolCallId)` so re-running this per turn is idempotent.
  *
- * `chatboxId`/`accessVersion` select the mutation's hosted-chatbox auth
- * branch; callers without a chatbox (the swarm surface) omit both and the
+ * `scenarioId`/`accessVersion` select the mutation's hosted-scenario auth
+ * branch; callers without a scenario (the swarm surface) omit both and the
  * mutation authorizes via its direct-session path instead (session owner +
  * per-snapshot `serverId`, which `captureMcpAppWidgetSnapshots` always
  * stamps from the tool call's originating server).
@@ -1213,7 +1675,7 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
   mcpClientManager: MCPClientManager;
   convexAuthToken: string;
   chatSessionId: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   /**
    * Session-scoped set of tool-call ids whose snapshot row is already
@@ -1231,7 +1693,7 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
     mcpClientManager,
     convexAuthToken,
     chatSessionId,
-    chatboxId,
+    scenarioId,
     accessVersion,
     capturedToolCallIds,
   } = args;
@@ -1246,7 +1708,7 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
   if (!convexUrl) {
     logger.warn(
       "[sessionSimulation.runner] CONVEX_URL not set; skipping widget snapshot capture",
-      { chatSessionId, chatboxId }
+      { chatSessionId, scenarioId },
     );
     return;
   }
@@ -1301,11 +1763,11 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
         const result = await convexClient.mutation(
           "chatSessions:createWidgetSnapshot" as any,
           {
-            ...(chatboxId !== undefined ? { chatboxId } : {}),
+            ...(scenarioId !== undefined ? { scenarioId } : {}),
             ...(accessVersion !== undefined ? { accessVersion } : {}),
             chatSessionId,
             ...sanitized,
-          }
+          },
         );
         // Null = the ingest race (session row not written yet) — leave the
         // id unmarked so the next turn retries. Anything else is the row id.
@@ -1319,7 +1781,7 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
           error: err instanceof Error ? err.message : String(err),
         });
       }
-    })
+    }),
   );
 }
 
@@ -1350,6 +1812,24 @@ export interface DrainAssistantTurnHooks {
   onToolCallChunk?: DirectChatTurnTraceEvents["onToolCallChunk"];
 }
 
+/** A failed hosted turn still owns transcript and trace evidence to persist. */
+class RecordedAssistantTurnError extends Error {
+  refusal?: SpendRefusal;
+  errorRefusal?: SpendRefusal;
+  constructor(
+    message: string,
+    readonly turn: {
+      history: ModelMessage[];
+      turnTrace: PersistedTurnTrace | undefined;
+      modelSource: SyntheticModelSource;
+      harnessSessionCommit?: HarnessSessionCommitPayload;
+    },
+  ) {
+    super(message);
+    this.name = "RecordedAssistantTurnError";
+  }
+}
+
 /**
  * TEMPORARY COMPATIBILITY ADAPTER (PR 3a). `drainAssistantTurn` is now a thin
  * wrapper over {@link resolveTurnRuntime} + {@link runUnifiedAssistantTurn}: it
@@ -1365,9 +1845,10 @@ export interface DrainAssistantTurnHooks {
  * `synthetic: true`, `personaId`, `journeyRunId`).
  *
  * Error contract (byte-preserved from the pre-facade dispatch): turn failures
- * THROW. Hosted engines signal failure with a MISSING turnTrace on a
- * non-aborted turn (recovered per-step errors keep their trace and succeed);
- * the direct engine always produces a trace, so it signals failure via
+ * THROW. Hosted engines use the same failure inspection as evals: missing
+ * traces, empty replies, and failed model-step spans terminate the session.
+ * Tool-error evidence remains distinct. The direct engine always produces a
+ * trace, so it signals failure via
  * `onEngineError`. Surfacing the failure lets `runOneSession`'s classifier see
  * real spend-cap / rate-limit errors (→ `"rate_limited"`) and genuine provider
  * failures (→ `"failed"`).
@@ -1391,7 +1872,7 @@ export async function drainAssistantTurn(
     journeyRunId?: string;
     /** Optional turn hooks (browser session context attachment points). */
     hooks?: DrainAssistantTurnHooks;
-  }
+  },
 ): Promise<{
   history: ModelMessage[];
   turnTrace: PersistedTurnTrace | undefined;
@@ -1411,6 +1892,7 @@ export async function drainAssistantTurn(
     harnessMcpProxy,
     pinnedHarnessSkills,
     harnessSandboxBinding,
+    environmentId,
     builtInTools: harnessBuiltInTools,
     extraBodyFields,
     hooks,
@@ -1425,7 +1907,7 @@ export async function drainAssistantTurn(
   if (args.sourceType === "swarm" && !!journeyRunId !== !!hostId) {
     throw new Error(
       "Swarm turn has partial continuity identity: journeyRunId and hostId " +
-        "must be provided together"
+        "must be provided together",
     );
   }
 
@@ -1438,21 +1920,21 @@ export async function drainAssistantTurn(
   // Forward the swarm `journeyRunId` into the hosted `/stream` (or `/stream/org`)
   // body as an extra field. The backend spend writer ignores unknown fields
   // until the swarm wiring lands (`feedback_bridge_preserves_unknown_fields`),
-  // so this is forward-compatible and inert for the chatbox path.
+  // so this is forward-compatible and inert for the scenario path.
   const mergedExtraBodyFields =
     journeyRunId !== undefined
       ? { ...(extraBodyFields ?? {}), journeyRunId }
       : extraBodyFields;
 
   // Narrow MCPJamHandlerOptions' open `sourceType` string to the engine union.
-  // The session-simulation surface passes "chatbox"; the swarm runner passes
-  // "swarm" (both flow through here). Anything else falls back to "chatbox".
+  // The session-simulation surface passes "scenario"; the swarm runner passes
+  // "swarm" (both flow through here). Anything else falls back to "scenario".
   const sourceType =
     args.sourceType === "direct" ||
     args.sourceType === "eval" ||
     args.sourceType === "swarm"
       ? args.sourceType
-      : ("chatbox" as const);
+      : ("scenario" as const);
 
   // Provider/runtime resolution + local usage writeback + approval guard, in
   // one shared adapter. Uses the same resolver the empty-session fallback
@@ -1461,7 +1943,7 @@ export async function drainAssistantTurn(
     modelDefinition,
     projectId: args.projectId ?? "",
     authHeader: args.authHeader,
-    chatboxId: args.chatboxId,
+    scenarioId: args.scenarioId,
     accessVersion: args.accessVersion,
     serverIds: args.selectedServers,
     sourceType,
@@ -1477,14 +1959,8 @@ export async function drainAssistantTurn(
 
   // Engine-error signal. Structural type covers both the hosted
   // `MCPJamEngineErrorEvent` and the direct `DirectChatTurnEngineErrorEvent`.
-  let lastEngineError:
-    | { message: string; code?: string; httpStatus?: number }
-    | undefined;
-  const captureEngineError = (event: {
-    message: string;
-    code?: string;
-    httpStatus?: number;
-  }) => {
+  let lastEngineError: ({ message: string } & SpendRefusal) | undefined;
+  const captureEngineError = (event: { message: string } & SpendRefusal) => {
     lastEngineError = event;
   };
 
@@ -1550,7 +2026,7 @@ export async function drainAssistantTurn(
     // billing — with the same message shape the old headless path did.
     if (lastEngineError) {
       throw new Error(
-        lastEngineError.message || "Local org-BYOK turn failed mid-stream."
+        lastEngineError.message || "Local org-BYOK turn failed mid-stream.",
       );
     }
 
@@ -1579,6 +2055,7 @@ export async function drainAssistantTurn(
     runtime: rt.runtime,
     streamSink: "none",
     persistMode: "caller",
+    ...(args.maxSteps !== undefined ? { maxSteps: args.maxSteps } : {}),
     messages: args.messages,
     modelDefinition,
     systemPrompt: args.systemPrompt,
@@ -1589,13 +2066,13 @@ export async function drainAssistantTurn(
     mcpClientManager: args.mcpClientManager,
     authContext: { kind: "user_bearer", token: args.authHeader ?? "" },
     sourceType,
-    origin: "chatbox",
+    origin: "scenario",
     // Synthetic runs have no human-in-the-loop. Auto-deny approval-required
     // tool calls inside the loop so the run makes forward progress.
     approvalMode: "auto-deny",
     chatSessionId: args.chatSessionId,
     ...(args.projectId ? { projectId: args.projectId } : {}),
-    ...(args.chatboxId ? { chatboxId: args.chatboxId } : {}),
+    ...(args.scenarioId ? { scenarioId: args.scenarioId } : {}),
     ...(args.accessVersion !== undefined
       ? { accessVersion: args.accessVersion }
       : {}),
@@ -1604,7 +2081,7 @@ export async function drainAssistantTurn(
       : {}),
     // Harness MCP-proxy plane — REQUIRED by runHarnessTurn when a harness host
     // has MCP servers selected (it throws otherwise). Threaded here so a swarm/
-    // chatbox-sim harness turn reaches its MCP servers just like live chat.
+    // scenario-sim harness turn reaches its MCP servers just like live chat.
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
     // Swarm continuity identity → the harness `swarm-chat` owner lane. Both are
     // set only on the swarm surface; the harness owner mapping needs them to
@@ -1617,6 +2094,10 @@ export async function drainAssistantTurn(
     // Ephemeral harness box (B-isolation phase 6) — present ⇒ the harness turn
     // runs on it instead of reserving the acting member's personal computer.
     ...(harnessSandboxBinding ? { harnessSandboxBinding } : {}),
+    // The turn's Project Environment — the grant boundary the harness path
+    // checks a BROKERED external-account credential against. Inert for the
+    // emulated engine, which resolves no such credential.
+    ...(environmentId ? { environmentId } : {}),
     // Server-executed built-ins for the harness path (see the drain's option).
     ...(harnessBuiltInTools ? { builtInTools: harnessBuiltInTools } : {}),
     ...(args.requireToolApproval !== undefined
@@ -1640,12 +2121,37 @@ export async function drainAssistantTurn(
     onEngineError: captureEngineError,
   });
 
-  // A produced turnTrace means the turn semantically succeeded (recovered
-  // per-step engine errors keep their trace). A MISSING turnTrace on a
-  // non-aborted turn always means the engine failed — throw even when no
-  // `onEngineError` event was captured, so a failed turn can't silently record
-  // an empty assistant reply and skip persistence.
-  if (!result.turnTrace && !args.abortSignal?.aborted) {
+  // Share evals' failure policy: a hosted engine can return a trace after
+  // a rejected request, or after a later model step failed. Neither is a
+  // successful reply for the persona to react to.
+  const turnFailure = getHostedTurnFailure({
+    turnTrace: result.turnTrace,
+    newMessageCount: result.newMessages.length,
+  });
+  if (turnFailure && !args.abortSignal?.aborted) {
+    const failed = (message: string) => {
+      const error = new RecordedAssistantTurnError(message, {
+        history: result.messages,
+        turnTrace: result.turnTrace,
+        modelSource: rt.modelSource,
+        ...(result.harnessSessionCommit
+          ? { harnessSessionCommit: result.harnessSessionCommit }
+          : {}),
+      });
+      // Keep classification even mid-turn, but retry only when no evidence was produced.
+      error.errorRefusal = lastEngineError
+        ? {
+            code: lastEngineError.code,
+            refusalReason: lastEngineError.refusalReason,
+            retryAfterMs: lastEngineError.retryAfterMs,
+            httpStatus: lastEngineError.httpStatus,
+            stepIndex: lastEngineError.stepIndex,
+            outstandingHolds: lastEngineError.outstandingHolds,
+          }
+        : undefined;
+      if (result.newMessages.length === 0) error.refusal = error.errorRefusal;
+      return error;
+    };
     if (lastEngineError) {
       const detail = [
         lastEngineError.code,
@@ -1655,15 +2161,13 @@ export async function drainAssistantTurn(
       ]
         .filter(Boolean)
         .join(", ");
-      throw new Error(
+      throw failed(
         detail
           ? `${lastEngineError.message} (${detail})`
-          : lastEngineError.message
+          : lastEngineError.message,
       );
     }
-    throw new Error(
-      "Assistant turn failed: the engine returned no turn trace (stream error or empty response)"
-    );
+    throw failed(turnFailure);
   }
 
   await rt.finalizeUsage(result); // no-op for hosted engines
@@ -1692,7 +2196,7 @@ function extractAssistantText(history: ModelMessage[]): string {
           typeof part === "object" &&
           part !== null &&
           (part as { type?: string }).type === "text" &&
-          typeof (part as { text?: unknown }).text === "string"
+          typeof (part as { text?: unknown }).text === "string",
       )
       .map((part) => part.text)
       .join("");

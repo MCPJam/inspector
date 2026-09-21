@@ -1,3 +1,4 @@
+import { withGithubCredentialPolicy } from "./github-checks/credential-policy.js";
 /**
  * github-checks-worker.ts — polling executor for GitHub PR check runs.
  *
@@ -28,15 +29,20 @@
  * fails it ~5 minutes later, which shows up on someone's PR as a check that
  * hung and then went neutral.
  *
- * Gated by `GITHUB_CHECKS_WORKER_ENABLED === '1'`; the backend has its own
- * `GITHUB_CHECKS_ENABLED` gate and 404s this whole surface when it is off.
+ * Gated by `GITHUB_CHECKS_WORKER_ENABLED === '1'`. That gate stops this
+ * process from CLAIMING work; it is not a kill switch for the feature. The
+ * backend's `GITHUB_CHECKS_ENABLED` gate — which this comment used to claim
+ * 404s the whole surface — no longer exists, so with the worker off the
+ * webhook still accepts deliveries and still inserts triggers. They sit
+ * `pending` until the backend's 30-minute sweep retires them as
+ * `worker_unavailable`, concluding each check neutral with an explanation.
  */
 
 import { WEB_CALL_TIMEOUT_MS } from "../config.js";
 import { logger } from "../utils/logger";
 import { getConvexBearerForDelegation } from "../utils/v1-convex-token.js";
 import { createAuthorizedManager } from "../routes/web/auth.js";
-import { prepareEvalRun } from "../routes/shared/evals.js";
+import { prepareEvalRun, shouldSkipExecution } from "../routes/shared/evals.js";
 import { createConvexClient } from "./evals/route-helpers.js";
 import type { CheckRecipe } from "./github-checks/recipes.js";
 import {
@@ -44,6 +50,7 @@ import {
   clampOutput,
   isGithubChecksSandboxConfigured,
   killCheckSandbox,
+  redactCloneCredential,
   type CheckSandbox,
 } from "./github-checks/sandbox.js";
 import { resolveAndStart } from "./github-checks/resolve-and-start.js";
@@ -52,6 +59,7 @@ import {
   CheckStoppedByPlan,
   PlanProtocolError,
   PlanUnreachableError,
+  type AttemptAction,
   type AttemptInput,
   type CheckPlanSession,
 } from "./github-checks/check-plan.js";
@@ -60,6 +68,7 @@ import {
   githubChecksServiceEnv,
   postServiceRoute,
 } from "./github-checks/service-route.js";
+import { executePersistedConformanceRun } from "./conformance-run-executor.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -71,6 +80,20 @@ const ERROR_BACKOFF_MS = 60_000;
  * gets its check taken away mid-build.
  */
 const HEARTBEAT_INTERVAL_MS = 60_000;
+/** A stuck control-plane cleanup must not keep the other cleanup from running. */
+export const GITHUB_CHECK_CLEANUP_TIMEOUT_MS = 15_000;
+
+/**
+ * How long to wait out a run held for its gating judge.
+ *
+ * The backend's hold has a 30-minute deadline and a sweep that ends it; one
+ * minute of slack covers the sweep landing after the deadline. Inside the lease
+ * budget by construction: the claim is refreshed by a heartbeat with no wall
+ * cap, and that interval already spans the whole `runEvalSuite` call.
+ */
+const JUDGE_GRADING_WAIT_MS = 31 * 60_000;
+/** How often to re-read a held run. Slow: the judge takes minutes, not ticks. */
+const JUDGE_GRADING_POLL_MS = 15_000;
 
 /**
  * The claim payload, HAND-MIRRORED from the backend's `ClaimedGithubCheck`
@@ -79,6 +102,13 @@ const HEARTBEAT_INTERVAL_MS = 60_000;
  * fields on the wire are ignored rather than rejected.
  */
 export type ClaimedGithubCheck = {
+  credentialPolicyVersion: 2;
+  githubCredentialPolicy:
+    | "no_customer_credentials"
+    | "suite_credentials"
+    | "same_repository";
+  allowedBuiltInToolIds: string[];
+  isFork: boolean;
   triggerId: string;
   repoFullName: string;
   prNumber: number;
@@ -87,6 +117,26 @@ export type ClaimedGithubCheck = {
   projectId: string;
   createdByExternalId: string;
   suiteId: string;
+  /**
+   * Whether the checkout needs an installation token to clone.
+   *
+   * A REQUIRED boolean, matching the backend, which always sends one (`false`
+   * for a row that never recorded a visibility). Optional-with-a-default would
+   * mean a wire regression silently degrades to "public" — and "public" is the
+   * value that clones without a credential, so the failure mode of guessing
+   * would be a private repository's check failing rather than the reverse.
+   */
+  repoPrivate: boolean;
+  /**
+   * Dual-read: absent/false means this trigger is legacy eval-only. The backend
+   * always sends a boolean on new claims; older workers ignore unknown fields.
+   */
+  conformanceEnabled?: boolean;
+  conformanceSuiteKinds?: Array<"protocol" | "apps" | "tasks" | "oauth">;
+  /** Repo-config id for grouping GitHub preview conformance history. */
+  repoConfigId?: string;
+  /** Explicit project-shared OAuth source selected for this repository. */
+  prServerOAuthSourceServerId?: string;
 };
 
 export type CheckSummary = {
@@ -125,15 +175,117 @@ function requiredEnv(): { convexUrl: string; serviceToken: string } | null {
   return githubChecksServiceEnv();
 }
 
+export class CredentialPolicyBlockedError extends Error {
+  constructor() {
+    super("credential_policy_blocked");
+  }
+}
+
+function isCredentialPolicyBlocked(error: unknown): boolean {
+  return (
+    error instanceof CredentialPolicyBlockedError ||
+    (error instanceof Error &&
+      error.message.includes("credential_policy_blocked"))
+  );
+}
+
+async function reportCredentialBlocked(
+  claimed: ClaimedGithubCheck,
+  claimedBy: string,
+): Promise<void> {
+  const { status } = await postServiceRoute(
+    `${SERVICE_BASE}/credential-blocked`,
+    {
+      triggerId: claimed.triggerId,
+      claimedBy,
+      credentialPolicyVersion: 2,
+    },
+  );
+  if (status !== 200 && status !== 409)
+    throw new Error("Credential refusal could not be recorded");
+}
+
+export class PrServerAuthorizationRequiredError extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+  }
+}
+
+async function reportPrServerAuthorizationRequired(
+  claimed: ClaimedGithubCheck,
+  claimedBy: string,
+  reason: string,
+): Promise<void> {
+  const { status } = await postServiceRoute(
+    `${SERVICE_BASE}/authorization-required`,
+    { triggerId: claimed.triggerId, claimedBy, reason },
+  );
+  if (status !== 200 && status !== 409)
+    throw new Error("Authorization refusal could not be recorded");
+}
+
+async function resolvePrServerOAuthToken(args: {
+  claimed: ClaimedGithubCheck;
+  claimedBy: string;
+  sourceServerId: string;
+  targetServerId: string;
+  targetResourceUrl: string;
+}): Promise<string> {
+  const { status, body } = await postServiceRoute(
+    `${SERVICE_BASE}/oauth-token`,
+    {
+      triggerId: args.claimed.triggerId,
+      claimedBy: args.claimedBy,
+      sourceServerId: args.sourceServerId,
+      targetServerId: args.targetServerId,
+      targetResourceUrl: args.targetResourceUrl,
+    },
+  );
+  if (status === 409)
+    throw new PrServerAuthorizationRequiredError(
+      typeof body?.error === "string" ? body.error : "authorization_required",
+    );
+  if (
+    status !== 200 ||
+    body?.ok !== true ||
+    typeof body.accessToken !== "string" ||
+    body.accessToken.trim().length === 0
+  )
+    throw new Error("PR server OAuth token unavailable");
+  return body.accessToken.trim();
+}
+
+async function credentialPreflight(
+  claimed: ClaimedGithubCheck,
+  claimedBy: string,
+  mintExecutionToken = false,
+): Promise<string | null> {
+  const { status, body } = await postServiceRoute(
+    `${SERVICE_BASE}/credential-preflight`,
+    {
+      triggerId: claimed.triggerId,
+      claimedBy,
+      credentialPolicyVersion: 2,
+      mintExecutionToken,
+    },
+  );
+  if (status === 409 && body?.error === "credential_policy_blocked")
+    throw new CredentialPolicyBlockedError();
+  if (status !== 200 || body?.ok !== true)
+    throw new Error("Credential preflight unavailable");
+  return typeof body.token === "string" ? body.token : null;
+}
+
 async function claimNext(
-  claimedBy: string
+  claimedBy: string,
 ): Promise<ClaimedGithubCheck | null | "disabled"> {
   const { status, body } = await postServiceRoute(`${SERVICE_BASE}/claim`, {
+    credentialPolicyVersion: 2,
     claimedBy,
   });
   // 404 = GITHUB_CHECKS_ENABLED is off backend-side. Treat as "nothing to do"
   // with a long backoff so flipping the flag needs no Inspector restart.
-  if (status === 404) return "disabled";
+  if (status === 404 || status === 409) return "disabled";
   if (status !== 200 || !body?.ok) {
     throw new Error(`claim failed (${status}): ${JSON.stringify(body)}`);
   }
@@ -141,12 +293,12 @@ async function claimNext(
 }
 
 async function reportPlanlessOutcome(
-  report: PlanlessCheckReport
+  report: PlanlessCheckReport,
 ): Promise<void> {
   try {
     const { status, body } = await postServiceRoute(
       `${SERVICE_BASE}/complete`,
-      report as unknown as Record<string, unknown>
+      report as unknown as Record<string, unknown>,
     );
     if (status !== 200 || !body?.ok) {
       logger.warn("[github-checks] completion rejected", {
@@ -176,7 +328,7 @@ async function reportPlanlessOutcome(
  */
 async function sendHeartbeat(
   triggerId: string,
-  claimedBy: string
+  claimedBy: string,
 ): Promise<void> {
   const { status, body } = await postServiceRoute(`${SERVICE_BASE}/heartbeat`, {
     triggerId,
@@ -209,8 +361,102 @@ export class LeaseLostError extends Error {
   }
 }
 
+/**
+ * The backend could not give us a credential for a private repository.
+ *
+ * A DISTINCT type, because the response it demands is distinct from every other
+ * failure in this file: it happens after `/plan/begin` and before anything is
+ * provisioned, so it is reported as a ladder-level `clone` attempt on the plan
+ * that already exists — never through the planless path, and never as the pull
+ * request's fault. Nothing about a PR can cause it.
+ */
+export class CloneTokenUnavailableError extends Error {
+  constructor(readonly detail: string) {
+    super(`clone token unavailable: ${detail}`);
+    this.name = "CloneTokenUnavailableError";
+  }
+}
+
+/**
+ * Mint the clone credential for THIS claim, or find out we no longer hold it.
+ *
+ * Three answers, and the difference between them is the whole contract:
+ *
+ *   200 + `cloneToken: null`   nothing was needed. Only legal for a public
+ *                              repository; for a private one the caller treats
+ *                              it as a mint failure, because a null token and a
+ *                              502 leave us equally unable to clone.
+ *   200 + `cloneToken: string` use it for clone/fetch and nothing else.
+ *   409                        this worker is not the claim holder any more.
+ *                              LEASE LOSS — the check has already been
+ *                              concluded by somebody else, so we must not
+ *                              manufacture a competing completion.
+ *   502 (or anything else)     the mint failed backend-side. The message is
+ *                              deliberately flat there and stays flat here.
+ *   no answer at all           a transport failure or the route's deadline.
+ *                              Typed as the 502 case, so it reaches the same
+ *                              ladder-level `clone_failed` rather than falling
+ *                              through as an untyped throw.
+ *
+ * The token is NEVER logged, and no branch of this function puts the response
+ * body into an error — a 502's body is a constant string, and a 200's body is
+ * the secret itself.
+ */
+async function mintCloneToken(
+  triggerId: string,
+  claimedBy: string,
+): Promise<string | null> {
+  let status: number;
+  let body: any;
+  try {
+    ({ status, body } = await postServiceRoute(`${SERVICE_BASE}/clone-token`, {
+      triggerId,
+      claimedBy,
+    }));
+  } catch (error) {
+    // THE ROUTE NEVER ANSWERED — a network failure, a missing service-token
+    // env, or the service-route's own 15s deadline. Materially identical to a
+    // 502: we hold no credential and cannot clone. It is typed as the same
+    // failure so it takes the same branch, because an untyped throw here would
+    // fall through to the generic catch, which has no degraded marker for it
+    // either — and would complete the freshly opened plan with an EMPTY attempt
+    // log. A check that ran nothing and reported nothing is the one shape the
+    // plan shell exists to prevent.
+    throw new CloneTokenUnavailableError(
+      `the clone-token route could not be reached: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (status === 409) {
+    throw new LeaseLostError(String(body?.error ?? "not_the_claim_holder"));
+  }
+  if (status !== 200 || !body?.ok) {
+    throw new CloneTokenUnavailableError(
+      `the backend could not mint a clone token (${status})`,
+    );
+  }
+  const token = body.cloneToken;
+  return typeof token === "string" && token.length > 0 ? token : null;
+}
+
 /** Test seam: the heartbeat's response validation is the whole point of it. */
 export const sendHeartbeatForTests = sendHeartbeat;
+
+/**
+ * Test seam: the clone-token contract is a two-repo hand-mirror, so the status
+ * mapping (409 ⇒ lease loss, 502 ⇒ mint failure) is worth pinning at the wire.
+ */
+export const mintCloneTokenForTests = mintCloneToken;
+
+/** Test seam for the hand-mirrored OAuth token route contract. */
+export const resolvePrServerOAuthTokenForTests = resolvePrServerOAuthToken;
+
+/**
+ * Test seam: `repoPrivate` arriving intact is the difference between cloning a
+ * private repository and not, and the claim body is where it can get dropped.
+ */
+export const claimNextForTests = claimNext;
 
 /**
  * Test seam for the real eval integration. The worker tests replace
@@ -231,17 +477,17 @@ export const defaultRunEvalSuiteForTests = () => defaultRunEvalSuite;
  */
 async function recordEphemeralServer(
   triggerId: string,
-  serverId: string
+  serverId: string,
 ): Promise<void> {
   const { status, body } = await postServiceRoute(
     `${SERVICE_BASE}/ephemeral-server`,
-    { triggerId, serverId }
+    { triggerId, serverId },
   );
   if (status !== 200 || !body?.ok) {
     throw new Error(
       `ephemeral-server registration rejected (${status}): ${JSON.stringify(
-        body
-      )}`
+        body,
+      )}`,
     );
   }
 }
@@ -257,9 +503,10 @@ async function recordEphemeralServer(
  * and the author-facing markdown for the check output, neither of which has any
  * verdict authority.
  *
- * The one message match that survives is the backend's canonical
- * `billing_limit_reached` code — an MCPJam-side limit, worth naming plainly in
- * the check output so nobody debugs their build over it.
+ * The only message matches that survive are the backend's canonical
+ * MCPJam-side limits — `billing_limit_reached` and the organization spend
+ * budget — worth naming plainly in the check output so nobody debugs their
+ * build over one.
  */
 export function describeCheckFailure(error: unknown): {
   failureReason: string;
@@ -280,7 +527,7 @@ export function describeCheckFailure(error: unknown): {
         ? {
             detailsMarkdown: error.detailsMarkdown.slice(
               0,
-              RESOLVER_DETAILS_MAX_CHARS
+              RESOLVER_DETAILS_MAX_CHARS,
             ),
             ...(error.detailsPreformatted ? { detailsPreformatted: true } : {}),
           }
@@ -299,7 +546,44 @@ export function describeCheckFailure(error: unknown): {
   if (/billing_limit_reached/i.test(message)) {
     return { failureReason: "billing_limit_reached" };
   }
+  // Both canonical markers for the org spend budget: the `/stream` wire code
+  // and the launch mutation's ConvexError code.
+  if (/spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED/i.test(message)) {
+    return { failureReason: "spend_budget_reached" };
+  }
   return { failureReason: message.slice(0, 200) };
+}
+
+/**
+ * The error, with any clone credential removed from its message AND its stack.
+ *
+ * A COPY rather than a mutation: the original is what the `finally` and the
+ * caller still hold, and rewriting a thrown object's message under them is the
+ * kind of action at a distance that is impossible to reason about later.
+ *
+ * This is the second line of defence, not the first. `sandbox.ts` redacts at the
+ * boundary where the credential-bearing text first becomes ours, so the error
+ * arriving here is already clean; this exists because `logger.error` is the
+ * server's single Sentry capture path, and a secret that reaches Sentry cannot
+ * be recalled from it. The constant `AUTHORIZATION:` sweep runs whether or not
+ * a token is held; the token-derived forms are removed only when one is.
+ */
+function redactErrorForLog(error: unknown, cloneToken: string | null): unknown {
+  if (!(error instanceof Error)) return error;
+  const message = redactCloneCredential(error.message, cloneToken);
+  const stack = error.stack
+    ? redactCloneCredential(error.stack, cloneToken)
+    : error.stack;
+  // UNCHANGED ⇒ the ORIGINAL, class and all. Only a genuinely
+  // credential-bearing error is replaced, so the overwhelming majority of
+  // failures still reach the logger as the typed error they were thrown as —
+  // and the constant `AUTHORIZATION:` sweep still runs on every one of them,
+  // whether or not a token is currently held.
+  if (message === error.message && stack === error.stack) return error;
+  const copy = new Error(message);
+  copy.name = error.name;
+  if (stack) copy.stack = stack;
+  return copy;
 }
 
 /**
@@ -333,7 +617,7 @@ export function effectiveRunResult(
     result?: string;
     summary?: CheckSummary | null;
     passCriteria?: { minimumPassRate?: number } | null;
-  } | null
+  } | null,
 ): string | undefined {
   if (!run) return undefined;
   if (run.result) return run.result;
@@ -344,7 +628,7 @@ export function effectiveRunResult(
       // way is what keeps the check's verdict and the eval UI's badge from
       // disagreeing on a fractional rate (2/3 is 67% to both, not 66.67% to one).
       const passRatePercent = Math.round(
-        ((run.summary?.passed ?? 0) / total) * 100
+        ((run.summary?.passed ?? 0) / total) * 100,
       );
       return passRatePercent >= (run.passCriteria?.minimumPassRate ?? 100)
         ? "passed"
@@ -375,6 +659,15 @@ export type CheckExecutionDeps = {
    */
   beginPlan: (claimed: ClaimedGithubCheck) => Promise<CheckPlanSession>;
   /**
+   * Mint the private-repository clone credential. Called ONLY when the claim
+   * says `repoPrivate`, and only between `beginPlan` and the first provision —
+   * see the ordering note in `executeClaimedCheck`.
+   */
+  mintCloneToken: (
+    triggerId: string,
+    claimedBy: string,
+  ) => Promise<string | null>;
+  /**
    * The deterministic ladder plus the sandboxes it needs — provisioning,
    * cloning, building, the runtime verification, and a FRESH BOX PER CANDIDATE
    * — executing the BACKEND'S plan, in the backend's order.
@@ -386,13 +679,22 @@ export type CheckExecutionDeps = {
    */
   resolveAndStart: typeof resolveAndStart;
   killSandbox: typeof killCheckSandbox;
+  credentialPreflight: (
+    claimed: ClaimedGithubCheck,
+    claimedBy: string,
+    mintExecutionToken?: boolean,
+  ) => Promise<string | null>;
   getBearer: (externalId: string, organizationId: string) => Promise<string>;
   createEphemeralServer: (args: {
     bearer: string;
     projectId: string;
     name: string;
     url: string;
+    useOAuth?: boolean;
   }) => Promise<string>;
+  resolvePrServerOAuthToken: typeof resolvePrServerOAuthToken;
+  reportPrServerAuthorizationRequired: typeof reportPrServerAuthorizationRequired;
+  reportCredentialBlocked: typeof reportCredentialBlocked;
   deleteEphemeralServer: (args: {
     bearer: string;
     serverId: string;
@@ -403,6 +705,7 @@ export type CheckExecutionDeps = {
     bearer: string;
     serverId: string;
     serverName: string;
+    oauthAccessToken?: string;
     /**
      * Called with the run's id THE MOMENT IT EXISTS, before the suite is
      * executed. That call is what posts the `eval` attempt, and that attempt is
@@ -414,12 +717,62 @@ export type CheckExecutionDeps = {
      * unbindable run is a run whose result nothing may read.
      */
     onRunStarted?: (runId: string) => Promise<void>;
+    /**
+     * False once the claim stops being ours.
+     *
+     * Read only while WAITING OUT a gating judge's hold — there is no point
+     * spending half an hour on a check the backend has already concluded, and
+     * the completion would be rejected anyway.
+     */
+    isLeaseHeld?: () => boolean;
   }) => Promise<{ runId: string; result?: string; summary?: CheckSummary }>;
+  /**
+   * Dual-check: run the conformance suites against the same verified preview
+   * server on an INDEPENDENT MCP session. Called only when the backend answers
+   * `run_conformance` after the eval bind. Product failures of eval must not
+   * skip this; sandbox death / launch infra still may.
+   */
+  runConformance: (args: {
+    claimed: ClaimedGithubCheck;
+    bearer: string;
+    serverUrl: string;
+    candidateId: string;
+    oauthAccessToken?: string;
+    onRunStarted?: (runId: string) => Promise<void>;
+  }) => Promise<{ runId: string }>;
   /** The PLANLESS completion. Only reachable when `/plan/begin` gave us none. */
   report: (report: PlanlessCheckReport) => Promise<void>;
   heartbeat: (triggerId: string, claimedBy: string) => Promise<void>;
   heartbeatIntervalMs: number;
+  cleanupTimeoutMs: number;
 };
+
+async function runCleanupStep(
+  operation: () => Promise<void>,
+  timeoutMs: number,
+  onFailure: (error: unknown) => void,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const operationResult = Promise.resolve()
+    .then(operation)
+    .then(
+      () => ({ ok: true as const }),
+      (error) => ({ ok: false as const, error }),
+    );
+  const deadline = new Promise<{ ok: false; error: Error }>((resolve) => {
+    timer = setTimeout(
+      () =>
+        resolve({
+          ok: false,
+          error: new Error(`cleanup timed out after ${timeoutMs}ms`),
+        }),
+      timeoutMs,
+    );
+  });
+  const result = await Promise.race([operationResult, deadline]);
+  if (timer) clearTimeout(timer);
+  if (!result.ok) onFailure(result.error);
+}
 
 /**
  * How long the post-failure liveness check gets. Short on purpose: it runs only
@@ -472,7 +825,7 @@ const LIVENESS_PROBE_PROTOCOL_VERSION = "2025-11-25";
  */
 async function serverStillResponding(
   sandbox: CheckSandbox,
-  recipe: CheckRecipe
+  recipe: CheckRecipe,
 ): Promise<boolean | null> {
   const body = JSON.stringify({
     jsonrpc: "2.0",
@@ -501,7 +854,7 @@ async function serverStillResponding(
   try {
     const result = (await sandbox.commands.run(
       `node -e ${JSON.stringify(script)}`,
-      { timeoutMs: EVAL_FAILURE_PROBE_TIMEOUT_MS }
+      { timeoutMs: EVAL_FAILURE_PROBE_TIMEOUT_MS },
     )) as { stdout?: unknown } | null;
     stdout = typeof result?.stdout === "string" ? result.stdout : "";
   } catch {
@@ -555,7 +908,7 @@ async function serverStillResponding(
 async function describeEvalFailure(
   error: unknown,
   sandbox: CheckSandbox,
-  recipe: CheckRecipe
+  recipe: CheckRecipe,
 ): Promise<string | undefined> {
   // Our own typed failures and the lease guard already say what they are.
   if (error instanceof CheckStepError || error instanceof LeaseLostError) {
@@ -565,7 +918,7 @@ async function describeEvalFailure(
     return undefined;
   const message = error instanceof Error ? error.message : String(error);
   return clampOutput(
-    `The server answered the health probe, then stopped answering on port ${recipe.port} while the eval suite was running — it either refused the connection or accepted it and sent nothing back. Checked from inside the sandbox, so this is the server process and not the network path to it.\n\n${message}`
+    `The server answered the health probe, then stopped answering on port ${recipe.port} while the eval suite was running — it either refused the connection or accepted it and sent nothing back. Checked from inside the sandbox, so this is the server process and not the network path to it.\n\n${message}`,
   );
 }
 
@@ -574,6 +927,7 @@ async function defaultCreateEphemeralServer(args: {
   projectId: string;
   name: string;
   url: string;
+  useOAuth?: boolean;
 }): Promise<string> {
   const client = createConvexClient(args.bearer);
   const serverId = await client.mutation("servers:createServer" as any, {
@@ -582,6 +936,7 @@ async function defaultCreateEphemeralServer(args: {
     enabled: true,
     transportType: "http",
     url: args.url,
+    ...(args.useOAuth ? { useOAuth: true, oauthResourceUrl: args.url } : {}),
   });
   return String(serverId);
 }
@@ -619,23 +974,100 @@ const TERMINAL_RUN_STATUSES = new Set([
  * the run alone lands the check as `infra_error` (neutral), which is the honest
  * answer when we cannot see the run.
  */
-type RunTerminality = "terminal" | "non_terminal" | "unknown";
+type RunTerminality =
+  | "terminal"
+  | "non_terminal"
+  /**
+   * Every trial finished; the run is HELD for its gating judge.
+   *
+   * Its own answer rather than `non_terminal`, because the two want opposite
+   * treatment on the throwing path below: a non-terminal run is abandoned and
+   * must be finalized `failed`, while a held run is one the platform is about
+   * to decide — finalizing it would overwrite a verdict that is minutes away.
+   */
+  | "grading"
+  | "unknown";
 
 async function runTerminality(
   client: { query: (name: any, args: any) => Promise<any> },
-  runId: string
+  runId: string,
 ): Promise<RunTerminality> {
   try {
     const run = (await client.query("testSuites:getTestSuiteRun" as any, {
       runId,
     })) as { status?: string } | null;
     if (!run) return "unknown";
+    if (run.status === "grading") return "grading";
     return TERMINAL_RUN_STATUSES.has(String(run.status))
       ? "terminal"
       : "non_terminal";
   } catch {
     return "unknown";
   }
+}
+
+/**
+ * Read a run, waiting out a gating judge's hold.
+ *
+ * IT DECIDES NOTHING. It returns the last row it read, and every judgement
+ * stays where it was: `runReachedAVerdict` is unchanged and still answers
+ * `false` for `grading`, so a wait that runs out throws and the check lands
+ * `infra_error` (neutral). That is the property worth having — a gating run is
+ * never neutral while its judge is still within its deadline, and it is never
+ * RED without a verdict.
+ *
+ * A read that throws is logged and retried: a transient Convex blip during a
+ * 31-minute wait is not evidence about the run.
+ */
+export async function awaitJudgeVerdict(
+  client: { query: (name: any, args: any) => Promise<any> },
+  runId: string,
+  options: {
+    waitMs: number;
+    pollMs: number;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+    /** False once the claim stops being ours — stop waiting for somebody else. */
+    isLeaseHeld?: () => boolean;
+  },
+): Promise<{
+  status?: string;
+  result?: string;
+  summary?: CheckSummary;
+  passCriteria?: { minimumPassRate?: number };
+} | null> {
+  const now = options.now ?? (() => Date.now());
+  const sleep =
+    options.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const deadline = now() + options.waitMs;
+
+  const read = async () =>
+    (await client.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    })) as {
+      status?: string;
+      result?: string;
+      summary?: CheckSummary;
+      passCriteria?: { minimumPassRate?: number };
+    } | null;
+
+  let run = await read();
+  while (run?.status === "grading") {
+    if (options.isLeaseHeld?.() === false) return run;
+    if (now() >= deadline) return run;
+    await sleep(options.pollMs);
+    try {
+      run = await read();
+    } catch (error) {
+      // Not evidence about the run. Keep the last row and try again.
+      logger.warn("[github-checks] failed to re-read a run held for grading", {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return run;
 }
 
 /**
@@ -662,7 +1094,7 @@ export function runReachedAVerdict(status: string | undefined): boolean {
  */
 async function runCompleted(
   client: { query: (name: any, args: any) => Promise<any> },
-  runId: string
+  runId: string,
 ): Promise<boolean> {
   try {
     const run = (await client.query("testSuites:getTestSuiteRun" as any, {
@@ -675,25 +1107,10 @@ async function runCompleted(
 }
 
 /**
- * Run the dedicated suite against the just-built server.
- *
- * The `serverIds` override is what makes this work at all: the suite is a
- * persisted `[github-checks] …` suite whose own saved server refs point at some
- * previous check's (now deleted) ephemeral row. Overriding on every run means
- * the suite's stored binding is never consulted — which is also why this suite
- * must never be launched from the UI.
- */
-/**
  * Which check's server this run's frozen environment names.
  *
- * The dedicated suite is shared, and `refreshSnapshot: true` rewrites its stored
- * environment before the run-start mutation freezes it — two mutations, no
- * atomicity. Two checks running at once (two workers, or two replicas of one) can
- * therefore interleave as: A rewrites → B rewrites → A starts and freezes B's
- * server. A would then evaluate the wrong PR's server, or fail when B deletes it,
- * and either way report a verdict about somebody else's code.
- *
- * This does not fix that race — it detects the case it can prove. Every check names
+ * The run-only server replacement removes the former shared-suite rewrite
+ * race. This remains a final defense against a malformed or regressed run snapshot. Every check names
  * its server `gh-check-<triggerId>`, so:
  *
  *   - the snapshot mentions OUR trigger → `ours`;
@@ -710,7 +1127,7 @@ async function runCompleted(
 export async function verifyRunSnapshot(
   client: ReturnType<typeof createConvexClient>,
   runId: string,
-  triggerId: string
+  triggerId: string,
 ): Promise<"ours" | "stolen" | "unverifiable"> {
   let snapshot: unknown;
   try {
@@ -754,7 +1171,7 @@ export async function verifyRunSnapshot(
 async function abandonPreparedRun(
   client: ReturnType<typeof createConvexClient>,
   prepared: Awaited<ReturnType<typeof prepareEvalRun>>,
-  ctx: { triggerId: string; reason: string; what: string }
+  ctx: { triggerId: string; reason: string; what: string },
 ): Promise<void> {
   const notes = ctx.reason.slice(0, 500);
   await client
@@ -772,7 +1189,7 @@ async function abandonPreparedRun(
             cleanupError instanceof Error
               ? cleanupError.message
               : String(cleanupError),
-        }
+        },
       );
     });
   if (prepared.recorder) {
@@ -782,18 +1199,25 @@ async function abandonPreparedRun(
         logger.error(
           `[github-checks] failed to finalize ${ctx.what}`,
           finalizeError,
-          { triggerId: ctx.triggerId, runId: prepared.runId }
+          { triggerId: ctx.triggerId, runId: prepared.runId },
         );
       });
   }
 }
 
+/**
+ * Run the selected suite against the just-built server. The backend replaces
+ * only the suite's MCP server binding, preserving its environment model,
+ * skills, plugins, host settings, and computer image.
+ */
 async function defaultRunEvalSuite(args: {
   claimed: ClaimedGithubCheck;
   bearer: string;
   serverId: string;
   serverName: string;
+  oauthAccessToken?: string;
   onRunStarted?: (runId: string) => Promise<void>;
+  isLeaseHeld?: () => boolean;
 }): Promise<{ runId: string; result?: string; summary?: CheckSummary }> {
   // Empty caller context = plain-JWT caller; the delegated JWT is the principal
   // (same contract as the scheduled worker).
@@ -803,9 +1227,11 @@ async function defaultRunEvalSuite(args: {
     args.claimed.projectId,
     [args.serverId],
     WEB_CALL_TIMEOUT_MS,
+    args.oauthAccessToken
+      ? { [args.serverId]: args.oauthAccessToken }
+      : undefined,
     undefined,
-    undefined,
-    { serverNames: [args.serverName] }
+    { serverNames: [args.serverName] },
   );
 
   try {
@@ -816,21 +1242,6 @@ async function defaultRunEvalSuite(args: {
       serverIds: [args.serverId],
       serverNames: [args.serverName],
       suiteRerun: true,
-      // REQUIRED, not incidental. `serverIds` is honored by the manager and by
-      // cap math, but it is NOT forwarded to the run-start mutation — the run's
-      // `configSnapshot.environment` comes from the suite's PERSISTED
-      // environment, and `suiteRerun: true` alone suppresses updating it
-      // (`authorEvalSuite`: `shouldUpdateSnapshot = !suiteRerun ||
-      // refreshSnapshot`). Without this flag the snapshot keeps naming the
-      // previous check's ephemeral server, which no longer exists, and the
-      // runner fails against a dead reference instead of testing the PR.
-      //
-      // This is the "suite binding rewrite" the design already called out as
-      // expected: the dedicated suite's stored server ref is rewritten every
-      // run. Harmless because we always override `serverIds` too — and the
-      // reason this suite is named `[github-checks] …` and must never be
-      // launched from the UI.
-      refreshSnapshot: true,
       // Distinguishes check-triggered runs from real /api/v1 calls in run
       // history and heartbeat accounting (backend union accepts this value).
       source: "github_check",
@@ -841,16 +1252,13 @@ async function defaultRunEvalSuite(args: {
 
     const client = createConvexClient(args.bearer);
 
-    // The suite is SHARED by every check, and rewriting its environment then
-    // starting the run are two separate mutations. Another check's rewrite can
-    // land in between, so this run's frozen snapshot can name ITS ephemeral
-    // server instead of ours. Verified before anything is evaluated, because a
-    // verdict from a run that tested a different PR's server is worse than no
-    // verdict at all. See `verifyRunSnapshot` for what is provable.
+    // Verify the frozen run points at this check's temporary server before any
+    // case executes. A verdict from another PR's server is worse than no
+    // verdict. See `verifyRunSnapshot` for what is provable.
     const ownership = await verifyRunSnapshot(
       client,
       prepared.runId,
-      args.claimed.triggerId
+      args.claimed.triggerId,
     );
     if (ownership !== "ours") {
       const reason =
@@ -889,7 +1297,21 @@ async function defaultRunEvalSuite(args: {
     }
 
     try {
-      await prepared.execute();
+      // A redelivered claim replays the run its trigger id already started. If
+      // that run FINISHED, re-executing would run the suite a second time and
+      // bill for it — and the verdict this check needs is already recorded on
+      // it. Only the execution is skipped; everything below still reads the
+      // run's terminality and reports it, which is exactly what a redelivery
+      // should do.
+      if (shouldSkipExecution(prepared)) {
+        logger.info("[github-checks] trigger already ran — not re-executing", {
+          triggerId: args.claimed.triggerId,
+          runId: prepared.runId,
+          status: prepared.status,
+        });
+      } else {
+        await prepared.execute();
+      }
     } catch (error) {
       // A throw from `execute()` is NOT an eval verdict, and must not be read as
       // one. `runEvalSuiteWithAiSdk` finalizes a normal run — pass or fail —
@@ -924,29 +1346,38 @@ async function defaultRunEvalSuite(args: {
             logger.error(
               "[github-checks] failed to finalize a non-terminal eval run",
               finalizeError,
-              { triggerId: args.claimed.triggerId, runId: prepared.runId }
+              { triggerId: args.claimed.triggerId, runId: prepared.runId },
             );
           });
       }
 
       // `unknown` (we could not read the run) also lands here: not being able to
       // see the run is not evidence the PR failed.
+      //
+      // `grading` falls THROUGH to the verdict read below, exactly as a
+      // completed run does. The run's trials all finished and the backend is
+      // holding it for its judge — the throw was about something after the
+      // run, and rethrowing here would land the check neutral on a run that is
+      // about to produce a real verdict.
+      if (terminality !== "terminal" && terminality !== "grading") {
+        throw error;
+      }
       if (
-        terminality !== "terminal" ||
+        terminality === "terminal" &&
         !(await runCompleted(client, prepared.runId))
       ) {
         throw error;
       }
     }
 
-    const run = (await client.query("testSuites:getTestSuiteRun" as any, {
-      runId: prepared.runId,
-    })) as {
-      status?: string;
-      result?: string;
-      summary?: CheckSummary;
-      passCriteria?: { minimumPassRate?: number };
-    } | null;
+    // Waits out a gating judge's hold, and decides nothing: `runReachedAVerdict`
+    // below is unchanged and still refuses `grading`, so a wait that runs out
+    // lands the check `infra_error` (neutral) rather than red on no verdict.
+    const run = await awaitJudgeVerdict(client, prepared.runId, {
+      waitMs: JUDGE_GRADING_WAIT_MS,
+      pollMs: JUDGE_GRADING_POLL_MS,
+      ...(args.isLeaseHeld ? { isLeaseHeld: args.isLeaseHeld } : {}),
+    });
 
     // Only `completed` carries a verdict — the same rule `runCompleted` states for
     // the throwing path, applied here too. The runner reaches THIS path without
@@ -960,7 +1391,7 @@ async function defaultRunEvalSuite(args: {
       throw new Error(
         `eval run ${prepared.runId} did not complete (status: ${
           run?.status ?? "unknown"
-        })`
+        })`,
       );
     }
 
@@ -975,6 +1406,53 @@ async function defaultRunEvalSuite(args: {
   }
 }
 
+async function defaultRunConformance(args: {
+  claimed: ClaimedGithubCheck;
+  bearer: string;
+  serverUrl: string;
+  candidateId: string;
+  oauthAccessToken?: string;
+  onRunStarted?: (runId: string) => Promise<void>;
+}): Promise<{ runId: string }> {
+  // The configured snapshot is passed through INTACT, `oauth` included. The
+  // backend refuses to configure OAuth for a check, but a row written before
+  // that refusal existed must not be quietly narrowed here: dropping a
+  // configured suite greens a check that never examined it. The executor
+  // records an OAuth the App cannot perform as an explicit incomplete, which
+  // is a non-green verdict and an honest one.
+  const suites = args.claimed.conformanceSuiteKinds ?? [
+    "protocol",
+    "apps",
+    "tasks",
+  ];
+  const target = args.claimed.repoConfigId
+    ? {
+        kind: "github_repo" as const,
+        githubCheckRepoConfigId: args.claimed.repoConfigId,
+        serverUrl: args.serverUrl,
+      }
+    : {
+        kind: "external" as const,
+        serverRef: args.claimed.repoFullName,
+        serverUrl: args.serverUrl,
+      };
+  const result = await executePersistedConformanceRun({
+    convexToken: args.bearer,
+    projectId: args.claimed.projectId,
+    server: {
+      url: args.serverUrl,
+      ...(args.oauthAccessToken ? { accessToken: args.oauthAccessToken } : {}),
+    },
+    suites,
+    source: "github_app",
+    target,
+    githubCheckTriggerId: args.claimed.triggerId,
+    actorLabel: `github-app:${args.claimed.repoFullName}`,
+    onRunStarted: args.onRunStarted,
+  });
+  return { runId: result.runId };
+}
+
 function defaultDeps(): CheckExecutionDeps {
   return {
     beginPlan: (claimed) =>
@@ -983,16 +1461,23 @@ function defaultDeps(): CheckExecutionDeps {
         repoFullName: claimed.repoFullName,
         headSha: claimed.headSha,
       }),
+    mintCloneToken,
     resolveAndStart,
     killSandbox: killCheckSandbox,
+    credentialPreflight,
+    reportCredentialBlocked,
+    resolvePrServerOAuthToken,
+    reportPrServerAuthorizationRequired,
     getBearer: getConvexBearerForDelegation,
     createEphemeralServer: defaultCreateEphemeralServer,
     deleteEphemeralServer: defaultDeleteEphemeralServer,
     recordServer: recordEphemeralServer,
     runEvalSuite: defaultRunEvalSuite,
+    runConformance: defaultRunConformance,
     report: reportPlanlessOutcome,
     heartbeat: sendHeartbeat,
     heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
+    cleanupTimeoutMs: GITHUB_CHECK_CLEANUP_TIMEOUT_MS,
   };
 }
 
@@ -1003,7 +1488,7 @@ function defaultDeps(): CheckExecutionDeps {
 export async function executeClaimedCheck(
   claimed: ClaimedGithubCheck,
   claimedBy: string,
-  overrides?: Partial<CheckExecutionDeps>
+  overrides?: Partial<CheckExecutionDeps>,
 ): Promise<void> {
   const deps: CheckExecutionDeps = { ...defaultDeps(), ...overrides };
   const logContext = {
@@ -1025,6 +1510,7 @@ export async function executeClaimedCheck(
       if (error instanceof LeaseLostError) {
         // Definitive. Stop beating and let the next step boundary bail out.
         leaseLost = error;
+        if (sandbox) void deps.killSandbox(sandbox).catch(() => {});
         clearInterval(heartbeat);
         logger.warn("[github-checks] lease lost; abandoning this check", {
           ...logContext,
@@ -1049,6 +1535,8 @@ export async function executeClaimedCheck(
   let sandbox: CheckSandbox | null = null;
   let serverId: string | null = null;
   let bearer: string | null = null;
+  let cleanupBearer: string | null = null;
+  let oauthAccessToken: string | undefined;
 
   // Reporting is the last thing that can fail, and it must not turn a delivered
   // completion into a thrown error — the poll loop would read that as a
@@ -1078,9 +1566,33 @@ export async function executeClaimedCheck(
   // neutral one.
   let session: CheckPlanSession;
   try {
+    if (
+      claimed.credentialPolicyVersion !== 2 ||
+      typeof claimed.isFork !== "boolean" ||
+      !Array.isArray(claimed.allowedBuiltInToolIds) ||
+      (claimed.isFork
+        ? !["no_customer_credentials", "suite_credentials"].includes(
+            claimed.githubCredentialPolicy,
+          )
+        : claimed.githubCredentialPolicy !== "same_repository")
+    ) {
+      throw new Error("credential_policy_version_required");
+    }
+    await deps.credentialPreflight(claimed, claimedBy);
     session = await deps.beginPlan(claimed);
   } catch (error) {
     clearInterval(heartbeat);
+    if (isCredentialPolicyBlocked(error)) {
+      await deps
+        .reportCredentialBlocked(claimed, claimedBy)
+        .catch(() =>
+          logger.warn(
+            "[github-checks] credential refusal could not be recorded",
+            logContext,
+          ),
+        );
+      return;
+    }
     const detail =
       error instanceof PlanProtocolError
         ? `the backend refused to open a plan for this check: ${error.reason}`
@@ -1110,6 +1622,7 @@ export async function executeClaimedCheck(
    */
   const safeComplete = async (input: {
     runId?: string;
+    conformanceRunId?: string;
     summary?: CheckSummary;
     detailsMarkdown?: string;
     terminalAttempt?: AttemptInput;
@@ -1147,12 +1660,71 @@ export async function executeClaimedCheck(
 
   /** The plan's id for the candidate the backend ACCEPTED, once it has one. */
   let acceptedCandidateId: string | null = null;
-  /** Set once the `eval` attempt landed: after that the plan is terminal. */
+  /** Set once the `eval` attempt landed. Dual-check: the plan is NOT terminal. */
   let runBound = false;
+  /** Set once the `conformance` attempt landed. */
+  let conformanceBound = false;
+  /** What the backend said to do after the eval bind. */
+  let afterEvalAction: AttemptAction | undefined;
   /** The in-box diagnostic for an eval that died. DISPLAY text, no authority. */
   let evalFailureDetails: string | undefined;
 
+  /**
+   * The clone credential, for a private repository only. Held in a local, never
+   * written to a field of any long-lived object, and passed exactly one place:
+   * the clone.
+   */
+  let cloneToken: string | null = null;
+
   try {
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 3 — MINT THE CLONE CREDENTIAL, AFTER THE PLAN AND BEFORE THE BOX.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // The ordering is load-bearing in BOTH directions:
+    //
+    //   after `beginPlan`   so a mint failure has a plan to be reported
+    //                       against, and lands as an ordinary `clone` attempt
+    //                       rather than a second planless completion;
+    //   before `provision`  so a check we already know cannot clone never costs
+    //                       an E2B box, and the failure cannot be confused with
+    //                       one the sandbox caused.
+    //
+    // A PUBLIC claim never calls the route at all. That is not an optimization:
+    // it is what keeps the blast radius of a `contents: read` mint proportional
+    // to the number of checks that genuinely need one.
+    await deps.credentialPreflight(claimed, claimedBy);
+    if (claimed.repoPrivate) {
+      try {
+        cloneToken = await deps.mintCloneToken(claimed.triggerId, claimedBy);
+      } catch (error) {
+        // THE PHASE DECIDES THE ATTRIBUTION, NOT THE ERROR'S TYPE. `mintCloneToken`
+        // already types its own failures, but this step must hold whatever the
+        // dep throws: anything that is not a lease loss means we reached the
+        // clone with no credential, and it has to land as `clone_failed` on the
+        // plan we just opened. Letting an untyped throw through would take the
+        // generic path, which has no degraded marker for it either — and would
+        // complete a fresh plan with an EMPTY attempt log, a check that ran
+        // nothing and reported nothing.
+        if (error instanceof LeaseLostError) throw error;
+        throw error instanceof CloneTokenUnavailableError
+          ? error
+          : new CloneTokenUnavailableError(
+              error instanceof Error ? error.message : String(error),
+            );
+      }
+      if (!cloneToken) {
+        // A null token is only ever legal for a public repository. Here it means
+        // the same thing a 502 does — we cannot clone — so it gets the same
+        // answer rather than a silent anonymous attempt that would 404 and read
+        // as the repository having vanished.
+        throw new CloneTokenUnavailableError(
+          "the backend returned no clone token for a private repository",
+        );
+      }
+      assertLeaseHeld();
+    }
+
     // Runs the deterministic ladder against the checkout, then executes the
     // BACKEND'S candidates in the BACKEND'S order, reporting every phase, and
     // leaves the accepted box running a verified server. Provisioning, cloning,
@@ -1165,6 +1737,7 @@ export async function executeClaimedCheck(
         repoFullName: claimed.repoFullName,
         prNumber: claimed.prNumber,
         headSha: claimed.headSha,
+        ...(cloneToken ? { cloneToken } : {}),
       },
       {
         plan: session,
@@ -1175,13 +1748,21 @@ export async function executeClaimedCheck(
           sandbox = box;
         },
         assertLeaseHeld,
-      }
+      },
     );
     sandbox = resolved.sandbox;
     acceptedCandidateId = resolved.candidateId;
     const recipe = resolved.recipe;
     const started = resolved.started;
     assertLeaseHeld();
+    const sourceServerId = started.authorizationRequired
+      ? claimed.prServerOAuthSourceServerId
+      : undefined;
+    if (started.authorizationRequired && !sourceServerId) {
+      throw new PrServerAuthorizationRequiredError(
+        "oauth_connection_not_selected",
+      );
+    }
 
     logger.info("[github-checks] PR server is reachable", {
       ...logContext,
@@ -1193,83 +1774,149 @@ export async function executeClaimedCheck(
 
     bearer = await deps.getBearer(
       claimed.createdByExternalId,
-      claimed.organizationId
+      claimed.organizationId,
     );
 
+    cleanupBearer = bearer;
     const serverName = `gh-check-${claimed.triggerId}`;
     serverId = await deps.createEphemeralServer({
       bearer,
       projectId: claimed.projectId,
       name: serverName,
       url: started.url,
+      useOAuth: started.authorizationRequired === true,
     });
     // Tell the backend before running anything: if this worker dies mid-eval,
     // recovery needs the pointer to soft-delete the row.
-    await deps.recordServer(claimed.triggerId, serverId).catch((error) =>
-      logger.warn("[github-checks] failed to record ephemeral server", {
-        ...logContext,
-        error: error instanceof Error ? error.message : String(error),
-      })
+    await deps.recordServer(claimed.triggerId, serverId);
+    if (started.authorizationRequired) {
+      oauthAccessToken = await deps.resolvePrServerOAuthToken({
+        claimed,
+        claimedBy,
+        sourceServerId,
+        targetServerId: serverId,
+        targetResourceUrl: started.url,
+      });
+    }
+    // Switch before interpreting any untrusted MCP result. Only this bearer
+    // reaches the eval manager, model tools, and conformance executor.
+    const executionBearer = await deps.credentialPreflight(
+      claimed,
+      claimedBy,
+      true,
     );
+    if (!executionBearer)
+      throw new Error("credential_policy_execution_token_required");
+    const executionServerId = serverId;
+    const executionPolicy = claimed.isFork
+      ? {
+          policy: claimed.githubCredentialPolicy as
+            | "no_customer_credentials"
+            | "suite_credentials",
+          allowedBuiltInToolIds: claimed.allowedBuiltInToolIds,
+          checkAccess: () => deps.credentialPreflight(claimed, claimedBy),
+        }
+      : false;
 
     // The last and most valuable boundary: the eval run is the twenty-minute part.
     assertLeaseHeld();
     // Captured because the failure path reads it from inside a closure, and
     // `sandbox` is a reassignable nullable whose narrowing does not survive that.
     const runningBox = sandbox;
-    const run = await deps
-      .runEvalSuite({
-        claimed,
-        bearer,
-        serverId,
-        serverName,
-        // STEP 9 — the attempt that BINDS the run, posted AT LAUNCH.
-        onRunStarted: async (runId) => {
-          await session.attempt({
-            candidateId: resolved.candidateId,
-            phase: "eval",
-            ok: true,
-            runId,
-            durationMs: 0,
-          });
-          // The returned action is `complete` (`verdict_established`) and the
-          // plan is now terminal: no further attempt is legal, and none is
-          // sent. We still WAIT for the run — the backend reads the verdict off
-          // the row, and an unfinished one derives `infra_error`, never a pass.
-          runBound = true;
-        },
-      })
-      .catch(async (error: unknown) => {
-        // The PR's server dying mid-run and an outage of ours read identically
-        // in the error text, so the box is asked directly. The answer is
-        // DISPLAY only now — the verdict comes from the BOUND run.
-        evalFailureDetails = await describeEvalFailure(
-          error,
-          runningBox,
-          recipe
-        );
-        // The diagnostic above talks to the box, so it takes real time — long
-        // enough for the lease to be taken away while it runs. Re-checked here so
-        // a check somebody else has already concluded is abandoned rather than
-        // reported on, which is what every other step boundary does.
-        assertLeaseHeld();
+    const run = await withGithubCredentialPolicy(executionPolicy, () =>
+      deps
+        .runEvalSuite({
+          claimed,
+          bearer: executionBearer,
+          serverId: executionServerId,
+          serverName,
+          ...(oauthAccessToken ? { oauthAccessToken } : {}),
+          // STEP 9 — the attempt that BINDS the run, posted AT LAUNCH.
+          onRunStarted: async (runId) => {
+            const decision = await session.attempt({
+              candidateId: resolved.candidateId,
+              phase: "eval",
+              ok: true,
+              runId,
+              durationMs: 0,
+            });
+            afterEvalAction = decision.action;
+            runBound = true;
+          },
+          isLeaseHeld: () => leaseLost === null,
+        })
+        .catch(async (error: unknown) => {
+          evalFailureDetails = await describeEvalFailure(
+            error,
+            runningBox,
+            recipe,
+          );
+          assertLeaseHeld();
 
-        // A LAUNCH that never bound a run is still reportable as an eval
-        // attempt; one that already bound is not, because the plan is terminal.
-        // `sandbox_error` is the honest kind — the launch is OURS — and
-        // `evals_failed` is not worker-reportable at all: that statement about
-        // the pull request comes only from the backend reading the bound run.
-        // A plan-level failure is excluded: the backend either refused us or is
-        // gone, and either way another attempt is not the answer.
+          if (
+            !runBound &&
+            !(error instanceof PlanProtocolError) &&
+            !(error instanceof PlanUnreachableError)
+          ) {
+            await session
+              .attempt({
+                candidateId: resolved.candidateId,
+                phase: "eval",
+                ok: false,
+                failureKind: "sandbox_error",
+                durationMs: 0,
+                detailsClamped:
+                  error instanceof Error
+                    ? error.message.slice(0, 500)
+                    : String(error).slice(0, 500),
+              })
+              .catch(() => {});
+          }
+          throw error;
+        }),
+    );
+
+    assertLeaseHeld();
+
+    let conformanceRunId: string | undefined;
+    // Dual-check: product failures of eval still run conformance. Infra
+    // throws above skip it so a dead box is not probed twice.
+    if (afterEvalAction === "run_conformance") {
+      try {
+        const conformance = await withGithubCredentialPolicy(
+          executionPolicy,
+          () =>
+            deps.runConformance({
+              claimed,
+              bearer: executionBearer,
+              serverUrl: started.url,
+              candidateId: resolved.candidateId,
+              ...(oauthAccessToken ? { oauthAccessToken } : {}),
+              onRunStarted: async (boundId) => {
+                await session.attempt({
+                  candidateId: resolved.candidateId,
+                  phase: "conformance",
+                  ok: true,
+                  conformanceRunId: boundId,
+                  durationMs: 0,
+                });
+                conformanceBound = true;
+              },
+            }),
+        );
+        conformanceRunId = conformance.runId;
+      } catch (error: unknown) {
+        assertLeaseHeld();
+        if (isCredentialPolicyBlocked(error)) throw error;
         if (
-          !runBound &&
+          !conformanceBound &&
           !(error instanceof PlanProtocolError) &&
           !(error instanceof PlanUnreachableError)
         ) {
           await session
             .attempt({
               candidateId: resolved.candidateId,
-              phase: "eval",
+              phase: "conformance",
               ok: false,
               failureKind: "sandbox_error",
               durationMs: 0,
@@ -1280,22 +1927,42 @@ export async function executeClaimedCheck(
             })
             .catch(() => {});
         }
-        throw error;
-      });
+        logger.warn("[github-checks] conformance family failed to launch", {
+          ...logContext,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
 
-    // The eval is the widest window in this flow — twenty minutes — so the lease
-    // can be taken away while it runs and still resolve normally. The failure path
-    // re-checks; this one has to as well, or a check the backend already concluded
-    // gets a completion posted over the top of it.
-    assertLeaseHeld();
-
+    await deps.credentialPreflight(claimed, claimedBy);
     await safeComplete({
-      // VERIFIED, never adopted: this must equal the run the `eval` attempt
-      // bound, and the backend 409s if it does not.
       runId: run.runId,
+      ...(conformanceRunId ? { conformanceRunId } : {}),
       ...(run.summary ? { summary: run.summary } : {}),
     });
   } catch (error) {
+    if (error instanceof PrServerAuthorizationRequiredError) {
+      await deps
+        .reportPrServerAuthorizationRequired(claimed, claimedBy, error.reason)
+        .catch(() =>
+          logger.warn(
+            "[github-checks] authorization requirement could not be recorded",
+            logContext,
+          ),
+        );
+      return;
+    }
+    if (isCredentialPolicyBlocked(error)) {
+      await deps
+        .reportCredentialBlocked(claimed, claimedBy)
+        .catch(() =>
+          logger.warn(
+            "[github-checks] credential refusal could not be recorded",
+            logContext,
+          ),
+        );
+      return;
+    }
     if (error instanceof LeaseLostError) {
       // Nothing to complete: the backend already concluded this check, which is
       // why the lease was taken away. Completing anyway would just be rejected.
@@ -1306,18 +1973,61 @@ export async function executeClaimedCheck(
       });
       return;
     }
+    if (error instanceof CloneTokenUnavailableError) {
+      // Reported ON THE PLAN, as a LADDER-scoped `clone` attempt: no candidate
+      // exists yet (nothing has been provisioned, let alone detected), and the
+      // backend attributes a ladder `clone_failed` as `infra_error`. It is ours
+      // — an app installation, a GitHub outage, a minting bug — and there is no
+      // reading of it that is the pull request's fault.
+      const detail = redactCloneCredential(error.detail, cloneToken).slice(
+        0,
+        500,
+      );
+      logger.error(
+        "[github-checks] could not mint a clone token",
+        redactErrorForLog(error, cloneToken),
+        { ...logContext, planId: session.planId, detail },
+      );
+      await safeComplete({
+        detailsMarkdown:
+          "MCPJam could not obtain a credential to clone this private repository, so nothing was built or evaluated. This is an MCPJam-side failure, not a problem with the pull request — check that the MCPJam GitHub App is still installed on this repository and retry the check.",
+        terminalAttempt: {
+          phase: "clone",
+          ok: false,
+          failureKind: "clone_failed",
+          durationMs: 0,
+          detailsClamped: detail,
+        },
+      });
+      return;
+    }
     const described = describeCheckFailure(error);
-    logger.error("[github-checks] check failed", error, {
-      ...logContext,
-      planId: session.planId,
-      reason: described.failureReason,
-      candidate: acceptedCandidateId,
-    });
+    // Redacted BEFORE any of it is logged, completed or clamped. A clone that
+    // failed inside the box is the one failure whose text can have touched the
+    // credential, and `describeCheckFailure` is a formatter — it has no idea a
+    // secret is in play.
+    const failureReason = redactCloneCredential(
+      described.failureReason,
+      cloneToken,
+    );
+    logger.error(
+      "[github-checks] check failed",
+      redactErrorForLog(error, cloneToken),
+      {
+        ...logContext,
+        planId: session.planId,
+        reason: failureReason,
+        candidate: acceptedCandidateId,
+      },
+    );
     // NO OUTCOME. Every failure that got this far was reported as an attempt at
     // the phase it happened at; the backend derives what it adds up to. The only
     // things travelling here are display text and — when the backend went away
     // mid-flight — the degraded marker.
-    const details = described.detailsMarkdown ?? evalFailureDetails;
+    const rawDetails = described.detailsMarkdown ?? evalFailureDetails;
+    const details = rawDetails
+      ? redactCloneCredential(rawDetails, cloneToken)
+      : undefined;
     const marker = degradedMarker(error);
     await safeComplete({
       ...(details
@@ -1327,22 +2037,58 @@ export async function executeClaimedCheck(
               : clampOutput(rawOf(details)),
           }
         : {}),
-      ...(marker ? { terminalAttempt: marker } : {}),
+      ...(marker
+        ? {
+            terminalAttempt: {
+              ...marker,
+              ...(marker.detailsClamped
+                ? {
+                    detailsClamped: redactCloneCredential(
+                      marker.detailsClamped,
+                      cloneToken,
+                    ),
+                  }
+                : {}),
+            },
+          }
+        : {}),
     });
   } finally {
     clearInterval(heartbeat);
     // Each step best-effort and independent: a failure to delete the server row
     // must not skip killing the box (which costs money), and vice versa. The
     // backend's recovery sweep and E2B's TTL are the backstops for both.
-    if (serverId && bearer) {
-      await deps.deleteEphemeralServer({ bearer, serverId }).catch((error) =>
-        logger.warn("[github-checks] ephemeral server cleanup failed", {
-          ...logContext,
-          error: error instanceof Error ? error.message : String(error),
-        })
+    const cleanupSteps: Promise<void>[] = [];
+    if (serverId && cleanupBearer) {
+      cleanupSteps.push(
+        runCleanupStep(
+          () =>
+            deps.deleteEphemeralServer({
+              bearer: cleanupBearer,
+              serverId,
+            }),
+          deps.cleanupTimeoutMs,
+          (error) =>
+            logger.warn("[github-checks] ephemeral server cleanup failed", {
+              ...logContext,
+              error: error instanceof Error ? error.message : String(error),
+            }),
+        ),
       );
     }
-    await deps.killSandbox(sandbox);
+    cleanupSteps.push(
+      runCleanupStep(
+        () => deps.killSandbox(sandbox),
+        deps.cleanupTimeoutMs,
+        (error) =>
+          logger.warn("[github-checks] sandbox cleanup failed", {
+            ...logContext,
+            sandboxId: sandbox?.sandboxId,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+      ),
+    );
+    await Promise.all(cleanupSteps);
   }
 }
 
@@ -1353,7 +2099,7 @@ export async function executeClaimedCheck(
  */
 function rawOf(detailsMarkdown: string): string {
   const fenced = /^(?:_[^\n]*_\n)?(`{3,})text\n([\s\S]*)\n\1$/.exec(
-    detailsMarkdown
+    detailsMarkdown,
   );
   return fenced ? fenced[2] : detailsMarkdown;
 }
@@ -1407,7 +2153,7 @@ export function startGithubChecksWorker(options?: {
 
   if (!requiredEnv()) {
     logger.warn(
-      "[github-checks] worker enabled but CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting"
+      "[github-checks] worker enabled but CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting",
     );
     return { stop: async () => {} };
   }
@@ -1420,7 +2166,7 @@ export function startGithubChecksWorker(options?: {
   // reason as the sandbox gate below, checked here instead.
   if (!process.env.CONVEX_URL) {
     logger.warn(
-      "[github-checks] worker enabled but CONVEX_URL missing; not starting (queued checks stay claimable)"
+      "[github-checks] worker enabled but CONVEX_URL missing; not starting (queued checks stay claimable)",
     );
     return { stop: async () => {} };
   }
@@ -1431,7 +2177,7 @@ export function startGithubChecksWorker(options?: {
   // those checks queued until the deployment is fixed.
   if (!isGithubChecksSandboxConfigured()) {
     logger.warn(
-      "[github-checks] worker enabled but E2B_API_KEY / GITHUB_CHECKS_E2B_TEMPLATE_ID missing; not starting (queued checks stay claimable)"
+      "[github-checks] worker enabled but E2B_API_KEY / GITHUB_CHECKS_E2B_TEMPLATE_ID missing; not starting (queued checks stay claimable)",
     );
     return { stop: async () => {} };
   }

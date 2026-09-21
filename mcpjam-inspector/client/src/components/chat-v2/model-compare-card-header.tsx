@@ -57,10 +57,14 @@ export function ModelCompareCardHeader({
   showIdentityHeader = false,
   logoSrc = null,
   result,
+  hideStatus = false,
   showToolsTab = false,
   showStepsTab = false,
   stepsActive = false,
   onSelectSteps,
+  showScorecardTab = false,
+  scorecardActive = false,
+  onSelectScorecard,
   showBrowserTab = false,
   browserActive = false,
   onSelectBrowser,
@@ -102,6 +106,8 @@ export function ModelCompareCardHeader({
   logoSrc?: string | null;
   /** When set, shows a Pass/Fail pill instead of the status dot. */
   result?: "passed" | "failed" | null;
+  /** The surrounding run drawer already displays its status. */
+  hideStatus?: boolean;
   /** Include a Results tab alongside Trace/Chat/Raw. Only applies when `tabsInline` is true. */
   showToolsTab?: boolean;
   /** Step-aligned "Steps" tab — rides the out-of-union `stepsActive` /
@@ -109,6 +115,10 @@ export function ModelCompareCardHeader({
   showStepsTab?: boolean;
   stepsActive?: boolean;
   onSelectSteps?: () => void;
+  /** Scorecard tab — same out-of-union pattern as Steps. */
+  showScorecardTab?: boolean;
+  scorecardActive?: boolean;
+  onSelectScorecard?: () => void;
   /** Include the eval-only "Browser" tab (headless render observations / replay
    *  video). Rides the out-of-union `browserActive` / `onSelectBrowser` props so
    *  the shared `TraceViewMode` union stays narrow (see TraceViewModeTabs doc). */
@@ -221,8 +231,9 @@ export function ModelCompareCardHeader({
       : `${currentInteractionCount} interactions`;
 
   const showResultPill =
-    !compactCompareHeader && (result === "passed" || result === "failed");
-  const showStatusDot = !compactCompareHeader && result == null;
+    !hideStatus && !compactCompareHeader && (result === "passed" || result === "failed");
+  const showStatusDot =
+    !hideStatus && !compactCompareHeader && result == null && !(tabsInline && isRunningSummary);
 
   const resultPill =
     showResultPill && result === "passed" ? (
@@ -265,6 +276,9 @@ export function ModelCompareCardHeader({
             mode={mode}
             onModeChange={onModeChange}
             showToolsTab={showToolsTab}
+            showScorecardTab={showScorecardTab}
+            scorecardActive={scorecardActive}
+            onSelectScorecard={onSelectScorecard}
             showStepsTab={showStepsTab}
             stepsActive={stepsActive}
             onSelectSteps={onSelectSteps}
@@ -371,7 +385,7 @@ export function ModelCompareCardHeader({
                         "h-full rounded-sm transition-all duration-300",
                         isFastest
                           ? "bg-emerald-500/25 dark:bg-emerald-400/20"
-                          : "bg-sidebar-accent"
+                          : "bg-accent"
                       )}
                       style={{
                         width: `${hasComparison ? durationBarPct : 100}%`,
@@ -411,7 +425,7 @@ export function ModelCompareCardHeader({
                         "h-full rounded-sm transition-all duration-300",
                         isFewestTokens
                           ? "bg-emerald-500/25 dark:bg-emerald-400/20"
-                          : "bg-sidebar-accent"
+                          : "bg-accent"
                       )}
                       style={{
                         width: `${hasComparison ? tokensBarPct : 100}%`,

@@ -2,6 +2,7 @@ import type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
 } from "../conformance-outcome.js";
+import type { ConformanceProfileStamp } from "../conformance-profile.js";
 import type { MCPServerConfig } from "../mcp-client-manager/index.js";
 import type { TasksWire } from "../mcp-client-manager/tasks-dispatch.js";
 
@@ -22,6 +23,20 @@ export const MCP_TASKS_CHECK_IDS = [
   "tasks-ttl-shape",
   "tasks-inline-result",
   "tasks-mcp-name-routing",
+  // Scenario depth added by the conformance-gap program. New ids, and all of
+  // them outside the `mcp-tasks` profile's scored set, so they report real
+  // verdicts without re-grading servers that were green under the eight above.
+  //
+  // NOT here, deliberately: a `notifications/tasks` check. It needs a live
+  // `subscriptions/listen` SSE stream, and the extension fixture never opens
+  // one — shipping a probe we cannot validate against a fixture is how a
+  // conformance suite acquires a flaky check. See the runner docstring.
+  "tasks-invalid-task-id-rejected",
+  "tasks-status-payload-shape",
+  "tasks-cancel-ack-shape",
+  "tasks-input-required-update-completes",
+  "tasks-ttl-integer-shape",
+  "tasks-undeclared-capability-names-requirements",
 ] as const;
 
 export type MCPTasksCheckId = (typeof MCP_TASKS_CHECK_IDS)[number];
@@ -87,6 +102,19 @@ export type MCPTasksConformanceConfig = MCPServerConfig & {
   toolArguments?: Record<string, unknown>;
   /** Upper bound on polling a created task to a terminal status. */
   pollTimeoutMs?: number;
+  /**
+   * Responses to submit when the probed task reports `input_required`, keyed by
+   * `inputRequests` key.
+   *
+   * OPT-IN, for the same reason the protocol suite's fixtures are: what a task
+   * is asking for is server-defined, and inventing an answer would submit
+   * arbitrary content into somebody's workflow. Absent ⇒
+   * `tasks-input-required-update-completes` reports a skip naming what it
+   * needs, and the run stops polling as soon as the task parks on
+   * `input_required` (further polls cannot advance it) rather than burning
+   * `pollTimeoutMs`.
+   */
+  inputResponses?: Record<string, unknown>;
 };
 
 export interface NormalizedMCPTasksConformanceConfig {
@@ -97,6 +125,8 @@ export interface NormalizedMCPTasksConformanceConfig {
   checkIds?: MCPTasksCheckId[];
   toolName?: string;
   toolArguments?: Record<string, unknown>;
+  /** @see {@link MCPTasksConformanceConfig.inputResponses} */
+  inputResponses?: Record<string, unknown>;
 }
 
 export interface MCPTasksConformanceResult {
@@ -128,6 +158,13 @@ export interface MCPTasksConformanceResult {
       couldNotRun: number;
     }
   >;
+  /**
+   * Which questions this run asked, and which build asked them. Same meaning
+   * and same mechanism as the protocol suite's stamp, drawn from a SEPARATE
+   * manifest — see `conformance-profile.ts` for why the two suites do not
+   * share one.
+   */
+  profile?: ConformanceProfileStamp;
   discovery: {
     protocolVersion?: string;
     wire: TasksWire;

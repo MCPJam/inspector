@@ -8,7 +8,15 @@ import {
   iterationsToEvalResultInputs,
   suiteTestResultsToEvalResultInputs,
   promptsToEvalResult,
+  variantFromExecutor,
+  legacyIterationStatusFromExecutionError,
+  resolveIterationLifecycleStatus,
 } from "../src/eval-result-mapping";
+import {
+  STAGE_ANALYZER_VERSION,
+  USER_VALUE_STAGES,
+  type StageResultRow,
+} from "../src/contract/index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -543,6 +551,430 @@ describe("iterationToEvalResult", () => {
 // runToEvalResults
 // ---------------------------------------------------------------------------
 
+describe("lifecycle status", () => {
+  it("reports the iteration's own status and never derives it from `passed`", () => {
+    // The whole point of the two axes: a graded failure that executed
+    // normally is `completed`, and a passing iteration that was still
+    // cancelled/timed out keeps its lifecycle status.
+    expect(
+      resolveIterationLifecycleStatus({ status: "completed", error: undefined })
+    ).toBe("completed");
+    expect(
+      resolveIterationLifecycleStatus({
+        status: "setup_failed",
+        error: "server never started",
+      })
+    ).toBe("setup_failed");
+    expect(
+      resolveIterationLifecycleStatus({ status: "skipped", error: undefined })
+    ).toBe("skipped");
+    // A declared status wins over the error the legacy rule would read.
+    expect(
+      resolveIterationLifecycleStatus({
+        status: "completed",
+        error: "assertion failed: goal not reached",
+      })
+    ).toBe("completed");
+  });
+
+  it("infers a status only for a struct that carries none", () => {
+    expect(legacyIterationStatusFromExecutionError(undefined)).toBe(
+      "completed"
+    );
+    expect(legacyIterationStatusFromExecutionError("   ")).toBe("completed");
+    expect(legacyIterationStatusFromExecutionError("connection reset")).toBe(
+      "failed"
+    );
+    expect(resolveIterationLifecycleStatus({ error: undefined })).toBe(
+      "completed"
+    );
+    expect(resolveIterationLifecycleStatus({ error: "boom" })).toBe("failed");
+  });
+
+  it("carries an explicit status onto every wire mapping", () => {
+    const prompt = makePrompt({ prompt: "hello" });
+    // A FAILED task verdict on an iteration that ran fine. If any mapper read
+    // `passed` the status below would come out `failed`.
+    const graded = makeIteration({
+      passed: false,
+      prompts: [prompt],
+      status: "completed",
+    });
+    expect(
+      iterationToEvalResult(graded, 0, { caseTitle: "case-1" }).status
+    ).toBe("completed");
+    expect(iterationsToEvalResultInputs("case-1", [graded])[0].status).toBe(
+      "completed"
+    );
+
+    const abandoned = makeIteration({
+      passed: false,
+      prompts: [prompt],
+      status: "setup_failed",
+      error: "server never started",
+    });
+    expect(iterationsToEvalResultInputs("case-1", [abandoned])[0].status).toBe(
+      "setup_failed"
+    );
+    expect(
+      runToEvalResults(makeRunResult([abandoned]), { caseTitle: "case-1" })[0]
+        .status
+    ).toBe("setup_failed");
+  });
+});
+
+describe("provider and model on reported iterations", () => {
+  const prompt = makePrompt({
+    provider: "mcpjam",
+    model: "anthropic/claude-haiku-4.5",
+  });
+
+  it("carries the prompt's provider and model through both mappers", () => {
+    const iteration = makeIteration({ prompts: [prompt] });
+
+    expect(
+      iterationsToEvalResultInputs("case-1", [iteration])[0]
+    ).toMatchObject({
+      provider: "mcpjam",
+      model: "anthropic/claude-haiku-4.5",
+    });
+
+    const suite = suiteTestResultsToEvalResultInputs(
+      new Map([["case-1", makeRunResult([iteration])]])
+    );
+    expect(suite[0]).toMatchObject({
+      provider: "mcpjam",
+      model: "anthropic/claude-haiku-4.5",
+    });
+  });
+
+  it("falls back to the executor when an iteration produced no prompt", () => {
+    // A case that failed in setup never reached the model, but the run still
+    // names what it was configured to run — a saved client's model, say.
+    const iteration = makeIteration({ prompts: [], status: "setup_failed" });
+    const variant = { provider: "mcpjam", model: "anthropic/claude-haiku-4.5" };
+
+    expect(
+      iterationsToEvalResultInputs(
+        "case-1",
+        [iteration],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        variant
+      )[0]
+    ).toMatchObject(variant);
+
+    expect(
+      suiteTestResultsToEvalResultInputs(
+        new Map([["case-1", makeRunResult([iteration])]]),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        variant
+      )[0]
+    ).toMatchObject(variant);
+  });
+
+  it("prefers the prompt over the executor fallback", () => {
+    const iteration = makeIteration({ prompts: [prompt] });
+    expect(
+      iterationsToEvalResultInputs(
+        "case-1",
+        [iteration],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { provider: "openai", model: "gpt-5" }
+      )[0]
+    ).toMatchObject({
+      provider: "mcpjam",
+      model: "anthropic/claude-haiku-4.5",
+    });
+  });
+
+  it("leaves both undefined with no prompt and no fallback", () => {
+    const iteration = makeIteration({ prompts: [] });
+    const result = iterationsToEvalResultInputs("case-1", [iteration])[0];
+    expect(result.provider).toBeUndefined();
+    expect(result.model).toBeUndefined();
+  });
+});
+
+describe("variantFromExecutor", () => {
+  it("reads the parsed provider and model off a HostRunner-shaped executor", () => {
+    expect(
+      variantFromExecutor({
+        getParsedProvider: () => "mcpjam",
+        getParsedModel: () => "anthropic/claude-haiku-4.5",
+      })
+    ).toEqual({ provider: "mcpjam", model: "anthropic/claude-haiku-4.5" });
+  });
+
+  it("returns nothing for an executor that does not parse a model string", () => {
+    // Only `HostRunner` has these; the `HostExecutor` interface does not.
+    expect(variantFromExecutor({ run: async () => ({}) })).toEqual({});
+    expect(variantFromExecutor(undefined)).toEqual({});
+  });
+});
+
+describe("stepResults on reported iterations", () => {
+  const EXPECTED = [{ toolName: "show-squad", arguments: { team: "PSG" } }];
+  const noMatch = {
+    missing: [],
+    extra: [],
+    outOfOrder: [],
+    argumentMismatches: [],
+  };
+  const stepsOf = (result: { metadata?: Record<string, unknown> }) =>
+    result.metadata?.stepResults;
+  const run = (overrides: Partial<IterationResult>, expected = EXPECTED) =>
+    iterationsToEvalResultInputs("case", [makeIteration(overrides)], expected);
+
+  it("passes the prompt and every expectation when the match passed", () => {
+    const results = run({
+      prompts: [makePrompt({ toolCalls: EXPECTED })],
+      toolMatch: { ...noMatch, passed: true },
+    });
+
+    expect(stepsOf(results[0])).toEqual([
+      { stepId: "step-1", stepIndex: 0, kind: "prompt", status: "ok" },
+      { stepId: "step-expect-0", stepIndex: 1, kind: "assert", status: "ok" },
+    ]);
+  });
+
+  it("spends each missing or mismatched call on one expectation only", () => {
+    const twice = [
+      { toolName: "show-squad", arguments: { team: "PSG" } },
+      { toolName: "show-squad", arguments: { team: "PSG" } },
+    ];
+    const results = run(
+      {
+        passed: false,
+        prompts: [makePrompt({ toolCalls: [twice[0]] })],
+        toolMatch: {
+          ...noMatch,
+          passed: false,
+          // One call was made; the matcher reports the second expectation missing.
+          missing: [twice[1]],
+        },
+      },
+      twice
+    );
+
+    // Only one row may cash in the single missing entry. The other is not
+    // individually implicated, so it takes the shared verdict instead.
+    const rows = stepsOf(results[0]) as { stepId: string; reason?: string }[];
+    expect(rows.filter((row) => row.reason === "not called")).toHaveLength(1);
+  });
+
+  it("matches an argument mismatch by expected arguments, not tool name alone", () => {
+    const expectations = [
+      { toolName: "show-squad", arguments: { team: "PSG" } },
+      { toolName: "show-squad", arguments: { team: "Inter" } },
+    ];
+    const results = run(
+      {
+        passed: false,
+        prompts: [makePrompt({})],
+        toolMatch: {
+          ...noMatch,
+          passed: false,
+          argumentMismatches: [
+            {
+              toolName: "show-squad",
+              expectedArgs: { team: "Inter" },
+              actualArgs: { team: "Milan" },
+            },
+          ],
+        },
+      },
+      expectations
+    );
+
+    const rows = stepsOf(results[0]) as { stepId: string; reason?: string }[];
+    const differed = rows.filter((row) =>
+      row.reason?.startsWith("arguments differed")
+    );
+    expect(differed.map((row) => row.stepId)).toEqual(["step-expect-1"]);
+  });
+
+  it("blames the expectation the matcher reported missing", () => {
+    const results = run({
+      passed: false,
+      prompts: [makePrompt({})],
+      toolMatch: { ...noMatch, missing: [...EXPECTED], passed: false },
+    });
+
+    expect(stepsOf(results[0])).toContainEqual({
+      stepId: "step-expect-0",
+      stepIndex: 1,
+      kind: "assert",
+      status: "fail",
+      reason: "not called",
+    });
+  });
+
+  it("names both sides when only the arguments differed", () => {
+    const results = run({
+      passed: false,
+      prompts: [makePrompt({})],
+      toolMatch: {
+        ...noMatch,
+        argumentMismatches: [
+          {
+            toolName: "show-squad",
+            expectedArgs: { team: "PSG" },
+            actualArgs: { team: "Paris Saint-Germain" },
+          },
+        ],
+        passed: false,
+      },
+    });
+
+    const [, assertion] = stepsOf(results[0]) as Record<string, unknown>[];
+    expect(assertion.status).toBe("fail");
+    expect(assertion.reason).toContain("arguments differed");
+    expect(assertion.reason).toContain("Paris Saint-Germain");
+  });
+
+  it("fails every expectation when the failure implicates none of them", () => {
+    // An extra call means the iteration did not match, but no single
+    // expectation is at fault — the header must not read "1 of 1 passed".
+    const results = run({
+      passed: false,
+      prompts: [makePrompt({})],
+      toolMatch: {
+        ...noMatch,
+        extra: [{ toolName: "list-players", arguments: {} }],
+        passed: false,
+      },
+    });
+
+    const [, assertion] = stepsOf(results[0]) as Record<string, unknown>[];
+    expect(assertion.status).toBe("fail");
+    expect(assertion.reason).toBe("unexpected tool call: list-players");
+  });
+
+  it("fails a negative case whose tool was called after all", () => {
+    const results = iterationsToEvalResultInputs(
+      "case",
+      [
+        makeIteration({
+          passed: false,
+          prompts: [makePrompt({})],
+          toolMatch: {
+            ...noMatch,
+            extra: [{ toolName: "show-squad", arguments: {} }],
+            passed: false,
+          },
+        }),
+      ],
+      EXPECTED,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { isNegativeTest: true }
+    );
+
+    expect(stepsOf(results[0])).toContainEqual({
+      stepId: "step-expect-0",
+      stepIndex: 1,
+      kind: "assert",
+      status: "fail",
+      reason: "tool was called: show-squad",
+    });
+  });
+
+  it("reports pending, not passed, when the matcher never ran", () => {
+    const results = run({ prompts: [makePrompt({})] });
+
+    expect(stepsOf(results[0])).toContainEqual({
+      stepId: "step-expect-0",
+      stepIndex: 1,
+      kind: "assert",
+      status: "pending",
+    });
+  });
+
+  it("uses the SDK's own step ids when the case has predicates", () => {
+    const predicates = [
+      { type: "containsText", text: "psg" },
+      { type: "containsText", text: "squad" },
+    ] as unknown as Parameters<typeof iterationsToEvalResultInputs>[5];
+
+    const results = iterationsToEvalResultInputs(
+      "case",
+      [
+        makeIteration({
+          passed: false,
+          prompts: [makePrompt({})],
+          // Only the first predicate was reached; the second never evaluated.
+          predicateResults: [
+            { passed: false, reason: "no psg in the answer" },
+          ] as unknown as IterationResult["predicateResults"],
+        }),
+      ],
+      EXPECTED,
+      undefined,
+      undefined,
+      predicates
+    );
+
+    expect(stepsOf(results[0])).toEqual([
+      { stepId: "sdk-prompt-0", stepIndex: 0, kind: "prompt", status: "ok" },
+      {
+        stepId: "sdk-assert-0",
+        stepIndex: 1,
+        kind: "assert",
+        status: "fail",
+        reason: "no psg in the answer",
+      },
+      {
+        stepId: "sdk-assert-1",
+        stepIndex: 2,
+        kind: "assert",
+        status: "pending",
+      },
+    ]);
+  });
+
+  it("omits the key entirely when there is nothing to report", () => {
+    const results = iterationsToEvalResultInputs("case", [makeIteration({})]);
+
+    expect(results[0].metadata).not.toHaveProperty("stepResults");
+  });
+
+  it("reports the same rows through the suite mapper", () => {
+    const iteration = makeIteration({
+      prompts: [makePrompt({ toolCalls: EXPECTED })],
+      toolMatch: { ...noMatch, passed: true },
+    });
+
+    const viaSuite = suiteTestResultsToEvalResultInputs(
+      new Map([["case", makeRunResult([iteration])]]),
+      { case: EXPECTED }
+    );
+
+    expect(stepsOf(viaSuite[0])).toEqual(
+      stepsOf(iterationsToEvalResultInputs("case", [iteration], EXPECTED)[0])
+    );
+  });
+});
+
 describe("runToEvalResults", () => {
   it("maps N iterations with correct case titles", () => {
     const run = makeRunResult([
@@ -570,11 +1002,13 @@ describe("runToEvalResults", () => {
       model: "m1",
       expectedToolCalls: [{ toolName: "t" }],
       promptSelector: "last",
+      intent: "refund",
     });
 
     expect(results[0].provider).toBe("custom");
     expect(results[0].model).toBe("m1");
     expect(results[0].expectedToolCalls).toEqual([{ toolName: "t" }]);
+    expect(results[0].intent).toBe("refund");
   });
 });
 
@@ -624,6 +1058,7 @@ describe("suiteRunToEvalResults", () => {
     const results = suiteRunToEvalResults(testResults, {
       casePrefix: "s",
       expectedToolCallsByTest: expectedByTest,
+      intentByTest: { "test-a": "refund", "test-b": null },
     });
 
     const testA = results.find((r) => r.caseTitle.includes("test-a"));
@@ -633,6 +1068,8 @@ describe("suiteRunToEvalResults", () => {
     expect(testB?.expectedToolCalls).toEqual([
       { toolName: "tool_y", arguments: { z: 1 } },
     ]);
+    expect(testA?.intent).toBe("refund");
+    expect(testB?.intent).toBeNull();
   });
 });
 
@@ -735,8 +1172,82 @@ describe("iterationsToEvalResultInputs", () => {
 
     const results = iterationsToEvalResultInputs("t", iterations);
 
-    expect(results[0].metadata).toEqual({ retryCount: 0, iterationNumber: 1 });
-    expect(results[1].metadata).toEqual({ retryCount: 2, iterationNumber: 2 });
+    // Every SDK iteration now also carries the derived user-value chain. Split
+    // those keys off rather than loosening this to `toMatchObject`: the exact
+    // shape of the rest of the metadata is what this test exists to pin.
+    const split = (index: number) => {
+      const {
+        stageResults,
+        stageAnalyzerVersion,
+        stageMeasurements,
+        stepResults,
+        ...rest
+      } = results[index].metadata as Record<string, unknown>;
+      return {
+        stageResults,
+        stageAnalyzerVersion,
+        stageMeasurements,
+        stepResults,
+        rest,
+      };
+    };
+
+    expect(split(0).rest).toEqual({ retryCount: 0, iterationNumber: 1 });
+    expect(split(1).rest).toEqual({ retryCount: 2, iterationNumber: 2 });
+
+    // One prompt, no expectations: the prompt step alone.
+    for (const index of [0, 1]) {
+      expect(split(index).stepResults).toEqual([
+        { stepId: "step-1", stepIndex: 0, kind: "prompt", status: "ok" },
+      ]);
+    }
+
+    for (const index of [0, 1]) {
+      const { stageResults, stageAnalyzerVersion, stageMeasurements } =
+        split(index);
+      expect(stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
+      expect((stageResults as StageResultRow[]).map((r) => r.stage)).toEqual([
+        ...USER_VALUE_STAGES,
+      ]);
+      expect(stageMeasurements).toMatchObject({
+        schemaVersion: 1,
+        stageAnalyzerVersion: STAGE_ANALYZER_VERSION,
+      });
+    }
+  });
+
+  it("derives a stage chain that never passes a stage on missing evidence", () => {
+    // A retry-exhausted iteration with no prompt history at all: the mapper
+    // produces no trace, so there is nothing any stage could be decided from.
+    const iteration = makeIteration({
+      passed: false,
+      error: "connect ECONNREFUSED",
+      retryCount: 2,
+      prompts: [],
+    });
+
+    const [result] = iterationsToEvalResultInputs("no-evidence", [iteration]);
+
+    expect(result.trace).toBeUndefined();
+    const rows = (result.metadata as Record<string, unknown>)
+      .stageResults as StageResultRow[];
+    expect(rows.filter((r) => r.state === "passed")).toHaveLength(0);
+    // This fixture declares no expected tool calls and no predicates, so most
+    // stages genuinely do not apply to it. Every stage that DOES apply is
+    // unmeasured — none is quietly green.
+    const applicable = rows.filter((r) => r.state !== "notApplicable");
+    expect(applicable.length).toBeGreaterThan(0);
+    expect(applicable.every((r) => r.state === "notMeasured")).toBe(true);
+    // A failed iteration that captured nothing at all is a setup abort — the
+    // harness never got to the test — not a server verdict.
+    expect(applicable.every((r) => r.reason === "setupAborted")).toBe(true);
+    expect((result.metadata as Record<string, unknown>).failureCategory).toBe(
+      "setup"
+    );
+    // Nothing was measured, so nothing may be reported as having failed.
+    expect(
+      (result.metadata as Record<string, unknown>).firstFailedStage
+    ).toBeUndefined();
   });
 
   it("propagates error", () => {
@@ -894,6 +1405,29 @@ describe("iterationsToEvalResultInputs", () => {
 // ---------------------------------------------------------------------------
 
 describe("suiteTestResultsToEvalResultInputs", () => {
+  it("derives the same stage chain as the sibling mapper", () => {
+    // Both exported mappers build the same per-iteration shape. A chain that
+    // appeared from one entry point and not the other would leave a reader
+    // unable to tell "no derivation ran" from "the derivation found nothing".
+    const iteration = makeIteration({ prompts: [makePrompt({})] });
+    const testResults = new Map<string, EvalRunResult>();
+    testResults.set("suite-case", makeRunResult([iteration]));
+
+    const viaSuite = suiteTestResultsToEvalResultInputs(testResults);
+    const viaIterations = iterationsToEvalResultInputs("suite-case", [
+      iteration,
+    ]);
+
+    const suiteMeta = viaSuite[0].metadata as Record<string, unknown>;
+    const iterationMeta = viaIterations[0].metadata as Record<string, unknown>;
+
+    expect(suiteMeta.stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
+    expect(
+      (suiteMeta.stageResults as StageResultRow[]).map((r) => r.stage)
+    ).toEqual([...USER_VALUE_STAGES]);
+    expect(suiteMeta.stageResults).toEqual(iterationMeta.stageResults);
+  });
+
   it("includes testName in metadata", () => {
     const testResults = new Map<string, EvalRunResult>();
     testResults.set(

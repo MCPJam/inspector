@@ -25,7 +25,7 @@ logger.debug("Processing request", requestData);
 - `logger.error` → Sentry **and** Axiom. This is the server's single Sentry
   capture path for free-form errors. `logger.ts` owns every
   `Sentry.captureException` call in the server; the error-origin policy
-  (`error-origin-capture.ts`) decides *whether* to capture and then calls
+  (`error-origin-capture.ts`) decides _whether_ to capture and then calls
   `captureOriginErrorToSentry` here, so there is one policy module and one
   mechanism, not two of each.
 - Route catch-sites use `reportRouteFailure` (`utils/route-error-report.ts`),
@@ -87,10 +87,28 @@ Tests live in `__tests__/` directories next to source files. Use existing tests 
 - **Factories** (`client/src/test/factories.ts`): `createServer()`, `createTool()`, `createMany()`, etc.
 - **Mock presets** (`client/src/test/mocks/`): `mcpApiPresets`, `storePresets`
 - **Server helpers** (`server/routes/mcp/__tests__/helpers/`): `createTestApp()`, `createMockMcpClientManager()`, `postJson()`, `expectError()`
+- **WorkOS emulator** (`server/test/support/workos-emulator.ts`): `startWorkosEmulator()`, `loginWithPkce()`, `mintUserApiKey()`. The `*.emulator.test.ts` suites drive the real WorkOS paths against a local `@workos/emulate` server instead of stubbing `fetch` — use them when the assertion depends on what WorkOS actually does (a rotated refresh token, a revoked key, a real JWKS). One emulator per file on port 0; see the WorkOS contract tests section in `../CONTRIBUTING.md`.
 
 ### Checklist
 
 Cover: happy path, validation errors, error handling, edge cases (null, empty, etc.).
+
+## Design
+
+UI work starts from [`../DESIGN.md`](../DESIGN.md) — the design system's color
+roles, typography, layout, elevation, shapes and component conventions.
+
+Import primitives per-file from the shared package:
+
+```tsx
+import { Button } from "@mcpjam/design-system/button";
+import { cn } from "@mcpjam/design-system/cn";
+```
+
+`design-system/src/tokens.css` is the source of truth for the palette; DESIGN.md's
+front matter and the docs/chat-ui token mirrors are generated from it. Edit
+tokens.css, then `npm run design:sync`. `npm run design:check` and
+`npm run design:lint` gate CI. Never hardcode a color value.
 
 ## Eval Prompt Policy
 

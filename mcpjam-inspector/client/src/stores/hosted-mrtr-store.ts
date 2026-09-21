@@ -58,7 +58,7 @@ export interface HostedMrtrRound {
  */
 export interface HostedMrtrRoundHandlers {
   submit: (
-    responses: Record<string, MrtrElicitationResponse>
+    responses: Record<string, MrtrElicitationResponse>,
   ) => Promise<void> | void;
   /** Withdraw the durable continuation (user dismissed / unresumable). */
   cancel?: () => Promise<void> | void;
@@ -80,12 +80,12 @@ interface HostedMrtrState {
   setCollection: (
     key: string,
     index: number,
-    answers: Record<string, MrtrElicitationResponse>
+    answers: Record<string, MrtrElicitationResponse>,
   ) => void;
   /** Submit a whole round's per-key answers through its own handler. */
   submit: (
     key: string,
-    responses: Record<string, MrtrElicitationResponse>
+    responses: Record<string, MrtrElicitationResponse>,
   ) => Promise<void>;
   /** User withdrew the round: drop it and withdraw the durable continuation. */
   cancel: (key: string) => Promise<void>;
@@ -120,7 +120,7 @@ export const useHostedMrtrStore = create<HostedMrtrState>((set, get) => ({
     if (existing.some((r) => r.key === round.key)) return;
     handlersByKey.set(round.key, handlers);
     const superseded = existing.filter(
-      (r) => r.continuationId === round.continuationId
+      (r) => r.continuationId === round.continuationId,
     );
     dropKeys(superseded.map((r) => r.key));
     set((s) => ({
@@ -181,7 +181,7 @@ export const useHostedMrtrStore = create<HostedMrtrState>((set, get) => ({
 
   resolveContinuation: (continuationId) => {
     const dropped = get().rounds.filter(
-      (r) => r.continuationId === continuationId
+      (r) => r.continuationId === continuationId,
     );
     if (dropped.length === 0) return;
     dropKeys(dropped.map((r) => r.key));

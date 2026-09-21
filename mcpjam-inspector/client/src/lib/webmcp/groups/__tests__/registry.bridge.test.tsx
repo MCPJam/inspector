@@ -20,6 +20,7 @@ const REGISTRY_TOOL_NAMES = [
   "ui_connect_registry_server",
   "ui_disconnect_registry_server",
   "ui_toggle_registry_star",
+  "ui_search_registry_directory",
 ];
 
 describe("registry group through useSurfaceAgentBridge", () => {
@@ -36,12 +37,12 @@ describe("registry group through useSurfaceAgentBridge", () => {
     expect(listSurfaceGroupToolNames("registry")).toEqual(REGISTRY_TOOL_NAMES);
   });
 
-  it("mount registers all three tools surface-scoped; unmount removes them", () => {
+  it("mount registers every tool surface-scoped; unmount removes them", () => {
     const { unmount } = renderHook(() =>
       useSurfaceAgentBridge({
         surfaceId: "registry",
         snapshot: () => ({ totalServers: 0 }),
-      }),
+      })
     );
 
     const state = useUiToolsRegistry.getState();
@@ -65,18 +66,18 @@ describe("registry group through useSurfaceAgentBridge", () => {
     // the group's tools.
     const pending = waitForUiToolNames(
       listSurfaceGroupToolNames("registry"),
-      1_500,
+      1_500
     );
 
     const { unmount } = renderHook(() =>
-      useSurfaceAgentBridge({ surfaceId: "registry" }),
+      useSurfaceAgentBridge({ surfaceId: "registry" })
     );
 
     await expect(pending).resolves.toBe(true);
 
     unmount();
     await expect(
-      waitForUiToolNames(listSurfaceGroupToolNames("registry"), 50),
+      waitForUiToolNames(listSurfaceGroupToolNames("registry"), 50)
     ).resolves.toBe(false);
   });
 });

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   describeAsSlug,
+  mcpjamLimitSlugForMessage,
   describeError,
   ERROR_CATALOG,
   extractNodeErrno,
   isNormalizedError,
+  originOf,
   type NormalizedError,
 } from "../../src/error-describer/index.js";
 import { MCPAuthError, MCPError } from "../../src/mcp-client-manager/errors.js";
@@ -74,6 +76,24 @@ const CASES: Case[] = [
     build: () => makeError("Internal error", { code: -32603 }),
     expectSlug: "jsonrpc/internal_error",
     expectRawCode: -32603,
+  },
+  {
+    name: "-32603 invalid response format",
+    build: () => makeError("Invalid response format", { code: -32603 }),
+    expectSlug: "jsonrpc/invalid_response_format",
+    expectRawCode: -32603,
+  },
+  {
+    name: "-32603 invalid response format (MCP error wrapping)",
+    build: () =>
+      makeError("MCP error -32603: Invalid response format", { code: -32603 }),
+    expectSlug: "jsonrpc/invalid_response_format",
+    expectRawCode: -32603,
+  },
+  {
+    name: "invalid response format without numeric code",
+    build: () => makeError("Invalid response format"),
+    expectSlug: "jsonrpc/invalid_response_format",
   },
   {
     name: "-32000 connection closed",
@@ -205,6 +225,118 @@ const CASES: Case[] = [
     build: () => new Error("Missing or invalid bearer token"),
     expectSlug: "auth/missing_bearer",
   },
+  // MCPJam's own consent wording. Both strings are produced by the client's
+  // OAuth orchestrator and used to land on `internal/unknown`, which rendered
+  // an expected one-click state as "Unknown error".
+  {
+    name: "consent-required wording",
+    build: () =>
+      new Error("OAuth consent is required for asana. Click Reconnect to continue."),
+    expectSlug: "auth/consent_required",
+  },
+  {
+    name: "reauthenticate-to-continue wording",
+    build: () => new Error("Reauthenticate asana to continue."),
+    expectSlug: "auth/consent_required",
+  },
+  // Provider quota / rate limit. A 429 reaches us in three shapes: the AI-SDK
+  // `APICallError` carries `statusCode`, some transports set a numeric `code`,
+  // and the local-BYOK swarm path loses both and leaves only the message.
+  {
+    name: "HTTP 429 statusCode",
+    build: () => makeError("Too Many Requests", { statusCode: 429 }),
+    expectSlug: "provider/quota",
+    expectRawCode: 429,
+  },
+  {
+    name: "HTTP 429 status",
+    build: () => makeError("Rate limited", { status: 429 }),
+    expectSlug: "provider/quota",
+    expectRawCode: 429,
+  },
+  {
+    name: "429 numeric code",
+    build: () => makeError("Rate limited", { code: 429 }),
+    expectSlug: "provider/quota",
+    expectRawCode: 429,
+  },
+  {
+    name: "bare 429 in message",
+    build: () => new Error("429 Too Many Requests"),
+    expectSlug: "provider/quota",
+  },
+  {
+    name: "'too many requests' wording without a status",
+    build: () => new Error("Anthropic returned Too Many Requests"),
+    expectSlug: "provider/quota",
+  },
+  {
+    // What a real throttle looks like: the AI SDK retries three times, then
+    // wraps the last provider error in a `RetryError` that keeps no status.
+    name: "AI SDK RetryError wording",
+    build: () =>
+      new Error("Failed after 3 attempts. Last error: Too Many Requests"),
+    expectSlug: "provider/quota",
+  },
+  {
+    // A port is not a status: with no `code` field to classify on, the bare-429
+    // matcher used to win here and the transport reason never reached the user.
+    name: "port 429 stays a transport error",
+    build: () => new Error("connect ECONNREFUSED 127.0.0.1:429"),
+    expectSlug: "transport/econnrefused",
+  },
+  {
+    name: "MCPJam daily model limit",
+    build: () =>
+      new Error(
+        "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      ),
+    expectSlug: "provider/mcpjam_limit_daily",
+  },
+  {
+    name: "MCPJam monthly model limit",
+    build: () =>
+      new Error(
+        "Monthly MCPJam model limit reached. Top up or use BYOK to keep chatting.",
+      ),
+    expectSlug: "provider/mcpjam_limit_monthly",
+  },
+  {
+    // Composed copy: the backend's `details` sentence names the renewal
+    // period, and reading /monthly/ from anywhere in the string would file a
+    // daily refusal under the monthly slug.
+    name: "a daily refusal whose detail sentence mentions the month",
+    build: () =>
+      new Error(
+        "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Your monthly credits are unaffected.",
+      ),
+    expectSlug: "provider/mcpjam_limit_daily",
+  },
+  {
+    // The net for copy that names no period — without it a reworded backend
+    // message drops back to "Unknown error", which is the BB-151 report.
+    name: "an MCPJam limit that names no billing period",
+    build: () =>
+      new Error("This organization has reached its MCPJam model limit."),
+    expectSlug: "provider/mcpjam_limit",
+  },
+  {
+    // The new pattern is anchored on "MCPJam … model limit", so a third
+    // party's own quota wording must not be swallowed by it.
+    name: "a provider's own quota is not the MCPJam allowance",
+    build: () => new Error("OpenAI: You exceeded your current quota"),
+    expectSlug: "internal/unknown",
+  },
+  {
+    // Pins the bound on the gap between "MCPJam" and "model limit". It is
+    // bounded because `[\w\s-]` matches "mcpjam" too: unbounded, a wire
+    // message of repeated "mcpjam" that never reaches the phrase backtracks
+    // quadratically. Real copy puts one space here, so 40 is already generous
+    // — and unbounded, this case would match and return the limit slug.
+    name: "a gap wider than the bound is not the MCPJam allowance",
+    build: () => new Error(`MCPJam ${"detail ".repeat(10)}model limit reached`),
+    expectSlug: "internal/unknown",
+  },
   // OAuth body
   {
     name: "oauth invalid_grant body",
@@ -220,6 +352,28 @@ const CASES: Case[] = [
     name: "oauth redirect mismatch body",
     build: () => ({ error: "redirect_uri_mismatch" }),
     expectSlug: "oauth/redirect_mismatch",
+  },
+  {
+    // `OAuthResponseError` keeps the RFC 6749 code on `.code`, not on
+    // `error`/`error_code`, so before it was read here the whole error fell to
+    // `internal/unknown` (origin `ambiguous`) no matter what the authorization
+    // server actually said — the 2026-08-24 incident shape.
+    name: "OAuthResponseError code",
+    build: () =>
+      makeError(
+        "Request context not available — authentication or export lookup failed",
+        { name: "OAuthResponseError", code: "invalid_grant" },
+      ),
+    expectSlug: "oauth/invalid_grant",
+  },
+  {
+    name: "OAuthResponseError with an unrecognized code stays unclassified",
+    build: () =>
+      makeError("Something else", {
+        name: "OAuthResponseError",
+        code: "some_vendor_specific_code",
+      }),
+    expectSlug: "internal/unknown",
   },
   {
     name: "oauth well-known unreachable",
@@ -273,6 +427,27 @@ describe("describeError — table-driven", () => {
       expect(out.rawMessage.length).toBeGreaterThan(0);
     });
   }
+});
+
+describe("describeError — invalid response format copy", () => {
+  it("points at the result shape, not a retry", () => {
+    const out = describeError(
+      makeError("Invalid response format", { code: -32603 }),
+    );
+    expect(out.slug).toBe("jsonrpc/invalid_response_format");
+    expect(out.likelyCauses).toHaveLength(1);
+    expect(out.nextSteps.join(" ")).toMatch(/Traffic Log/);
+    expect(out.nextSteps.join(" ").toLowerCase()).not.toMatch(/retry/);
+  });
+
+  it("does not treat a buried phrase as invalid response format", () => {
+    const out = describeError(
+      makeError("Internal error: logs mention invalid response format", {
+        code: -32603,
+      }),
+    );
+    expect(out.slug).toBe("jsonrpc/internal_error");
+  });
 });
 
 describe("describeError — fallback shapes (>= 8)", () => {
@@ -645,4 +820,86 @@ describe("protocol version pin", () => {
       "which this client is pinned to",
     );
   });
+});
+
+describe("a 429 is attributed to the boundary it crossed", () => {
+  // The status arrives identically from an LLM provider and from the MCP
+  // server under test (`StreamableHTTPError` puts it on `.code`), so the
+  // classifier alone cannot tell them apart. Only the caller knows.
+  it("still reads an unqualified 429 as provider quota", () => {
+    const d = describeError(makeError("Too Many Requests", { statusCode: 429 }));
+    expect(d.slug).toBe("provider/quota");
+    expect(originOf(d)).toBe("user_config");
+  });
+
+  it("reads an MCP server's 429 as the SERVER's rate limit", () => {
+    const d = describeError(makeError("Too Many Requests", { statusCode: 429 }), {
+      surface: "mcpServer",
+    });
+    expect(d.slug).toBe("server/rate_limited");
+    // The user's provider settings are not at fault, so the advice must not
+    // send them to a provider dashboard.
+    expect(originOf(d)).toBe("user_server");
+    expect(JSON.stringify(d.nextSteps)).not.toMatch(/provider/i);
+  });
+
+  it("covers the numeric-code shape too — that is how a transport reports it", () => {
+    const d = describeError(makeError("Rate limited", { code: 429 }), {
+      surface: "mcpServer",
+    });
+    expect(d.slug).toBe("server/rate_limited");
+  });
+
+  it("leaves every other slug alone under the same surface", () => {
+    const d = describeError(makeError("Unauthorized", { statusCode: 401 }), {
+      surface: "mcpServer",
+    });
+    expect(d.slug).toBe("auth/http_401");
+  });
+});
+
+it.each(["content", "messages"])(
+  "describes an empty hosted model response (%s) without blaming the server",
+  (noun) => {
+    expect(
+      describeError(
+        `Backend step returned no ${noun} (stream error or empty response)`
+      )
+    ).toMatchObject({
+      slug: "provider/empty_response",
+      origin: "ambiguous",
+      oneLine:
+        "The model returned no response, so the turn could not complete.",
+    });
+  }
+);
+
+
+describe("MCPJam containment refusals", () => {
+  it.each([
+    ["platform_free_budget_exhausted", "provider/mcpjam_platform_budget"],
+    ["account_suspended", "account/suspended"],
+  ])("preserves %s without reporting provider authentication failure", (code, slug) => {
+    expect(describeError({ code, message: "Forbidden" }).slug).toBe(slug);
+    expect(describeError({ data: { code }, message: "Forbidden" }).slug).toBe(slug);
+  });
+});
+
+it.each([
+  ["Daily MCPJam model limit reached.", "provider/mcpjam_limit_daily"],
+  ["Monthly MCPJam model limit reached.", "provider/mcpjam_limit_monthly"],
+  [
+    "MCPJam model limit reached for the moment: 2 in-flight requests hold the remaining credits.",
+    "provider/mcpjam_limit",
+  ],
+  ["Provider rate limit", undefined],
+])("classifies MCPJam limit markers: %s", (message, slug) => {
+  expect(mcpjamLimitSlugForMessage(message)).toBe(slug);
+  if (slug) expect(describeError(new Error(message)).slug).toBe(slug);
+});
+
+it("describes the credit exhaustion heading with plan-appropriate recovery guidance", () => {
+  const result = describeError("Out of MCPJam credits.");
+  expect(result.slug).toBe("provider/mcpjam_limit");
+  expect(result.title).toBe("Out of MCPJam credits");
 });

@@ -11,10 +11,10 @@ import {
   EMPTY_USAGE_FILTER,
   UNLABELED_OUTCOME,
   type UsageFilterState,
-} from "@/hooks/chatbox-usage-filters";
+} from "@/hooks/scenario-usage-filters";
 
-const { mockUseChatboxTopicMap, graphDataFrames } = vi.hoisted(() => ({
-  mockUseChatboxTopicMap: vi.fn(),
+const { mockUseScenarioTopicMap, graphDataFrames } = vi.hoisted(() => ({
+  mockUseScenarioTopicMap: vi.fn(),
   /** Every `graphData` object handed to the force graph, in render order. */
   graphDataFrames: [] as Array<{ nodes?: Array<{ id: string }> }>,
 }));
@@ -85,13 +85,13 @@ vi.mock("react-force-graph-2d", async () => {
         nodeCanvasObject?: (
           node: unknown,
           ctx: unknown,
-          globalScale: number
+          globalScale: number,
         ) => void;
         onRenderFramePre?: (ctx: unknown) => void;
         onNodeClick?: (node: { id: string }) => void;
         onBackgroundClick?: () => void;
       },
-      ref
+      ref,
     ) {
       React.useImperativeHandle(ref, () => ({
         zoomToFit: vi.fn(),
@@ -189,14 +189,16 @@ function isNodeDimmed(sessionId: string): boolean {
   return Number(node.getAttribute("data-node-alpha")) < 1;
 }
 
-vi.mock("@/hooks/useChatboxTopicMap", () => ({
-  useTopicMap: (...args: unknown[]) => mockUseChatboxTopicMap(...args),
-  useChatboxTopicMap: (...args: unknown[]) => mockUseChatboxTopicMap(...args),
-  topicMapScopeFromInsights: (scope: { kind: string; chatboxId?: string; projectId?: string } | null) =>
+vi.mock("@/hooks/useSessionMap", () => ({
+  useSessionMap: (...args: unknown[]) => mockUseScenarioTopicMap(...args),
+  useScenarioTopicMap: (...args: unknown[]) => mockUseScenarioTopicMap(...args),
+  topicMapScopeFromInsights: (
+    scope: { kind: string; scenarioId?: string; projectId?: string } | null,
+  ) =>
     scope
       ? scope.kind === "swarm"
         ? { kind: "swarm", projectId: scope.projectId }
-        : { kind: "chatbox", chatboxId: scope.chatboxId }
+        : { kind: "scenario", scenarioId: scope.scenarioId }
       : null,
 }));
 
@@ -207,7 +209,7 @@ const EMPTY_FILTER: UsageFilterState = {
 
 const SNAPSHOT = {
   version: 1,
-  chatboxId: "chatbox-1",
+  scenarioId: "scenario-1",
   runId: "run-1",
   generatedAt: Date.now(),
   isSampled: false,
@@ -275,7 +277,7 @@ const SNAPSHOT = {
   ],
 };
 
-function createDefaultChatboxTopicMapHookValue() {
+function createDefaultScenarioTopicMapHookValue() {
   return {
     latestRun: {
       _id: "run-1",
@@ -336,7 +338,7 @@ function createDefaultChatboxTopicMapHookValue() {
  * being exercised.
  */
 function outcomeAwareHookValue() {
-  const base = createDefaultChatboxTopicMapHookValue();
+  const base = createDefaultScenarioTopicMapHookValue();
   return {
     ...base,
     latestRun: { ...base.latestRun, topicMapVersion: 2, signalsVersion: 1 },
@@ -354,9 +356,9 @@ function outcomeAwareHookValue() {
 
 beforeEach(() => {
   graphDataFrames.length = 0;
-  mockUseChatboxTopicMap.mockReset();
-  mockUseChatboxTopicMap.mockReturnValue(
-    createDefaultChatboxTopicMapHookValue()
+  mockUseScenarioTopicMap.mockReset();
+  mockUseScenarioTopicMap.mockReturnValue(
+    createDefaultScenarioTopicMapHookValue(),
   );
 });
 
@@ -367,7 +369,7 @@ describe("topicMapNodeHoverLabel", () => {
         semanticTitle: "Password reset",
         semanticPreview: "User needs to reset a forgotten password.",
         sessionId: "session-a",
-      })
+      }),
     ).toBe("Password reset");
   });
 
@@ -377,7 +379,7 @@ describe("topicMapNodeHoverLabel", () => {
         semanticPreview:
           "The user requested a drawing of a dog, prompting the assistant to utilize a drawing tool.",
         sessionId: "session-a",
-      })
+      }),
     ).toBe("drawing");
   });
 
@@ -386,7 +388,7 @@ describe("topicMapNodeHoverLabel", () => {
       topicMapNodeHoverLabel({
         semanticPreview: "User needs: billing help, urgently.",
         sessionId: "session-a",
-      })
+      }),
     ).toBe("billing");
   });
 
@@ -403,7 +405,7 @@ describe("topicMapNodeHoverLabel", () => {
       sessionId: "session-cat",
     };
     expect(topicMapNodeHoverLabel(dogNode)).not.toBe(
-      topicMapNodeHoverLabel(catNode)
+      topicMapNodeHoverLabel(catNode),
     );
   });
 
@@ -412,7 +414,7 @@ describe("topicMapNodeHoverLabel", () => {
       topicMapNodeHoverLabel({
         semanticPreview: "   ",
         sessionId: "sess-xyz",
-      })
+      }),
     ).toBe("sess-xyz");
   });
 });
@@ -430,14 +432,14 @@ describe("TopicMapPanel", () => {
     } as unknown as typeof ResizeObserver;
 
     try {
-      mockUseChatboxTopicMap.mockReturnValue({
-        ...createDefaultChatboxTopicMapHookValue(),
+      mockUseScenarioTopicMap.mockReturnValue({
+        ...createDefaultScenarioTopicMapHookValue(),
         snapshot: null,
         isLoading: true,
       });
 
       const panelProps = {
-        chatboxId: "chatbox-1",
+        scenarioId: "scenario-1",
         filter: EMPTY_FILTER,
         onToggleChip: vi.fn(),
         onClearChip: vi.fn(),
@@ -447,8 +449,8 @@ describe("TopicMapPanel", () => {
       const { rerender } = render(<TopicMapPanel {...panelProps} />);
       expect(observed).toHaveLength(0);
 
-      mockUseChatboxTopicMap.mockReturnValue(
-        createDefaultChatboxTopicMapHookValue()
+      mockUseScenarioTopicMap.mockReturnValue(
+        createDefaultScenarioTopicMapHookValue(),
       );
       rerender(<TopicMapPanel {...panelProps} />);
       expect(observed.length).toBeGreaterThan(0);
@@ -457,78 +459,150 @@ describe("TopicMapPanel", () => {
     }
   });
 
-  it("renders cluster list with summaries in the sidebar", () => {
+  // The cooperative-wheel listener lives on the graph wrapper, which only
+  // mounts once a snapshot exists. Data almost always arrives after the first
+  // render, so an effect that read the wrapper once (before the loading branch
+  // resolved) would leave a bare wheel to d3-zoom and re-trap the page scroll.
+  // The rebuild callback must be invoked with NO arguments. Wiring it straight
+  // to `onClick` handed it a React synthetic event, which the scenario rebuild
+  // spread into the Convex payload, throwing "Converting circular structure to
+  // JSON" so the rebuild never ran.
+  //
+  // Voluntary re-analysis is gated off here (#5277): the one place to ask for
+  // it is the freshness chip's popover. What survives in the panel is the
+  // failed-analysis retry in the map header; the `snapshot: null` empty state
+  // has no analysis to read a failure from, so it offers nothing.
+  it("offers no rebuild from an empty state that has not failed", () => {
+    mockUseScenarioTopicMap.mockReturnValue({
+      ...createDefaultScenarioTopicMapHookValue(),
+      latestRun: null,
+      snapshot: null,
+      isLoading: false,
+    });
+
     render(
       <TopicMapPanel
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scenarioId="scenario-1"
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /re-analyze|retry analysis/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  // The map header, which only renders once a snapshot exists. Same rule:
+  // nothing for a healthy map, a retry once the analysis reports failures.
+  it("offers no rebuild from the header of a healthy map", () => {
+    mockUseScenarioTopicMap.mockReturnValue(
+      createDefaultScenarioTopicMapHookValue(),
+    );
+
+    render(
+      <TopicMapPanel
+        scenarioId="scenario-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /rebuild clusters/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("retries a failed analysis from the map header with no arguments", async () => {
+    const user = userEvent.setup();
+    const onRebuild = vi.fn();
+    const base = createDefaultScenarioTopicMapHookValue();
+    mockUseScenarioTopicMap.mockReturnValue({
+      ...base,
+      snapshot: {
+        ...base.snapshot,
+        analysis: {
+          total: 2,
+          analyzed: 1,
+          pending: 0,
+          running: 0,
+          failed: 1,
+          skipped: 0,
+          deferred: 0,
+          awaitingTaxonomy: 0,
+          unassigned: 0,
+          staleAssignments: 0,
+          projectionPending: 0,
+          projectionFailed: 0,
+          deferredUntil: null,
+          lastAnalyzedAt: 1,
+          failures: { provider_error: 1 },
+          skips: {},
+          sampled: false,
+          taxonomies: [],
+        },
+      },
+    });
+
+    render(
+      <TopicMapPanel
+        scenarioId="scenario-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={onRebuild}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /retry analysis/i }));
+    expect(onRebuild).toHaveBeenCalledTimes(1);
+    expect(onRebuild.mock.calls[0]).toEqual([{ force: true }]);
+  });
+
+  it("renders cluster list with summaries in the sidebar", () => {
+    render(
+      <TopicMapPanel
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
     );
 
     expect(screen.queryByText("Historical Topic Map")).not.toBeInTheDocument();
     expect(screen.queryByText("2 mapped sessions")).not.toBeInTheDocument();
     expect(screen.getByText("Password resets")).toBeInTheDocument();
     expect(
-      screen.getByText("Reset and account recovery questions.")
+      screen.getByText("Reset and account recovery questions."),
     ).toBeInTheDocument();
     expect(screen.getByText("Billing issues")).toBeInTheDocument();
     expect(screen.getByText("Invoice and refund help.")).toBeInTheDocument();
   });
 
-  it("renders Fit view and rebuild controls overlayed on the canvas", () => {
+  it("renders Fit view overlayed on the canvas, with no voluntary rebuild", () => {
     render(
       <TopicMapPanel
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />
+      />,
     );
 
-    const fitView = screen.getByRole("button", { name: /fit view/i });
-    const rebuild = screen.getByRole("button", { name: /rebuild clusters/i });
-    expect(fitView.compareDocumentPosition(rebuild)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    );
-  });
-
-  it("shows rebuild status in the header while a run is active", () => {
-    mockUseChatboxTopicMap.mockReturnValue({
-      ...createDefaultChatboxTopicMapHookValue(),
-      latestRun: {
-        _id: "run-2",
-        status: "running" as const,
-        startedAt: Date.now(),
-        finishedAt: null,
-        sessionCount: null,
-        clusterCount: null,
-        errorMessage: null,
-        model: "openai/gpt-4o-mini",
-        topicMapVersion: 1,
-        edgeCount: null,
-        sampleNodeCount: null,
-        unmappedSessionCount: null,
-        isSampled: false,
-        topicMapReady: false,
-        isStale: false,
-      },
-    });
-
-    render(
-      <TopicMapPanel
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
-        filter={EMPTY_FILTER}
-        onToggleChip={vi.fn()}
-        onClearChip={vi.fn()}
-        onRebuild={vi.fn()}
-      />
-    );
-
-    expect(screen.getByText("Updating clusters")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /fit view/i }),
+    ).toBeInTheDocument();
+    // Voluntary re-analysis is gated off (#5277); only a failed analysis
+    // earns a retry here.
+    expect(
+      screen.queryByRole("button", { name: /re-analyze|retry analysis/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("lets operators toggle a community chip from the sidebar", async () => {
@@ -537,18 +611,18 @@ describe("TopicMapPanel", () => {
 
     render(
       <TopicMapPanel
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={onToggleChip}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />
+      />,
     );
 
     await user.click(
       screen.getByRole("button", {
         name: /Billing issues Invoice and refund help/i,
-      })
+      }),
     );
 
     expect(onToggleChip).toHaveBeenCalledWith({
@@ -561,25 +635,25 @@ describe("TopicMapPanel", () => {
   it("renders cluster keywords as static chips without a popover", () => {
     render(
       <TopicMapPanel
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />
+      />,
     );
 
     const keywordChip = screen.getByText("password");
     expect(keywordChip.tagName).toBe("SPAN");
     expect(
-      screen.queryByRole("button", { name: "password" })
+      screen.queryByRole("button", { name: "password" }),
     ).not.toBeInTheDocument();
   });
 
   it("highlights active cluster selection in the list", () => {
     render(
       <TopicMapPanel
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         filter={{
           preset: "all",
           chips: [
@@ -593,7 +667,7 @@ describe("TopicMapPanel", () => {
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />
+      />,
     );
 
     const clusterButton = screen.getByRole("button", {
@@ -608,17 +682,17 @@ describe("TopicMapPanel", () => {
 
     render(
       <TopicMapPanel
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
         onOpenSession={onOpenSession}
-      />
+      />,
     );
 
     await user.click(
-      screen.getByRole("button", { name: /graph node session-b/i })
+      screen.getByRole("button", { name: /graph node session-b/i }),
     );
 
     expect(onOpenSession).toHaveBeenCalledWith("session-b");
@@ -626,7 +700,7 @@ describe("TopicMapPanel", () => {
     // operator returns to the map.
     expect(screen.getByTestId("force-graph").parentElement).toHaveAttribute(
       "data-selected-session",
-      "session-b"
+      "session-b",
     );
   });
 
@@ -635,19 +709,19 @@ describe("TopicMapPanel", () => {
 
     render(
       <TopicMapPanel
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />
+      />,
     );
 
     const graphHost = screen.getByTestId("force-graph").parentElement;
     expect(graphHost).toHaveAttribute("data-selected-session", "session-a");
 
     await user.click(
-      screen.getByRole("button", { name: /graph node session-b/i })
+      screen.getByRole("button", { name: /graph node session-b/i }),
     );
     expect(graphHost).toHaveAttribute("data-selected-session", "session-b");
 
@@ -661,7 +735,7 @@ describe("colorForNode", () => {
     const themed = colorForNode(
       { clusterId: "cluster-a", outcome: "errored" },
       "theme",
-      0
+      0,
     );
     // Theme mode must ignore outcome entirely — colorForCluster's path is
     // unchanged by the outcome feature.
@@ -673,12 +747,12 @@ describe("colorForNode", () => {
     const completed = colorForNode(
       { clusterId: "cluster-a", outcome: "completed" },
       "outcome",
-      0
+      0,
     );
     const errored = colorForNode(
       { clusterId: "cluster-a", outcome: "errored" },
       "outcome",
-      0
+      0,
     );
     expect(completed).not.toBe(errored);
     // Same outcome in a different cluster is the same color: that is the point.
@@ -686,8 +760,8 @@ describe("colorForNode", () => {
       colorForNode(
         { clusterId: "cluster-b", outcome: "completed" },
         "outcome",
-        5
-      )
+        5,
+      ),
     ).toBe(completed);
   });
 
@@ -695,14 +769,24 @@ describe("colorForNode", () => {
     // A node on a pre-bump snapshot, or a session whose signals never
     // extracted. Neither is a verdict, so neither may be painted as one.
     expect(colorForNode({ clusterId: "cluster-a" }, "outcome", 0)).toBe(
-      NO_OUTCOME_COLOR
+      NO_OUTCOME_COLOR,
     );
   });
 
-  it("renders unclear with the same neutral as no outcome at all", () => {
-    expect(
-      colorForNode({ clusterId: "cluster-a", outcome: "unclear" }, "outcome", 0)
-    ).toBe(NO_OUTCOME_COLOR);
+  it("renders unclear as its own tint, not the missing-outcome grey", () => {
+    const unclear = colorForNode(
+      { clusterId: "cluster-a", outcome: "unclear" },
+      "outcome",
+      0,
+    );
+    expect(unclear).not.toBe(NO_OUTCOME_COLOR);
+    expect(unclear).toBe(
+      colorForNode(
+        { clusterId: "cluster-b", outcome: "unclear" },
+        "outcome",
+        5,
+      ),
+    );
   });
 
   it("falls back to neutral for an unrecognized outcome value", () => {
@@ -710,8 +794,8 @@ describe("colorForNode", () => {
       colorForNode(
         { clusterId: "cluster-a", outcome: "something-new" },
         "outcome",
-        0
-      )
+        0,
+      ),
     ).toBe(NO_OUTCOME_COLOR);
   });
 });
@@ -720,32 +804,32 @@ describe("TopicMapPanel color-by mode", () => {
   function renderPanel() {
     return render(
       <TopicMapPanel
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />
+      />,
     );
   }
 
   it("defaults to theme and offers an outcome toggle", () => {
-    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    mockUseScenarioTopicMap.mockReturnValue(outcomeAwareHookValue());
     renderPanel();
 
     expect(screen.getByRole("button", { name: "Theme" })).toHaveAttribute(
       "aria-pressed",
-      "true"
+      "true",
     );
     expect(screen.getByRole("button", { name: "Outcome" })).toHaveAttribute(
       "aria-pressed",
-      "false"
+      "false",
     );
   });
 
   it("shows the outcome legend once outcome mode is active", async () => {
     const user = userEvent.setup();
-    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    mockUseScenarioTopicMap.mockReturnValue(outcomeAwareHookValue());
     renderPanel();
 
     expect(screen.queryByText("Unresolved")).not.toBeInTheDocument();
@@ -753,26 +837,16 @@ describe("TopicMapPanel color-by mode", () => {
 
     expect(screen.getByRole("button", { name: "Outcome" })).toHaveAttribute(
       "aria-pressed",
-      "true"
+      "true",
     );
     expect(screen.getByText("Unresolved")).toBeInTheDocument();
-    expect(screen.getByText("Unclear / not analyzed")).toBeInTheDocument();
-  });
-
-  it("disables outcome mode on a pre-bump snapshot instead of painting it neutral", () => {
-    // version 1 blobs carry no `outcome` on their nodes. Offering the mode
-    // would paint every node grey and read as a bug rather than stale data.
-    mockUseChatboxTopicMap.mockReturnValue(
-      createDefaultChatboxTopicMapHookValue()
-    );
-    renderPanel();
-
-    expect(screen.getByRole("button", { name: "Outcome" })).toBeDisabled();
+    expect(screen.getByText("Unclear")).toBeInTheDocument();
+    expect(screen.getByText("Not analyzed")).toBeInTheDocument();
   });
 
   it("still renders a pre-bump snapshot normally", () => {
-    mockUseChatboxTopicMap.mockReturnValue(
-      createDefaultChatboxTopicMapHookValue()
+    mockUseScenarioTopicMap.mockReturnValue(
+      createDefaultScenarioTopicMapHookValue(),
     );
     renderPanel();
 
@@ -783,12 +857,12 @@ describe("TopicMapPanel color-by mode", () => {
   it("explains an empty legend when no mapped session has an outcome", async () => {
     const user = userEvent.setup();
     const base = outcomeAwareHookValue();
-    mockUseChatboxTopicMap.mockReturnValue({
+    mockUseScenarioTopicMap.mockReturnValue({
       ...base,
       snapshot: {
         ...base.snapshot,
         nodes: base.snapshot.nodes.map(
-          ({ outcome: _outcome, ...node }) => node
+          ({ outcome: _outcome, ...node }) => node,
         ),
       },
     });
@@ -796,7 +870,7 @@ describe("TopicMapPanel color-by mode", () => {
 
     await user.click(screen.getByRole("button", { name: "Outcome" }));
     expect(
-      screen.getByText("No mapped session has an inferred outcome yet.")
+      screen.getByText("No mapped session has an inferred outcome yet."),
     ).toBeInTheDocument();
   });
 
@@ -808,7 +882,7 @@ describe("TopicMapPanel color-by mode", () => {
     // IDENTITY across the toggle is what pins the fix — a colour assertion
     // alone stays green however many times the layout is thrown away.
     const user = userEvent.setup();
-    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    mockUseScenarioTopicMap.mockReturnValue(outcomeAwareHookValue());
     renderPanel();
 
     const beforeNodes = graphDataFrames[graphDataFrames.length - 1]?.nodes;
@@ -823,43 +897,13 @@ describe("TopicMapPanel color-by mode", () => {
     // outcome colour differs from its cluster colour.
     const completed = colorForNode(
       { clusterId: "cluster-a", outcome: "completed" },
-      "outcome"
+      "outcome",
     );
     expect(completed).not.toBe(
-      colorForNode({ clusterId: "cluster-a" }, "theme", 0)
+      colorForNode({ clusterId: "cluster-a" }, "theme", 0),
     );
     expect(beforeFills).not.toContain(completed);
     expect(nodeFills("session-a")).toContain(completed);
-  });
-
-  it("reverts to theme if the snapshot stops supporting outcomes", async () => {
-    const user = userEvent.setup();
-    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
-    const { rerender } = renderPanel();
-
-    await user.click(screen.getByRole("button", { name: "Outcome" }));
-    expect(screen.getByRole("button", { name: "Outcome" })).toHaveAttribute(
-      "aria-pressed",
-      "true"
-    );
-
-    mockUseChatboxTopicMap.mockReturnValue(
-      createDefaultChatboxTopicMapHookValue()
-    );
-    rerender(
-      <TopicMapPanel
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
-        filter={EMPTY_FILTER}
-        onToggleChip={vi.fn()}
-        onClearChip={vi.fn()}
-        onRebuild={vi.fn()}
-      />
-    );
-
-    expect(screen.getByRole("button", { name: "Theme" })).toHaveAttribute(
-      "aria-pressed",
-      "true"
-    );
   });
 });
 
@@ -870,7 +914,7 @@ describe("TopicMapPanel color-by mode", () => {
  */
 function goalOutcomeFilter(
   clusterId: string,
-  outcome: string | null
+  outcome: string | null,
 ): UsageFilterState {
   return {
     preset: "all",
@@ -889,12 +933,12 @@ describe("TopicMapPanel outcome narrowing", () => {
   function renderWithFilter(filter: UsageFilterState) {
     return render(
       <TopicMapPanel
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         filter={filter}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />
+      />,
     );
   }
 
@@ -902,14 +946,14 @@ describe("TopicMapPanel outcome narrowing", () => {
     // session-a is cluster-a/completed; session-b is cluster-b/unresolved.
     // Selecting cluster-a/unresolved must leave NOTHING lit in cluster-a —
     // previously the goal chip lit every outcome inside it.
-    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    mockUseScenarioTopicMap.mockReturnValue(outcomeAwareHookValue());
     renderWithFilter(goalOutcomeFilter("cluster-a", "unresolved"));
     expect(isNodeDimmed("session-a")).toBe(true);
     expect(isNodeDimmed("session-b")).toBe(true);
   });
 
   it("leaves the matching node lit", () => {
-    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    mockUseScenarioTopicMap.mockReturnValue(outcomeAwareHookValue());
     renderWithFilter(goalOutcomeFilter("cluster-a", "completed"));
     expect(isNodeDimmed("session-a")).toBe(false);
     // Different goal AND different outcome.
@@ -917,7 +961,7 @@ describe("TopicMapPanel outcome narrowing", () => {
   });
 
   it("dims nothing when nothing is selected", () => {
-    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    mockUseScenarioTopicMap.mockReturnValue(outcomeAwareHookValue());
     renderWithFilter(EMPTY_USAGE_FILTER);
     expect(isNodeDimmed("session-a")).toBe(false);
     expect(isNodeDimmed("session-b")).toBe(false);
@@ -925,7 +969,7 @@ describe("TopicMapPanel outcome narrowing", () => {
 
   it("selects nodes with no outcome for the unlabeled sentinel", () => {
     const base = outcomeAwareHookValue();
-    mockUseChatboxTopicMap.mockReturnValue({
+    mockUseScenarioTopicMap.mockReturnValue({
       ...base,
       snapshot: {
         ...base.snapshot,
@@ -941,88 +985,71 @@ describe("TopicMapPanel outcome narrowing", () => {
     expect(isNodeDimmed("session-b")).toBe(false);
     expect(isNodeDimmed("session-a")).toBe(true);
   });
-
-  it("does not dim the whole map on a pre-bump snapshot", () => {
-    // A v1 snapshot has no outcome on any node, so a concrete outcome chip
-    // would match nothing and blank the canvas — which reads as a broken map
-    // rather than as stale data. The snapshot cannot honor the constraint, so
-    // it is exempt from it; the cluster chip still narrows.
-    mockUseChatboxTopicMap.mockReturnValue(
-      createDefaultChatboxTopicMapHookValue()
-    );
-    renderWithFilter(goalOutcomeFilter("cluster-a", "unresolved"));
-    expect(isNodeDimmed("session-a")).toBe(false);
-    // The cluster constraint is still applied.
-    expect(isNodeDimmed("session-b")).toBe(true);
-  });
 });
 
 describe("TopicMapPanel cluster halos", () => {
   function renderPanel() {
     return render(
       <TopicMapPanel
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         filter={EMPTY_USAGE_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />
+      />,
     );
   }
 
-  it("paints halos with the theme colour in both modes", async () => {
-    // A halo denotes the CLUSTER. Deriving it from a member node's colour means
-    // that in outcome mode a mixed-outcome cluster gets whichever outcome the
-    // first-iterated node had — an order-dependent halo asserting one outcome
-    // for the whole goal. Halos are therefore mode-independent.
+  it("paints theme-coloured halos only in theme mode", async () => {
     const user = userEvent.setup();
-    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    mockUseScenarioTopicMap.mockReturnValue(outcomeAwareHookValue());
     renderPanel();
 
     const themeHalos = haloColors();
     expect(themeHalos.length).toBeGreaterThan(0);
+    const themeRgb = rgbTriple(
+      colorForNode({ clusterId: "cluster-a" }, "theme", 0),
+    );
+    expect(themeHalos.some((stop) => stop.includes(themeRgb))).toBe(true);
 
     await user.click(screen.getByRole("button", { name: "Outcome" }));
-    expect(haloColors()).toEqual(themeHalos);
+    expect(haloColors()).not.toEqual(themeHalos);
+    expect(
+      haloColors()
+        .filter((stop) => !stop.startsWith("rgba(0,0,0"))
+        .some((stop) => stop.includes(themeRgb)),
+    ).toBe(false);
   });
 
   it("does not paint an outcome colour into a halo", async () => {
-    // Two things this test has to get right to mean anything:
-    //  1. Compare decimal RGB triples, not hex. The gradient is built with
-    //     hexToRgba, which emits `rgba(74, 222, 128, …)`, so asserting against
-    //     the hex substring "4ade80" could never fail whatever colour was used.
-    //  2. Assert in OUTCOME mode. In theme mode a node's colour already IS the
-    //     cluster colour, so the bug this guards against cannot show up there.
+    // Outcome-mode halos are a neutral grouping ring. A mixed-outcome cluster
+    // must not pick one member's colour and assert it for the whole goal.
     const user = userEvent.setup();
-    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    mockUseScenarioTopicMap.mockReturnValue(outcomeAwareHookValue());
     renderPanel();
     await user.click(screen.getByRole("button", { name: "Outcome" }));
 
-    const outcomeRgb = rgbTriple(
-      colorForNode({ clusterId: "cluster-a", outcome: "completed" }, "outcome")
+    const completed = colorForNode(
+      { clusterId: "cluster-a", outcome: "completed" },
+      "outcome",
     );
     const themeRgb = rgbTriple(
-      colorForNode({ clusterId: "cluster-a" }, "theme", 0)
+      colorForNode({ clusterId: "cluster-a" }, "theme", 0),
     );
-    // If these ever coincide the assertions below prove nothing, so say so
-    // loudly rather than passing for the wrong reason.
-    expect(outcomeRgb).not.toBe(themeRgb);
 
     const stops = haloColors().filter((stop) => !stop.startsWith("rgba(0,0,0"));
     expect(stops.length).toBeGreaterThan(0);
-    // The theme colour is present...
-    expect(stops.some((stop) => stop.includes(themeRgb))).toBe(true);
-    // ...and no outcome colour is.
+    expect(stops.some((stop) => stop.includes(themeRgb))).toBe(false);
     for (const stop of stops) {
-      expect(stop).not.toContain(outcomeRgb);
+      expect(stop).not.toContain(completed);
     }
   });
 });
 
 describe("TopicMapPanel wave filter", () => {
-  it("hides nodes whose journeyRunId is outside the wave", () => {
-    const base = createDefaultChatboxTopicMapHookValue();
-    mockUseChatboxTopicMap.mockReturnValue({
+  it("passes the wave to the server and renders exactly the returned population", () => {
+    const base = createDefaultScenarioTopicMapHookValue();
+    mockUseScenarioTopicMap.mockReturnValue({
       ...base,
       snapshot: {
         ...base.snapshot,
@@ -1042,24 +1069,29 @@ describe("TopicMapPanel wave filter", () => {
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />
+      />,
     );
 
     expect(
-      screen.getByRole("button", { name: /graph node session-a/i })
+      screen.getByRole("button", { name: /graph node session-a/i }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /graph node session-b/i })
-    ).toBeNull();
+      screen.queryByRole("button", { name: /graph node session-b/i }),
+    ).toBeInTheDocument();
+    expect(mockUseScenarioTopicMap).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: { kind: "swarm", projectId: "proj-1", journeyRunIds: ["run-a"] },
+      }),
+    );
   });
 });
 
 describe("TopicMapPanel swarm empty / loading", () => {
   it("uses map copy and keeps headerActions while a swarm rebuild is running", () => {
-    mockUseChatboxTopicMap.mockReturnValue({
-      ...createDefaultChatboxTopicMapHookValue(),
+    mockUseScenarioTopicMap.mockReturnValue({
+      ...createDefaultScenarioTopicMapHookValue(),
       snapshot: null,
-      isLoading: false,
+      isLoading: true,
       latestRun: {
         _id: "run-2",
         status: "running" as const,
@@ -1088,12 +1120,14 @@ describe("TopicMapPanel swarm empty / loading", () => {
 
     expect(screen.getByText("Building cluster map")).toBeInTheDocument();
     expect(screen.queryByText("Building clusters")).toBeNull();
-    expect(screen.getByTestId("swarm-insights-view-toggle")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("swarm-insights-view-toggle"),
+    ).toBeInTheDocument();
   });
 
   it("shows map-not-generated copy when done without a blob", () => {
-    mockUseChatboxTopicMap.mockReturnValue({
-      ...createDefaultChatboxTopicMapHookValue(),
+    mockUseScenarioTopicMap.mockReturnValue({
+      ...createDefaultScenarioTopicMapHookValue(),
       snapshot: null,
       isLoading: false,
       latestRun: {
@@ -1119,10 +1153,7 @@ describe("TopicMapPanel swarm empty / loading", () => {
       />,
     );
 
-    expect(
-      screen.getByText("Cluster map not generated yet"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("No mapped sessions yet")).toBeInTheDocument();
     expect(screen.queryByText("No clusters yet")).toBeNull();
   });
 });
-

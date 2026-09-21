@@ -432,7 +432,9 @@ export function ToolsTab({
     const observer = new IntersectionObserver((entries) => {
       const entry = entries[0];
       if (!entry.isIntersecting) return;
-      if (!cursor || fetchingTools) return;
+      // Presence, not truthiness: MCP 2026-07-28 `server/utilities/pagination`
+      // makes `""` a valid cursor that MUST NOT be read as the end of results.
+      if (cursor === undefined || fetchingTools) return;
 
       // Load more tools
       fetchTools();
@@ -545,7 +547,14 @@ export function ToolsTab({
         toolArray.map((tool: Tool) => [tool.name, tool])
       );
       setTools((prev) => (reset ? dictionary : { ...prev, ...dictionary }));
-      setCursor(data.nextCursor);
+      // The response body is untyped, so a non-string `nextCursor` is not a
+      // cursor and ends the listing. A repeated cursor is NOT an ending: the
+      // value is opaque, and a server may legally reissue one constant
+      // token — `""` included — for every page. Paging is user-driven here, so
+      // there is nothing to spin unattended.
+      setCursor(
+        typeof data.nextCursor === "string" ? data.nextCursor : undefined,
+      );
       // SEP-2549 provenance: only ever set on an actual hit — a non-hit
       // fetch clears any stale badge from a previous cached response.
       setServedFromCache(data.servedFromCache);
@@ -1088,7 +1097,7 @@ export function ToolsTab({
       displayedToolCount={toolNames.length}
       sentinelRef={sentinelRef}
       loadingMore={fetchingTools}
-      cursor={cursor ?? ""}
+      cursor={cursor}
       serverConnected={isServerConnected}
       formFields={formFields}
       onFieldChange={updateFieldValue}

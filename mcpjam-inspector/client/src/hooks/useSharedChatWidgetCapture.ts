@@ -21,15 +21,15 @@ interface UseSharedChatWidgetCaptureOptions {
   enabled: boolean;
   readyToPersist?: boolean;
   chatSessionId: string;
-  // Resolved chatbox identity (post-redeem). Snapshot mutations key on
+  // Resolved scenario identity (post-redeem). Snapshot mutations key on
   // these — never on the link token.
-  hostedChatboxId?: string;
+  hostedScenarioId?: string;
   hostedAccessVersion?: number;
   persistedSnapshotToolCallIds?: string[];
   messages: UIMessage[];
-  // Called when the backend reports `chatbox_access_stale` — the owner
-  // (typically ChatboxChatPage via use-chat-session) should re-run the
-  // /web/chatbox/redeem fetch so a fresh `hostedAccessVersion` flows back
+  // Called when the backend reports `scenario_access_stale` — the owner
+  // (typically ScenarioChatPage via use-chat-session) should re-run the
+  // /web/scenario/redeem fetch so a fresh `hostedAccessVersion` flows back
   // into this hook and the capture loop re-fires.
   onStaleHostedAccess?: () => void;
 }
@@ -186,7 +186,7 @@ export function useSharedChatWidgetCapture({
   enabled,
   readyToPersist = true,
   chatSessionId,
-  hostedChatboxId,
+  hostedScenarioId,
   hostedAccessVersion,
   persistedSnapshotToolCallIds = [],
   messages,
@@ -220,14 +220,14 @@ export function useSharedChatWidgetCapture({
   const toolSourcesRef = useRef(buildToolSourceMap(messages));
   const widgetsRef = useRef(widgets);
   const sessionIdRef = useRef(chatSessionId);
-  const chatboxIdRef = useRef(hostedChatboxId);
+  const scenarioIdRef = useRef(hostedScenarioId);
   const accessVersionRef = useRef(hostedAccessVersion);
   const persistedSnapshotToolCallIdsRef = useRef(
     new Set(persistedSnapshotToolCallIds),
   );
   const onStaleHostedAccessRef = useRef(onStaleHostedAccess);
   // ToolCallIds whose upload was abandoned mid-flight because the backend
-  // reported `chatbox_access_stale`. Replayed once the next
+  // reported `scenario_access_stale`. Replayed once the next
   // `hostedAccessVersion` arrives — without this, the parent's re-redeem
   // silently changes a ref value and nothing re-fires the capture loop
   // until an unrelated widget/message change happens to retrigger the
@@ -243,10 +243,10 @@ export function useSharedChatWidgetCapture({
   );
   const prevScopeRef = useRef({
     chatSessionId,
-    hostedChatboxId,
+    hostedScenarioId,
   });
   // Identity generation. Bumped whenever `chatSessionId` or
-  // `hostedChatboxId` changes. Each `uploadAttemptRef` invocation captures
+  // `hostedScenarioId` changes. Each `uploadAttemptRef` invocation captures
   // its generation at start and bails before any state-mutating
   // continuation if the scope has moved — without this, an in-flight
   // upload for chat A can land its `createWidgetSnapshot` call in chat B
@@ -322,14 +322,14 @@ export function useSharedChatWidgetCapture({
     const prev = prevScopeRef.current;
     const identityChanged =
       prev.chatSessionId !== chatSessionId ||
-      prev.hostedChatboxId !== hostedChatboxId;
+      prev.hostedScenarioId !== hostedScenarioId;
 
     sessionIdRef.current = chatSessionId;
-    chatboxIdRef.current = hostedChatboxId;
+    scenarioIdRef.current = hostedScenarioId;
     accessVersionRef.current = hostedAccessVersion;
 
     if (identityChanged) {
-      // Different chat or different chatbox → previous per-toolCallId state
+      // Different chat or different scenario → previous per-toolCallId state
       // is no longer relevant. Drop everything, including the stale-retry
       // queue (those toolCallIds belong to the old scope). Bump the scope
       // generation so any in-flight upload bails at its next continuation
@@ -346,9 +346,9 @@ export function useSharedChatWidgetCapture({
       pendingTimersRef.current.clear();
       inFlightRef.current.clear();
     } else if (pendingStaleRetryRef.current.size > 0) {
-      // accessVersion bumped on the same chatbox/session — the parent's
+      // accessVersion bumped on the same scenario/session — the parent's
       // silent re-redeem has handed us a fresh version. Replay the
-      // toolCallIds whose previous attempt died on `chatbox_access_stale`
+      // toolCallIds whose previous attempt died on `scenario_access_stale`
       // so the capture loop self-heals without waiting for an unrelated
       // widget/message change. Cancel the bounded-backoff timer too —
       // we made progress, no further auto-refreshes needed.
@@ -360,8 +360,8 @@ export function useSharedChatWidgetCapture({
       }
     }
 
-    prevScopeRef.current = { chatSessionId, hostedChatboxId };
-  }, [chatSessionId, hostedChatboxId, hostedAccessVersion]);
+    prevScopeRef.current = { chatSessionId, hostedScenarioId };
+  }, [chatSessionId, hostedScenarioId, hostedAccessVersion]);
 
   useEffect(() => {
     return () => {
@@ -378,11 +378,11 @@ export function useSharedChatWidgetCapture({
   }, []);
 
   uploadAttemptRef.current = async (toolCallId: string) => {
-    const chatboxId = chatboxIdRef.current;
+    const scenarioId = scenarioIdRef.current;
     const accessVersion = accessVersionRef.current;
     // Generation snapshot. Re-read against `scopeGenerationRef.current`
     // after every await to detect identity changes (chatSessionId /
-    // chatboxId) and bail before mutating per-scope refs or calling
+    // scenarioId) and bail before mutating per-scope refs or calling
     // `createWidgetSnapshot` for the wrong chat.
     const attemptGeneration = scopeGenerationRef.current;
     const scopeStillValid = () =>
@@ -415,13 +415,13 @@ export function useSharedChatWidgetCapture({
       content: BlobPart,
       contentType: string,
     ): Promise<string> => {
-      const isChatboxSession = Boolean(chatboxId);
+      const isScenarioSession = Boolean(scenarioId);
       const uploadUrl = await generateSnapshotUploadUrl({
-        ...(chatboxId ? { chatboxId } : {}),
-        ...(chatboxId && Number.isFinite(accessVersion)
+        ...(scenarioId ? { scenarioId } : {}),
+        ...(scenarioId && Number.isFinite(accessVersion)
           ? { accessVersion }
           : {}),
-        ...(!isChatboxSession
+        ...(!isScenarioSession
           ? { chatSessionId: sessionIdRef.current }
           : {}),
       });
@@ -478,8 +478,8 @@ export function useSharedChatWidgetCapture({
 
       // Build the shared payload (the part every writer to
       // `sharedChatWidgetSnapshots` produces), sanitize for Convex
-      // transport, then layer the playground/chatbox session context
-      // (chatboxId / accessVersion / chatSessionId) on top. The shared
+      // transport, then layer the playground/scenario session context
+      // (scenarioId / accessVersion / chatSessionId) on top. The shared
       // pipeline owns the $-key escaping inside `widgetPermissions`
       // (JSON Schema fragments routinely use `$ref` / `$schema` which
       // Convex's argument validator rejects raw) and any future
@@ -521,8 +521,8 @@ export function useSharedChatWidgetCapture({
           : {}),
       };
       const snapshotPayload = {
-        ...(chatboxId ? { chatboxId } : {}),
-        ...(chatboxId && Number.isFinite(accessVersion)
+        ...(scenarioId ? { scenarioId } : {}),
+        ...(scenarioId && Number.isFinite(accessVersion)
           ? { accessVersion }
           : {}),
         chatSessionId: sessionIdRef.current,
@@ -562,7 +562,7 @@ export function useSharedChatWidgetCapture({
         // No hook-side latch: the parent's `requestRefreshAccessVersion`
         // gates re-entrancy with its own in-flight ref (cleared in
         // `finally`), so concurrent stale errors coalesce there. Latching
-        // here would survive a failed `/api/web/chatboxes/redeem`
+        // here would survive a failed `/api/web/scenarios/redeem`
         // response (no accessVersion bump → no reset → latch stuck true)
         // and silently disable every future recovery attempt.
         cachedBlobsRef.current.delete(toolCallId);
@@ -661,7 +661,7 @@ export function useSharedChatWidgetCapture({
   }, [
     enabled,
     readyToPersist,
-    hostedChatboxId,
+    hostedScenarioId,
     persistedSnapshotToolCallIds,
     widgets,
     messages,

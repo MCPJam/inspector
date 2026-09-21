@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { useChatboxHostTheme } from "@/contexts/chatbox-client-style-context";
+import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
 
 /**
  * Notion AI's "thinking" indicator — the shimmer-text effect Notion's agent
@@ -33,8 +33,8 @@ import { useChatboxHostTheme } from "@/contexts/chatbox-client-style-context";
  */
 export function NotionShimmerIndicator({ className }: { className?: string }) {
   // Chat-shell host theme. Falls back to "dark" to match the rest of the
-  // inspector's "no chatbox context" behavior (see other shimmer indicators).
-  const chatboxHostTheme = useChatboxHostTheme() ?? "dark";
+  // inspector's "no scenario context" behavior (see other shimmer indicators).
+  const scenarioHostTheme = useScenarioHostTheme() ?? "dark";
 
   return (
     <span
@@ -45,13 +45,13 @@ export function NotionShimmerIndicator({ className }: { className?: string }) {
           measured ~1.567s loop. Captured from notion.so. */}
       <span
         aria-hidden="true"
-        data-theme={chatboxHostTheme}
+        data-theme={scenarioHostTheme}
         className="notion-loader-icon"
       />
       <span
         aria-hidden="true"
         data-testid="loading-indicator-notion-shimmer"
-        data-theme={chatboxHostTheme}
+        data-theme={scenarioHostTheme}
         className="nds-shimmer-text text-sm"
       >
         Working

@@ -16,6 +16,11 @@
 import { useQuery } from "convex/react";
 import { SWARM_QUERIES, type SwarmSessionMetrics } from "@/lib/swarm-api";
 import { SessionMetricsStripView } from "@/components/shared/session-metric-strip";
+import {
+  CollapsibleSessionMetricsShell,
+  collapsibleSessionMetricsStorageKey,
+} from "@/components/shared/collapsible-session-metrics-shell";
+import { usePersistedBoolean } from "@/hooks/use-persisted-boolean";
 
 export function SwarmSessionsMetricStrip({
   projectId,
@@ -30,6 +35,25 @@ export function SwarmSessionsMetricStrip({
       ? { projectId, ...(personaRefId ? { personaRefId } : {}) }
       : "skip") as any
   ) as SwarmSessionMetrics | undefined;
+  const [expanded, setExpanded] = usePersistedBoolean(
+    collapsibleSessionMetricsStorageKey(),
+    true,
+  );
 
-  return <SessionMetricsStripView metrics={metrics} testIdPrefix="swarm" />;
+  if (!metrics || metrics.sessionCount === 0) return null;
+
+  return (
+    <CollapsibleSessionMetricsShell
+      expanded={expanded}
+      onExpandedChange={setExpanded}
+      metrics={metrics}
+      testIdPrefix="swarm"
+    >
+      <SessionMetricsStripView
+        metrics={metrics}
+        testIdPrefix="swarm"
+        embedded
+      />
+    </CollapsibleSessionMetricsShell>
+  );
 }

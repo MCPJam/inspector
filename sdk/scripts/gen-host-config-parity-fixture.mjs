@@ -287,11 +287,40 @@ const inputs = [
     },
   },
   {
+    // Runtime-minted kind: the platform stamps `{ kind: "ephemeral" }` at a
+    // run-snapshot boundary (one box per eval iteration, booted from the
+    // run's frozen environment image). Authors can never write it, but it is
+    // persisted and content-addressed, so it needs a golden vector. Hashes
+    // distinctly from the personal vector above.
+    label: "computer-ephemeral",
+    input: { ...base(), computer: { kind: "ephemeral" } },
+  },
+  {
+    // `toolset` is legacy input for EVERY kind, not just personal: accepted
+    // then dropped. This vector proves `{ kind: "ephemeral", toolset }` and
+    // `{ kind: "ephemeral" }` are the same identity — the backend runs the
+    // same `shimLegacyComputerToolset` pipeline, so the two canonicalizers
+    // must not diverge on it.
+    label: "computer-ephemeral-with-toolset-dropped",
+    input: { ...base(), computer: { kind: "ephemeral", toolset: "bash" } },
+  },
+  {
     // Optional harness selector. Absent ⇒ emulated (base-minimal proves that
     // hash is unchanged); an explicit "claude-code" writes the key and hashes
     // distinctly. Validated pass-through, like progressiveToolDiscovery.
     label: "harness-claude-code",
     input: { ...base(), harness: "claude-code" },
+  },
+  {
+    // A harness id the BACKEND's pinned @mcpjam/sdk release does not know.
+    // The backend masks it to "claude-code" past that release's HARNESS_IDS
+    // guard and overwrites the key on the way out (`withSdkSafeHarness`), so
+    // this vector is the proof that the mask/restore round-trip is
+    // byte-identical to what a cursor-aware canonicalizer emits — key position
+    // included. Without it, the shim could silently reorder the canonical JSON
+    // and every shim-era row would need a rehash at the next dep bump.
+    label: "harness-cursor",
+    input: { ...base(), harness: "cursor" },
   },
   {
     // Empty builtInToolIds collapses to absent → canonical JSON has no key,

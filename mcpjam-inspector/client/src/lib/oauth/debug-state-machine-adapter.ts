@@ -3,6 +3,7 @@ import {
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   createOAuthStateMachine,
   getBrowserDebugDynamicRegistrationMetadata,
+  isAuthenticatedRequestFailure,
   isLoopbackOAuthUrl,
   type OAuthFlowState,
   type OAuthProtocolVersion,
@@ -162,9 +163,9 @@ export function createDebugRequestExecutor(): OAuthRequestExecutor {
     if (!proxyResponse.ok) {
       const reason = await readProxyError(proxyResponse);
       throw new Error(
-        `Backend debug proxy error: ${proxyResponse.status} ${proxyResponse.statusText}${
-          reason ? `: ${reason}` : ""
-        }`,
+        `Backend debug proxy error: ${proxyResponse.status} ${
+          proxyResponse.statusText
+        }${reason ? `: ${reason}` : ""}`,
       );
     }
 
@@ -272,6 +273,12 @@ const UNREPORTED_STEP_FAILURES = new Set([
   AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
 ]);
 
+function isUnreportedStepFailure(error: string): boolean {
+  return (
+    UNREPORTED_STEP_FAILURES.has(error) || isAuthenticatedRequestFailure(error)
+  );
+}
+
 /**
  * Wrap the caller's `updateState` so every NEW step failure is reported.
  *
@@ -287,7 +294,8 @@ const UNREPORTED_STEP_FAILURES = new Set([
  *
  * `Warning: `-prefixed messages are skipped entirely — those are advisories the
  * flow recovers from (an optional metadata field the server left out), not step
- * failures. So are the messages in `UNREPORTED_STEP_FAILURES`.
+ * failures. So are target-server failures identified by
+ * `isUnreportedStepFailure`.
  */
 function withStepFailureReporting(
   updateState: InspectorOAuthStateMachineConfig["updateState"],
@@ -299,7 +307,7 @@ function withStepFailureReporting(
     const error = updates.error;
     if (
       typeof error === "string" &&
-      (error.startsWith("Warning: ") || UNREPORTED_STEP_FAILURES.has(error))
+      (error.startsWith("Warning: ") || isUnreportedStepFailure(error))
     ) {
       // Not ours to act on: the message is already on screen, and reporting
       // these buries real step failures under server-under-test nits.
@@ -309,7 +317,11 @@ function withStepFailureReporting(
       updateState(updates);
       return;
     }
-    if (typeof error === "string" && error !== "" && error !== lastReportedError) {
+    if (
+      typeof error === "string" &&
+      error !== "" &&
+      error !== lastReportedError
+    ) {
       lastReportedError = error;
       reportCaught(new Error(sanitizeStepError(error)), {
         source: "oauth_debugger_step",
@@ -367,9 +379,16 @@ export function createInspectorOAuthStateMachine(
     // The debugger is a local-dev inspection surface: when the server under
     // test is itself loopback (e.g. a `127.0.0.1` dev MCP server), its metadata
     // fetches must be permitted. Mirror the Connect flow — allow loopback only
-    // when the debugged server URL is loopback; the guard still blocks
-    // LAN/link-local/reserved destinations regardless.
+    // when the debugged server URL is loopback. On its own this flag leaves
+    // LAN/link-local/reserved destinations blocked; outside hosted mode the
+    // wider allowance below supersedes it for the private ranges, and
+    // link-local/cloud-metadata stays refused in both.
     allowLoopbackMetadataFetch: isLoopbackOAuthUrl(machineConfig.serverUrl),
+    // Outside hosted mode the backend proxy behind this adapter runs on the
+    // developer's machine, so the whole private range is in scope — including
+    // an authorization server on a custom hostname that answers 127.0.0.1,
+    // which the loopback-literal test above cannot recognise.
+    allowPrivateMetadataFetch: !HOSTED_MODE,
     // One step per "Continue" click: `scheduleAutoAdvance` is intentionally not
     // provided. The SDK state machines call it via optional chaining, so when
     // it is absent each `proceedToNextStep()` stops at the next step instead of

@@ -15,7 +15,7 @@
  * other members' private Playground sessions never reach this client, so the
  * panel renders whatever the page contains without re-deriving policy.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePaginatedQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import { MessageSquare, Search } from "lucide-react";
@@ -35,13 +35,20 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
-import { SessionReadinessBadge } from "@/components/chatboxes/session-readiness";
+import { SessionReadinessBadge } from "@/components/scenarios/session-readiness";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { cn } from "@/lib/utils";
+import {
+  buildSessionsPath,
+  useAppNavigate,
+  useCurrentSearchParam,
+} from "@/lib/app-navigation";
+import { getShareableAppOrigin } from "@/lib/scenario-session";
 import {
   SESSIONS_FEED_PAGE_SIZE,
   SESSIONS_FEED_QUERIES,
   SESSION_SOURCE_TYPE_LABELS,
+  sessionOriginChipLabel,
   sessionParentChipLabel,
   type SessionFeedItem,
   type SessionFeedSourceType,
@@ -49,7 +56,7 @@ import {
 
 const SOURCE_TYPE_PILLS: SessionFeedSourceType[] = [
   "direct",
-  "chatbox",
+  "scenario",
   "eval",
   "swarm",
 ];
@@ -66,7 +73,14 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [searchInput, setSearchInput] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+
+  // Selection lives in the URL, not in component state. `/sessions?session=…`
+  // is the backend's universal permalink fallback (every `/v1/sessions` item
+  // carries a `link`), so arriving at one must open that session — which local
+  // state cannot do. It also makes the selection shareable and survivable
+  // across a reload, and gives Back/Forward the meaning a reader expects.
+  const navigate = useAppNavigate();
+  const selectedThreadId = useCurrentSearchParam("session");
 
   useEffect(() => {
     const handle = window.setTimeout(
@@ -121,6 +135,48 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
     () => rows.find((r) => r.id === selectedThreadId) ?? null,
     [rows, selectedThreadId]
   );
+
+  /**
+   * Move the selection into the URL, stamping the panel's own `projectId`.
+   *
+   * The panel's own `projectId`, not one read back out of the URL: it knows
+   * which project these rows came from, so the link it mints says so in its
+   * path. That is the same reason the shareable link below passes `projectId`
+   * — a link that names no project resolves against whatever project the
+   * reader happens to be parked on.
+   *
+   * Not `replace`: each session a reader opens is a place they can go Back from.
+   */
+  const handleSelect = useCallback(
+    (threadId: string) => {
+      navigate(buildSessionsPath({ session: threadId, project: projectId }));
+    },
+    [navigate, projectId]
+  );
+
+  /**
+   * NO stale-selection cleanup here, deliberately.
+   *
+   * Selection lives in the URL, so in principle it could outlive a project
+   * switch and leave this pane loading a thread absent from the list beside it.
+   * It cannot in practice: a project switch IS a navigation now — the picker
+   * goes to `/p/<nextProjectId>/servers` — so this panel unmounts and the URL
+   * carrying the selection is gone with it.
+   *
+   * An effect here could not close that gap anyway: App renders this panel as
+   * `key={projectId}`, so a project change REMOUNTS it, and any "previous
+   * project" ref would re-initialize to the new value and never observe the
+   * transition. Machinery that cannot fire is worse than none — a reader would
+   * trust it.
+   */
+
+  // The shareable form of the same link.
+  const sessionLink = selectedThreadId
+    ? `${getShareableAppOrigin()}${buildSessionsPath({
+        session: selectedThreadId,
+        project: projectId,
+      })}`
+    : undefined;
 
   const emptyListCopy = searching
     ? "No sessions match this search"
@@ -238,7 +294,7 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
                     key={row.id}
                     row={row}
                     selected={row.id === selectedThreadId}
-                    onSelect={() => setSelectedThreadId(row.id)}
+                    onSelect={() => handleSelect(row.id)}
                   />
                 ))}
               </div>
@@ -248,14 +304,17 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
           <ResizablePanel defaultSize={68} minSize={40}>
             <div className="h-full overflow-hidden">
               {selectedThreadId ? (
-                // The shared detail pane is chatbox/swarm-native; a Playground
+                // The shared detail pane is scenario/swarm-native; a Playground
                 // or eval transcript that trips one of its branches degrades
                 // to the row's own metadata instead of white-screening.
                 <ErrorBoundary
                   name="sessions-thread-detail"
                   fallback={<SessionDetailFallback row={selectedRow} />}
                 >
-                  <ShareUsageThreadDetail threadId={selectedThreadId} />
+                  <ShareUsageThreadDetail
+                    threadId={selectedThreadId}
+                    sessionLink={sessionLink}
+                  />
                 </ErrorBoundary>
               ) : (
                 <div className="flex h-full items-center justify-center">
@@ -295,6 +354,7 @@ function SessionFeedRow({
   onSelect: () => void;
 }) {
   const parentChip = sessionParentChipLabel(row.parentRef);
+  const originChip = sessionOriginChipLabel(row.origin);
   const title = row.title?.trim() || row.firstMessagePreview || "Untitled";
 
   return (
@@ -321,6 +381,14 @@ function SessionFeedRow({
         <span className="rounded-full border border-border/60 px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
           {SESSION_SOURCE_TYPE_LABELS[row.sourceType] ?? row.sourceType}
         </span>
+        {originChip ? (
+          <span
+            data-testid="session-origin-chip"
+            className="rounded-full border border-border/60 px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+          >
+            {originChip}
+          </span>
+        ) : null}
         {row.ownedByViewer ? (
           <span className="rounded-full border border-border/60 px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
             Yours

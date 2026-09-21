@@ -29,6 +29,20 @@ const harnessState = vi.hoisted(() => ({
     ],
     elapsedMs: 3,
   } as Record<string, unknown>,
+  snapshot: {
+    mode: "a11y",
+    tree: '- button "Reserve"',
+    elements: [{ role: { role: "button", name: "Reserve" } }],
+    capturedAt: 1,
+  } as Record<string, unknown>,
+  stepResult: {
+    ok: true,
+    widgetToolCalls: [
+      { name: "reserve", args: { seat: 12 }, ok: true, elapsedMs: 1 },
+    ],
+    followUps: [],
+    elapsedMs: 4,
+  } as Record<string, unknown>,
   disposeCalls: 0,
   /** When set, dispose() awaits it — lets a test hold a teardown open. */
   disposeGate: null as Promise<void> | null,
@@ -44,6 +58,20 @@ const harnessState = vi.hoisted(() => ({
         { name: "reserve", args: { seat: 12 }, ok: true, elapsedMs: 1 },
       ],
       elapsedMs: 3,
+    };
+    this.snapshot = {
+      mode: "a11y",
+      tree: '- button "Reserve"',
+      elements: [{ role: { role: "button", name: "Reserve" } }],
+      capturedAt: 1,
+    };
+    this.stepResult = {
+      ok: true,
+      widgetToolCalls: [
+        { name: "reserve", args: { seat: 12 }, ok: true, elapsedMs: 1 },
+      ],
+      followUps: [],
+      elapsedMs: 4,
     };
     this.disposeCalls = 0;
     this.disposeGate = null;
@@ -68,6 +96,12 @@ vi.mock("../../../utils/mcp-app-browser-harness", async () => {
     }
     async executeAction(input: { action: unknown }) {
       return { action: input.action, ...harnessState.actionResult };
+    }
+    async captureSnapshot() {
+      return harnessState.snapshot;
+    }
+    async runScriptedStep(input: { step: unknown }) {
+      return { step: input.step, ...harnessState.stepResult };
     }
     async dispose() {
       harnessState.disposeCalls += 1;
@@ -304,6 +338,199 @@ describe("widget-session route", () => {
     });
   });
 
+  describe("snapshot + scripted-step (the text-only driving path)", () => {
+    async function openSession(): Promise<string> {
+      const started = await startSession(app);
+      return (await started.json()).sessionId as string;
+    }
+
+    it("returns the widget as an addressable tree", async () => {
+      const sessionId = await openSession();
+      const response = await app.request(
+        `/api/mcp/widget-session/${sessionId}/snapshot`,
+      );
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.snapshot.mode).toBe("a11y");
+      // The elements come back in the SAME vocabulary a scripted step takes,
+      // which is the whole point: an agent reads one and posts it straight back
+      // rather than translating between two locator languages.
+      expect(body.snapshot.elements[0]).toEqual({
+        role: { role: "button", name: "Reserve" },
+      });
+      expect(typeof body.expiresAt).toBe("number");
+    });
+
+    it("drives the widget by role instead of by coordinate", async () => {
+      const sessionId = await openSession();
+      const response = await app.request(
+        `/api/mcp/widget-session/${sessionId}/scripted-step`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            step: {
+              kind: "click",
+              target: { role: { role: "button", name: "Reserve" } },
+            },
+          }),
+        },
+      );
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.ok).toBe(true);
+      // The tool calls the widget fired IN RESPONSE are the evidence an agent
+      // is actually here for — "the button fired the wrong tool" is the bug
+      // this loop exists to find.
+      expect(body.widgetToolCalls).toEqual([
+        { name: "reserve", args: { seat: 12 }, ok: true, elapsedMs: 1 },
+      ]);
+    });
+
+    it("rejects a malformed step rather than half-running it", async () => {
+      const sessionId = await openSession();
+      const response = await app.request(
+        `/api/mcp/widget-session/${sessionId}/scripted-step`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ step: { kind: "click" } }),
+        },
+      );
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toMatch(/step is invalid/);
+    });
+
+    it("400s a malformed priorWidgetToolCalls instead of failing inside the harness", async () => {
+      // A `widgetToolCalled` assertion reads `.name` off each entry, so
+      // `[null]` used to reach the harness as a TypeError and come back as a
+      // 200 with a failed step and an internal message — a malformed request
+      // reported as a widget problem. The caller can only fix what we name.
+      const sessionId = await openSession();
+      for (const prior of [[null], ["reserve"], {}, [{ ok: true }]]) {
+        const response = await app.request(
+          `/api/mcp/widget-session/${sessionId}/scripted-step`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              step: {
+                kind: "assert",
+                assertion: { type: "widgetToolCalled", toolName: "reserve" },
+              },
+              priorWidgetToolCalls: prior,
+            }),
+          },
+        );
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toMatch(/priorWidgetToolCalls/);
+      }
+    });
+
+    it("accepts a well-formed tool-call history", async () => {
+      const sessionId = await openSession();
+      const response = await app.request(
+        `/api/mcp/widget-session/${sessionId}/scripted-step`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            step: {
+              kind: "assert",
+              assertion: { type: "widgetToolCalled", toolName: "reserve" },
+            },
+            priorWidgetToolCalls: [
+              { name: "reserve", args: {}, ok: true, elapsedMs: 1 },
+            ],
+          }),
+        },
+      );
+      expect(response.status).toBe(200);
+    });
+
+    it("404s both new routes on an unknown session", async () => {
+      expect(
+        (await app.request("/api/mcp/widget-session/nope/snapshot")).status,
+      ).toBe(404);
+      const step = await app.request(
+        "/api/mcp/widget-session/nope/scripted-step",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            step: { kind: "key", key: "Enter" },
+          }),
+        },
+      );
+      expect(step.status).toBe(404);
+    });
+
+    it("stops driving once the per-widget step budget is spent", async () => {
+      // `executeAction` has always enforced this; `runScriptedStep` only
+      // incremented the counter. Exposing the step path as its own route made
+      // that a reachable bypass — a caller posting only semantic steps could
+      // drive a runaway widget forever, refreshing the session TTL each time,
+      // while the coordinate path next door capped out at twelve.
+      harnessState.stepResult = {
+        ok: false,
+        reason: "per-widget step budget exhausted",
+        widgetToolCalls: [],
+        followUps: [],
+        elapsedMs: 1,
+        note: "step_budget_exceeded",
+      };
+      const sessionId = await openSession();
+      const response = await app.request(
+        `/api/mcp/widget-session/${sessionId}/scripted-step`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ step: { kind: "key", key: "Enter" } }),
+        },
+      );
+      expect(response.status).toBe(200);
+      expect((await response.json()).note).toBe("step_budget_exceeded");
+      // A terminal note disposes the session, so the NEXT call 404s rather
+      // than holding Chromium for a widget nothing can drive.
+      const after = await app.request(
+        `/api/mcp/widget-session/${sessionId}/snapshot`,
+      );
+      expect(after.status).toBe(404);
+    });
+
+    it("reports a failed assertion as a 200 with ok:false", async () => {
+      // A failed assertion is an ANSWER, not a transport error: the widget was
+      // driven successfully and did not do the thing. Returning 500 would make
+      // a caller retry a step that will keep failing.
+      harnessState.stepResult = {
+        ok: false,
+        reason: "expected tool `reserve` to have been called",
+        widgetToolCalls: [],
+        followUps: [],
+        elapsedMs: 2,
+      };
+      const sessionId = await openSession();
+      const response = await app.request(
+        `/api/mcp/widget-session/${sessionId}/scripted-step`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            step: {
+              kind: "assert",
+              assertion: { type: "widgetToolCalled", toolName: "reserve" },
+            },
+          }),
+        },
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        ok: false,
+        reason: "expected tool `reserve` to have been called",
+      });
+    });
+  });
+
   describe("close", () => {
     it("closes a live session and disposes its harness", async () => {
       const data = await (await startSession(app)).json();
@@ -318,10 +545,9 @@ describe("widget-session route", () => {
     });
 
     it("reports closed:false for an unknown session", async () => {
-      const res = await app.request(
-        "/api/mcp/widget-session/does-not-exist",
-        { method: "DELETE" },
-      );
+      const res = await app.request("/api/mcp/widget-session/does-not-exist", {
+        method: "DELETE",
+      });
       expect(res.status).toBe(200);
       expect((await res.json()).closed).toBe(false);
     });

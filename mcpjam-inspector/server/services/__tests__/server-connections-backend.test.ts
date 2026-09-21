@@ -31,6 +31,7 @@ vi.mock("../internal-backend.js", async () => {
 
 const {
   acquireLease,
+  fetchValidationContext,
   reportValidation,
   ServerConnectionBackendError,
 } = await import("../server-connections-backend.js");
@@ -198,5 +199,90 @@ describe("a body read that never finishes", () => {
     );
 
     expect((error as Error).message).toContain("timed out");
+  });
+});
+
+describe("what a refusal carries", () => {
+  it("keeps the envelope's extra fields as details", async () => {
+    // A refused claim carries `ownerHint` — the masked email of the account
+    // the link belongs to — and that is the one fact that makes the refusal
+    // actionable. Dropping it here left the page able to say "wrong account"
+    // and not which one.
+    fetchMock.mockResolvedValue({
+      status: 403,
+      ok: false,
+      json: async () => ({
+        ok: false,
+        code: "ACCOUNT_MISMATCH",
+        error: "Different account.",
+        ownerHint: "m•••@mcpjam.com",
+      }),
+    } as unknown as Response);
+
+    await expect(acquireLease("scr_1", "lease_1")).rejects.toMatchObject({
+      status: 403,
+      code: "ACCOUNT_MISMATCH",
+      message: "Different account.",
+      details: { ownerHint: "m•••@mcpjam.com" },
+    });
+  });
+
+  it("leaves details undefined when the envelope carried nothing extra", async () => {
+    fetchMock.mockResolvedValue({
+      status: 409,
+      ok: false,
+      json: async () => ({ ok: false, code: "LEASE_MISMATCH", error: "Held." }),
+    } as unknown as Response);
+
+    const error = await acquireLease("scr_1", "lease_1").catch((cause) => cause);
+    expect(error).toBeInstanceOf(ServerConnectionBackendError);
+    expect(error.details).toBeUndefined();
+  });
+});
+
+describe("credentialRetryable on a validation context", () => {
+  // The flag decides whether the worker retries an unreachable authorization
+  // server or sends the user back through consent. A truthy-but-not-true value
+  // from a backend of any vintage must not be read as "retry".
+  const cases: Array<[string, unknown, boolean]> = [
+    ["true", true, true],
+    ["false", false, false],
+    ["omitted", undefined, false],
+    ["null", null, false],
+    ["an empty string", "", false],
+    ['the string "true"', "true", false],
+    ["1", 1, false],
+    ["0", 0, false],
+  ];
+
+  for (const [label, value, expected] of cases) {
+    it(`reads ${label} as ${expected}`, async () => {
+      const payload: Record<string, unknown> = {
+        ok: true,
+        serverUrl: "https://mcp.test/sse",
+        accessToken: "token",
+        authMethod: "oauth",
+      };
+      if (value !== undefined) {
+        payload.credentialRetryable = value;
+      }
+      fetchMock.mockResolvedValue(jsonResponse(200, payload));
+
+      await expect(
+        fetchValidationContext("scr_1", "lease_1")
+      ).resolves.toMatchObject({ credentialRetryable: expected });
+    });
+  }
+
+  it("propagates a transport failure instead of defaulting the flag", async () => {
+    // A call that never reached the backend says nothing about the credential.
+    // Answering with a context would hand the worker `credentialRetryable:
+    // false` — "consent again" — on the strength of a dropped connection.
+    const transportError = new TypeError("fetch failed");
+    fetchMock.mockRejectedValue(transportError);
+
+    await expect(fetchValidationContext("scr_1", "lease_1")).rejects.toBe(
+      transportError
+    );
   });
 });

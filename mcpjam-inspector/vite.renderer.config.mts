@@ -4,6 +4,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import tailwindcss from "@tailwindcss/vite";
 import { readFileSync } from "fs";
+import { electronBuildSurface } from "./shared/sentry-config";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -23,6 +24,10 @@ const chatUiThreadHelpersEntry = resolve(
   "../chat-ui/src/thread-helpers.ts",
 );
 const chatUiTraceEntry = resolve(__dirname, "../chat-ui/src/trace.ts");
+const chatUiJsonTokensEntry = resolve(
+  __dirname,
+  "../chat-ui/src/json-tokens.ts",
+);
 const widgetReactEntry = resolve(__dirname, "../widget-react/src/index.ts");
 
 // https://vitejs.dev/config
@@ -41,6 +46,12 @@ export default defineConfig(({ mode }) => {
         "@/shared": resolve(__dirname, "./shared"),
         "@": resolve(__dirname, "./client/src"),
         // More specific subpaths must precede the bare alias (first match wins).
+        // A subpath missing here does NOT fail to resolve — it falls through to
+        // the bare alias and becomes `chat-ui/src/index.ts/<subpath>`, which
+        // only breaks at `vite build`. This map is a fourth copy (client's
+        // vite/vitest configs and tsconfig hold the others); every subpath
+        // belongs in all four.
+        "@mcpjam/chat-ui/json-tokens": chatUiJsonTokensEntry,
         "@mcpjam/chat-ui/thread-helpers": chatUiThreadHelpersEntry,
         "@mcpjam/chat-ui/trace": chatUiTraceEntry,
         "@mcpjam/chat-ui": chatUiEntry,
@@ -80,6 +91,11 @@ export default defineConfig(({ mode }) => {
     },
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),
+      // Sentry `dist`, matching the `--dist` that forge.config.ts's
+      // packageAfterCopy hook uploads `.vite/renderer` under. This config only
+      // ever builds the Electron renderer, and forge builds it on the machine
+      // that packages it, so the build host's platform IS the target's.
+      __BUILD_SURFACE__: JSON.stringify(electronBuildSurface(process.platform)),
     },
     build: {
       // Desktop stack traces were unsymbolicated: the renderer build emitted
