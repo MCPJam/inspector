@@ -74,6 +74,29 @@ describe("ConnectionAccountsSection", () => {
     expect(screen.queryByText("opaque-a")).toBeNull();
   });
 
+  it("distinguishes two accounts that share an email", () => {
+    mocks.hook.mockReturnValue({
+      connections: [
+        {
+          connectionId: "a",
+          isDefault: true,
+          profile: { id: "x", email: "same@example.com", name: "Acme Corp" },
+        },
+        {
+          connectionId: "b",
+          isDefault: false,
+          profile: { id: "y", email: "same@example.com", name: "Side Project" },
+        },
+      ],
+      shared: false,
+    });
+    mount();
+    // The address cannot tell them apart, so the caption has to.
+    expect(screen.getAllByText("same@example.com")).toHaveLength(2);
+    expect(screen.getByText("Acme Corp · Default")).toBeTruthy();
+    expect(screen.getByText("Side Project")).toBeTruthy();
+  });
+
   it("captions a stale account as needing reconnection instead of a label", () => {
     mocks.hook.mockReturnValue({
       connections: [{ ...rows[1], needsReauth: true, label: "Side" }],
@@ -88,10 +111,10 @@ describe("ConnectionAccountsSection", () => {
     const user = userEvent.setup();
     mocks.update.mockResolvedValue(undefined);
     mount();
-    const label = "Name for same@example.com — Side";
+    const label = "Name for same@example.com: Side";
     expect(screen.queryByLabelText(label)).toBeNull();
     await user.click(
-      screen.getByRole("button", { name: "Manage same@example.com — Side" }),
+      screen.getByRole("button", { name: "Manage same@example.com: Side" }),
     );
     await user.click(screen.getByRole("menuitem", { name: "Rename" }));
     const input = screen.getByLabelText(label);
@@ -107,20 +130,20 @@ describe("ConnectionAccountsSection", () => {
     );
   });
 
-  it("offers a default switch only on an account that is not already it", async () => {
+  it("offers the default switch only on an account that is not already it", async () => {
     const user = userEvent.setup();
     mount();
     await user.click(
-      screen.getByRole("button", { name: "Manage same@example.com — Side" }),
+      screen.getByRole("button", { name: "Manage same@example.com: Side" }),
     );
-    expect(screen.getByRole("menuitem", { name: "Use in chat" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Set as default" })).toBeTruthy();
     cleanup();
     mocks.hook.mockReturnValue({ connections: [rows[0]], shared: false });
     mount();
     await user.click(
-      screen.getByRole("button", { name: "Manage same@example.com — Default" }),
+      screen.getByRole("button", { name: "Manage same@example.com: Default" }),
     );
-    expect(screen.queryByRole("menuitem", { name: "Use in chat" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Set as default" })).toBeNull();
   });
 
   it("starts an explicit add flow", async () => {

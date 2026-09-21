@@ -45,10 +45,14 @@ function identityOf(connection: OAuthConnection, index: number): string {
 }
 
 /** The user's own words for this account, and whether chat uses it. */
-function captionOf(connection: OAuthConnection): string | undefined {
+function captionOf(
+  connection: OAuthConnection,
+  identity: string,
+): string | undefined {
   if (connection.needsReauth) return undefined;
+  const named = connection.label || connection.profile?.name;
   return (
-    [connection.label, connection.isDefault ? "Default" : null]
+    [named === identity ? undefined : named, connection.isDefault ? "Default" : null]
       .filter(Boolean)
       .join(" · ") || undefined
   );
@@ -122,6 +126,13 @@ export function ConnectionAccountsSection({
       <p className="text-xs font-medium text-muted-foreground">
         Connected accounts
       </p>
+      {connections.length > 1 && (
+        <p className="text-xs text-muted-foreground">
+          In chat the model picks an account per call. The default is what
+          everything else uses: evals, the Tools tab, resource reads and the
+          CLI.
+        </p>
+      )}
 
       {error && (
         <p role="alert" className="text-xs text-destructive">
@@ -132,7 +143,7 @@ export function ConnectionAccountsSection({
       <div className="space-y-1">
         {connections.map((connection, index) => {
           const identity = identityOf(connection, index);
-          const caption = captionOf(connection);
+          const caption = captionOf(connection, identity);
           return (
             <div
               key={connection.connectionId}
@@ -153,7 +164,7 @@ export function ConnectionAccountsSection({
                       renameHeldFocus.current = true;
                     }}
                     aria-label={`Name for ${identity}${
-                      caption ? ` — ${caption}` : ""
+                      caption ? `: ${caption}` : ""
                     }`}
                     defaultValue={connection.label ?? ""}
                     placeholder="Add a name"
@@ -199,7 +210,7 @@ export function ConnectionAccountsSection({
                     // Two accounts can share an address, so the caption has
                     // to disambiguate or both buttons read the same.
                     aria-label={`Manage ${identity}${
-                      caption ? ` — ${caption}` : ""
+                      caption ? `: ${caption}` : ""
                     }`}
                   >
                     <MoreHorizontal className="size-4" />
@@ -216,7 +227,7 @@ export function ConnectionAccountsSection({
                       disabled={connection.needsReauth}
                       onSelect={() => void update(connection, "default")}
                     >
-                      Use in chat
+                      Set as default
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuItem
