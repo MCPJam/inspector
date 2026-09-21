@@ -279,6 +279,7 @@ export function SwarmFindingsTab({
       />
       {projectId && (
         <ActionableFindings
+          hideEmpty
           surface={{ kind: "journey_run", projectId, runId: wave.anchor.runId }}
           context={{ rerunLabel: "this swarm" }}
           boundaryName="swarm-actionable-findings"
