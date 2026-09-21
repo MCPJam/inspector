@@ -10,6 +10,7 @@ import {
   editGeneratedDraft,
   saveGeneratedDraft,
   stageMarkdownDrafts,
+  followAuthoringJob,
 } from "../eval-workspace";
 import type { EvalAgentScope } from "@/shared/eval-agent-scope";
 const scope: EvalAgentScope = {
@@ -32,6 +33,34 @@ const input = {
   steps: [{ id: "p1", kind: "prompt" as const, prompt: "Find a ticket" }],
 };
 beforeEach(() => useEvalGeneration.setState({ suites: {} }));
+
+it("lets a newer authoring job take the suite over from an older one", async () => {
+  // Opening a link to an older import while a newer one is being followed
+  // pointed two pollers at one store key. The loser used to keep writing, so
+  // the reader watched the job they had just opened get overwritten.
+  const key = evalSuiteKey(scope);
+  useEvalGeneration.setState({
+    suites: {
+      [key]: { status: "running", drafts: [], authoringJobId: "new" } as never,
+    },
+  });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({
+      data: { jobId: "old", status: "completed", drafts: [], warnings: [] },
+    }),
+  );
+  try {
+    await followAuthoringJob(
+      { projectId: scope.projectId, suiteId: scope.suiteId },
+      "old",
+    );
+    // The old job announced itself once — that write is what a takeover is
+    // measured against — but never overwrote the newer job's outcome.
+    expect(useEvalGeneration.getState().suites[key]?.status).toBe("running");
+  } finally {
+    fetchMock.mockRestore();
+  }
+});
 
 it("clears a failed generation's error when an import stages its drafts", () => {
   const key = evalSuiteKey(scope);

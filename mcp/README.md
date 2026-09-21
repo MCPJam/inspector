@@ -269,7 +269,7 @@ picks. Promote such a row to a named environment in place with
 
 An environment-backed run records the environment and the exact revision it
 executed against, and `get_eval_run` reports that triple — so an agent can
-confirm _which_ configuration produced a result long after the environment has
+confirm *which* configuration produced a result long after the environment has
 been edited. A run that used a saved server selection has no environment to
 record, and reports `environment: null`.
 
@@ -290,7 +290,7 @@ This worker serves MCPJam's own Agent Skills alongside its tools, so an agent th
 
 and implements `skills/list`, `skills/get`, and `resources/read` for every URI in a skill's manifest. `resources/directory/read` is **not** implemented, so `directoryRead` is not declared — the manifest already enumerates every file.
 
-The catalog includes `drive-mcpjam-playground`, which teaches agent-driven session turns, browser commands, handoff, and screenshot evidence. The eval skills are `run-mcpjam-evals`, `mcpjam-eval-import`, `create-mcp-eval`, and `explore-to-sdk-evals`. Among the eval skills, only the first teaches this server's _tools_ — the eval-run loop, what bills, and how to triage a failure. The other three teach authoring the eval files and suites those tools then operate on, which is the adjacency that matters for a caller working on evals. `mcp-inspector` is excluded because its subject is interpreting probe / doctor / OAuth / conformance output, and this server exposes none of those tools. `mcpjam-eval-import` is served by both venues deliberately: it spans them, producing a suite the platform tools run.
+The catalog includes `drive-mcpjam-playground`, which teaches agent-driven session turns, browser commands, handoff, and screenshot evidence. The eval skills are `run-mcpjam-evals`, `mcpjam-eval-import`, `create-mcp-eval`, and `explore-to-sdk-evals`. Among the eval skills, only the first teaches this server's *tools* — the eval-run loop, what bills, and how to triage a failure. The other three teach authoring the eval files and suites those tools then operate on, which is the adjacency that matters for a caller working on evals. `mcp-inspector` is excluded because its subject is interpreting probe / doctor / OAuth / conformance output, and this server exposes none of those tools. `mcpjam-eval-import` is served by both venues deliberately: it spans them, producing a suite the platform tools run.
 
 **The bundle is generated and committed.** `scripts/generate-skills-bundle.mjs` reads the SKILL.md sources, computes SHA-256 digests and byte sizes, and writes `src/generated/SkillsBundle.generated.ts`. After editing a skill, run `npm run bundle:skills -w @mcpjam/mcp` and commit the result; `tests/skillsBundleDrift.test.ts` fails if you forget. The generator is not a build hook because `build:ui` and `deploy` do not build `@mcpjam/sdk`, which it imports on purpose — it must parse frontmatter with the same function a host re-parses with, or we manufacture our own `frontmatter_drift`.
 
@@ -351,11 +351,11 @@ Three things about that are deliberate:
 
 ### AuthKit domains
 
-| Target                                                                       | `AUTHKIT_DOMAIN`                      |
-| ---------------------------------------------------------------------------- | ------------------------------------- |
-| Production (`wrangler deploy --env production`, hostname `mcp.mcpjam.com`)   | `login.mcpjam.com`                    |
+| Target | `AUTHKIT_DOMAIN` |
+| --- | --- |
+| Production (`wrangler deploy --env production`, hostname `mcp.mcpjam.com`) | `login.mcpjam.com` |
 | Staging (`wrangler deploy --env staging`, hostname `mcp-staging.mcpjam.com`) | `dynamic-echo-14-staging.authkit.app` |
-| PR previews (`wrangler deploy --env preview`) and `npm run dev`              | `dynamic-echo-14-staging.authkit.app` |
+| PR previews (`wrangler deploy --env preview`) and `npm run dev` | `dynamic-echo-14-staging.authkit.app` |
 
 Both domains are the MCPJam tenant — the same one the inspector app authenticates against, so a user signed into the inspector can reach this worker.
 
@@ -366,7 +366,7 @@ For developing against the **Home/MCPJam agent** locally, use `npm run dev:local
 `dev:local` worker automatically (see `CONTRIBUTING.md`), so you normally don't
 run it by hand.
 Both tenants must have **Client ID Metadata Document** enabled under
-_Connect → Configuration_ in the WorkOS dashboard — it's off by default, and
+*Connect → Configuration* in the WorkOS dashboard — it's off by default, and
 without it dynamic-client-registration MCP clients will fail to connect.
 
 No secrets are required: JWKS is public, and the Platform API is called with

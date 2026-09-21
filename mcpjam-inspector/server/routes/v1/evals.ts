@@ -92,6 +92,7 @@ import {
   HOSTED_MODE,
   LOCAL_SERVER_ADDR,
   MCPJAM_HOSTED_ORIGIN,
+  MCPJAM_PUBLIC_ORIGIN,
 } from "../../config.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { SCHEDULED_EVALS_WRITE_ENABLED } from "../../config.js";
@@ -9914,7 +9915,12 @@ async function startAuthoringJobAndAwait(
  * reworded case is not caught as a duplicate.
  */
 function authoringReviewUrl(suiteId: string, jobId: string): string {
-  const origin = HOSTED_MODE ? MCPJAM_HOSTED_ORIGIN : LOCAL_SERVER_ADDR;
+  // A self-hosted deployment that set its public origin is reached there by
+  // the person opening this link; `LOCAL_SERVER_ADDR` is the fallback for the
+  // local inspector, where localhost IS the address.
+  const origin = HOSTED_MODE
+    ? MCPJAM_HOSTED_ORIGIN
+    : (MCPJAM_PUBLIC_ORIGIN ?? LOCAL_SERVER_ADDR);
   return `${origin}/evaluate/suite/${encodeURIComponent(
     suiteId,
   )}?importJob=${encodeURIComponent(jobId)}`;

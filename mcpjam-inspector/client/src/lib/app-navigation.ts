@@ -513,9 +513,7 @@ export function buildOrganizationPath(
 export function buildEvalsPath(route: EvalRoute): string {
   return buildEvalRoutePath(
     route.type === "test-edit" || route.type === "test-detail"
-      ? routePaths.evaluate
-      : routePaths.evals,
-    route,
+      ? routePaths.evaluate : routePaths.evals, route,
   );
 }
 
@@ -523,9 +521,7 @@ export function buildEvalsPath(route: EvalRoute): string {
 export function buildEvalsRunsPath(route: EvalRoute): string {
   return buildEvalRoutePath(
     route.type === "test-edit" || route.type === "test-detail"
-      ? routePaths.evaluate
-      : routePaths.evalsRuns,
-    route,
+      ? routePaths.evaluate : routePaths.evalsRuns, route,
   );
 }
 
@@ -555,17 +551,11 @@ export function legacyEvalPathToEvaluatePath(
 }
 
 /** Old case bookmarks open Ding Dong without dropping subtab or project context. */
-export function legacyEvalCasePathToEvaluatePath(
-  pathname: string,
-  search = "",
-  hash = "",
-): string {
+export function legacyEvalCasePathToEvaluatePath(pathname: string, search = "", hash = ""): string {
   const rewritten = pathname.replace(
     /^\/evals(?:\/runs)?\/suite\/([^/]+)\/test\/([^/]+)(\/edit)?\/*$/i,
     (_, suiteId, testId, edit) =>
-      `${routePaths.evaluate}/suite/${suiteId}/test/${testId}${
-        edit ? "/edit" : ""
-      }`,
+      `${routePaths.evaluate}/suite/${suiteId}/test/${testId}${edit ? "/edit" : ""}`,
   );
   return `${rewritten}${search}${hash}`;
 }
@@ -601,9 +591,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
         route.suiteId,
-      )}/runs/${encodeURIComponent(route.runId)}${
-        route.comparison ? "/compare" : ""
-      }${query ? `?${query}` : ""}`;
+      )}/runs/${encodeURIComponent(route.runId)}${route.comparison ? "/compare" : ""}${query ? `?${query}` : ""}`;
     }
     case "test-detail": {
       const params = new URLSearchParams();
@@ -628,11 +616,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       }`;
     }
     case "suite-edit":
-      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/edit${
-        route.fromCaseChecks
-          ? `?fromCaseChecks=${encodeURIComponent(route.fromCaseChecks)}`
-          : ""
-      }`;
+      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/edit${route.fromCaseChecks ? `?fromCaseChecks=${encodeURIComponent(route.fromCaseChecks)}` : ""}`;
     case "commit-detail": {
       // Commits are a Runs-mode lens: Suites mode has no cross-suite SHA view,
       // so a commit route built there degrades to that mode's list.

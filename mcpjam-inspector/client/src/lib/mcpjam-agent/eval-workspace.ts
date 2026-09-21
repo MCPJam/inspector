@@ -718,14 +718,29 @@ export async function saveGeneratedDraft(scope: EvalAgentScope, id: string) {
 
 const startingRuns = new Set<string>();
 const authoringPolls = new Set<string>();
+/**
+ * True once another job has taken this suite's follower over.
+ *
+ * `authoringJobId` is cleared when a job reaches a terminal state, so an empty
+ * value means "nobody is following" rather than "someone else is" — only a
+ * DIFFERENT id counts as a takeover.
+ */
+function supersededBy(key: string, jobId: string): boolean {
+  const current = useEvalGeneration.getState().suites[key]?.authoringJobId;
+  return Boolean(current && current !== jobId);
+}
 /** Resume polling persisted jobs after reload; disconnecting never cancels work. */
 export async function followAuthoringJob(
   scope: Pick<EvalAgentScope, "projectId" | "suiteId">,
   jobId: string,
 ) {
   if (authoringPolls.has(jobId)) return;
-  authoringPolls.add(jobId);
   const key = evalSuiteKey(scope);
+  // Claiming the suite is itself a write, so an already-superseded job must
+  // stand down BEFORE it announces itself — otherwise it takes the key back
+  // from the job the reader opened and the guards below never fire.
+  if (supersededBy(key, jobId)) return;
+  authoringPolls.add(jobId);
   updateGeneration(key, (state) => ({
     ...state,
     authoringJobId: jobId,
@@ -758,6 +773,11 @@ export async function followAuthoringJob(
         );
         continue;
       }
+      // Two jobs can target one suite — a link to an older import opened
+      // while a newer one is being followed. Both polls write to the same
+      // store key, so the loser has to stand down rather than overwrite the
+      // job the reader is actually looking at.
+      if (supersededBy(key, jobId)) break;
       updateGeneration(key, (state) => {
         const known = new Set(state.drafts.map((d) => d.authoring?.draftId));
         const staged: GeneratedDraft[] = status.drafts
@@ -808,14 +828,17 @@ export async function followAuthoringJob(
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   } catch (error) {
-    updateGeneration(key, (state) => ({
-      ...state,
-      status: "error",
-      error:
-        error instanceof Error
-          ? error.message
-          : "Could not read authoring job. Reload to reconnect.",
-    }));
+    // Same standing-down rule as the poll loop: a superseded job's failure is
+    // not news about the job the reader is watching.
+    if (!supersededBy(key, jobId))
+      updateGeneration(key, (state) => ({
+        ...state,
+        status: "error",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Could not read authoring job. Reload to reconnect.",
+      }));
   } finally {
     authoringPolls.delete(jobId);
   }
