@@ -1,4 +1,4 @@
-import { within } from "@testing-library/react";
+import { fireEvent, within } from "@testing-library/react";
 import {
   SuiteRunReviewContent,
   type SuiteRunReviewProps,
@@ -953,8 +953,17 @@ it("gives imported drafts their own surface with a way back to the suite", async
       rerunningSuiteId={null}
     />,
   );
-  // The import surface replaces the suite page, so real cases are not beside
-  // drafts that are not in the suite yet.
+  // Drafts left over from an earlier import must not replace the suite: the
+  // cases it already HAS are what the reader opened it for. They wait behind
+  // a button that says how many there are.
+  expect(screen.getByTestId("suite-detail-test-cases")).toBeVisible();
+  expect(screen.queryByTestId("suite-import-review")).toBeNull();
+  const resume = screen.getByTestId("suite-resume-import-review");
+  expect(resume).toHaveTextContent("1 imported draft is waiting for review");
+
+  fireEvent.click(resume);
+  // Reviewing is still its own surface — drafts are not listed beside real
+  // cases, which read as though the import had already landed.
   expect(screen.getByTestId("suite-import-review")).toBeVisible();
   expect(screen.queryByTestId("suite-detail-test-cases")).toBeNull();
   // The breadcrumb is the way back, and it must not say "Generate".

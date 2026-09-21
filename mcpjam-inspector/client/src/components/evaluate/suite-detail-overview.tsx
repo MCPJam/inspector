@@ -415,7 +415,13 @@ export function SuiteDetailOverview({
    */
   const importedDrafts =
     generation?.drafts.filter((draft) => draft.authoring?.source) ?? [];
-  const [importReviewClosed, setImportReviewClosed] = useState(false);
+  // Drafts that were already waiting when the suite opened must not replace
+  // it: one leftover draft would hide every case the suite actually has. They
+  // wait behind a button instead. Arriving on a review link is the exception —
+  // that IS the request to review them.
+  const [importReviewClosed, setImportReviewClosed] = useState(
+    () => !importJobId && importedDrafts.length > 0,
+  );
   useEffect(() => {
     // Linked-to jobs are followed, not assumed: the poll stages whatever the
     // job still holds, and committed drafts are already excluded from it, so
@@ -739,6 +745,24 @@ export function SuiteDetailOverview({
             </div>
           ) : null}
         </section>
+      ) : null}
+
+      {importedDrafts.length && !reviewingImport ? (
+        <button
+          type="button"
+          data-testid="suite-resume-import-review"
+          onClick={() => setImportReviewClosed(false)}
+          className="flex w-full items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-3 text-left text-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <span className="text-muted-foreground">
+            {importedDrafts.length === 1
+              ? "1 imported draft is waiting for review. It is not in the suite yet."
+              : `${importedDrafts.length} imported drafts are waiting for review. They are not in the suite yet.`}
+          </span>
+          <span className="shrink-0 font-medium text-foreground">
+            Review draft cases
+          </span>
+        </button>
       ) : null}
 
       {showEmptyCasesHero ? (
