@@ -9,6 +9,8 @@ import {
   EyeOff,
   Loader2,
 } from "lucide-react";
+import { useHostedOAuthConnections } from "@/hooks/use-hosted-oauth-connections";
+import { connectionLabel } from "@/shared/oauth-connections";
 import { ServerWithName } from "@/hooks/use-app-state";
 import {
   fetchHostedOAuthTokens,
@@ -23,23 +25,42 @@ import { ScrollableJsonView } from "@/components/ui/json-editor";
 import { ErrorCard } from "@/components/ui/error-card";
 
 interface ServerInfoContentProps {
+  /**
+   * Which half to render. The OAuth sections moved to their own tab, so
+   * Overview asks for "info" and Authorization for "auth"; "all" keeps the
+   * original behaviour for any other caller.
+   */
+  sections?: "all" | "info" | "auth";
   server: ServerWithName;
   projectId?: string | null;
   hostedServerId?: string | null;
 }
 
 export function ServerInfoContent({
+  sections = "all",
   server,
   projectId = null,
   hostedServerId = null,
 }: ServerInfoContentProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
-  const [hostedTokenResult, setHostedTokenResult] =
-    useState<HostedOAuthTokensResult | null>(null);
-  const [isLoadingHostedTokens, setIsLoadingHostedTokens] = useState(false);
-  const [hostedTokenError, setHostedTokenError] = useState<string | null>(null);
+  // Keyed by connection id ("" is the default connection, and the only key a
+  // single-account server ever uses).
+  const [hostedTokensByConnection, setHostedTokensByConnection] = useState<
+    Record<string, HostedOAuthTokensResult>
+  >({});
+  const [loadingConnection, setLoadingConnection] = useState<string | null>(
+    null,
+  );
+  const [hostedTokenErrors, setHostedTokenErrors] = useState<
+    Record<string, string>
+  >({});
   const hostedRevealRequestIdRef = useRef(0);
+  const { connections } = useHostedOAuthConnections(
+    projectId,
+    hostedServerId,
+    sections !== "info" && server.useOAuth === true,
+  );
 
   const serverUrl =
     "url" in server.config ? server.config.url?.toString() : undefined;
@@ -75,9 +96,9 @@ export function ServerInfoContent({
 
   useEffect(() => {
     hostedRevealRequestIdRef.current += 1;
-    setHostedTokenResult(null);
-    setHostedTokenError(null);
-    setIsLoadingHostedTokens(false);
+    setHostedTokensByConnection({});
+    setHostedTokenErrors({});
+    setLoadingConnection(null);
     setExpandedTokens((prev) => {
       const next = new Set(prev);
       for (const key of next) {
@@ -133,34 +154,37 @@ export function ServerInfoContent({
     });
   };
 
-  const revealHostedTokens = async () => {
-    if (!projectId || !hostedServerId || isLoadingHostedTokens) return;
+  const revealHostedTokens = async (connectionId?: string) => {
+    if (!projectId || !hostedServerId || loadingConnection !== null) return;
+    const key = connectionId ?? "";
 
     const requestId = ++hostedRevealRequestIdRef.current;
-    setHostedTokenError(null);
-    setIsLoadingHostedTokens(true);
+    setHostedTokenErrors((prev) => {
+      const { [key]: _dropped, ...rest } = prev;
+      return rest;
+    });
+    setLoadingConnection(key);
 
     try {
       const result = await fetchHostedOAuthTokens({
         projectId,
         serverId: hostedServerId,
+        ...(connectionId ? { connectionId } : {}),
       });
-      if (hostedRevealRequestIdRef.current === requestId) {
-        setHostedTokenResult(result);
-      }
+      if (hostedRevealRequestIdRef.current === requestId)
+        setHostedTokensByConnection((prev) => ({ ...prev, [key]: result }));
     } catch (error) {
-      if (hostedRevealRequestIdRef.current === requestId) {
-        setHostedTokenResult(null);
-        setHostedTokenError(
-          error instanceof Error
-            ? error.message
-            : "Failed to reveal hosted OAuth tokens"
-        );
-      }
+      if (hostedRevealRequestIdRef.current === requestId)
+        setHostedTokenErrors((prev) => ({
+          ...prev,
+          [key]:
+            error instanceof Error
+              ? error.message
+              : "Failed to reveal hosted OAuth tokens",
+        }));
     } finally {
-      if (hostedRevealRequestIdRef.current === requestId) {
-        setIsLoadingHostedTokens(false);
-      }
+      if (hostedRevealRequestIdRef.current === requestId)
+        setLoadingConnection(null);
     }
   };
 
@@ -256,59 +280,95 @@ export function ServerInfoContent({
   };
 
   const renderHostedOAuthVaultSection = () => {
-    const tokens = hostedTokenResult?.tokens;
+    // One block per connected account. A multi-account server used to show a
+    // single pair — the default connection's — however many accounts were
+    // connected, because the reveal never named one.
+    const targets =
+      connections.length > 1
+        ? connections.map((connection, index) => ({
+            key: connection.connectionId,
+            title: connectionLabel(connection, index),
+            needsReauth: connection.needsReauth === true,
+          }))
+        : [{ key: "", title: undefined, needsReauth: false }];
 
     return (
       <div className="space-y-3 text-xs pt-2">
         <div className="text-sm font-medium text-muted-foreground">
           OAuth Tokens
         </div>
-        <div className="space-y-3 rounded-md bg-muted/40 p-3">
-          {hostedTokenError ? (
-            <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
-              {hostedTokenError}
-            </div>
-          ) : null}
+        {targets.map((target) => {
+          const tokens = hostedTokensByConnection[target.key]?.tokens;
+          const error = hostedTokenErrors[target.key];
+          const suffix = target.key ? `:${target.key}` : "";
+          return (
+            <div
+              key={target.key || "default"}
+              className="space-y-3 rounded-md bg-muted/40 p-3"
+            >
+              {target.title && (
+                <div className="text-sm font-medium text-foreground">
+                  {target.title}
+                </div>
+              )}
+              {error ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+                  {error}
+                </div>
+              ) : null}
 
-          {!tokens ? (
-            canRevealHostedOAuthTokens ? (
-              <button
-                type="button"
-                onClick={() => void revealHostedTokens()}
-                disabled={isLoadingHostedTokens}
-                className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isLoadingHostedTokens ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : null}
-                {isLoadingHostedTokens ? "Revealing..." : "Reveal tokens"}
-              </button>
-            ) : (
-              <div className="rounded-md bg-background/60 p-2 text-sm text-muted-foreground">
-                Token reveal is unavailable until this server is synced to the
-                hosted project.
-              </div>
-            )
-          ) : (
-            <>
-              {renderToken(
-                "Access Token",
-                tokens.access_token,
-                "hostedAccessToken",
-                { maskedByDefault: true }
+              {target.needsReauth ? (
+                <div className="rounded-md bg-background/60 p-2 text-sm text-muted-foreground">
+                  This account needs reconnecting before it holds tokens.
+                </div>
+              ) : !tokens ? (
+                canRevealHostedOAuthTokens ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void revealHostedTokens(target.key || undefined)
+                    }
+                    disabled={loadingConnection !== null}
+                    className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {loadingConnection === target.key ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : null}
+                    {loadingConnection === target.key
+                      ? "Revealing..."
+                      : "Reveal tokens"}
+                  </button>
+                ) : (
+                  <div className="rounded-md bg-background/60 p-2 text-sm text-muted-foreground">
+                    Token reveal is unavailable until this server is synced to
+                    the hosted project.
+                  </div>
+                )
+              ) : (
+                <>
+                  {renderToken(
+                    "Access Token",
+                    tokens.access_token,
+                    `hostedAccessToken${suffix}`,
+                    { maskedByDefault: true },
+                  )}
+                  {renderToken(
+                    "Refresh Token",
+                    tokens.refresh_token,
+                    `hostedRefreshToken${suffix}`,
+                    { maskedByDefault: true },
+                  )}
+                  {renderToken(
+                    "ID Token",
+                    tokens.id_token,
+                    `hostedIdToken${suffix}`,
+                    { maskedByDefault: true },
+                  )}
+                </>
               )}
-              {renderToken(
-                "Refresh Token",
-                tokens.refresh_token,
-                "hostedRefreshToken",
-                { maskedByDefault: true }
-              )}
-              {renderToken("ID Token", tokens.id_token, "hostedIdToken", {
-                maskedByDefault: true,
-              })}
-            </>
-          )}
-        </div>
+            </div>
+          );
+        })}
       </div>
     );
   };
@@ -579,8 +639,8 @@ export function ServerInfoContent({
         </div>
       )}
 
-      {renderOAuthTokensSection()}
-      {renderOAuthTraceSection()}
+      {sections !== "info" && renderOAuthTokensSection()}
+      {sections !== "info" && renderOAuthTraceSection()}
     </div>
   );
 }

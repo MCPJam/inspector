@@ -4,7 +4,7 @@ import {
   type ConnectionsByServerId,
 } from "@mcpjam/sdk";
 import {
-  connectionLabel,
+  connectionLabels,
   type AuthorizedOAuthConnection,
 } from "../../../shared/oauth-connections.js";
 import { setManagerConnections } from "../../utils/mcp-connections.js";
@@ -1390,11 +1390,14 @@ export async function createAuthorizedManager(
         // connection so public tools stay usable and a live 401 can start
         // OAuth.
         if (!live.length) continue;
+        // Labelled as a GROUP: two accounts on one email must not read the
+        // same, or the model is choosing between identical strings.
+        const groupLabels = connectionLabels(live);
         connectionsByServerId[id] = live.map((c, index) => ({
           serverId: id,
           connectionId: c.connectionId,
           key: connectionKey(id, c.connectionId, c.isDefault),
-          label: connectionLabel(c, index),
+          label: groupLabels[index],
           profile: c.profile,
           isDefault: c.isDefault,
         }));

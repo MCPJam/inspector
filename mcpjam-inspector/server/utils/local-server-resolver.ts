@@ -1,6 +1,6 @@
 import { connectionKey } from "@mcpjam/sdk";
 import type { AuthorizedOAuthConnection } from "../../shared/oauth-connections.js";
-import { connectionLabel } from "../../shared/oauth-connections.js";
+import { connectionLabels } from "../../shared/oauth-connections.js";
 import {
   getManagerConnections,
   setManagerConnections,
@@ -1873,6 +1873,8 @@ export async function executeLocalServerConnect(
   // must not redirect an in-flight turn to another credential.
   const previousGroups = getManagerConnections(mcpClientManager) ?? {};
   const accounts = resolved.authorizeResult.oauthConnections ?? [];
+  // See the note in routes/web/auth.ts: labels are unique per group.
+  const accountLabels = connectionLabels(accounts);
   const connected = [];
   for (const [index, account] of accounts.entries()) {
     if (
@@ -1915,7 +1917,7 @@ export async function executeLocalServerConnect(
         serverId,
         key,
         connectionId: account.connectionId,
-        label: connectionLabel(account, index),
+        label: accountLabels[index],
         profile: account.profile,
         isDefault: account.isDefault,
       });
