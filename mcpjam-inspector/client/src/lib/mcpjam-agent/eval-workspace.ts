@@ -210,6 +210,14 @@ export interface GenerationState {
   }>;
   suiteServers?: string[];
   authoringJobId?: string;
+  /**
+   * What the running job is authoring FROM.
+   *
+   * A suite with no cases yet and an import in flight is not an empty suite
+   * waiting to be filled — it is an import in progress, and it belongs on the
+   * import surface rather than behind "No cases yet".
+   */
+  authoringSource?: "markdown" | "generation" | "agent" | "import";
   reviewRequestId?: string;
   /**
    * The `reviewRequestId` the reader has already been shown and dismissed.
@@ -669,6 +677,7 @@ export async function followAuthoringJob(
           drafts: [...state.drafts, ...staged],
           availableTools: status.availableTools,
           suiteServers: status.suiteServers,
+          authoringSource: status.source,
           reviewRequestId: staged.length ? generateId() : state.reviewRequestId,
           status:
             status.status === "pending"

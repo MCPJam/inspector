@@ -406,7 +406,7 @@ export function SuiteDetailOverview({
   const hasRuns = runs.length > 0;
   // Waiting drafts are not cases: until one is added the suite is still empty,
   // and the way out of empty is the same three choices either way.
-  const showEmptyCasesHero = !hasCases;
+
 
   /**
    * Imported drafts get their OWN surface, the way generation does. They are
@@ -435,12 +435,46 @@ export function SuiteDetailOverview({
    * a fresh import and a fresh import look like one already dismissed. The
    * store answers it instead. A review link is always the request to review.
    */
+  // A running import belongs here from the moment it starts, before it has
+  // produced a draft: otherwise the wait happens behind "No cases yet", which
+  // is a page about a suite that has nothing in it rather than one about the
+  // document being read.
+  const importRunning =
+    generation?.status === "running" &&
+    (generation?.authoringSource === "import" ||
+      generation?.authoringSource === "markdown");
   const reviewingImport = Boolean(
     projectId &&
-      importedDrafts.length &&
+      (importedDrafts.length || importRunning) &&
       (Boolean(importJobId) ||
+        importRunning ||
         generation?.reviewRequestId !== generation?.reviewSeenId),
   );
+  // Declared here, not beside `hasCases`, because it depends on the import
+  // surface below.
+  const showEmptyCasesHero = !hasCases && !reviewingImport;
+  /**
+   * Reveal imported drafts one at a time.
+   *
+   * The worker authors five cases per model call, so a six-case document lands
+   * as five at once and then one — which reads as a stall and then a dump. The
+   * drafts are already written by then; this only paces how they appear, so
+   * the reader sees the list being built rather than replaced.
+   */
+  const [visibleDraftIds, setVisibleDraftIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const nextDraftId = importedDrafts.find(
+    (draft) => !visibleDraftIds.has(draft.id),
+  )?.id;
+  useEffect(() => {
+    if (!nextDraftId) return;
+    const timer = window.setTimeout(
+      () => setVisibleDraftIds((shown) => new Set([...shown, nextDraftId])),
+      220,
+    );
+    return () => window.clearTimeout(timer);
+  }, [nextDraftId]);
   const exitImportReview = useCallback(() => {
     if (projectId) markImportReviewSeen({ projectId, suiteId: suite._id });
   }, [projectId, suite._id]);
@@ -543,6 +577,7 @@ export function SuiteDetailOverview({
       >
         <div className="mx-auto w-full max-w-5xl">
           <EvalGeneratedDrafts
+            visibleDraftIds={visibleDraftIds}
             key={`${projectId}:${suite._id}:import`}
             projectId={projectId}
             suiteId={suite._id}
