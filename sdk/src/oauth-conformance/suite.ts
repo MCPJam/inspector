@@ -77,6 +77,7 @@ export class OAuthConformanceSuite {
     const startedAt = Date.now();
     const results: Array<ConformanceResult & { label: string }> = [];
 
+    let sameAccountProfileId: string | undefined;
     for (const flow of this.config.flows) {
       // Merge defaults with per-flow overrides. Runtime validation
       // happens inside OAuthConformanceTest's constructor.
@@ -89,6 +90,36 @@ export class OAuthConformanceSuite {
 
       const test = new OAuthConformanceTest(merged);
       const result = await test.run();
+      if (merged.verification?.profile?.expectSameAccount && result.profileId) {
+        const stable =
+          sameAccountProfileId === undefined ||
+          sameAccountProfileId === result.profileId;
+        if (sameAccountProfileId !== undefined)
+          result.steps.push({
+            step: "verify_profile_identity_stable_across_flows",
+            title: "Profile identity across flows",
+            summary: "Compare flows declared to use the same account.",
+            status: stable ? "passed" : "failed",
+            durationMs: 0,
+            logs: [],
+            httpAttempts: [],
+            ...(stable
+              ? {}
+              : {
+                  error: {
+                    message:
+                      "Flows declared to use the same account returned different profile IDs.",
+                  },
+                }),
+          });
+        if (!stable) {
+          result.passed = false;
+          result.outcome = "failed";
+          result.summary =
+            "OAuth conformance failed: flows declared to use the same account returned different profile identities.";
+        }
+        sameAccountProfileId ??= result.profileId;
+      }
       results.push({ ...result, label });
     }
 
