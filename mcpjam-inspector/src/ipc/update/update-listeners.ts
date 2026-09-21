@@ -43,6 +43,10 @@ export const UPDATE_POLL_INTERVAL_MS = 10 * 60_000;
 // enough to survive a slow boot, short enough that a laptop opened next week
 // does not silently install on launch.
 export const RELAUNCH_MARKER_MAX_AGE_MS = 15 * 60_000;
+// One restart to recover an install, never a second. If the fresh process
+// cannot install either, the problem is not stale state and relaunching again
+// would loop the app forever.
+const MAX_INSTALL_RELAUNCH_ATTEMPTS = 1;
 let stalledInstallTimeoutMs = DEFAULT_STALLED_INSTALL_TIMEOUT_MS;
 let stalledDownloadTimeoutMs = DEFAULT_STALLED_DOWNLOAD_TIMEOUT_MS;
 let stalledQuitTimeoutMs = DEFAULT_STALLED_QUIT_TIMEOUT_MS;
@@ -130,6 +134,8 @@ let isInstallingOnQuit = false;
 // Set on a launch that followed `relaunchToFinishInstall()`. The next
 // download installs itself instead of waiting for a second click.
 let installOnNextDownload = false;
+// How many times we have already restarted the app to rescue this install.
+let relaunchAttempts = 0;
 
 function clearStalledInstallWatchdog(): void {
   if (stalledInstallTimer !== null) {
@@ -314,11 +320,11 @@ function relaunchMarkerPath(): string {
  * the normal "Update" button on the next launch instead of a hands-free
  * install, which is the pre-existing behaviour, not a new failure.
  */
-function writeRelaunchMarker(): void {
+function writeRelaunchMarker(attempts: number): void {
   try {
     fs.writeFileSync(
       relaunchMarkerPath(),
-      JSON.stringify({ at: Date.now() }),
+      JSON.stringify({ at: Date.now(), attempts }),
       "utf8",
     );
   } catch (error) {
@@ -332,13 +338,13 @@ function writeRelaunchMarker(): void {
  * Always deletes: a marker that is read once and left behind would re-arm a
  * hands-free install on every later launch.
  */
-function consumeRelaunchMarker(): boolean {
+function consumeRelaunchMarker(): number {
   const markerPath = relaunchMarkerPath();
   let raw: string;
   try {
     raw = fs.readFileSync(markerPath, "utf8");
   } catch {
-    return false;
+    return 0;
   }
   try {
     fs.rmSync(markerPath, { force: true });
@@ -346,16 +352,26 @@ function consumeRelaunchMarker(): boolean {
     log.error("Failed to remove relaunch marker:", error);
   }
   try {
-    const { at } = JSON.parse(raw) as { at?: unknown };
+    const { at, attempts } = JSON.parse(raw) as {
+      at?: unknown;
+      attempts?: unknown;
+    };
     if (typeof at !== "number") {
-      return false;
+      return 0;
     }
     const age = Date.now() - at;
     // A negative age means the clock moved; treat it as untrustworthy rather
     // than as "very fresh".
-    return age >= 0 && age <= RELAUNCH_MARKER_MAX_AGE_MS;
+    if (age < 0 || age > RELAUNCH_MARKER_MAX_AGE_MS) {
+      return 0;
+    }
+    // A marker we cannot read a count out of still means "we relaunched", so
+    // it counts as one attempt rather than resetting the budget to zero.
+    return Number.isInteger(attempts) && (attempts as number) > 0
+      ? (attempts as number)
+      : 1;
   } catch {
-    return false;
+    return 0;
   }
 }
 
@@ -371,11 +387,25 @@ function consumeRelaunchMarker(): boolean {
  * install that just failed and block the quit we are asking for.
  */
 function relaunchToFinishInstall(reason: string): void {
-  log.error(`Install refused by Electron (${reason}); relaunching to retry`);
   clearStalledQuitWatchdog();
   isQuittingForUpdate = false;
+  // Restarting the app is only a fix if it works. If we already relaunched
+  // for this and are back here, restarting again would just do it forever —
+  // an app that keeps disappearing on its own is worse than the dead button
+  // this recovers from. Hand over the releases page, which always works.
+  if (relaunchAttempts >= MAX_INSTALL_RELAUNCH_ATTEMPTS) {
+    log.error(
+      `Install still refused after ${relaunchAttempts} relaunch(es) (${reason}); offering manual download`,
+    );
+    const version =
+      currentStatus.kind === "downloaded" ? currentStatus.version : undefined;
+    setStatus({ kind: "manual", version });
+    broadcastUpdateError();
+    return;
+  }
+  log.error(`Install refused by Electron (${reason}); relaunching to retry`);
   setStatus({ kind: "idle" });
-  writeRelaunchMarker();
+  writeRelaunchMarker(relaunchAttempts + 1);
   app.relaunch();
   app.quit();
 }
@@ -490,9 +520,12 @@ function setStatus(next: UpdateStatus): void {
 export function setupAutoUpdaterEvents(): void {
   // Did the previous process relaunch us mid-install? Read it once, here,
   // before any check can fire.
-  if (app.isPackaged && consumeRelaunchMarker()) {
-    log.info("Resuming an update install that needed a relaunch");
-    installOnNextDownload = true;
+  if (app.isPackaged) {
+    relaunchAttempts = consumeRelaunchMarker();
+    if (relaunchAttempts > 0) {
+      log.info("Resuming an update install that needed a relaunch");
+      installOnNextDownload = true;
+    }
   }
 
   autoUpdater.on("checking-for-update", () => {
@@ -813,6 +846,7 @@ export function __resetUpdateStateForTests(): void {
   isQuittingForUpdate = false;
   isInstallingOnQuit = false;
   installOnNextDownload = false;
+  relaunchAttempts = 0;
   trustedWindow = null;
   updateListenersRegistered = false;
   collapsedDownloads = 0;

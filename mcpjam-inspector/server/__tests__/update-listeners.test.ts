@@ -1180,6 +1180,44 @@ describe("install refused by Electron", () => {
     expect(quitAndInstallMock).not.toHaveBeenCalled();
   });
 
+  it("stops relaunching if the fresh process cannot install either", async () => {
+    // The relaunch is a recovery, not a habit. If it did not work once it
+    // will not work twice, and an app that keeps restarting itself is worse
+    // than the dead button it was trying to fix.
+    fsState.files.set(MARKER, JSON.stringify({ at: Date.now(), attempts: 1 }));
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    emitAutoUpdaterEvent("error", refusedError());
+
+    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(fsState.files.has(MARKER)).toBe(false);
+    // The releases page is the one path left that always works.
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toEqual({ kind: "manual", version: "3.8.1" });
+    expect(window.webContents.send).toHaveBeenCalledWith("update-error");
+  });
+
+  it("counts the relaunch it is about to make", async () => {
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    emitAutoUpdaterEvent("error", refusedError());
+
+    expect(relaunchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fsState.files.get(MARKER) as string).attempts).toBe(1);
+  });
+
   it("lets the user quit when the install is refused at quit", async () => {
     // Sophie hit Cmd+Q three times and the app refused every time:
     // installUpdateOnQuit() returns true, before-quit preventDefault()s, and
