@@ -126,13 +126,6 @@ export function ConnectionAccountsSection({
       <p className="text-xs font-medium text-muted-foreground">
         Connected accounts
       </p>
-      {connections.length > 1 && (
-        <p className="text-xs text-muted-foreground">
-          In chat the model picks an account per call. The default is what
-          everything else uses: evals, the Tools tab, resource reads and the
-          CLI.
-        </p>
-      )}
 
       {error && (
         <p role="alert" className="text-xs text-destructive">

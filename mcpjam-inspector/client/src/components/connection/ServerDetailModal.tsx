@@ -832,7 +832,12 @@ export function ServerDetailModal({
               {showAuthorization && (
                 <TabsContent
                   value="authorization"
-                  className="mt-0 flex-none max-h-[60vh] overflow-y-auto data-[state=inactive]:invisible"
+                  // Overlays the force-mounted configuration panel, like every
+                  // other tab. Configuration's own classes are NOT reusable
+                  // here: it keeps `invisible` while inactive, which still
+                  // occupies layout, so a sibling in normal flow stacks below
+                  // its full height and spills out of the dialog.
+                  className="mt-0 flex-none absolute inset-0 overflow-y-auto bg-background"
                 >
                   <div className="space-y-4 pl-1 pr-6">
                   <ConnectionAccountsSection
