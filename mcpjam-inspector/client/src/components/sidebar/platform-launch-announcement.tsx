@@ -274,7 +274,7 @@ export function PlatformLaunchAnnouncement({
           >
             {LAUNCH.title}
           </DialogTitle>
-          <DialogDescription className="max-w-xl text-foreground">
+          <DialogDescription className="text-balance text-foreground">
             {LAUNCH.body}
           </DialogDescription>
         </DialogHeader>
