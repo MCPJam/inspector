@@ -111,10 +111,10 @@ describe("ConnectionAccountsSection", () => {
     const user = userEvent.setup();
     mocks.update.mockResolvedValue(undefined);
     mount();
-    const label = "Name for same@example.com — Side";
+    const label = "Name for same@example.com: Side";
     expect(screen.queryByLabelText(label)).toBeNull();
     await user.click(
-      screen.getByRole("button", { name: "Manage same@example.com — Side" }),
+      screen.getByRole("button", { name: "Manage same@example.com: Side" }),
     );
     await user.click(screen.getByRole("menuitem", { name: "Rename" }));
     const input = screen.getByLabelText(label);
@@ -134,14 +134,14 @@ describe("ConnectionAccountsSection", () => {
     const user = userEvent.setup();
     mount();
     await user.click(
-      screen.getByRole("button", { name: "Manage same@example.com — Side" }),
+      screen.getByRole("button", { name: "Manage same@example.com: Side" }),
     );
     expect(screen.getByRole("menuitem", { name: "Set as default" })).toBeTruthy();
     cleanup();
     mocks.hook.mockReturnValue({ connections: [rows[0]], shared: false });
     mount();
     await user.click(
-      screen.getByRole("button", { name: "Manage same@example.com — Default" }),
+      screen.getByRole("button", { name: "Manage same@example.com: Default" }),
     );
     expect(screen.queryByRole("menuitem", { name: "Set as default" })).toBeNull();
   });

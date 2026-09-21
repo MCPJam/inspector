@@ -568,7 +568,7 @@ function personaGoalLine(rows: readonly SwarmJourneyFinding[]): string | null {
     names.length > 1
       ? `${names[0]} and ${plural(names.length - 1, "other persona")}`
       : names[0];
-  return `"${lead[1].title}" for ${who}.`;
+  return `"${shortenGoalTitle(lead[1].title, 12)}" for ${who}.`;
 }
 
 /**
@@ -632,8 +632,10 @@ export function composeWireFindingsSummary(
       if (!goal) continue;
       const lines = [
         kind === "broken"
-          ? `"${goal.title}" broke for ${persona.name}.`
-          : `"${goal.title}" showed friction for ${persona.name}.`,
+          ? `"${shortenGoalTitle(goal.title, 12)}" broke for ${persona.name}.`
+          : `"${shortenGoalTitle(goal.title, 12)}" showed friction for ${
+              persona.name
+            }.`,
       ];
       const feeling = feelingLine(persona);
       if (feeling) lines.push(feeling);

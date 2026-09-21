@@ -157,7 +157,7 @@ export function ConnectionAccountsSection({
                       renameHeldFocus.current = true;
                     }}
                     aria-label={`Name for ${identity}${
-                      caption ? ` — ${caption}` : ""
+                      caption ? `: ${caption}` : ""
                     }`}
                     defaultValue={connection.label ?? ""}
                     placeholder="Add a name"
@@ -203,7 +203,7 @@ export function ConnectionAccountsSection({
                     // Two accounts can share an address, so the caption has
                     // to disambiguate or both buttons read the same.
                     aria-label={`Manage ${identity}${
-                      caption ? ` — ${caption}` : ""
+                      caption ? `: ${caption}` : ""
                     }`}
                   >
                     <MoreHorizontal className="size-4" />
