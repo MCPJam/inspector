@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent, waitFor } from "@/test";
-import { EvalGeneratedDrafts } from "../eval-generated-drafts";
+import {
+  EvalGeneratedDrafts,
+  describeEvalDraftError,
+} from "../eval-generated-drafts";
 import {
   evalSuiteKey,
   registerEvalSuite,
@@ -317,4 +320,18 @@ it("adds drafts one at a time so they cannot collide on the suite", async () => 
     "start:Second",
     "end:Second",
   ]);
+});
+
+it("does not put the model's own contract error on screen", () => {
+  // The job retries these itself. A serialized issue array names a field of a
+  // contract the reader cannot see and cannot act on.
+  expect(
+    describeEvalDraftError(
+      '[{"code":"invalid_type","expected":"string","received":"undefined","path":["drafts",0,"additions",0,"id"],"message":"Required"}]',
+    ),
+  ).toBe("The model's reply did not match the case contract. Retrying.");
+  // Anything written for a person still reaches them verbatim.
+  expect(describeEvalDraftError("You cannot import into this suite.")).toBe(
+    "You cannot import into this suite.",
+  );
 });

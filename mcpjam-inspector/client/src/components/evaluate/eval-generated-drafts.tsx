@@ -59,7 +59,32 @@ const WRITE_CONFLICT_MESSAGE =
  * render: a model limit gets the catalog sentence, a write conflict gets the
  * retry line, and anything else is shown as-is.
  */
+/**
+ * A validation failure inside the authoring model's reply is not addressed to
+ * the reader. It arrives as a serialized issue array — `[{"code":
+ * "invalid_type","expected":"string","path":["drafts",0,"additions",0,"id"]…}]`
+ * — which names a field of a contract they cannot see and cannot act on. The
+ * job retries these itself, so the only honest thing to say is what is
+ * happening.
+ */
+function isModelContractError(message: string): boolean {
+  const trimmed = message.trim();
+  if (!trimmed.startsWith("[") && !trimmed.startsWith("{")) return false;
+  try {
+    const parsed = JSON.parse(trimmed);
+    const issues = Array.isArray(parsed) ? parsed : [parsed];
+    return issues.some(
+      (issue) =>
+        issue && typeof issue === "object" && "code" in issue && "path" in issue,
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function describeEvalDraftError(message: string): string {
+  if (isModelContractError(message))
+    return "The model's reply did not match the case contract. Retrying.";
   return (
     describeMCPJamLimitMessage(message) ??
     (isWriteConflictMessage(message) ? WRITE_CONFLICT_MESSAGE : message)
