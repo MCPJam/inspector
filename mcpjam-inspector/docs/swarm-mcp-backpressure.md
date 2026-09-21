@@ -48,7 +48,7 @@ errors, or propagate metadata through the harness-facing RPC envelope. The new a
 rely on the narrower tool-error metadata wrapper. STDIO has no HTTP Retry-After. Separate proxy
 deployments, redirects and provider-internal subrequests still require inspection.
 
-Admission is installed for hosted project-member HTTP managers, covering both
+Admission is installed for hosted project-member HTTP managers, covering all three
 listed hosted paths by construction, including initialization/discovery. Local,
 shared-chat and STDIO paths are excluded. GET listening, DELETE and cancellation
 notifications bypass pacing. Coordinator failures stop dispatch. Feedback failure

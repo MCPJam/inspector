@@ -95,6 +95,60 @@ describe("MCP request admission", () => {
     expect(upstream).toHaveBeenCalledTimes(6);
   });
 
+  it("bypasses a full queue for Request cancellation without consuming the body", async () => {
+    const c = coordinator();
+    const upstream = vi.fn(
+      async (input: RequestInfo | URL) =>
+        new Response(await (input as Request).text()),
+    );
+    const wrapped = createMcpBackpressureFetch({
+      key: "request-cancel",
+      fetch: upstream,
+      coordinator: c,
+      maxPending: 0,
+    });
+    const request = new Request(url, {
+      method: "POST",
+      body: JSON.stringify({ method: "notifications/cancelled" }),
+    });
+    expect(await (await wrapped(request)).json()).toEqual({
+      method: "notifications/cancelled",
+    });
+    expect(c.admit).not.toHaveBeenCalled();
+  });
+
+  it("retains admission if a Request body cannot be cloned", async () => {
+    const c = coordinator();
+    const upstream = vi.fn(async () => new Response("ok"));
+    const wrapped = createMcpBackpressureFetch({
+      key: "used-request",
+      fetch: upstream,
+      coordinator: c,
+    });
+    const request = new Request(url, post);
+    await request.text();
+    await wrapped(request);
+    expect(c.admit).toHaveBeenCalledTimes(1);
+    expect(upstream).toHaveBeenCalledExactlyOnceWith(request, undefined);
+  });
+
+  it("uses an init body override instead of Request cancellation", async () => {
+    const c = coordinator();
+    const upstream = vi.fn(async () => new Response("ok"));
+    const wrapped = createMcpBackpressureFetch({
+      key: "request-override",
+      fetch: upstream,
+      coordinator: c,
+    });
+    const request = new Request(url, {
+      method: "POST",
+      body: JSON.stringify({ method: "notifications/cancelled" }),
+    });
+    await wrapped(request, post);
+    expect(c.admit).toHaveBeenCalledTimes(1);
+    expect(request.bodyUsed).toBe(false);
+  });
+
   it("cancels while waiting and releases the local queue slot", async () => {
     const c = coordinator();
     vi.mocked(c.admit).mockResolvedValue({
@@ -169,6 +223,9 @@ describe("MCP request admission", () => {
     [429, "30", 30_000, true],
     [429, "Mon, 21 Sep 2026 12:00:45 GMT", 45_000, true],
     [429, "nonsense", undefined, true],
+    [429, "1e308", undefined, true],
+    [503, "1e308", undefined, false],
+    [429, "1e20", undefined, true],
     [503, "30", 30_000, true],
     [503, "nonsense", undefined, false],
   ])(

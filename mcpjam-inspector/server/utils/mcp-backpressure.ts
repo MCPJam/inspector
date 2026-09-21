@@ -30,18 +30,25 @@ export class McpAdmissionError extends Error {
 // live in Convex; this map is only the local memory-pressure guard.
 const pendingByKey = new Map<string, number>();
 
-function requiresAdmission(
+async function requiresAdmission(
   input: RequestInfo | URL,
   init?: RequestInit,
-): boolean {
+): Promise<boolean> {
   const method =
     init?.method ?? (input instanceof Request ? input.method : "GET");
   if (method.toUpperCase() !== "POST") return false;
   // Cancellation must be able to reach a server even when work is queued.
-  if (typeof init?.body === "string") {
+  let body = init?.body;
+  if (body == null && input instanceof Request) {
     try {
-      if (JSON.parse(init.body)?.method === "notifications/cancelled")
-        return false;
+      body = await input.clone().text();
+    } catch {
+      // Keep normal admission when a used or unreadable body cannot be inspected.
+    }
+  }
+  if (typeof body === "string") {
+    try {
+      if (JSON.parse(body)?.method === "notifications/cancelled") return false;
     } catch {
       /* Transport validates the body. */
     }
@@ -63,7 +70,7 @@ export function createMcpBackpressureFetch(options: {
   const enabled = options.enabled ?? (() => true);
   let feedbackFailed = false;
   return (async (input, init) => {
-    if (!enabled() || !requiresAdmission(input, init))
+    if (!enabled() || !(await requiresAdmission(input, init)))
       return options.fetch(input, init);
     const signal =
       init?.signal ?? (input instanceof Request ? input.signal : undefined);

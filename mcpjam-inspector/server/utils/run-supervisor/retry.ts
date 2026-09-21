@@ -199,7 +199,13 @@ export function retryAfterMsOf(
     // Numeric but negative is a malformed header, not a date: answering
     // `undefined` is right, and falling through would let `Date.parse` read
     // something like "-5" as a year.
-    return seconds >= 0 ? Math.round(seconds * 1_000) : undefined;
+    const delayMs = Math.round(seconds * 1_000);
+    // Reject overflow and deadlines that the shared coordinator cannot represent.
+    return seconds >= 0 &&
+      Number.isSafeInteger(delayMs) &&
+      Number.isSafeInteger(now() + delayMs)
+      ? delayMs
+      : undefined;
   }
   const retryAt = Date.parse(raw);
   if (!Number.isFinite(retryAt)) return undefined;
