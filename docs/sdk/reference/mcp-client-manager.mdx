@@ -710,6 +710,132 @@ const response = await generateText({
 
 ---
 
+## Multi-account tool routing
+
+When one logical MCP server has multiple credentials (e.g. two OAuth accounts), `getToolsForAiSdkByServer` returns a separate `ToolSet` per connection key. Pass those toolsets to `mergeConnectionToolsets` to produce a single flat `ToolSet` that routes each call to the correct credential.
+
+### mergeConnectionToolsets()
+
+```typescript
+import { mergeConnectionToolsets } from "@mcpjam/sdk";
+
+mergeConnectionToolsets(
+  perKey: Record<string, ToolSet>,
+  connectionsByServerId: ConnectionsByServerId,
+  options: {
+    snapshot: ConnectionRoutingSnapshot;
+    onRoute?: (toolCallId: string, connection: McpToolConnection) => void;
+  }
+): ToolSet
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `perKey` | `Record<string, ToolSet>` | Per-connection toolsets from `getToolsForAiSdkByServer`. |
+| `connectionsByServerId` | `ConnectionsByServerId` | Map from server ID to the list of `McpToolConnection` objects for that server. |
+| `options.snapshot` | `ConnectionRoutingSnapshot` | A `ReadonlyMap<connectionId, key>` that records which key each connection ID maps to at the time of the call. Used to reject stale or foreign selectors before any wire traffic. |
+| `options.onRoute` | `(toolCallId, connection) => void` | Optional callback invoked when a call is routed to a connection. |
+
+#### Merge behavior
+
+- **Single connection per server** — the toolset passes through unchanged. Each tool is stamped with its `connectionId` so saved continuations can re-bind to the same credential.
+- **Multiple connections, matching schemas** — tools with the same name and identical input schemas are merged into one tool. The merged tool gains a required `account` parameter (an enum of `connectionId` values). The `account` value is stripped before the wire call.
+- **Multiple connections, differing schemas or existing `account` parameter** — each connection gets its own `tool__slug` variant. The slug is derived from the connection's `label`.
+- **Invalid `account` selector** — missing, foreign, or stale selectors return an error result before any invocation. No fallback, no fan-out.
+
+Both `execute` and `toModelOutput` dispatch through the selected connection, so linked-resource conversion always uses the same credential as the tool call.
+
+#### McpToolConnection
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `serverId` | `string` | The logical server ID. |
+| `connectionId` | `string` | Unique 32-character hex ID for this credential. |
+| `key` | `string` | The manager key for this connection (see `connectionKey`). |
+| `label` | `string` | Human-readable label used to generate `tool__slug` variant names. |
+| `isDefault` | `boolean` | When `true`, this connection owns the bare server key. |
+
+#### Example
+
+```typescript
+import {
+  MCPClientManager,
+  mergeConnectionToolsets,
+  connectionKey,
+  type McpToolConnection,
+} from "@mcpjam/sdk";
+
+const a: McpToolConnection = {
+  serverId: "myserver",
+  connectionId: "a".repeat(32),
+  key: "myserver",          // bare key — the default connection
+  label: "Work account",
+  isDefault: true,
+};
+const b: McpToolConnection = {
+  serverId: "myserver",
+  connectionId: "b".repeat(32),
+  key: connectionKey("myserver", "b".repeat(32)),
+  label: "Personal account",
+  isDefault: false,
+};
+
+const manager = new MCPClientManager({
+  [a.key]: { url: "https://mcp.example.com/mcp", accessToken: tokenA },
+  [b.key]: { url: "https://mcp.example.com/mcp", accessToken: tokenB },
+});
+
+const snapshot = new Map([
+  [a.connectionId, a.key],
+  [b.connectionId, b.key],
+]);
+
+const tools = mergeConnectionToolsets(
+  await manager.getToolsForAiSdkByServer([a.key, b.key]),
+  { myserver: [a, b] },
+  { snapshot }
+);
+
+// Pass `tools` to generateText() — the model selects an account via the
+// injected `account` parameter; routing is handled transparently.
+```
+
+---
+
+### connectionKey()
+
+Builds the manager key for a non-default connection. The default connection uses the bare server key; additional connections use `serverKey#connectionId`.
+
+```typescript
+import { connectionKey } from "@mcpjam/sdk";
+
+connectionKey(serverKey: string, connectionId: string, isDefault?: boolean): string
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverKey` | `string` | The logical server key. |
+| `connectionId` | `string` | 32-character hex connection ID. |
+| `isDefault` | `boolean` | When `true`, returns `serverKey` unchanged. Default: `false`. |
+
+---
+
+### parseConnectionKey()
+
+Parses a manager key back into its `serverKey` and optional `connectionId`.
+
+```typescript
+import { parseConnectionKey } from "@mcpjam/sdk";
+
+parseConnectionKey(key: string): { serverKey: string; connectionId?: string }
+```
+
+Returns `{ serverKey, connectionId }` when the key contains a valid 32-character hex suffix, or `{ serverKey: key }` for bare keys.
+
+---
+
 ## Complete Example
 
 ```typescript
