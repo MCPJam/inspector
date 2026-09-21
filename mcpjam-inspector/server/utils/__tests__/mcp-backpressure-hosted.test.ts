@@ -27,6 +27,7 @@ describe("hosted MCP admission adapter", () => {
       projectId: "project-1",
       serverId: "server-1",
       userId: "user-1",
+      connectionId: "connection-1",
     });
     const init = {
       method: "POST",
@@ -53,6 +54,7 @@ describe("hosted MCP admission adapter", () => {
       projectId: "project-1",
       serverId: "server-1",
       userId: "user-1",
+      connectionId: "connection-1",
     });
     expect(JSON.parse(control.mock.calls[1][1].body)).toMatchObject({
       status: 429,

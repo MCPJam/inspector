@@ -1,3 +1,4 @@
+import { captureHostedOAuthConnection } from "@/lib/apis/web/oauth-connections";
 /**
  * Production OAuth implementation using the SDK state-machine runner with trace support.
  */
@@ -1510,6 +1511,8 @@ export type OAuthProtocolResolutionSource =
   | "auth_gated_fallback";
 
 export interface OAuthResult {
+  credentialId?: string;
+  vaultObjectId?: string;
   success: boolean;
   serverConfig?: HttpServerConfig;
   error?: string;
@@ -1568,6 +1571,8 @@ function buildElectronMcpAuthorizationRequest(authorizationUrl: string): {
 }
 
 interface HostedOAuthCompletionResponse {
+  credentialId?: string;
+  vaultObjectId?: string;
   success: boolean;
   expiresAt?: number | null;
   kind?: "generic" | "registry";
@@ -1797,6 +1802,9 @@ async function createHostedOAuthSessionIfNeeded(input: {
     body: JSON.stringify({
       projectId: pendingMarker.projectId,
       serverId: pendingMarker.serverId,
+      ...(pendingMarker.connectionIntent
+        ? { connectionIntent: pendingMarker.connectionIntent }
+        : {}),
       codeVerifier,
       redirectUri: input.redirectUrl,
       expectedState,
@@ -2208,6 +2216,9 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     const authorizationServerUrl =
       this.discoveryState()?.authorizationServerUrl;
     const importPayload: ImportHostedOAuthTokensRequest = {
+      ...(readHostedOAuthPendingMarker()?.connectionIntent
+        ? { connectionIntent: readHostedOAuthPendingMarker()!.connectionIntent }
+        : {}),
       projectId: this.convexBinding.projectId,
       serverId: this.convexBinding.serverId,
       serverUrl: this.serverUrl,
@@ -3281,8 +3292,20 @@ export async function completeHostedOAuthCallback(
       storedSession?.protocolVersion ??
       storedOAuthConfig.protocolVersion;
 
+    void captureHostedOAuthConnection(
+      context.projectId,
+      context.serverId,
+      result.credentialId,
+      result.vaultObjectId,
+    ).catch(() => undefined);
     return {
       success: true,
+      ...(result.credentialId
+        ? {
+            credentialId: result.credentialId,
+            vaultObjectId: result.vaultObjectId,
+          }
+        : {}),
       serverName,
       serverConfig: createServerConfig(
         serverUrl,

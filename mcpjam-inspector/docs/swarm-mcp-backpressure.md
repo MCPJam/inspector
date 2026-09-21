@@ -10,7 +10,7 @@ connection ids with `MCPJAM_MCP_BACKPRESSURE_SERVER_IDS` only after backend roll
 The backend design above is the policy reference. Two starts/second (burst two),
 shared monotonic cooldowns, a 60-second admission budget per POST and 64 pending
 requests per connection/process bound the pilot. Static/shared OAuth connections
-share across users; private OAuth/XAA use separate user buckets. It does not add
+share across users; personal OAuth uses separate connection buckets; XAA uses user buckets. It does not add
 automatic tool replay or a distributed in-flight cap.
 
 ## TDD checklist
@@ -81,3 +81,13 @@ limitations are recorded in the draft PRs.
 No production rollout. Screenshots and a recording remain pending. There is no
 new UI, so an explicit nonvisual exception is needed before requesting review
 without that media; keep the PR in draft while iterating.
+
+## Multi-account integration after merging main
+
+Each expanded manager entry retains its real server id and selected credential id
+when installing admission. The default and non-default entries are both protected;
+synthetic manager keys never become coordinator server ids. Explicit single-account
+selection is also forwarded. Deploy backend follow-up
+[#1539](https://github.com/MCPJam/mcpjam-backend/pull/1539) before enrolling these
+paths so connection ownership is validated and unrelated personal accounts remain
+independent. Shared auto-discovered OAuth remains shared across project members.

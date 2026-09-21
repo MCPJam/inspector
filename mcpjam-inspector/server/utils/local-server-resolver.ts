@@ -1,5 +1,17 @@
+import { connectionKey } from "@mcpjam/sdk";
+import type { AuthorizedOAuthConnection } from "../../shared/oauth-connections.js";
+import { connectionLabel } from "../../shared/oauth-connections.js";
+import {
+  getManagerConnections,
+  setManagerConnections,
+  registerLocalConnectionScope,
+} from "./mcp-connections.js";
 import type { Context } from "hono";
-import type { MCPClientManager, MCPServerConfig } from "@mcpjam/sdk";
+import type {
+  MCPClientManager,
+  MCPServerConfig,
+  HttpServerConfig,
+} from "@mcpjam/sdk";
 import { narrowElicitationToLocalSupport } from "../routes/mcp/elicitation.js";
 import {
   registerLocalMrtrCollector,
@@ -123,6 +135,7 @@ type LocalAuthorizeBatchSuccess = {
   permissions: { chatOnly: boolean };
   serverConfig: LocalAuthorizeServerConfig;
   oauthAccessToken?: string | null;
+  oauthConnections?: AuthorizedOAuthConnection[];
   internalLogContext?: InternalLogContext;
 };
 
@@ -199,7 +212,11 @@ export async function authorizeBatchLocal(
   bearerToken: string,
   projectId: string,
   serverIds: string[],
-  workosApiKeyActingAs?: WorkosApiKeyActingAs
+  workosApiKeyActingAs?: WorkosApiKeyActingAs,
+  connectionOptions?: {
+    includeConnections?: boolean;
+    connectionIds?: Record<string, string>;
+  },
 ): Promise<LocalAuthorizeBatchResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -246,7 +263,7 @@ export async function authorizeBatchLocal(
     response = await fetch(`${convexUrl}/web/authorize-batch-local`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ projectId, serverIds }),
+      body: JSON.stringify({ projectId, serverIds, ...connectionOptions }),
       signal: controller.signal,
     });
   } catch (error) {
@@ -337,7 +354,11 @@ export async function authorizeServerLocal(
   bearerToken: string,
   projectId: string,
   serverId: string,
-  workosApiKeyActingAs?: WorkosApiKeyActingAs
+  workosApiKeyActingAs?: WorkosApiKeyActingAs,
+  connectionOptions?: {
+    includeConnections?: boolean;
+    connectionIds?: Record<string, string>;
+  },
 ): Promise<
   LocalAuthorizeBatchSuccess & {
     organizationId?: string | null;
@@ -349,7 +370,8 @@ export async function authorizeServerLocal(
     bearerToken,
     projectId,
     [serverId],
-    workosApiKeyActingAs
+    workosApiKeyActingAs,
+    connectionOptions,
   );
   const result = batch.results[serverId];
   if (!result) {
@@ -580,6 +602,7 @@ export function toMCPServerConfig(
       projectId: string;
       serverId: string;
       serverName: string;
+      connectionId?: string;
     };
     /**
      * XAA re-mint hook. When the server uses Cross-App Access, the connect
@@ -839,6 +862,7 @@ export function toMCPServerConfig(
       projectId: options.refreshContext.projectId,
       serverId: options.refreshContext.serverId,
       serverName: options.refreshContext.serverName,
+      connectionId: options.refreshContext.connectionId,
       // In local mode this process is the one that can reach a private
       // authorization server. Covers the in-flight 401 during a long session,
       // not just the connect. `!HOSTED_MODE` rather than `true`:
@@ -1215,7 +1239,14 @@ export async function resolveLocalServerForConnect(
    */
   effectiveAuth: EffectiveAuthMethod;
 }> {
-  let result = await authorizeServerLocal(c, bearerToken, projectId, serverId);
+  let result = await authorizeServerLocal(
+    c,
+    bearerToken,
+    projectId,
+    serverId,
+    undefined,
+    { includeConnections: true },
+  );
 
   // One resolver decides the flow for every dispatch below: canonical
   // authMethod wins ("auto" selects XAA when configured, "discover"
@@ -1465,6 +1496,8 @@ export async function resolveLocalServerForConnect(
       projectId,
       serverId,
       serverName: options?.serverDisplayName ?? serverId,
+      connectionId: result.oauthConnections?.find((c) => c.isDefault)
+        ?.connectionId,
     },
     xaaUnauthorizedHandler,
     xaaPolicy,
@@ -1676,6 +1709,10 @@ export async function executeLocalServerConnect(
 ) {
   const { serverId, projectId, serverDisplayName, bearer } = params;
   const mcpClientManager = c.mcpClientManager;
+  registerLocalConnectionScope(mcpClientManager, serverDisplayName, {
+    serverId,
+    projectId,
+  });
 
   let resolved: Awaited<ReturnType<typeof resolveLocalServerForConnect>>;
   try {
@@ -1830,6 +1867,76 @@ export async function executeLocalServerConnect(
       500
     );
   }
+
+  // The bare key remains the default for inspection/evals. Chat owns stable
+  // account keys, including an alias for the default: rebinding the bare key
+  // must not redirect an in-flight turn to another credential.
+  const previousGroups = getManagerConnections(mcpClientManager) ?? {};
+  const accounts = resolved.authorizeResult.oauthConnections ?? [];
+  const connected = [];
+  for (const [index, account] of accounts.entries()) {
+    if (
+      !account.accessToken ||
+      account.needsReauth ||
+      !("url" in connectConfig)
+    )
+      continue;
+    const key = connectionKey(serverDisplayName, account.connectionId, false);
+    const headers = new Headers(connectConfig.requestInit?.headers);
+    headers.set("Authorization", `Bearer ${account.accessToken}`);
+    registerLocalMrtrCollector(mcpClientManager, key);
+    try {
+      const existing = mcpClientManager.getServerConfig(key) as
+        | HttpServerConfig
+        | undefined;
+      const sameToken =
+        existing &&
+        new Headers(existing.requestInit?.headers).get("Authorization") ===
+          headers.get("Authorization");
+      if (
+        !sameToken ||
+        mcpClientManager.getConnectionStatus(key) !== "connected"
+      ) {
+        await mcpClientManager.disconnectServer(key).catch(() => undefined);
+        await mcpClientManager.connectToServer(key, {
+          ...(connectConfig as HttpServerConfig),
+          requestInit: { ...connectConfig.requestInit, headers },
+          onUnauthorized: buildHostedOAuthUnauthorizedHandler({
+            bearerToken: bearer,
+            projectId,
+            serverId,
+            serverName: serverDisplayName,
+            connectionId: account.connectionId,
+            allowPrivateAuthorizationServerFallback: true,
+          }),
+        });
+      }
+      connected.push({
+        serverId,
+        key,
+        connectionId: account.connectionId,
+        label: connectionLabel(account, index),
+        profile: account.profile,
+        isDefault: account.isDefault,
+      });
+    } catch (error) {
+      logger.debug("Account connection unavailable", {
+        serverId,
+        connectionId: account.connectionId,
+        error: String(error),
+      });
+      await mcpClientManager.removeServer(key).catch(() => undefined);
+    }
+  }
+  for (const previous of previousGroups[serverDisplayName] ?? []) {
+    if (!connected.some((c) => c.key === previous.key))
+      await mcpClientManager.removeServer(previous.key).catch(() => undefined);
+  }
+  const { [serverDisplayName]: _previous, ...otherGroups } = previousGroups;
+  setManagerConnections(mcpClientManager, {
+    ...otherGroups,
+    ...(connected.length ? { [serverDisplayName]: connected } : {}),
+  });
 
   // Capture the inspection snapshot synchronously so a fast follow-up
   // disconnect/reconnect on the same server can't tear down the manager

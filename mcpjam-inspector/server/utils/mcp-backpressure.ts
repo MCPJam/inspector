@@ -162,6 +162,7 @@ export function hostedMcpBackpressureFetch(options: {
   projectId: string;
   serverId: string;
   userId?: string | null;
+  connectionId?: string;
 }): typeof fetch {
   const enabled = () =>
     HOSTED_MODE &&
@@ -178,6 +179,7 @@ export function hostedMcpBackpressureFetch(options: {
     projectId: options.projectId,
     serverId: options.serverId,
     userId: options.userId,
+    ...(options.connectionId ? { connectionId: options.connectionId } : {}),
   };
   const request = async (
     action: "admit" | "report",
