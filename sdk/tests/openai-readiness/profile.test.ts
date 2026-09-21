@@ -65,5 +65,14 @@ describe("profile readiness", () => {
     expect(
       status([{ ...tool(), name: "delete_profile" }], "description-honesty")
     ).toBe("informational");
+    // A malformed input schema is not an empty one.
+    for (const inputSchema of [
+      { type: "object", properties: null },
+      { type: "object", required: null },
+      { type: "object", properties: "nope" },
+    ])
+      expect(status([{ ...tool(), inputSchema }], "input-empty")).toBe(
+        "violated"
+      );
   });
 });

@@ -106,11 +106,19 @@ export function runOpenAIProfileChecks(
   const properties = object(output?.properties);
   const id = object(properties?.id);
   const checks = [
+    // The contract is "accepts an empty argument object". A malformed schema
+    // must not read as one: `properties: null` is not an empty property set,
+    // it is a schema nobody can grade. `additionalProperties` is deliberately
+    // NOT required here — the contract states it for the OUTPUT schema only,
+    // and demanding it on the input would fail servers that satisfy the
+    // stated contract.
     !!input &&
       input.type === "object" &&
-      (!input.required ||
+      (input.required === undefined ||
         (Array.isArray(input.required) && input.required.length === 0)) &&
-      (!input.properties || Object.keys(input.properties).length === 0),
+      (input.properties === undefined ||
+        Object.keys(object(input.properties) ?? { malformed: true }).length ===
+          0),
     !!output &&
       output.type === "object" &&
       output.additionalProperties === false &&
