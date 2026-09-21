@@ -228,6 +228,31 @@ for (const flow of result.results) {
 }
 ```
 
+### Cross-flow profile identity
+
+Set `verification.profile.expectSameAccount: true` on flows that should all authenticate as the same account. The suite compares the `profileId` returned by each such flow and fails if they differ or if any flow supplies no identity:
+
+```typescript
+const suite = new OAuthConformanceSuite({
+  name: "My Server",
+  serverUrl: "https://your-server.com/mcp",
+  flows: [
+    {
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "cimd",
+      verification: { listTools: true, profile: { expectSameAccount: true } },
+    },
+    {
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "dcr",
+      verification: { listTools: true, profile: { expectSameAccount: true } },
+    },
+  ],
+});
+```
+
+When the check runs, a `verify_profile_identity_stable_across_flows` step is added to each participating flow's `steps` array.
+
 ---
 
 ## Result types
