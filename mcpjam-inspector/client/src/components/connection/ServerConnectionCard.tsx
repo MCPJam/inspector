@@ -1,3 +1,5 @@
+import { ConnectionAccountsSection } from "./ConnectionAccountsSection";
+import type { ConnectionIntent } from "@/shared/oauth-connections";
 import {
   useState,
   useEffect,
@@ -102,6 +104,7 @@ interface ServerConnectionCardProps {
     serverName: string,
     options?: {
       forceOAuthFlow?: boolean;
+      connectionIntent?: ConnectionIntent;
       allowInteractiveOAuthFlow?: boolean;
     }
   ) => Promise<void>;
@@ -375,6 +378,7 @@ export function ServerConnectionCard({
 
   const handleReconnect = async (options?: {
     forceOAuthFlow?: boolean;
+    connectionIntent?: ConnectionIntent;
     allowInteractiveOAuthFlow?: boolean;
   }) => {
     setIsReconnecting(true);
@@ -893,6 +897,21 @@ export function ServerConnectionCard({
               )}
             </button>
           </div>
+
+          <ConnectionAccountsSection
+            projectId={projectId}
+            serverId={hostedServerId}
+            enabled={isAuthenticated && server.useOAuth === true}
+            onAuthenticate={(connectionIntent) =>
+              onReconnect(server.name, {
+                forceOAuthFlow: true,
+                connectionIntent,
+              })
+            }
+            onSwitch={() =>
+              onReconnect(server.name, { allowInteractiveOAuthFlow: false })
+            }
+          />
 
           {(isConnected || showTunnelActions) && (
             <div className="mt-3 flex items-center gap-2">
