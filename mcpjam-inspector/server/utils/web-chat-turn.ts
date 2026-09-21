@@ -1,3 +1,4 @@
+import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 /**
  * Shared web-chat streaming turn.
  *
@@ -836,6 +837,11 @@ export async function streamWebChatTurn(
             projectId: persist.projectId,
             chatSessionId: persist.chatSessionId!,
             manager,
+            connectionId: toolConnectionAttribution(
+              preparedTools[toolName],
+              toolInput,
+              info.toolCallId,
+            )?.connectionId,
             serverName: scopeStepUpServerNamesById[info.serverId],
             info,
             toolName,
@@ -1045,6 +1051,11 @@ export async function streamWebChatTurn(
       turnTrace: PersistedTurnTrace,
       harnessSessionCommit?: HarnessSessionCommitPayload,
     ) => {
+      if (prepared.connectionsAtTurn)
+        turnTrace = {
+          ...turnTrace,
+          connectionsAtTurn: prepared.connectionsAtTurn,
+        };
       const isDirectChat = !isScenarioSession;
       // Capture the live tool catalog. Failures must never block the persist.
       // Surfaces with synthetic server ids (mcpjam-agent) opt out via

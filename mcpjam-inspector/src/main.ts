@@ -51,13 +51,13 @@ import fs from "fs";
 // in `startHonoServer()` enforces that ordering.
 import { probeFreePort } from "./server-port-fallback.js";
 import log from "electron-log";
-import { updateElectronApp } from "update-electron-app";
 import { registerListeners } from "./ipc/listeners-register.js";
 import { createSafeStorageKeyStore } from "./ipc/local-harness/local-harness-listeners.js";
 import {
   installUpdateOnQuit,
   setTrustedUpdateWindow,
   setupAutoUpdaterEvents,
+  startUpdatePolling,
 } from "./ipc/update/update-listeners.js";
 import {
   buildProtocolOAuthCallbackUrl,
@@ -87,15 +87,15 @@ log.transports.console.level = "debug";
 // reporting is offline or opted out).
 registerMainProcessCrashHandlers(log);
 
-// Wire autoUpdater event handlers BEFORE update-electron-app starts polling,
-// otherwise an early `update-available` event could fire before our listener exists.
+// Wire autoUpdater event handlers BEFORE polling starts, otherwise an early
+// `update-available` event could fire before our listener exists.
 setupAutoUpdaterEvents();
 
-// Enable auto-updater (with custom notification handling)
-updateElectronApp({
-  notifyUser: false, // We'll show our own UI instead of the default dialog
-  logger: log,
-});
+// Poll for updates ourselves rather than through update-electron-app, whose
+// blind `setInterval` cannot be stopped. A poll that lands after a build is
+// staged makes Electron forget that build, and from then on both the Update
+// button and install-on-quit fail — see startUpdatePolling().
+startUpdatePolling();
 
 // Set app user model ID for Windows
 if (process.platform === "win32") {

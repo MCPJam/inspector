@@ -154,7 +154,7 @@ export function ScenarioShareSection({
       copy={{
         linkLabel: "Tester link",
         signedOutMessage: "Sign in to manage scenario access.",
-        withheldLabel: "Withheld — this scenario can't run.",
+        withheldLabel: "Withheld: this scenario can't run.",
         rotateConfirmTitle: "Rotate this tester link?",
         rotateConfirmBody:
           "Anyone with the old URL will no longer be able to redeem it. Testers who already opened the link keep their access until you remove them.",

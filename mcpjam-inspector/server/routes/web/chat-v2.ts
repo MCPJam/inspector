@@ -1,3 +1,4 @@
+import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
 import { apiSessionWriteAllowed } from "./api-session-write-guard";
 import { BrowserSessionService } from "../../services/browserd/session-service";
 import { toResumeExecutionTarget } from "@/shared/execution-target";
@@ -1273,6 +1274,7 @@ chatV2.post("/", async (c) => {
       // wire matches what we're prepared to honor.
       effectiveClientCapabilities,
       {
+        multiConnection: true,
         ...(isScenarioSession ? { accessScope: "chat_v2" } : {}),
         scenarioId,
         accessVersion,
@@ -1307,6 +1309,13 @@ chatV2.post("/", async (c) => {
         ...(executionScope ? { executionScope } : {}),
       },
     );
+    if (Array.isArray(hostedBody.messages) && hostedBody.messages.length <= 1)
+      void refreshConnectionProfiles(
+        manager,
+        bearerToken,
+        hostedBody.projectId,
+      );
+
     oauthServerUrls = urls;
     // Inject the live manager so the collector's fingerprint/era thunks can
     // read the negotiated identity at suspend time (post-connect).

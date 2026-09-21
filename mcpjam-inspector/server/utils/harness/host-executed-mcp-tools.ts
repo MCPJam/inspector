@@ -1,3 +1,6 @@
+import type { ConnectionsByServerId } from "@mcpjam/sdk";
+import { mergeConnectionToolsets, type MCPClientManager } from "@mcpjam/sdk";
+import { getManagerConnections } from "../mcp-connections.js";
 /**
  * Project a host's selected MCP servers into HOST-EXECUTED AI SDK tools, for a
  * harness whose runtime cannot make an MCP tool model-callable itself
@@ -106,6 +109,7 @@ export interface HostExecutedMcpProjection {
 export async function projectSelectedMcpServersAsHostTools(args: {
   manager: MCPJamHandlerOptions["mcpClientManager"];
   selectedServerIds: string[];
+  connectionsByServerId?: ConnectionsByServerId;
   /** Plugin origin per server id (INS-7): a plugin-contributed server with no
    *  live connection fails the turn instead of being silently skipped. */
   pluginOrigins?: Record<string, RuntimePluginVersion>;
@@ -208,7 +212,17 @@ export async function projectSelectedMcpServersAsHostTools(args: {
     // …and reuse it under the HOST's options, not the SDK's defaults. The
     // no-options overload is kept for a default turn so those tools stay
     // byte-identical to what this projection produced before.
-    const serverTools = toolOptions
+    const group = (args.connectionsByServerId ?? getManagerConnections(args.manager as MCPClientManager))?.[serverId];
+    const serverTools = group?.length
+      ? mergeConnectionToolsets(
+          await (args.manager as MCPClientManager).getToolsForAiSdkByServer(
+            group.map((c) => c.key),
+            toolOptions,
+          ),
+          { [serverId]: group },
+          { snapshot: new Map(group.map((c) => [c.connectionId, c.key])) },
+        )
+      : toolOptions
       ? await args.manager.getToolsForAiSdk([serverId], toolOptions)
       : await args.manager.getToolsForAiSdk([serverId]);
     const snapshot = args.toolPolicy?.[serverId];

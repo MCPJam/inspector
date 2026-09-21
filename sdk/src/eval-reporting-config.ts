@@ -26,6 +26,7 @@ export const REPORTING_CONFIG_FIELDS = {
   notes: "wire",
   passCriteria: "wire",
   externalRunId: "wire",
+  runGroupId: "wire",
   framework: "wire",
   ci: "wire",
   expectedIterations: "wire",
@@ -73,6 +74,13 @@ export function normalizeReportingConfig<T extends MCPJamReportingConfig>(
       )
         fail("runEvaluations envelope (maximum 100 evaluators and 64 KiB)");
   }
+  if (
+    input.runGroupId !== undefined &&
+    (typeof input.runGroupId !== "string" ||
+      !input.runGroupId.trim() ||
+      input.runGroupId.length > 128)
+  )
+    fail("runGroupId (1-128 characters)");
   const runName = input.runName ?? env.MCPJAM_RUN_NAME;
   if (
     runName !== undefined &&
