@@ -41,6 +41,31 @@ export type NormalizedError = ErrorCatalogEntry & {
    * Captured `.cause` chain head — only `name` + `message`, redacted.
    */
   cause?: { name: string; message: string };
+  /**
+   * The thrown value’s own constructor name ("WebApiError", "TypeError"),
+   * when a consumer attached one. The catalog `title` says what went wrong
+   * for a reader; this says what the runtime actually threw, which is what a
+   * bug report needs. Populated client-side alongside {@link stack}.
+   */
+  errorType?: string;
+  /**
+   * Redacted stack, when a consumer attached one.
+   *
+   * NOT populated by `describeError`, deliberately. The server describes its
+   * own errors and puts the result straight into the JSON error body, so
+   * capturing a stack here would ship server stacks to every browser — the
+   * leak `WebRouteError` avoids by attaching its `cause` non-enumerably. The
+   * client fills this in from errors it already holds.
+   */
+  stack?: string;
+  /**
+   * The `x-request-id` of the failing request — the join key to its Axiom
+   * row.
+   *
+   * This is the field that makes a stackless 5xx reportable, so it is the one
+   * a details view shows when {@link stack} is absent.
+   */
+  requestId?: string;
 };
 
 /**
