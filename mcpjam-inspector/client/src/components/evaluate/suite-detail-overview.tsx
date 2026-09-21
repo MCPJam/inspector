@@ -408,9 +408,13 @@ export function SuiteDetailOverview({
    * Imported drafts get their OWN surface, the way generation does. They are
    * not in the suite and cannot run, so listing them beside real cases invited
    * exactly one reading: that the import had already landed.
+   *
+   * What marks a draft as imported is document provenance: the authoring job
+   * cites the file it read. Generation invents cases from the suite's tools and
+   * has nothing to cite, so it never reaches this surface.
    */
   const importedDrafts =
-    generation?.drafts.filter((draft) => draft.markdownImport) ?? [];
+    generation?.drafts.filter((draft) => draft.authoring?.source) ?? [];
   const [importReviewClosed, setImportReviewClosed] = useState(false);
   useEffect(() => {
     // Linked-to jobs are followed, not assumed: the poll stages whatever the

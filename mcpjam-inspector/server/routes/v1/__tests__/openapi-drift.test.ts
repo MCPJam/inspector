@@ -234,17 +234,6 @@ const KNOWN_UNDOCUMENTED = new Set([
   // capability probe above. Document them when durable turns ship on.
   "get /projects/{projectId}/agent/jobs/{jobId}",
   "post /projects/{projectId}/agent/jobs/{jobId}/cancel",
-  // Shared eval authoring jobs, reachable only through surfaces gated by the
-  // `eval-authoring-import-v1` flag (and, for generation,
-  // EVAL_AUTHORING_GENERATION_V1_ENABLED). Same rule and the same follow-up:
-  // document the pair when the flag comes off.
-  "get /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}",
-  "post /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}/commit",
-  // Document import rides the same gate: the route answers
-  // FEATURE_NOT_SUPPORTED unless EVAL_AUTHORING_GENERATION_V1_ENABLED is set,
-  // and `docs/README.md` keeps a per-deployment feature out of openapi.json
-  // until the flag comes off. Document it beside `cases/generate` then.
-  "post /projects/{projectId}/eval-suites/{suiteId}/cases/import",
 ]);
 
 /**

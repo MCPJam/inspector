@@ -1,9 +1,3 @@
-import posthog from "posthog-js";
-import { saveMarkdownCases } from "@/lib/apis/markdown-case-import-api";
-import type {
-  MarkdownDraft,
-  MarkdownSaveRequest,
-} from "@/shared/markdown-case-import";
 import type { MetadataSnapshot } from "./eval-tool-metadata";
 import { deriveQuery, deriveExpectedToolCalls } from "@/shared/steps";
 import { create } from "zustand";
@@ -43,11 +37,6 @@ export interface EvalDraftBridge {
 }
 export interface EvalSuiteBridge {
   read: () => unknown;
-  generate: (
-    instructions: string,
-    stage: (input: CreateEvalTestCaseInput) => Promise<unknown>,
-    options?: GenerationOptions,
-  ) => Promise<void>;
   save: (input: CreateEvalTestCaseInput) => Promise<unknown>;
   run?: () => Promise<unknown>;
 }
@@ -206,12 +195,6 @@ export interface GeneratedDraft {
   authoringPrepared?: boolean;
   issueResolutions?: Record<string, string>;
   acceptedAdditionIds?: string[];
-  markdownImport?: {
-    source: MarkdownDraft["source"];
-    issues: MarkdownDraft["issues"];
-    warnings: string[];
-    prepared?: MarkdownSaveRequest;
-  };
   id: string;
   revision: string;
   input: CreateEvalTestCaseInput;
@@ -293,45 +276,6 @@ function updateGeneration(
     },
   }));
 }
-/** Imported cases share the persisted review queue, but keep their provenance and retry payload. */
-export function stageMarkdownDrafts(
-  scope: Pick<EvalAgentScope, "projectId" | "suiteId">,
-  drafts: MarkdownDraft[],
-  warnings: string[],
-) {
-  const staged: GeneratedDraft[] = drafts.map((draft) => ({
-    id: `imported-${generateId()}`,
-    revision: generateId(),
-    input: {
-      suiteId: scope.suiteId!,
-      caseId: mintCaseId(),
-      title: draft.title,
-      query: draft.prompt,
-      expectedOutput: draft.expectedOutput,
-      steps: [{ id: "prompt", kind: "prompt", prompt: draft.prompt }],
-      models: [],
-      runs: 1,
-      isNegativeTest: false,
-      expectedToolCalls: [],
-    },
-    markdownImport: {
-      source: draft.source,
-      issues: draft.issues,
-      warnings,
-    },
-  }));
-  updateGeneration(evalSuiteKey(scope), (state) => ({
-    ...state,
-    drafts: [...state.drafts, ...staged],
-    reviewRequestId: generateId(),
-    // Generation and import share one per-suite store. A failed generation
-    // left its error here, and the import surface then rendered it above
-    // drafts that had just succeeded — telling the reader to change a tool
-    // coverage setting import does not even offer.
-    error: undefined,
-  }));
-}
-
 /**
  * Short label for the draft card's badge.
  *
@@ -391,20 +335,6 @@ export function importedDraftBlockedReason(
       return "Review each proposed addition before adding.";
     return;
   }
-  const imported = draft.markdownImport;
-  if (!imported || imported.prepared) return;
-  if (
-    !draft.input.title.trim() ||
-    !draft.input.query.trim() ||
-    !draft.input.expectedOutput?.trim()
-  )
-    return "Complete the case title, User Prompt, and Expected Outcome.";
-  if (
-    draft.input.title.length > 500 ||
-    draft.input.query.length > 20000 ||
-    draft.input.expectedOutput.length > 10000
-  )
-    return "Shorten the case title, prompt, or expected outcome before adding.";
 }
 
 export function startEvalGeneration(
@@ -413,65 +343,37 @@ export function startEvalGeneration(
   options?: GenerationOptions,
 ) {
   const key = evalSuiteKey(scope);
-  const bridge = getEvalSuite(scope);
+  // Reading the suite is still the scope check: generation is only startable
+  // from a suite the caller is actually on.
+  getEvalSuite(scope);
   if (useEvalGeneration.getState().suites[key]?.status === "running")
     throw new Error(
       "Generation is already running. Read context for progress; do not start another job.",
     );
   updateGeneration(key, (s) => ({ ...s, status: "running", error: undefined }));
-  if (posthog.isFeatureEnabled("eval-authoring-generation-v1")) {
-    void authoringRequest({
-      operation: "start",
-      input: {
-        projectId: scope.projectId,
-        suiteId: scope.suiteId,
-        source: "generation",
-        requestKey: crypto.randomUUID(),
-        instructions:
-          instructions.trim() || "Generate eval cases for the suite's tools.",
-        options,
-      },
-    })
-      .then(({ jobId }) => followAuthoringJob(scope, jobId))
-      .catch((error) =>
-        updateGeneration(key, (state) => ({
-          ...state,
-          status: "error",
-          error: error instanceof Error ? error.message : String(error),
-        })),
-      );
-    return {
-      status: "generation_started",
-      note: "Drafts will appear for review. Read ui_eval_context for progress.",
-    };
-  }
-  void bridge
-    .generate(
-      instructions,
-      async (input) => {
-        if (input.suiteId !== scope.suiteId)
-          throw new Error("Generated case is outside the scoped suite.");
-        const id = `generated-${generateId()}`;
-        updateGeneration(key, (s) => ({
-          ...s,
-          drafts: [...s.drafts, { id, revision: generateId(), input }],
-        }));
-        return id;
-      },
+  void authoringRequest({
+    operation: "start",
+    input: {
+      projectId: scope.projectId,
+      suiteId: scope.suiteId,
+      source: "generation",
+      requestKey: crypto.randomUUID(),
+      instructions:
+        instructions.trim() || "Generate eval cases for the suite's tools.",
       options,
-    )
-    .then(
-      () => updateGeneration(key, (s) => ({ ...s, status: "ready" })),
-      (error) =>
-        updateGeneration(key, (s) => ({
-          ...s,
-          status: "error",
-          error: String(error instanceof Error ? error.message : error),
-        })),
+    },
+  })
+    .then(({ jobId }) => followAuthoringJob(scope, jobId))
+    .catch((error) =>
+      updateGeneration(key, (state) => ({
+        ...state,
+        status: "error",
+        error: error instanceof Error ? error.message : String(error),
+      })),
     );
   return {
     status: "generation_started",
-    note: "Drafts will appear for review. Read ui_eval_context for progress. They are not saved yet.",
+    note: "Drafts will appear for review. Read ui_eval_context for progress.",
   };
 }
 export function editGeneratedDraft(
@@ -497,7 +399,6 @@ export function editGeneratedDraft(
     !current ||
     current.revision !== revision ||
     current.saving ||
-    current.markdownImport?.prepared ||
     current.authoringPrepared
   )
     throw new Error(
@@ -539,7 +440,7 @@ export function removeGeneratedDraft(scope: EvalAgentScope, id: string) {
   const current = useEvalGeneration
     .getState()
     .suites[key]?.drafts.find((draft) => draft.id === id);
-  if (!current || current.saving || current.markdownImport?.prepared) return;
+  if (!current || current.saving) return;
   updateGeneration(key, (state) => ({
     ...state,
     drafts: state.drafts.filter((draft) => draft.id !== id),
@@ -642,57 +543,6 @@ export async function saveGeneratedDraft(scope: EvalAgentScope, id: string) {
       }
       if (result.committed?.length !== 1)
         throw new Error("Save outcome is unknown. Retry to confirm.");
-    } else if (current.markdownImport) {
-      const blocked = importedDraftBlockedReason(current);
-      if (blocked) throw new Error(blocked);
-      const request = current.markdownImport.prepared ?? {
-        projectId: scope.projectId!,
-        suiteId: scope.suiteId!,
-        cases: [
-          {
-            caseId: current.input.caseId!,
-            idempotencyKey: `markdown:${current.id}:${current.revision}`,
-            title: current.input.title.trim(),
-            prompt: current.input.query.trim(),
-            expectedOutput: current.input.expectedOutput!.trim(),
-            source: current.markdownImport.source,
-          },
-        ],
-      };
-      updateGeneration(key, (state) => ({
-        ...state,
-        drafts: state.drafts.map((draft) =>
-          draft.id === id
-            ? {
-                ...draft,
-                markdownImport: {
-                  ...current.markdownImport!,
-                  prepared: request,
-                },
-              }
-            : draft,
-        ),
-      }));
-      const result = await saveMarkdownCases(request);
-      if (result.failed.length) {
-        // A definitive failure permits editing. Unknown outcomes retain the
-        // exact payload and idempotency key until a retry confirms the save.
-        updateGeneration(key, (state) => ({
-          ...state,
-          drafts: state.drafts.map((draft) =>
-            draft.id === id
-              ? {
-                  ...draft,
-                  markdownImport: {
-                    ...draft.markdownImport!,
-                    prepared: undefined,
-                  },
-                }
-              : draft,
-          ),
-        }));
-        throw new Error(result.failed[0].message);
-      }
     } else {
       await getEvalSuite(scope).save(current.input);
     }

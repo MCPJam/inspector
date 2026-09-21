@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { authoringRequest } from "@/lib/apis/eval-authoring-api";
 import { followAuthoringJob } from "@/lib/mcpjam-agent/eval-workspace";
 import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
@@ -11,10 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
-import { toast } from "@/lib/toast";
-import { extractMarkdownCases } from "@/lib/apis/markdown-case-import-api";
 import { MAX_MARKDOWN_BYTES } from "@/shared/markdown-case-import";
-import { stageMarkdownDrafts } from "@/lib/mcpjam-agent/eval-workspace";
 
 interface ImportDatasetDialogProps {
   open: boolean;
@@ -28,10 +24,7 @@ export function ImportDatasetDialog({
   projectId,
   suiteId,
 }: ImportDatasetDialogProps) {
-  const sharedAuthoring =
-    useFeatureFlagEnabled("eval-authoring-import-v1") === true;
   const [file, setFile] = useState<File | null>(null);
-  const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "extracting">("idle");
   // The limit dialog already opened on the refusal; the inline line only has
@@ -51,7 +44,6 @@ export function ImportDatasetDialog({
     controller.current?.abort();
     busy.current = false;
     setFile(null);
-    setWarnings([]);
     setError(null);
     setPhase("idle");
     return () => {
@@ -66,7 +58,6 @@ export function ImportDatasetDialog({
     onOpenChange(false);
   };
   const selectFile = (files: FileList | null) => {
-    setWarnings([]);
     setFile(null);
     setError(null);
     if (!files?.length) return;
@@ -111,51 +102,29 @@ export function ImportDatasetDialog({
       }
       if (!markdown.trim()) throw new Error("The file is empty.");
       if (current !== generation.current) return;
-      if (sharedAuthoring) {
-        const result = await authoringRequest(
-          {
-            operation: "start",
-            input: {
-              source: "markdown",
-              markdown,
-              fileName: file.name,
-              projectId,
-              suiteId,
-              requestKey: (() => {
-                if (startIdentity.current.file !== file)
-                  startIdentity.current = { file, key: crypto.randomUUID() };
-                return startIdentity.current.key;
-              })(),
-            },
+      const result = await authoringRequest(
+        {
+          operation: "start",
+          input: {
+            source: "markdown",
+            markdown,
+            fileName: file.name,
+            projectId,
+            suiteId,
+            requestKey: (() => {
+              if (startIdentity.current.file !== file)
+                startIdentity.current = { file, key: crypto.randomUUID() };
+              return startIdentity.current.key;
+            })(),
           },
-          abort.signal,
-        );
-        // The job is started either way, but a response that lost its race
-        // must not close a dialog the user already reopened on another suite.
-        if (current !== generation.current) return;
-        void followAuthoringJob({ projectId, suiteId }, result.jobId);
-        onOpenChange(false);
-        return;
-      }
-      const response = await extractMarkdownCases(
-        { markdown, fileName: file.name, projectId, suiteId },
+        },
         abort.signal,
       );
+      // The job is started either way, but a response that lost its race
+      // must not close a dialog the user already reopened on another suite.
       if (current !== generation.current) return;
-      if (response.drafts.length) {
-        stageMarkdownDrafts(
-          { projectId, suiteId },
-          response.drafts,
-          response.warnings,
-        );
-        toast.success("Imported drafts are ready to review.");
-        onOpenChange(false);
-      } else {
-        setWarnings(response.warnings);
-        setError(
-          "No test cases were extracted. Review the warnings or choose another file.",
-        );
-      }
+      void followAuthoringJob({ projectId, suiteId }, result.jobId);
+      onOpenChange(false);
     } catch (e) {
       if (current === generation.current)
         setError(
@@ -197,8 +166,8 @@ export function ImportDatasetDialog({
             Import test cases
           </DialogTitle>
           <DialogDescription>
-            AI turns your document — markdown, JSON, CSV, notes — into draft
-            test cases. Review them before saving.
+            AI reads your test plan, however you wrote it, and drafts the
+            cases. Review them before saving.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -238,7 +207,6 @@ export function ImportDatasetDialog({
                 disabled={phase !== "idle"}
                 onClick={() => {
                   setFile(null);
-                  setWarnings([]);
                   setError(null);
                 }}
               >
@@ -247,13 +215,6 @@ export function ImportDatasetDialog({
             </div>
           )}
         </div>
-        {warnings.length > 0 && (
-          <ul className="list-disc space-y-1 pl-5 text-sm">
-            {warnings.map((warning, i) => (
-              <li key={i}>{warning}</li>
-            ))}
-          </ul>
-        )}
         {errorText && (
           <p
             role="alert"

@@ -3,7 +3,6 @@ import { RunIterationControl } from "./run-iteration-control";
 import { EvalModelChoices } from "./eval-target-matrix";
 import type { GeneratedDraft } from "@/lib/mcpjam-agent/eval-workspace";
 import { resolveAuthoringIssue } from "@/lib/mcpjam-agent/eval-workspace";
-import { ImportedDraftEditor } from "./imported-draft-editor";
 import { EVAL_DESCRIBE_ONLY_AGENT } from "@/shared/eval-agent-scope";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Trash2 } from "lucide-react";
@@ -232,11 +231,7 @@ export function EvalGeneratedDrafts({
             const expanded = reviewing === draft.id;
             const blockedReason = importedDraftBlockedReason(draft);
             const blockedBadge = importedDraftBlockedBadge(draft);
-            const locked =
-              draft.saving ||
-              Boolean(
-                draft.markdownImport?.prepared || draft.authoringPrepared,
-              );
+            const locked = draft.saving || Boolean(draft.authoringPrepared);
             const prompt = draft.input.steps?.find(
               (step) => step.kind === "prompt",
             );
@@ -301,40 +296,36 @@ export function EvalGeneratedDrafts({
                         disabled={locked}
                       />
                     )}
-                    {draft.markdownImport ? (
-                      <ImportedDraftEditor scope={scope} draft={draft} />
-                    ) : (
-                      <CaseSpine
-                        steps={caseViewModel("draft", draft.input).steps}
-                        matchOptions={draft.input.matchOptions}
-                        onMatchOptionsChange={(matchOptions) =>
-                          editGeneratedDraft(scope, draft.id, draft.revision, {
-                            matchOptions,
-                          })
-                        }
-                        expectedOutput={draft.input.expectedOutput}
-                        onExpectedOutputChange={(expectedOutput) =>
-                          editGeneratedDraft(scope, draft.id, draft.revision, {
-                            expectedOutput,
-                          })
-                        }
-                        predicates={draft.input.predicates}
-                        onPredicatesChange={(predicates) =>
-                          editGeneratedDraft(scope, draft.id, draft.revision, {
-                            predicates,
-                          })
-                        }
-                        availableTools={state?.availableTools ?? []}
-                        suiteServers={state?.suiteServers ?? []}
-                        evalValidationBorderClass="border-border"
-                        readOnly={locked}
-                        onStepsChange={(steps) =>
-                          editGeneratedDraft(scope, draft.id, draft.revision, {
-                            steps,
-                          })
-                        }
-                      />
-                    )}
+                    <CaseSpine
+                      steps={caseViewModel("draft", draft.input).steps}
+                      matchOptions={draft.input.matchOptions}
+                      onMatchOptionsChange={(matchOptions) =>
+                        editGeneratedDraft(scope, draft.id, draft.revision, {
+                          matchOptions,
+                        })
+                      }
+                      expectedOutput={draft.input.expectedOutput}
+                      onExpectedOutputChange={(expectedOutput) =>
+                        editGeneratedDraft(scope, draft.id, draft.revision, {
+                          expectedOutput,
+                        })
+                      }
+                      predicates={draft.input.predicates}
+                      onPredicatesChange={(predicates) =>
+                        editGeneratedDraft(scope, draft.id, draft.revision, {
+                          predicates,
+                        })
+                      }
+                      availableTools={state?.availableTools ?? []}
+                      suiteServers={state?.suiteServers ?? []}
+                      evalValidationBorderClass="border-border"
+                      readOnly={locked}
+                      onStepsChange={(steps) =>
+                        editGeneratedDraft(scope, draft.id, draft.revision, {
+                          steps,
+                        })
+                      }
+                    />
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -439,8 +430,7 @@ export function EvalGeneratedDrafts({
                   >
                     {draft.saving
                       ? "Adding…"
-                      : draft.markdownImport?.prepared ||
-                          draft.authoringPrepared
+                      : draft.authoringPrepared
                         ? "Retry save"
                         : "Add to suite"}
                   </Button>

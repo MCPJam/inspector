@@ -10,6 +10,7 @@ import {
   followAuthoringJob,
 } from "@/lib/mcpjam-agent/eval-workspace";
 import { openEvalChat } from "@/lib/mcpjam-agent/eval-scope";
+import { authoringRequest } from "@/lib/apis/eval-authoring-api";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDetailOverview } from "../suite-detail-overview";
@@ -40,6 +41,20 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 vi.mock("@/lib/mcpjam-agent/eval-workspace", async (original) => ({
   ...(await original<object>()),
   followAuthoringJob: vi.fn(async () => undefined),
+}));
+// Generation runs the shared authoring job, so starting one is a request, not
+// a call into the suite bridge.
+vi.mock("@/lib/apis/eval-authoring-api", async (original) => ({
+  ...(await original<object>()),
+  authoringRequest: vi.fn(async () => ({ jobId: "job-1" })),
+  readAuthoringJob: vi.fn(async () => ({
+    jobId: "job-1",
+    status: "pending",
+    phase: "draft",
+    error: null,
+    warnings: [],
+    drafts: [],
+  })),
 }));
 
 function makeSuite(overrides: Partial<EvalSuite> = {}): EvalSuite {
@@ -402,14 +417,15 @@ describe("SuiteDetailOverview", () => {
   it("starts generation directly without opening a chat", async () => {
     const user = userEvent.setup();
     const onGenerateTestCases = vi.fn().mockResolvedValue(undefined);
-    const generate = vi.fn(() => new Promise<void>(() => {}));
+    const started = vi.mocked(authoringRequest);
+    started.mockClear();
     const unregister = registerEvalSuite(
       {
         projectId: "project-1",
         suiteId: "suite-1",
         suiteName: "Checkout reliability",
       },
-      { read: () => ({}), generate, save: vi.fn() },
+      { read: () => ({}), save: vi.fn() },
     );
 
     renderWithProviders(
@@ -433,14 +449,18 @@ describe("SuiteDetailOverview", () => {
     );
 
     await user.click(screen.getByTestId("suite-empty-action-generate"));
-    expect(generate).not.toHaveBeenCalled();
+    expect(started).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Generate cases" }));
 
     expect(
       screen.getByTestId("suite-case-generation-workspace"),
     ).toBeInTheDocument();
     expect(screen.getAllByTestId("generating-case-skeleton")).toHaveLength(5);
-    expect(generate).toHaveBeenCalledTimes(1);
+    expect(started).toHaveBeenCalledTimes(1);
+    expect(started.mock.calls[0][0]).toMatchObject({
+      operation: "start",
+      input: { source: "generation" },
+    });
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
     unregister();
     expect(onGenerateTestCases).not.toHaveBeenCalled();
@@ -896,7 +916,14 @@ it("gives imported drafts their own surface with a way back to the suite", async
           {
             id: "draft-1",
             revision: "r1",
-            markdownImport: { source: { fileName: "cases.md" } },
+            // Document provenance is what makes a draft an IMPORT; the
+            // authoring job cites the file it read.
+            authoring: {
+              draftId: "d1",
+              source: { fileName: "cases.md" },
+              issues: [],
+              additions: [],
+            },
             input: {
               suiteId: "suite-1",
               title: "Imported grocery case",

@@ -55,6 +55,8 @@ import {
 import { ConvexHttpClient } from "convex/browser";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
+import { upstreamRefusalRouteError } from "../../services/upstream-refusal.js";
+import { upstreamRetryAfter } from "../../services/swarm-agent.js";
 import {
   EVAL_VOCABULARY_HEADER,
   UNKNOWN_VOCABULARY_MESSAGE,
@@ -147,7 +149,6 @@ import {
 import { shouldSkipExecution } from "../shared/evals.js";
 import {
   createEvalCasesInBatches,
-  partialResultOf,
   withMintedCaseIds,
   MAX_CASES_PER_BATCH,
   type CaseBatchFailedEntry,
@@ -160,8 +161,6 @@ import {
   authorEvalSuite,
   createConvexClients,
   resolveServerIdsOrThrow,
-  generateEvalTestsWithManager,
-  generateNegativeEvalTestsWithManager,
   type PreparedEvalRun,
   type RunEvalsRequest,
 } from "../shared/evals.js";
@@ -176,7 +175,6 @@ import {
 import {
   matchOptionsSchema,
   casePredicatesSchema,
-  type CasePredicates,
 } from "@/shared/eval-matching";
 import {
   stepsSchema,
@@ -9227,381 +9225,25 @@ evals.post(
       body.caseModels?.map(toPersistedModelEntry) ??
       (await defaultCaseModels(readClient, suiteId));
 
-    if (process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED === "true") {
-      return startAuthoringJobAndAwait(c, {
-        token,
-        readClient,
-        projectId,
-        suiteId,
-        serverIds: serverIds ?? [],
-        serverNames,
-        startFailureMessage: "Could not start generation.",
-        job: {
-          source: "generation",
-          instructions: "Generate cases for the suite's authorized tools.",
-          options: {
-            mode,
-            caseModels,
-            caseMix: body.caseMix,
-            varyUserStyles: body.varyUserStyles,
-          },
+    return startAuthoringJobAndAwait(c, {
+      token,
+      readClient,
+      projectId,
+      suiteId,
+      serverIds: serverIds ?? [],
+      serverNames,
+      startFailureMessage: "Could not start generation.",
+      job: {
+        source: "generation",
+        instructions: "Generate cases for the suite's authorized tools.",
+        options: {
+          mode,
+          caseModels,
+          caseMix: body.caseMix,
+          varyUserStyles: body.varyUserStyles,
         },
-        requestKey: idempotencyKey ?? randomUUID(),
-      });
-    }
-
-    // A caseMix only counts when it requests at least one case (a bucket > 0).
-    // An empty `{}` OR a zero-sum mix (`{ negative: 0 }`, all zeros) is treated
-    // as absent — matching backend #589, which reverts a zero-sum mix to the
-    // default plan, and the popover's `total >= 1` guard. Without this, a
-    // truthy-but-empty mix would supersede `mode` here while the backend
-    // ignored it, so e.g. `{ mode: "negative", caseMix: { negative: 0 } }`
-    // would silently become normal generation.
-    const hasCaseMix =
-      !!body.caseMix &&
-      Object.values(body.caseMix).some((v) => typeof v === "number" && v > 0);
-    const generationOptions =
-      hasCaseMix || body.varyUserStyles
-        ? {
-            ...(hasCaseMix ? { caseMix: body.caseMix } : {}),
-            ...(body.varyUserStyles ? { varyUserStyles: true } : {}),
-          }
-        : undefined;
-
-    // caseMix supersedes mode: a non-empty caseMix routes through the
-    // plan-driven generator (which expresses negative-only via its `negative`
-    // bucket and forwards generationOptions) and returns per-case
-    // `isNegativeTest` flags. The legacy negative-only path — which forces every
-    // draft negative — is used only when mode is "negative" AND no real caseMix
-    // was given. This same flag gates persistence/counting below so a
-    // `mode: "negative"` + caseMix request doesn't mislabel its positive cases.
-    const legacyNegativeOnly = mode === "negative" && !hasCaseMix;
-
-    const { convexClient } = createConvexClients(token);
-
-    // LEDGER FIRST. A keyed retry whose first attempt already generated must
-    // replay those exact drafts: regeneration is a second credit spend, and —
-    // being stochastic — would produce different cases that no derived
-    // per-item key could dedupe against the first attempt's.
-    let drafts: any[] | null = null;
-    if (idempotencyKey) {
-      let ledger: { drafts: unknown } | null;
-      try {
-        ledger = await createConvexReadClient(token).query(
-          "testSuites:getCaseGeneration" as any,
-          { suiteId, idempotencyKey },
-        );
-      } catch (error) {
-        // FAIL CLOSED, not degrade-to-generate. A caller that sent a key is
-        // asking for spend idempotency; treating an unreadable ledger as a
-        // cache miss would re-spend credits during exactly the kind of
-        // backend blip that also lost the first attempt's response. 502 is
-        // retryable and the retry presents the same key.
-        logger.warn("v1.eval.generate: could not read the generation ledger", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        throw new WebRouteError(
-          502,
-          ErrorCode.SERVER_UNREACHABLE,
-          "Could not verify this generation's idempotency ledger. Retry with the same key.",
-        );
-      }
-      if (ledger && Array.isArray(ledger.drafts)) {
-        drafts = ledger.drafts;
-      }
-    }
-
-    if (drafts === null) {
-      const { manager } = await createAuthorizedManager(
-        callerContextFromHono(c),
-        token,
-        projectId,
-        serverIds,
-        WEB_CALL_TIMEOUT_MS,
-        undefined,
-        undefined,
-        {
-          serverNames,
-          // v1 eval API has no host-persona input — no enterprise policy to
-          // enforce; the issuer makes per-server XAA servers mint instead of
-          // failing with 'Missing XAA issuer'.
-          xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
-        },
-      );
-      try {
-        const request = {
-          serverIds,
-          serverNames,
-          convexAuthToken: token,
-          projectId,
-          ...(generationOptions ? { generationOptions } : {}),
-        } as unknown as RunEvalsRequest;
-        const result = legacyNegativeOnly
-          ? await generateNegativeEvalTestsWithManager(manager, request as any)
-          : await generateEvalTestsWithManager(manager, request as any);
-        drafts = Array.isArray((result as any).tests)
-          ? (result as any).tests
-          : [];
-      } finally {
-        await manager.disconnectAllServers().catch(() => {});
-      }
-
-      // Record the drafts BEFORE persisting any case — INCLUDING an empty
-      // result: "the generator ran and produced nothing" is a spend worth
-      // checkpointing too, or every keyed retry would pay for it again. From
-      // this point a crash is recoverable without re-spending; before it,
-      // regeneration was genuinely necessary anyway. Recording is best-effort
-      // (the spend already happened, so failing the request here would strand
-      // paid work), but a lost RACE is not a failure: the mutation is
-      // first-writer-wins, and the loser must converge on the winner's drafts
-      // so two concurrent same-key requests persist the SAME cases (the
-      // per-item keys then dedupe the loop) instead of two divergent sets.
-      if (idempotencyKey) {
-        try {
-          const outcome = (await convexClient.mutation(
-            "testSuites:recordCaseGeneration" as any,
-            { suiteId, idempotencyKey, drafts },
-          )) as { recorded?: boolean } | null;
-          if (outcome?.recorded === false) {
-            const winner = await createConvexReadClient(token).query(
-              "testSuites:getCaseGeneration" as any,
-              { suiteId, idempotencyKey },
-            );
-            if (winner && Array.isArray(winner.drafts)) {
-              drafts = winner.drafts;
-            }
-          }
-        } catch (error) {
-          logger.warn(
-            "v1.eval.generate: could not record the generation ledger",
-            { error: error instanceof Error ? error.message : String(error) },
-          );
-        }
-      }
-    }
-
-    // Persist the generated drafts as cases under the suite.
-    // Projected into the caller's vocabulary, so the element type is the
-    // projection's, not the DTO's.
-    const created: ReturnType<
-      typeof projectCaseDto<ReturnType<typeof toCaseDto>>
-    >[] = [];
-    const createdCaseIds: string[] = [];
-    const generateVocabulary = vocabularyOf(c);
-    const skipped: Array<{ title: string; error: string }> = [];
-    let normal = 0;
-    let negative = 0;
-    // Built first, written once. Generation writes through the SAME batch
-    // mutation as every other authoring path — there is no private route for
-    // generated cases — so a 20-case generation is one write, not twenty.
-    const pendingDrafts: Array<{
-      item: EvalCaseBatchItem;
-      title: string;
-      isNegative: boolean;
-    }> = [];
-    for (const [draftIndex, draft] of drafts.entries()) {
-      // The legacy negative-only path emits only negative cases; otherwise the
-      // plan-driven generator flags each draft. Negative cases must carry NO
-      // expected tool calls (the suite guard rejects that), so clear them on
-      // both the top level and prompt turns.
-      const isNeg = legacyNegativeOnly || draft.isNegativeTest === true;
-      const mapCalls = (
-        calls: any,
-      ): Array<{ toolName: string; arguments: any }> =>
-        isNeg || !Array.isArray(calls)
-          ? []
-          : calls.map((tc: any) =>
-              typeof tc === "string"
-                ? { toolName: tc, arguments: {} }
-                : {
-                    toolName: tc.toolName ?? tc.tool,
-                    arguments: tc.arguments ?? {},
-                  },
-            );
-      const promptTurns = Array.isArray(draft.promptTurns)
-        ? draft.promptTurns.map((turn: any) => ({
-            id: typeof turn.id === "string" ? turn.id : randomUUID(),
-            prompt: turn.prompt ?? "",
-            expectedToolCalls: mapCalls(turn.expectedToolCalls),
-            ...(turn.expectedOutput !== undefined
-              ? { expectedOutput: turn.expectedOutput }
-              : {}),
-          }))
-        : [
-            {
-              id: randomUUID(),
-              prompt: typeof draft.query === "string" ? draft.query : "",
-              expectedToolCalls: mapCalls(draft.expectedToolCalls),
-              ...(draft.expectedOutput !== undefined
-                ? { expectedOutput: draft.expectedOutput }
-                : {}),
-            },
-          ];
-      const normalizedSteps = Array.isArray(draft.steps)
-        ? normalizeSteps(draft.steps)
-        : [];
-      // Negative cases must carry no expected tool calls, so drop any
-      // `toolCalledWith` asserts that survive inside authored steps; and fall
-      // back to the promptTurns/query conversion when steps normalize to empty.
-      const draftSteps = isNeg
-        ? normalizedSteps.filter(
-            (s) =>
-              !(
-                s.kind === "assert" &&
-                (s.assertion as { type?: string }).type === "toolCalledWith"
-              ),
-          )
-        : normalizedSteps;
-      const steps =
-        draftSteps.length > 0 ? draftSteps : promptTurnsToSteps(promptTurns);
-      const item: EvalCaseBatchItem = {
-        title: draft.title,
-        steps,
-        query: typeof draft.query === "string" ? draft.query : "",
-        runs: typeof draft.runs === "number" ? draft.runs : 1,
-        models: caseModels,
-        expectedToolCalls: mapCalls(draft.expectedToolCalls),
-        changeSource: "generated",
-        ...(draft.expectedOutput !== undefined
-          ? { expectedOutput: draft.expectedOutput }
-          : {}),
-        ...(isNeg ? { isNegativeTest: true } : {}),
-        ...(draft.scenario !== undefined ? { scenario: draft.scenario } : {}),
-        // Positional, not content-derived: on a keyed retry the drafts come
-        // from the ledger VERBATIM, so index i names the same draft both
-        // times and the re-persist lands on the first attempt's case.
-        ...(idempotencyKey
-          ? {
-              idempotencyKey: deriveItemIdempotencyKey(
-                idempotencyKey,
-                String(draftIndex),
-              ),
-            }
-          : {}),
-      };
-      pendingDrafts.push({
-        item,
-        title: String(draft.title ?? ""),
-        isNegative: isNeg,
-      });
-    }
-
-    if (pendingDrafts.length > 0) {
-      // Minted HERE rather than in Convex: callers mint, the platform
-      // validates. A generated case is authored by this server, so this is the
-      // caller.
-      const cases = withMintedCaseIds(pendingDrafts.map((d) => d.item));
-      let result: Awaited<ReturnType<typeof createEvalCasesInBatches>>;
-      let rejection: string | undefined;
-      try {
-        result = await createEvalCasesInBatches(convexClient, {
-          suiteId,
-          cases,
-        });
-      } catch (error) {
-        // A whole-call rejection is one condition, not N. But a rejection can
-        // still arrive after an earlier chunk committed, and those cases are
-        // persisted — reporting them as skipped would understate what the
-        // caller was billed for and invite a duplicate retry.
-        rejection = error instanceof Error ? error.message : String(error);
-        result = partialResultOf(error);
-        logger.warn("v1.eval.generate: failed to persist the generated cases", {
-          error: rejection,
-          drafts: pendingDrafts.length,
-          committedBeforeRejection: result.committed.length,
-        });
-      }
-
-      // The platform addresses each result by the index of the item we sent.
-      // An index outside that range is a bug, not an outcome — but it must not
-      // throw AFTER the writes landed and take the whole report down with it.
-      const draftAt = (index: number) => {
-        const draft = pendingDrafts[index];
-        if (!draft) {
-          logger.warn(
-            "v1.eval.generate: result named a draft index we never sent",
-            { index, sent: pendingDrafts.length },
-          );
-        }
-        return draft;
-      };
-
-      const reported = new Set<number>();
-      for (const entry of result.failed) {
-        const draft = draftAt(entry.index);
-        if (!draft) continue;
-        reported.add(entry.index);
-        const reason = `${entry.code}: ${entry.message}`;
-        logger.warn("v1.eval.generate: failed to persist a generated case", {
-          error: reason,
-        });
-        skipped.push({ title: draft.title, error: reason });
-      }
-      const readClient = createConvexReadClient(token);
-      // Read the committed cases in one pass. Committed entries arrive in item
-      // order, and `Promise.all` preserves it, so `created` still follows the
-      // order the generator produced.
-      const docs = await Promise.all(
-        result.committed.map((entry) =>
-          readClient.query("testSuites:getTestCase" as any, {
-            // The EFFECTIVE id, not the one just minted. A keyed retry replays
-            // onto the case the first attempt authored, and reporting the fresh
-            // proposal would name a case that was never written.
-            testCaseId: entry.testCaseId,
-          }),
-        ),
-      );
-      result.committed.forEach((entry, position) => {
-        const draft = draftAt(entry.index);
-        if (!draft) return;
-        reported.add(entry.index);
-        created.push(
-          projectCaseDto(
-            toCaseDto(docs[position], generateVocabulary),
-            generateVocabulary,
-          ),
-        );
-        createdCaseIds.push(String(entry.testCaseId));
-        if (draft.isNegative) negative += 1;
-        else normal += 1;
-      });
-      // Drafts the rejected call never reached.
-      if (rejection !== undefined) {
-        pendingDrafts.forEach((draft, index) => {
-          if (!reported.has(index)) {
-            skipped.push({ title: draft.title, error: rejection! });
-          }
-        });
-      }
-
-      const entryWarnings = result.committed.flatMap((entry) =>
-        (entry.warnings ?? []).map((w) => ({ title: entry.title, ...w })),
-      );
-      if (result.warnings.length > 0 || entryWarnings.length > 0) {
-        logger.info("v1.eval.generate: case create returned warnings", {
-          suiteId,
-          warnings: [...result.warnings, ...entryWarnings],
-        });
-      }
-    }
-
-    // Best-effort bookkeeping so the ledger row also names what it produced.
-    if (idempotencyKey && createdCaseIds.length > 0) {
-      await convexClient
-        .mutation("testSuites:markCaseGenerationPersisted" as any, {
-          suiteId,
-          idempotencyKey,
-          createdCaseIds,
-        })
-        .catch(() => {});
-    }
-
-    return v1Resource(c, {
-      generationModel: "anthropic/claude-haiku-4.5",
-      created,
-      counts: { normal, negative },
-      // Surface, never silently drop, drafts that failed to persist.
-      ...(skipped.length > 0 ? { skipped } : {}),
+      },
+      requestKey: idempotencyKey ?? randomUUID(),
     });
   },
 );
@@ -9618,10 +9260,6 @@ evals.post(
 evals.post(
   "/projects/:projectId/eval-suites/:suiteId/cases/import",
   async (c) => {
-    if (process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED !== "true")
-      throw convexFunctionUnavailableError(
-        "Document import is not enabled on this deployment.",
-      );
     const projectId = c.req.param("projectId");
     const suiteId = evalIdParam(c, "suiteId", "Eval suite");
     const body = parseWithSchema(
@@ -9786,6 +9424,38 @@ evals.post(
  * before any spend, the manager is always disconnected, and a caller's
  * disconnect never cancels a job the backend has already accepted.
  */
+/**
+ * A refusal the BACKEND owns, kept as the refusal it is.
+ *
+ * Generation used to answer its own 429 with `RATE_LIMITED` and a
+ * `Retry-After`, which is what the spec publishes and what the SDK and CLI
+ * tell a caller to wait for. Routing every start through the authoring job
+ * would have turned that into `SERVER_UNREACHABLE` with no window — a
+ * retryable, attributable refusal reported as our fault. 5xx is left alone:
+ * the module this defers to is deliberately 4xx-only.
+ */
+function authoringRefusal(
+  response: Response,
+  bodyText: string,
+  args: { startFailureMessage: string },
+  message: string | undefined,
+): Error {
+  return (
+    upstreamRefusalRouteError({
+      status: response.status,
+      bodyText,
+      message,
+      fallbackMessage: args.startFailureMessage,
+      retryAfter: upstreamRetryAfter(response),
+    }) ??
+    new WebRouteError(
+      response.status as any,
+      ErrorCode.SERVER_UNREACHABLE,
+      message ?? args.startFailureMessage,
+    )
+  );
+}
+
 async function startAuthoringJobAndAwait(
   c: Context,
   args: {
@@ -9848,10 +9518,14 @@ async function startAuthoringJobAndAwait(
       signal: AbortSignal.timeout(30_000),
     },
   );
+  const bodyText = await response.text();
   let job;
   try {
-    job = JSON.parse(await response.text());
+    job = JSON.parse(bodyText);
   } catch {
+    // A 4xx can still be a refusal the backend owns even when the body is not
+    // JSON (a WAF page, a proxy error), so classify before calling it ours.
+    if (!response.ok) throw authoringRefusal(response, bodyText, args, undefined);
     throw new WebRouteError(
       502,
       ErrorCode.SERVER_UNREACHABLE,
@@ -9859,10 +9533,11 @@ async function startAuthoringJobAndAwait(
     );
   }
   if (!response.ok)
-    throw new WebRouteError(
-      response.status as any,
-      ErrorCode.SERVER_UNREACHABLE,
-      job.error ?? args.startFailureMessage,
+    throw authoringRefusal(
+      response,
+      bodyText,
+      args,
+      typeof job.error === "string" ? job.error : undefined,
     );
   // Compatibility callers may wait briefly; their disconnect never cancels the job.
   const waitUntil = Date.now() + 15_000;
