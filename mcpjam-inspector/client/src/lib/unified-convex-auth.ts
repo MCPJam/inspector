@@ -11,6 +11,7 @@ import {
   markGuestActivated,
   getGuestSessionRefusal,
 } from "@/lib/guest-session";
+import { shouldSkipGuestSession } from "@/lib/vanity-landing-hosts";
 
 /**
  * Stable hook fed to `<ConvexProviderWithAuthKit useAuth={...}>`.
@@ -129,6 +130,11 @@ function markActiveGuest(): void {
 
 export function useUnifiedConvexAuth() {
   const workos = useWorkOSAuth();
+  // caniuse.dev renders from the public host catalog and needs no identity,
+  // so it must not spend from the per-IP daily guest budget. Read per render
+  // rather than at module load: it is a Set lookup, and a module-level
+  // constant would freeze the hostname before a test could stub it.
+  const skipGuest = shouldSkipGuestSession();
   // Bumped when the user presses Retry on the session-refresh banner. It feeds
   // both the memo below (new `getAccessToken` identity → Convex re-runs
   // `setAuth`) and the guest bootstrap effect (a fully-lapsed guest has
@@ -138,14 +144,22 @@ export function useUnifiedConvexAuth() {
   const [guestToken, setGuestToken] = useState<string | null>(
     () => getCachedGuestSession()?.token ?? null,
   );
+  // `false` under `skipGuest`: the lazy initializer is what makes a cold
+  // visit start in a loading state, and with no bootstrap to clear it the
+  // surface would sit on a spinner forever.
   const [guestLoading, setGuestLoading] = useState(
-    () => getCachedGuestSession()?.token == null,
+    () => !skipGuest && getCachedGuestSession()?.token == null,
   );
 
   // Fetch a guest token whenever there is no signed-in WorkOS user. Reset
   // when a user does sign in so subsequent renders favor the WorkOS path.
   useEffect(() => {
     if (workos.isLoading) {
+      return;
+    }
+    if (skipGuest) {
+      setGuestToken(null);
+      setGuestLoading(false);
       return;
     }
     if (workos.user) {
@@ -216,7 +230,7 @@ export function useUnifiedConvexAuth() {
     return () => {
       cancelled = true;
     };
-  }, [workos.isLoading, workos.user, retryNonce]);
+  }, [skipGuest, workos.isLoading, workos.user, retryNonce]);
 
   return useMemo(() => {
     if (workos.user) {
@@ -241,6 +255,10 @@ export function useUnifiedConvexAuth() {
     return {
       isLoading: workos.isLoading || guestLoading,
       user: guestToken ? GUEST_USER_PLACEHOLDER : null,
+      // Deliberately NOT guarded by `skipGuest`, even though it can mint a
+      // guest of its own below: the adapter only calls this once `user` is
+      // truthy, and under `skipGuest` `guestToken` never becomes non-null, so
+      // it is unreachable there.
       getAccessToken: async (opts?: {
         forceRefreshToken?: boolean;
       }): Promise<string | null> => {

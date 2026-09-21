@@ -18,6 +18,7 @@ import {
   WIRE_MECHANISM_PHRASE,
   WIRE_PERSONA,
   WIRE_RUN_ID,
+  WIRE_SECOND_RUN_ID,
   WIRE_TRUNCATION_FIX,
 } from "./swarm-findings-wire-fixtures";
 import {
@@ -413,7 +414,11 @@ describe("the wire headline says what was established", () => {
     // `derived` means the chain worker measured it; a model's reading would
     // be worded as a reading.
     expect(summary.lines[1]).toBe("Recorded at the tool response stage.");
-    expect(summary.lines.join(" ")).toContain("Reconcile payouts");
+    // One of the two goals is named IN FULL. Which one is decided by reach and
+    // then by id, never by payload order — see the reordering tests below.
+    expect(summary.lines.join(" ")).toContain(
+      "Export the quarterly ledger for the finance team",
+    );
     expect(summary.lines.join(" ")).not.toContain("…");
   });
 
@@ -531,5 +536,252 @@ describe("a recorded fact is evidence, not a verdict", () => {
     );
     // The chain never measured this stage, so it stays unstated.
     expect(response.state).toBe("none");
+  });
+});
+
+describe("a reordered payload says the same thing", () => {
+  const reversed = (wire: ReturnType<typeof truncatedWire>) =>
+    swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: [...wire.findings].reverse(),
+    });
+  const model = (wire: ReturnType<typeof truncatedWire>) =>
+    deriveSwarmFindingsModelFromWire({
+      journeyFindings: wire,
+      personas: [],
+      runs: [],
+    });
+
+  it("names the same goal whichever row came first", () => {
+    const wire = truncatedWire();
+    const lines = (w: typeof wire) =>
+      composeWireFindingsSummary(w, model(w), { terminal: true }).lines;
+    expect(lines(reversed(wire))).toEqual(lines(wire));
+  });
+
+  it("names only the personas who actually had the goal it names", () => {
+    const wire = truncatedWire({ signalRows: false, mechanismRows: true });
+    const rows = wire.findings.filter(
+      (row) => row.basis === "verifiedMechanism",
+    );
+    // One cause, two NON-CARTESIAN pairs: Ana ran the first goal, Bo ran the
+    // second, and neither ran the other's. The goal is picked by reach, so
+    // naming every persona on the mechanism attributed Ana's goal to Bo, who
+    // was never given it. How far the cause reaches is the population
+    // clause's job, not this line's.
+    const bo = { name: "Bo", personaRefId: null };
+    const split = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      personas: [
+        ...wire.personas,
+        { ...wire.personas[0]!, persona: bo, goalRunIds: [WIRE_SECOND_RUN_ID] },
+      ],
+      findings: [
+        // Two sessions, so this goal leads on reach.
+        {
+          ...rows[0]!,
+          sessionIds: ["session-1", "session-1b"],
+          population: { count: 2, total: 4, unit: "sessions" as const },
+        },
+        { ...rows[1]!, persona: bo },
+      ],
+    });
+    const line = composeWireFindingsSummary(split, model(split), {
+      terminal: true,
+    }).lines.find((row) => row.includes(WIRE_GOAL.title));
+    expect(line).toBe(`"${WIRE_GOAL.title}" for Ana.`);
+    expect(line).not.toContain("other persona");
+  });
+
+  it("refuses to name a stage the grouped rows disagree about", () => {
+    const wire = truncatedWire();
+    // One row says the chain measured `response`; the other says `call`. There
+    // is no honest single answer, so the card states no stage at all rather
+    // than whichever the payload happened to list first.
+    let seen = 0;
+    const split = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: wire.findings.map((row) =>
+        row.basis === "verifiedMechanism" && seen++ === 0
+          ? { ...row, chainStage: "call" }
+          : row,
+      ),
+    });
+    expect(selectLeadWireMechanism(split)!.chainStage).toBeNull();
+    expect(
+      composeWireFindingsSummary(split, model(split), {
+        terminal: true,
+      }).lines.join(" "),
+    ).not.toContain("stage");
+  });
+
+  it("claims a measured stage only when every row measured it", () => {
+    const wire = truncatedWire();
+    let seen = 0;
+    const mixed = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: wire.findings.map((row) =>
+        row.basis === "verifiedMechanism" && seen++ === 0
+          ? { ...row, chainStageBasis: "reported" }
+          : row,
+      ),
+    });
+    // The stage still holds, but "recorded at" would claim the chain worker
+    // measured it in a row where it did not.
+    expect(selectLeadWireMechanism(mixed)!.chainStageBasis).toBe("reported");
+    expect(
+      composeWireFindingsSummary(mixed, model(mixed), {
+        terminal: true,
+      }).lines,
+    ).toContain("The explanation points at the tool response.");
+  });
+});
+
+describe("the persona quotes a session that actually spoke", () => {
+  it("prefers the lead whose sessions wrote an account, not the lowest id", () => {
+    const wire = truncatedWire({ signalRows: false });
+    const mechanism = wire.findings.find(
+      (row) => row.basis === "verifiedMechanism",
+    )!;
+    const report = wire.findings.find((row) => row.basis === "sessionReport")!;
+    // Two verified rows for the SAME goal, on different targets. The one that
+    // sorts first by id has a supporting session that said nothing; the other
+    // has the account. Ranking leads by id alone drops the quote.
+    const silent = {
+      ...mechanism,
+      id: "aaa-silent",
+      target: { ...mechanism.target, id: "host-silent" },
+      sessionIds: ["silent-1"],
+    };
+    const silentReport = {
+      ...report,
+      id: "report-silent",
+      target: { ...mechanism.target, id: "host-silent" },
+      sessionIds: ["silent-1"],
+      reportExcerpt: {
+        actual: "Nothing was recorded in this session's words.",
+        citations: ["silent-1/m:0"],
+      },
+    };
+    const speaking = {
+      ...mechanism,
+      id: "zzz-speaking",
+      target: { ...mechanism.target, id: "host-speaking" },
+      sessionIds: ["spoke-1"],
+    };
+    const speakingReport = {
+      ...report,
+      id: "report-speaking",
+      target: { ...mechanism.target, id: "host-speaking" },
+      sessionIds: ["spoke-1"],
+      reportExcerpt: {
+        actual: "The reply stopped at its output limit.",
+        account: WIRE_ACCOUNT,
+        citations: ["spoke-1/m:0"],
+      },
+    };
+    const built = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: [silent, silentReport, speaking, speakingReport],
+    });
+    const persona = deriveSwarmFindingsModelFromWire({
+      journeyFindings: built,
+      personas: [],
+      runs: [],
+    }).personas[0]!;
+    expect(persona.account).toBe(WIRE_ACCOUNT);
+    expect(persona.accountSessionId).toBe("spoke-1");
+    expect(persona.cited?.actual).toBe(
+      "The reply stopped at its output limit.",
+    );
+  });
+
+  it("treats a whitespace-only account as no account at all", () => {
+    const wire = truncatedWire({ signalRows: false });
+    const mechanism = wire.findings.find(
+      (row) => row.basis === "verifiedMechanism",
+    )!;
+    const report = wire.findings.find((row) => row.basis === "sessionReport")!;
+    // `account` is free prose a model wrote; the contract bounds its length
+    // and nothing else. A blank one is still truthy, so ranking on the raw
+    // field picks the blank session over the speaking one -- and the trim
+    // that follows then hands the card nothing, with a real quote one row
+    // away. Rank on the value as it will be RENDERED.
+    const pair = (id: string, host: string, account?: string) => [
+      {
+        ...mechanism,
+        id,
+        target: { ...mechanism.target, id: host },
+        sessionIds: [`${host}-1`],
+      },
+      {
+        ...report,
+        id: `report-${id}`,
+        target: { ...mechanism.target, id: host },
+        sessionIds: [`${host}-1`],
+        reportExcerpt: {
+          actual: `What ${host} recorded.`,
+          ...(account === undefined ? {} : { account }),
+          citations: [`${host}-1/m:0`],
+        },
+      },
+    ];
+    const built = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: [
+        ...pair("aaa-blank", "host-blank", "  \n  "),
+        ...pair("zzz-speaking", "host-speaking", WIRE_ACCOUNT),
+      ],
+    });
+    const persona = deriveSwarmFindingsModelFromWire({
+      journeyFindings: built,
+      personas: [],
+      runs: [],
+    }).personas[0]!;
+    expect(persona.account).toBe(WIRE_ACCOUNT);
+    expect(persona.accountSessionId).toBe("host-speaking-1");
+    // ...and a blank one on its own is an absence, never an empty quote.
+    const blankOnly = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: pair("aaa-blank", "host-blank", "  \n  "),
+    });
+    const alone = deriveSwarmFindingsModelFromWire({
+      journeyFindings: blankOnly,
+      personas: [],
+      runs: [],
+    }).personas[0]!;
+    expect(alone.account).toBeUndefined();
+    expect(alone.accountSessionId).toBeUndefined();
+    expect(alone.issue.trim()).not.toBe("");
+  });
+
+  it("still breaks ties by id when neither candidate has an account", () => {
+    const wire = truncatedWire({ signalRows: false });
+    const mechanism = wire.findings.find(
+      (row) => row.basis === "verifiedMechanism",
+    )!;
+    const bare = (id: string, host: string) => ({
+      ...mechanism,
+      id,
+      target: { ...mechanism.target, id: host },
+      sessionIds: [`${host}-1`],
+    });
+    const built = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: [bare("zzz", "host-z"), bare("aaa", "host-a")],
+    });
+    const of = (w: typeof built) =>
+      deriveSwarmFindingsModelFromWire({
+        journeyFindings: w,
+        personas: [],
+        runs: [],
+      }).personas[0]!;
+    expect(of(built).account).toBeUndefined();
+    // Deterministic, and identical under reversal.
+    const reversed = swarmJourneyFindingsSchema.parse({
+      ...built,
+      findings: [...built.findings].reverse(),
+    });
+    expect(of(reversed).issue).toBe(of(built).issue);
   });
 });

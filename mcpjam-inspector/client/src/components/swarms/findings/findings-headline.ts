@@ -528,17 +528,47 @@ function populationClause(count: number, read: number, goals: number): string {
   return ` in ${count} of ${read} sessions read${across}`;
 }
 
+/**
+ * Which goal and whose, for a cause that may span several of both.
+ *
+ * Chosen by reach and then by id, never by position: the rows of one mechanism
+ * arrive in whatever order the producer listed them, and naming `rows[0]`'s
+ * goal let a reordered but identical payload name a different one.
+ */
 function personaGoalLine(rows: readonly SwarmJourneyFinding[]): string | null {
-  const row = rows[0];
-  if (!row) return null;
+  const byGoal = new Map<string, { title: string; sessions: Set<string> }>();
+  for (const row of rows) {
+    const entry = byGoal.get(row.goal.runId) ?? {
+      title: row.goal.title,
+      sessions: new Set<string>(),
+    };
+    for (const id of row.sessionIds) entry.sessions.add(id);
+    byGoal.set(row.goal.runId, entry);
+  }
+  const lead = [...byGoal.entries()].sort(
+    ([aId, a], [bId, b]) =>
+      b.sessions.size - a.sessions.size || aId.localeCompare(bId),
+  )[0];
+  if (!lead) return null;
   // The FULL title. `shortenGoalTitle` cuts to four words, which turns most
   // real goals into an ellipsis and tells the reader nothing.
-  const others = new Set(rows.map((r) => r.persona.name)).size - 1;
+  //
+  // Only the personas who actually had THIS goal. One mechanism can span
+  // non-cartesian pairs -- Zoe on goal A, Amy on goal B -- and naming every
+  // persona on the lead goal's title told the reader Amy tried a goal she was
+  // never given. How far the cause reaches is the population clause's job.
+  const names = [
+    ...new Set(
+      rows
+        .filter((row) => row.goal.runId === lead[0])
+        .map((row) => row.persona.name),
+    ),
+  ].sort();
   const who =
-    others > 0
-      ? `${row.persona.name} and ${plural(others, "other persona")}`
-      : row.persona.name;
-  return `"${row.goal.title}" for ${who}.`;
+    names.length > 1
+      ? `${names[0]} and ${plural(names.length - 1, "other persona")}`
+      : names[0];
+  return `"${lead[1].title}" for ${who}.`;
 }
 
 /**
