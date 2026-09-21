@@ -298,6 +298,13 @@ export async function createHonoApp() {
     cors({
       origin: CORS_ORIGINS,
       credentials: true,
+      // Neither header is CORS-safelisted, so without this the browser hides
+      // both from JS on any cross-origin call — which `npm run dev` is, with
+      // the client on 5173 and this server on 6274. The error card reads
+      // `x-request-id` to give a stackless 5xx something reportable, and
+      // `use-chat-session` already reads `x-mcpjam-error-origin`; both were
+      // silently undefined off the hosted same-origin path.
+      exposeHeaders: ["x-request-id", "x-mcpjam-error-origin"],
     }),
   );
 
