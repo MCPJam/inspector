@@ -959,7 +959,7 @@ it("gives imported drafts their own surface with a way back to the suite", async
   expect(screen.getByTestId("suite-detail-test-cases")).toBeVisible();
   expect(screen.queryByTestId("suite-import-review")).toBeNull();
   const resume = screen.getByTestId("suite-resume-import-review");
-  expect(resume).toHaveTextContent("1 imported draft is waiting for review");
+  expect(resume).toHaveTextContent("Review 1 draft case");
 
   fireEvent.click(resume);
   // Reviewing is still its own surface — drafts are not listed beside real

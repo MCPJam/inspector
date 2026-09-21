@@ -748,21 +748,18 @@ export function SuiteDetailOverview({
       ) : null}
 
       {importedDrafts.length && !reviewingImport ? (
-        <button
-          type="button"
-          data-testid="suite-resume-import-review"
-          onClick={() => setImportReviewClosed(false)}
-          className="flex w-full items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-3 text-left text-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <span className="text-muted-foreground">
+        <div>
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="suite-resume-import-review"
+            onClick={() => setImportReviewClosed(false)}
+          >
             {importedDrafts.length === 1
-              ? "1 imported draft is waiting for review. It is not in the suite yet."
-              : `${importedDrafts.length} imported drafts are waiting for review. They are not in the suite yet.`}
-          </span>
-          <span className="shrink-0 font-medium text-foreground">
-            Review draft cases
-          </span>
-        </button>
+              ? "Review 1 draft case"
+              : `Review ${importedDrafts.length} draft cases`}
+          </Button>
+        </div>
       ) : null}
 
       {showEmptyCasesHero ? (
