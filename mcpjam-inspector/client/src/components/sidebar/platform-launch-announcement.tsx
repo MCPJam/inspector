@@ -34,8 +34,8 @@ const LAUNCH: ProductUpdateEntry = {
   _id: LAUNCH_ID,
   slug: LAUNCH_ID,
   publishAt: Date.UTC(2026, 8, 18),
-  title: "Our new platform",
-  body: "We've launched our new platform to help you test the full lifecycle of your MCP servers with Swarms, User Testing, Evals, and CI/CD integration.",
+  title: "Check out our new platform",
+  body: "We've just launched a suite of new features to help you test the full lifecycle of your MCP servers!",
   videoUrl: "https://www.youtube.com/watch?v=vD06SWzNx0Y",
   dismissed: false,
   isNew: true,
@@ -196,7 +196,7 @@ export function PlatformLaunchAnnouncement({
     <Dialog open={open} onOpenChange={changeOpen}>
       <section
         aria-label="Platform launch"
-        className="fixed bottom-4 left-4 z-40 w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border bg-background text-foreground motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-200"
+        className="fixed bottom-4 left-4 z-40 w-[calc(var(--sidebar-width,16rem)-2rem)] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border bg-background text-foreground motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-200"
       >
         <div className="h-0.5 bg-primary" />
         <Button
@@ -220,7 +220,7 @@ export function PlatformLaunchAnnouncement({
           >
             <SwarmHeroCharacters className="my-5" />
             <h2 className="mb-2 text-center text-xl font-semibold tracking-tight">
-              Our new platform
+              Check out our new platform
             </h2>
             <div className="grid grid-cols-2 gap-1.5">
               {FEATURES.map(({ name, icon: Icon }) => (
@@ -274,7 +274,7 @@ export function PlatformLaunchAnnouncement({
           >
             {LAUNCH.title}
           </DialogTitle>
-          <DialogDescription className="max-w-xl text-foreground">
+          <DialogDescription className="text-balance text-foreground">
             {LAUNCH.body}
           </DialogDescription>
         </DialogHeader>
