@@ -1383,6 +1383,13 @@ export async function createAuthorizedManager(
         );
         // A disconnected default must not hide another usable account.
         auth.oauthAccessToken ||= live[0]?.accessToken;
+        // Every row dead (no token, or all needing reauthorization) is NOT a
+        // multi-connection server. Recording an empty group here would drop
+        // the server from the manager entirely, which contradicts the
+        // discover/auto path that deliberately allows a tokenless anonymous
+        // connection so public tools stay usable and a live 401 can start
+        // OAuth.
+        if (!live.length) continue;
         connectionsByServerId[id] = live.map((c, index) => ({
           serverId: id,
           connectionId: c.connectionId,
@@ -2075,7 +2082,7 @@ export async function createAuthorizedManager(
     readonly [string, MCPServerConfig]
   >(([serverId, config]) => {
     const group = connectionsByServerId[serverId];
-    if (!group) return [[serverId, config] as const];
+    if (!group?.length) return [[serverId, config] as const];
     const auth = batch.results[serverId] as ConvexBatchAuthorizeSuccess;
     return group.map((connection) => {
       const credential = auth.oauthConnections!.find(

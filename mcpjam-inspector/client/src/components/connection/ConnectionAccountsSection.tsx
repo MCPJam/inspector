@@ -21,6 +21,7 @@ import {
   AlertDialogTitle,
 } from "@mcpjam/design-system/alert-dialog";
 import { useHostedOAuthConnections } from "@/hooks/use-hosted-oauth-connections";
+import { useMultiAccountConnectionsEnabled } from "@/hooks/useMultiAccountConnectionsEnabled";
 import { updateOAuthConnection } from "@/lib/apis/web/oauth-connections";
 import {
   connectionLabel,
@@ -45,6 +46,7 @@ export function ConnectionAccountsSection({
     serverId,
     enabled,
   );
+  const canAddAccount = useMultiAccountConnectionsEnabled();
   const [busy, setBusy] = useState(false);
   const [removing, setRemoving] = useState<OAuthConnection>();
   if (!enabled || !projectId || !serverId) return null;
@@ -142,7 +144,7 @@ export function ConnectionAccountsSection({
             </DropdownMenu>
           </div>
         ))}
-        {!shared && (
+        {!shared && canAddAccount && (
           <Button
             variant="outline"
             size="sm"

@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ConnectionAccountsSection } from "../ConnectionAccountsSection";
-const mocks = vi.hoisted(() => ({ hook: vi.fn(), update: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  hook: vi.fn(),
+  update: vi.fn(),
+  flag: vi.fn(),
+}));
+vi.mock("@/hooks/useMultiAccountConnectionsEnabled", () => ({
+  useMultiAccountConnectionsEnabled: mocks.flag,
+}));
 vi.mock("@/hooks/use-hosted-oauth-connections", () => ({
   useHostedOAuthConnections: mocks.hook,
 }));
@@ -26,6 +33,7 @@ describe("ConnectionAccountsSection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.hook.mockReturnValue({ connections: rows, shared: false });
+    mocks.flag.mockReturnValue(true);
   });
   afterEach(cleanup);
   it("shows separate same-email rows and reconnect state without exposing profile IDs", () => {
@@ -59,6 +67,25 @@ describe("ConnectionAccountsSection", () => {
       screen.getByRole("button", { name: "Connect another account" }),
     );
     expect(auth).toHaveBeenCalledWith({ kind: "add" });
+  });
+  it("hides add behind the rollout flag but still manages what exists", () => {
+    mocks.flag.mockReturnValue(false);
+    render(
+      <ConnectionAccountsSection
+        projectId="p"
+        serverId="s"
+        enabled
+        onAuthenticate={vi.fn()}
+        onSwitch={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByText("2 accounts"));
+    expect(
+      screen.queryByRole("button", { name: "Connect another account" }),
+    ).toBeNull();
+    // A de-flagged org must still see and be able to take down what it has.
+    expect(screen.getAllByText("same@example.com")).toHaveLength(2);
+    expect(screen.getByLabelText("Label for Side")).toBeTruthy();
   });
   it("does not offer add for a shared server", () => {
     mocks.hook.mockReturnValue({ connections: rows.slice(0, 1), shared: true });

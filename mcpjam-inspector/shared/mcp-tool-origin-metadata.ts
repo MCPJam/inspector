@@ -237,3 +237,22 @@ export function toolConnectionAttribution(
       }
     : undefined;
 }
+
+/**
+ * The connection a tool call was routed through, when one was recorded. Absent
+ * for every server with a single credential — attribution is only stamped once
+ * a server has more than one connection live.
+ */
+export function readMcpToolConnectionId(
+  metadata: unknown
+): string | undefined {
+  if (!isRecord(metadata)) return undefined;
+  const mcpjam = metadata[MCPJAM_PROVIDER_METADATA_KEY];
+  if (!isRecord(mcpjam)) return undefined;
+  const connection = mcpjam.connection;
+  if (!isRecord(connection)) return undefined;
+  const connectionId = connection.connectionId;
+  return typeof connectionId === "string" && connectionId.length > 0
+    ? connectionId
+    : undefined;
+}

@@ -1,5 +1,11 @@
 # Multi-account OAuth connections
 
+Behind the PostHog flag `multi-account-connections-enabled`, which gates the
+one write that creates a second connection (`lib/featureGates.ts`, key
+`multi-account-connections`) and the "Connect another account" control. Reads,
+relabel, set-default and remove stay ungated so a de-flagged org can still see
+and take down what it has. Its conditions must stay email-property-only.
+
 Personal OAuth servers support up to eight connections. Connection management is
 inside the server card/details: add, reconnect, relabel, change default, and remove.
 Shared OAuth servers remain single-account and keep administrator write checks.
@@ -39,6 +45,11 @@ deployment is performed by this implementation.
   live profile conformance checks. It expects the multi-account lab on port 18811
   (override `MULTI_ACCOUNT_LAB_URL`) with `linked_resource` and `upstream_account`
   tools. The isolated lab copy is `/private/tmp/mcpjam-multi-account-lab`.
+
+Rerunning an edited tool call from the trace view is disabled for a call that
+ran on a specific account: rerun resolves a server, not a connection, so it
+would replay through the default credential. Threading the connection through
+`tools/execute` is a follow-up.
 
 A full signed-in browser walkthrough and production vault integration have not
 been exercised. Unit/integration tests cover their account-management paths; the
