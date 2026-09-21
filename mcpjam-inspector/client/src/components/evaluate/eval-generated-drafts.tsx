@@ -409,8 +409,8 @@ export function EvalGeneratedDrafts({
                             <li key={addition.id}>
                               <span className="font-mono text-[11px]">
                                 {addition.path}
-                              </span>{" "}
-                              — {addition.explanation}
+                              </span>
+                              : {addition.explanation}
                             </li>
                           ))}
                         </ul>
