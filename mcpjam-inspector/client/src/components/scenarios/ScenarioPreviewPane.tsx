@@ -123,7 +123,7 @@ function PreviewFrame({
     return (
       <PreviewEmptyState
         title="This flow can't finish inside the preview"
-        body="The preview navigated away from the scenario, which an OAuth sign-in does. Open it in a real browser tab to complete the flow."
+        body="The preview navigated away from the scenario. An OAuth sign-in does this. Open it in a real browser tab to complete the flow."
         link={link}
         onRetry={() => setNavigatedAway(false)}
       />

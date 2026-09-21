@@ -599,7 +599,7 @@ export function UserTestingScenarioDetail({
                session (BB-176). The visible label stays short; the hover and
                accessible name carry the rest. */
             title="Opens this study exactly as a tester sees it, in a new tab"
-            aria-label="Open preview, this study as a tester sees it"
+            aria-label="Open preview: this study as a tester sees it"
           >
             <Eye className="mr-1.5 size-3.5" />
             Open preview

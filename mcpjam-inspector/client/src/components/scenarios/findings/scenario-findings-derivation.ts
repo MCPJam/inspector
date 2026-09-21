@@ -297,7 +297,7 @@ export function deriveScenarioFindingsFootnotes(
     notes.push(
       `${model.unanalyzedCount} session${
         model.unanalyzedCount === 1 ? "" : "s"
-      } not analyzed yet, in no persona above`,
+      } not analyzed yet and in no persona above`,
     );
   }
   return notes;

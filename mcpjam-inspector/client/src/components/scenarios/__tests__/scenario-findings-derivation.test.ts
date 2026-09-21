@@ -249,7 +249,7 @@ describe("deriveScenarioFindingsFootnotes", () => {
       sessionCount: 2,
     });
     expect(deriveScenarioFindingsFootnotes(one)).toContain(
-      "1 session not analyzed yet, in no persona above"
+      "1 session not analyzed yet and in no persona above"
     );
 
     const many = deriveScenarioFindingsModel({
@@ -260,7 +260,7 @@ describe("deriveScenarioFindingsFootnotes", () => {
       sessionCount: 2,
     });
     expect(deriveScenarioFindingsFootnotes(many)).toContain(
-      "2 sessions not analyzed yet, in no persona above"
+      "2 sessions not analyzed yet and in no persona above"
     );
   });
 

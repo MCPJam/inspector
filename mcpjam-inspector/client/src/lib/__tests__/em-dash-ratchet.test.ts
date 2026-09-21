@@ -244,7 +244,7 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/ui-playground/PlaygroundLeft.tsx", 2],
   ["components/ui/chart.tsx", 1],
   ["components/ui/error-card.tsx", 1],
-  ["components/UserTestingTab.tsx", 5],
+  ["components/UserTestingTab.tsx", 4],
   ["components/webmcp-inspector/ToolsPanel.tsx", 4],
   ["components/webmcp-inspector/WebmcpInspectorTab.tsx", 7],
   ["components/what-is-mcp/what-is-mcp-guide-data.ts", 13],

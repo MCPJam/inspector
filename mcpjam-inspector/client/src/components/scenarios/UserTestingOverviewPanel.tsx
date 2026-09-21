@@ -202,8 +202,8 @@ function LoadFailureState({
         Couldn&apos;t show your scenarios
       </h2>
       <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-        The list failed to render. Reload the page. Nothing has happened to your
-        scenarios.
+        The list failed to render. Reload the page. A render failure isn&apos;t
+        a sign that your scenarios changed.
       </p>
       <Button variant="outline" className="mt-5" onClick={onCreateScenario}>
         <Plus className="mr-1.5 size-4" />
