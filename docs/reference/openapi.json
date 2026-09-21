@@ -33286,9 +33286,10 @@
                 "sessionsRateLimited",
                 "partialRead",
                 "toolCatalogMissing",
-                "mechanismsRejected"
+                "mechanismsRejected",
+                "analysisUnavailable"
               ],
-              "description": "`sessionScanCapped`, `budgetExhausted`, `transcriptMissing`, `contextTooLarge`, `extractionRejected`, `chainUnmeasured`, `judgeNotRun`, `sessionsWithdrawn`, `sessionsRateLimited`, `partialRead`, `toolCatalogMissing`, `mechanismsRejected`"
+              "description": "`sessionScanCapped`, `budgetExhausted`, `transcriptMissing`, `contextTooLarge`, `extractionRejected`, `chainUnmeasured`, `judgeNotRun`, `sessionsWithdrawn`, `sessionsRateLimited`, `partialRead`, `toolCatalogMissing`, `mechanismsRejected`, `analysisUnavailable`"
             }
           },
           "outcomePhrase": {
@@ -33486,9 +33487,10 @@
                 "sessionsRateLimited",
                 "partialRead",
                 "toolCatalogMissing",
-                "mechanismsRejected"
+                "mechanismsRejected",
+                "analysisUnavailable"
               ],
-              "description": "`sessionScanCapped`, `budgetExhausted`, `transcriptMissing`, `contextTooLarge`, `extractionRejected`, `chainUnmeasured`, `judgeNotRun`, `sessionsWithdrawn`, `sessionsRateLimited`, `partialRead`, `toolCatalogMissing`, `mechanismsRejected`"
+              "description": "`sessionScanCapped`, `budgetExhausted`, `transcriptMissing`, `contextTooLarge`, `extractionRejected`, `chainUnmeasured`, `judgeNotRun`, `sessionsWithdrawn`, `sessionsRateLimited`, `partialRead`, `toolCatalogMissing`, `mechanismsRejected`, `analysisUnavailable`"
             }
           },
           "disclosure": {
