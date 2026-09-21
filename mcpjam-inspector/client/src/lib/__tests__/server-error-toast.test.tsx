@@ -29,6 +29,13 @@ afterEach(() => {
 });
 
 describe("toastServerConnectionFailure", () => {
+  it.each(["server", "connect", "try"])("retains attribution for the name %s even when it appears in generic copy", async (name) => {
+    render(<Toaster />);
+    toastServerConnectionFailure(name, "Request failed (500)");
+    expect(await screen.findByText(name, { exact: true })).toBeInTheDocument();
+    expect(screen.getByText(ERROR_MESSAGES.connectionFailed)).toBeInTheDocument();
+  });
+
   it("puts the server in the title and the failure under it", async () => {
     // One colon-spliced line made the server name and the failure compete for
     // the same weight, with the error icon aligned against neither.

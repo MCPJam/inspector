@@ -1392,6 +1392,19 @@ describe("mcp-oauth", () => {
       });
     });
 
+    it("keeps callback state usable if legacy cleanup cannot write to storage", async () => {
+      localStorage.setItem("mcp-oauth-flow-state-readonly", JSON.stringify({
+        version: 1, registrationStrategy: "dcr", state: {
+          recordedIssuer: "https://issuer.example", currentStep: "authorization_request",
+          codeVerifier: "callback-verifier", state: "callback-state",
+        },
+      }));
+      const { resolveStoredIssuer } = await import("../mcp-oauth");
+      const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("quota exceeded"); });
+      try { expect(resolveStoredIssuer("readonly")).toBe("https://issuer.example"); }
+      finally { write.mockRestore(); }
+    });
+
     it("removes legacy persisted tokens while preserving issuer and redirect state", async () => {
       localStorage.setItem("mcp-oauth-flow-state-legacy", JSON.stringify({
         version: 1,

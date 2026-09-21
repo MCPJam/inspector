@@ -7,10 +7,7 @@ import {
   type OAuthTraceStepSnapshot,
   type OAuthTraceStepStatus,
 } from "@mcpjam/sdk/browser";
-import {
-  sanitizeOAuthTraceValue,
-  traceOAuthErrorMessage,
-} from "./trace-redaction";
+import { traceOAuthErrorMessage } from "./trace-redaction";
 
 export type OAuthTraceSource =
   | "interactive_connect"
@@ -229,6 +226,45 @@ function buildPersistableTrace(
   });
 }
 
+// A storage allowlist: return authored identifiers, never an input string.
+const STORED_TRACE_STEPS: readonly OAuthFlowStep[] = [
+  "idle", "request_without_token", "received_401_unauthorized", "discovery_start",
+  "request_resource_metadata", "received_resource_metadata",
+  "request_authorization_server_metadata", "received_authorization_server_metadata",
+  "cimd_prepare", "cimd_fetch_request", "cimd_metadata_response",
+  "request_client_registration", "received_client_credentials", "generate_pkce_parameters",
+  "authorization_request", "received_authorization_code", "token_request",
+  "received_access_token", "authenticated_mcp_request", "complete",
+  "verify_list_tools", "verify_call_tool",
+];
+
+/** Only protocol progress crosses a reload; arbitrary diagnostics stay in memory. */
+function traceForStorage(trace: OAuthTrace): OAuthTrace {
+  const step = (value: OAuthFlowStep): OAuthFlowStep =>
+    STORED_TRACE_STEPS.find((known) => known === value) ?? "idle";
+  const timestamp = (value: number | undefined): number | undefined =>
+    typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return {
+    version: 1,
+    source: trace.source === "callback" ? "callback"
+      : trace.source === "refresh" ? "refresh"
+      : trace.source === "hosted_callback" ? "hosted_callback"
+      : "interactive_connect",
+    currentStep: step(trace.currentStep),
+    steps: trace.steps.map((entry) => ({
+      step: step(entry.step),
+      title: getStepInfo(step(entry.step)).title,
+      status: entry.status === "success" ? "success"
+        : entry.status === "error" ? "error" : "pending",
+      startedAt: timestamp(entry.startedAt) ?? 0,
+      completedAt: timestamp(entry.completedAt),
+      recovered: entry.recovered === true,
+      recoveredAt: timestamp(entry.recoveredAt),
+    })),
+    httpHistory: [],
+  };
+}
+
 export function createOAuthTrace(input: {
   source: OAuthTraceSource;
   serverName?: string;
@@ -276,7 +312,9 @@ export function loadOAuthTrace(serverName: string): OAuthTrace | undefined {
     parsed.httpHistory = Array.isArray(parsed.httpHistory)
       ? parsed.httpHistory
       : [];
-    return parsed;
+    const summary = traceForStorage(parsed);
+    saveOAuthTrace(serverName, summary);
+    return summary;
   } catch {
     return undefined;
   }
@@ -300,28 +338,12 @@ export function clearPersistedOAuthTraces(): void {
   }
 }
 
-// Live local diagnostics may remain raw; every storage write must redact.
+// Free-form text, URLs, headers and bodies are never persisted, even locally.
 export function saveOAuthTrace(serverName: string, trace: OAuthTrace): void {
   try {
-    localStorage.setItem(
-      storageKey(serverName),
-      JSON.stringify(sanitizeOAuthTraceValue(buildPersistableTrace(trace))),
-    );
-  } catch (error) {
-    console.warn("Failed to persist OAuth trace with HTTP history.", error);
-
-    try {
-      localStorage.setItem(
-        storageKey(serverName),
-        JSON.stringify(
-          sanitizeOAuthTraceValue(
-            buildPersistableTrace(trace, { dropHttpHistory: true }),
-          ),
-        ),
-      );
-    } catch (retryError) {
-      console.warn("Failed to persist OAuth trace.", retryError);
-    }
+    localStorage.setItem(storageKey(serverName), JSON.stringify(traceForStorage(trace)));
+  } catch {
+    // Diagnostics are optional; storage failures must not interrupt OAuth.
   }
 }
 
@@ -342,7 +364,7 @@ export function saveOAuthTraceToSession(
   try {
     sessionStorage.setItem(
       sessionTraceKey(serverName),
-      JSON.stringify(sanitizeOAuthTraceValue(buildPersistableTrace(trace))),
+      JSON.stringify(traceForStorage(trace)),
     );
   } catch {
     // sessionStorage full or unavailable — trace will be lost across redirect.
@@ -364,7 +386,9 @@ export function loadOAuthTraceFromSession(
     parsed.httpHistory = Array.isArray(parsed.httpHistory)
       ? parsed.httpHistory
       : [];
-    return parsed;
+    const summary = traceForStorage(parsed);
+    saveOAuthTraceToSession(serverName, summary);
+    return summary;
   } catch {
     return undefined;
   }

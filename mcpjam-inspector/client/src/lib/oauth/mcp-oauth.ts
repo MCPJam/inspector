@@ -399,7 +399,12 @@ function loadOAuthFlowSession(
     };
     // Remove credentials left by older versions from disk as well as memory.
     if (JSON.stringify(session) !== raw) {
-      saveOAuthFlowSession(serverName, session);
+      try {
+        saveOAuthFlowSession(serverName, session);
+      } catch {
+        // Storage may be full or read-only. Keep the sanitized in-memory
+        // session usable so migration cannot break callback verification.
+      }
     }
     return session;
   } catch {

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  loadOAuthTrace,
+  loadOAuthTraceFromSession,
   saveOAuthTrace,
   saveOAuthTraceToSession,
   type OAuthTrace,
@@ -11,15 +13,29 @@ describe("OAuth trace persistence", () => {
     sessionStorage.clear();
   });
 
+  it("does not persist unknown protocol identifiers or attacker-supplied titles", () => {
+    const trace = {
+      version: 1, source: "opaque-secret", currentStep: "opaque-secret",
+      steps: [{ step: "opaque-secret", title: "opaque-secret", status: "opaque-secret", startedAt: 1 }],
+      httpHistory: [],
+    } as unknown as OAuthTrace;
+    saveOAuthTrace("unknown", trace);
+    const stored = localStorage.getItem("mcp-oauth-trace-unknown")!;
+    expect(stored).not.toContain("opaque-secret");
+    expect(JSON.parse(stored)).toMatchObject({ currentStep: "idle", steps: [{ step: "idle", status: "pending" }] });
+  });
+
   it.each(["local", "session"])(
-    "redacts credentials before writing %s storage without mutating live diagnostics",
+    "stores only progress in %s storage without mutating live diagnostics",
     (kind) => {
       const trace: OAuthTrace = {
         version: 1,
         source: "interactive_connect",
         serverName: "example",
         currentStep: "token_request",
-        steps: [],
+        error: "unstructured-secret-credential",
+        serverUrl: "https://user:password@example.com/?opaque=unstructured-secret-credential",
+        steps: [{ step: "token_request", title: "unstructured-secret-credential", status: "error", startedAt: 1, error: "unstructured-secret-credential", details: { opaque: "unstructured-secret-credential" } }],
         httpHistory: [
           {
             step: "token_request",
@@ -53,7 +69,9 @@ describe("OAuth trace persistence", () => {
           ? "mcp-oauth-trace-example"
           : "mcp-oauth-session-trace-example",
       )!;
-      expect(stored).toContain("[redacted]");
+      expect(JSON.parse(stored).httpHistory).toEqual([]);
+      expect(JSON.parse(stored).steps[0]).toMatchObject({ step: "token_request", status: "error", startedAt: 1 });
+      expect(stored).not.toContain("unstructured-secret-credential");
       for (const secret of [
         "secret-header-credential",
         "secret-client-credential",
@@ -64,6 +82,12 @@ describe("OAuth trace persistence", () => {
         expect(stored).not.toContain(secret);
       }
       expect(JSON.stringify(trace)).toBe(original);
+      const storage = kind === "local" ? localStorage : sessionStorage;
+      const key = kind === "local" ? "mcp-oauth-trace-example" : "mcp-oauth-session-trace-example";
+      storage.setItem(key, original);
+      const loaded = kind === "local" ? loadOAuthTrace("example") : loadOAuthTraceFromSession("example");
+      expect(loaded?.httpHistory).toEqual([]);
+      expect(storage.getItem(key)).not.toContain("unstructured-secret-credential");
     },
   );
 });
