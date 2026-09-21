@@ -40,11 +40,16 @@ deployment is performed by this implementation.
   switching, stale-delete rejection, reconnect, merge and default promotion checks.
   All six connection HTTP routes rejected unauthenticated requests.
 - `node sdk/scripts/verify-multi-account-lab.mjs` exercises real DCR/PKCE grants,
-  same-email distinct profiles, account-specific linked-resource conversion,
-  upstream selector collisions, invalid selector rejection, token refresh and
-  live profile conformance checks. It expects the multi-account lab on port 18811
-  (override `MULTI_ACCOUNT_LAB_URL`) with `linked_resource` and `upstream_account`
-  tools. The isolated lab copy is `/private/tmp/mcpjam-multi-account-lab`.
+  same-email distinct profiles, account-specific attachment conversion, selector
+  collisions, invalid selector rejection, token refresh and live profile
+  conformance checks. It runs against the email lab — three mailboxes behind one
+  login, source in `MCPJam/mcpjam-multiaccount`, deployed at
+  `https://multiaccount.mcpjam.com`. Point it anywhere with
+  `MULTI_ACCOUNT_LAB_URL` (default `http://127.0.0.1:18811` for a local copy).
+  It needs the lab's `read_attachment` and `create_filter` tools: the first
+  serves different bytes per mailbox under one URI, the second declares its own
+  `account` field, so together they cover credential isolation and the selector
+  collision.
 
 Rerunning an edited tool call from the trace view is disabled for a call that
 ran on a specific account: rerun resolves a server, not a connection, so it

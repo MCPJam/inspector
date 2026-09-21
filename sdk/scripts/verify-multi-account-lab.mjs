@@ -1,4 +1,4 @@
-// Run against the isolated multi-account lab with linked_resource/upstream_account.
+// Run against the email lab (multiaccount.mcpjam.com, or a local copy).
 // Prints assertions only; authorization codes and tokens never leave this process.
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
@@ -50,20 +50,20 @@ async function authorize(accountId) {
     })
   ).json();
 }
-const accounts = ["ws_acme_7f3a91", "ws_side_2b8c04"];
+const accounts = ["mbx_work_7f3a91", "mbx_support_2b8c04"];
 const tokens = await Promise.all(accounts.map(authorize));
 const a = {
   serverId: "lab",
   connectionId: "a".repeat(32),
   key: "lab",
-  label: "Acme",
+  label: "Work",
   isDefault: true,
 };
 const b = {
   serverId: "lab",
   connectionId: "b".repeat(32),
   key: "lab#" + "b".repeat(32),
-  label: "Side",
+  label: "Support",
   isDefault: false,
 };
 const configs = Object.fromEntries(
@@ -92,24 +92,24 @@ try {
   );
   const input = { account: b.connectionId };
   const options = { toolCallId: "side-resource", messages: [] };
-  const raw = await tools.linked_resource.execute(input, options);
-  const output = await tools.linked_resource.toModelOutput({
+  const raw = await tools.read_attachment.execute(input, options);
+  const output = await tools.read_attachment.toModelOutput({
     ...options,
     input,
     output: raw,
   });
   const serialized = JSON.stringify(output);
   const variant = Object.keys(tools).find(
-    (name) => name.startsWith("upstream_account__") && name.endsWith("side")
+    (name) => name.startsWith("create_filter__") && name.endsWith("support")
   );
   assert.ok(variant);
   const echoed = await tools[variant].execute(
-    { account: "upstream-value" },
+    { account: "forward-target" },
     { ...options, toolCallId: "collision" }
   );
-  assert.match(JSON.stringify(echoed), /upstream-value/);
+  assert.match(JSON.stringify(echoed), /forward-target/);
   const before = await (await fetch(base + "/inspect/events")).json();
-  const rejected = await tools.linked_resource.execute(
+  const rejected = await tools.read_attachment.execute(
     { account: "foreign" },
     { ...options, toolCallId: "foreign" }
   );
@@ -144,11 +144,11 @@ try {
   const [aBlob, bBlob] = await Promise.all(
     [a, b].map(
       async (c) =>
-        (await manager.readResource(c.key, { uri: "account://same" }))
+        (await manager.readResource(c.key, { uri: "attachment://latest" }))
           .contents[0].blob
     )
   );
-  assert.notEqual(aBlob, bBlob, "each account must serve its own resource");
+  assert.notEqual(aBlob, bBlob, "each mailbox must serve its own attachment");
   assert.ok(
     serialized.includes(bBlob),
     "B output conversion must read B's resource"
