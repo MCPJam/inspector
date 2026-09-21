@@ -1796,3 +1796,24 @@ export type {
   PairwiseJudge,
   PairwisePreferenceResult,
 } from "./eval-execution-variants.js";
+
+export {
+  captureOpenAIProfile,
+  findOpenAIProfileTool,
+  isOpenAIProfile,
+} from "./openai-profile/capture.js";
+export type {
+  OpenAIProfile,
+  OpenAIProfileCapture,
+} from "./openai-profile/capture.js";
+export {
+  connectionKey,
+  parseConnectionKey,
+} from "./mcp-client-manager/connection-key.js";
+export { mergeConnectionToolsets } from "./mcp-client-manager/multi-connection-tools.js";
+export type {
+  McpToolConnection,
+  ConnectionsByServerId,
+  ConnectionRoutingSnapshot,
+  ConnectionToolMetadata,
+} from "./mcp-client-manager/multi-connection-tools.js";
