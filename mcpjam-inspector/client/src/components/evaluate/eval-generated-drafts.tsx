@@ -82,6 +82,26 @@ function isModelContractError(message: string): boolean {
   }
 }
 
+/** The one line that stands in for the detail, so it says what is inside. */
+function describeDraftNotes(authoring: {
+  issues: ReadonlyArray<{ blocking: boolean; resolution?: string }>;
+  additions: ReadonlyArray<unknown>;
+}): string {
+  const toFix = authoring.issues.filter(
+    (issue) => issue.blocking && !issue.resolution,
+  ).length;
+  const changed = authoring.additions.length;
+  const parts = [
+    toFix === 1 ? "1 thing to fix" : toFix > 1 ? `${toFix} things to fix` : "",
+    changed === 1
+      ? "1 change MCPJam made"
+      : changed > 1
+        ? `${changed} changes MCPJam made`
+        : "",
+  ].filter(Boolean);
+  return parts.length ? parts.join(", ") : "Notes on this case";
+}
+
 export function describeEvalDraftError(message: string): string {
   if (isModelContractError(message))
     return "The model's reply did not match the case contract. Retrying.";
@@ -372,6 +392,21 @@ export function EvalGeneratedDrafts({
                 )}
                 {draft.authoring && (
                   <div className="space-y-3 text-sm">
+                    {/*
+                      One sentence, then everything else folded away. A case
+                      that named two missing tools produced six red paragraphs
+                      and three change notes, each restating the contract, and
+                      the one thing the reader had to do was buried in it. The
+                      detail still has to be reachable — a blocking issue is
+                      cleared by writing in its box — but it is not the first
+                      thing on the page.
+                    */}
+                    {blockedReason && (
+                      <p className="text-destructive">
+                        We could not finish this case. Complete it below before
+                        adding it to the suite.
+                      </p>
+                    )}
                     {draft.authoring.source && (
                       <details>
                         <summary>
@@ -384,7 +419,14 @@ export function EvalGeneratedDrafts({
                         </pre>
                       </details>
                     )}
-                    {draft.authoring.issues.map((issue, index) => (
+                    {(draft.authoring.issues.length > 0 ||
+                      draft.authoring.additions.length > 0) && (
+                      <details className="space-y-3">
+                        <summary className="cursor-pointer text-muted-foreground">
+                          {describeDraftNotes(draft.authoring)}
+                        </summary>
+                        <div className="space-y-3 pt-2">
+                          {draft.authoring.issues.map((issue, index) => (
                       <div key={index}>
                         <p
                           className={
@@ -416,33 +458,31 @@ export function EvalGeneratedDrafts({
                               )
                             }
                           />
-                        )}
-                      </div>
-                    ))}
-                    {draft.authoring.additions.length > 0 && (
-                      // The additions are in the steps above, so this says what
-                      // was added and why. Removing one is a step edit, and
-                      // saving the case is the agreement.
-                      <div className="space-y-1">
-                        <p className="font-medium text-foreground">
-                          {/* Not always additions: the model removes a step
-                              the document asked for when the tool behind it
-                              does not exist. "Added" named half of them. */}
-                          {draft.authoring.additions.length === 1
-                            ? "MCPJam changed this from your document:"
-                            : `MCPJam changed this from your document (${draft.authoring.additions.length}):`}
-                        </p>
-                        <ul className="list-disc space-y-1 pl-5">
-                          {draft.authoring.additions.map((addition) => (
-                            <li key={addition.id}>
-                              <span className="font-mono text-[11px]">
-                                {addition.path}
-                              </span>
-                              : {addition.explanation}
-                            </li>
+                            )}
+                            </div>
                           ))}
-                        </ul>
-                      </div>
+                          {draft.authoring.additions.length > 0 && (
+                            // The changes are already IN the steps above; this
+                            // names them. Not always additions, either: the
+                            // model removes a step whose tool does not exist.
+                            <div className="space-y-1">
+                              <p className="font-medium text-foreground">
+                                What MCPJam changed:
+                              </p>
+                              <ul className="list-disc space-y-1 pl-5">
+                                {draft.authoring.additions.map((addition) => (
+                                  <li key={addition.id}>
+                                    <span className="font-mono text-[11px]">
+                                      {addition.path}
+                                    </span>
+                                    : {addition.explanation}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      </details>
                     )}
                   </div>
                 )}
