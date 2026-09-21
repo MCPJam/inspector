@@ -610,6 +610,12 @@ export function setupAutoUpdaterEvents(): void {
 
   autoUpdater.on("update-not-available", () => {
     log.info("No updates available");
+    // The recovery this process was launched for is over and it produced no
+    // build. Disarm: left standing, the flag would auto-install whatever
+    // downloads NEXT — possibly a different release hours later — and take
+    // the app down without the user asking for it. The marker's own age limit
+    // is meant to prevent exactly that, and cannot once it is in memory.
+    installOnNextDownload = false;
     // A `pending` that ends here produced no installable build — retire it.
     // A `downloaded` one is real and survives a later check; `manual` has
     // already told the user where to go.
@@ -647,6 +653,10 @@ export function setupAutoUpdaterEvents(): void {
       return;
     }
     log.error("Auto-updater error:", error);
+    // A real error also ends the recovery. Only the refused concurrent check
+    // above keeps the flag, because that one says nothing about the download
+    // it collided with — it is still running and can still land.
+    installOnNextDownload = false;
     // Electron lost track of a build that is still staged. Not a download
     // failure and not something the user can fix by clicking again — the only
     // way back is a fresh process, so take it rather than leaving a button

@@ -1195,6 +1195,64 @@ describe("install refused by Electron", () => {
     expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
   });
 
+  it("disarms the hands-free install when the retry finds nothing", async () => {
+    // The relaunch is for ONE install. If that check comes back empty the
+    // recovery is over, and a release that shows up later must not install
+    // itself and take the app down with no click behind it.
+    fsState.files.set(MARKER, JSON.stringify({ at: Date.now(), attempts: 1 }));
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-not-available");
+
+    // Much later, an unrelated release lands on its own.
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.9.0");
+
+    expect(quitAndInstallMock).not.toHaveBeenCalled();
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toEqual(
+      expect.objectContaining({ kind: "downloaded", version: "3.9.0" }),
+    );
+  });
+
+  it("disarms the hands-free install after an updater error", async () => {
+    fsState.files.set(MARKER, JSON.stringify({ at: Date.now(), attempts: 1 }));
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("error", new Error("network is offline"));
+
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.9.0");
+
+    expect(quitAndInstallMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the hands-free install when a concurrent check is refused", async () => {
+    // That error is about the POLL that collided, not the download it
+    // collided with — which is still running and can still land.
+    fsState.files.set(MARKER, JSON.stringify({ at: Date.now(), attempts: 1 }));
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent(
+      "error",
+      Object.assign(new Error("refused"), { domain: "RACCommandErrorDomain" }),
+    );
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores a marker left over from an older session", async () => {
     fsState.files.set(MARKER, JSON.stringify({ at: Date.now() - 60 * 60_000 }));
     const window = createWindow();
