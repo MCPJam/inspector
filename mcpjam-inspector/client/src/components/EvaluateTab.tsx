@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { createElement } from "react";
 import { ModelDisplayNamesContext } from "@/lib/model-display-name";
 import { normalizeGeneratedDraft } from "@/lib/evals/normalize-generated-draft";
@@ -483,7 +484,7 @@ function EvaluateTabContent({
   const handleExcalidrawQuickstart = useCallback(async () => {
     if (!handleConnect || isQuickstartRunning) return;
     if (!projectId) {
-      toast.error("Select or create a project before running the quickstart.");
+      toast.error(ERROR_MESSAGES.selectOrCreateAProjectBeforeRunningTheQuickstart);
       return;
     }
     setIsQuickstartRunning(true);
@@ -568,7 +569,7 @@ function EvaluateTabContent({
             toast.error(
               getBillingErrorMessage(
                 error,
-                "Suite created, but attaching its environments failed",
+                ERROR_MESSAGES.suiteCreatedButAttachingItsEnvironmentsFailed,
               ),
             );
           }
@@ -580,7 +581,7 @@ function EvaluateTabContent({
           suiteId: createdSuite._id,
         });
       } catch (error) {
-        toast.error(getBillingErrorMessage(error, "Failed to create suite"));
+        toast.error(getBillingErrorMessage(error, ERROR_MESSAGES.failedToCreateSuite));
         throw error;
       }
     },

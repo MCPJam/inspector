@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState } from "react";
 import { Plus, Loader2, Server } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -58,7 +59,7 @@ export function HostIndexPage({
       toast.success(`Client duplicated`);
       onSelectHost(hostId);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to duplicate client");
+      toast.error(err instanceof Error ? err.message : ERROR_MESSAGES.failedToDuplicateClient);
     } finally {
       setDuplicatingId(null);
     }

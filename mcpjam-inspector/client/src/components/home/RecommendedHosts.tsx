@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState } from "react";
 import { toast } from "@/lib/toast";
 import { Loader2, Plus } from "lucide-react";
@@ -32,7 +33,7 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
 
   async function handleCreate(hostId: string) {
     if (!projectId) {
-      toast.error("Select a project before creating a client.");
+      toast.error(ERROR_MESSAGES.selectAProjectBeforeCreatingAClient);
       return;
     }
     const catalog =
@@ -41,7 +42,7 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
       ? getCatalogTemplate(catalog, hostId)
       : undefined;
     if (!template) {
-      toast.error("Could not load live client templates.");
+      toast.error(ERROR_MESSAGES.couldNotLoadLiveClientTemplates2);
       return;
     }
     const label =

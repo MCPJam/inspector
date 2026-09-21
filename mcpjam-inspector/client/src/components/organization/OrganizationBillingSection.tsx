@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   isV2PlanCatalog,
   isLegacyTeamEntry,
@@ -864,7 +865,7 @@ export function OrganizationBillingSection({
       ) {
         if (!cancelled) {
           toast.error(
-            "This plan or billing interval is not offered to this organization.",
+            ERROR_MESSAGES.thisPlanOrBillingIntervalIsNotOfferedToThisOrganization,
           );
           onCheckoutIntentConsumed?.();
         }
@@ -885,8 +886,8 @@ export function OrganizationBillingSection({
         if (!cancelled) {
           toast.error(
             !billingStatus.canManageBilling
-              ? "Only organization owners can start checkout."
-              : "Checkout isn't available in this environment.",
+              ? ERROR_MESSAGES.onlyOrganizationOwnersCanStartCheckout
+              : ERROR_MESSAGES.checkoutIsnTAvailableInThisEnvironment,
           );
           onCheckoutIntentConsumed?.();
         }

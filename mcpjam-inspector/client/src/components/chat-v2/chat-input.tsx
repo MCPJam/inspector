@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useRef,
   useState,
@@ -1074,7 +1075,7 @@ export function ChatInput({
           setVoiceInputError(
             error instanceof Error
               ? error.message
-              : "Voice transcription failed."
+              : ERROR_MESSAGES.voiceTranscriptionFailed
           );
         })
         .finally(() => {
@@ -1100,12 +1101,12 @@ export function ChatInput({
       !navigator.mediaDevices?.getUserMedia ||
       typeof MediaRecorder === "undefined"
     ) {
-      setVoiceInputError("Voice input is not supported in this browser.");
+      setVoiceInputError(ERROR_MESSAGES.voiceInputIsNotSupportedInThisBrowser);
       return;
     }
 
     if (voiceBudgetExhausted) {
-      setVoiceInputError("You've used today's voice budget.");
+      setVoiceInputError(ERROR_MESSAGES.youVeUsedTodaySVoiceBudget);
       return;
     }
 
@@ -1142,7 +1143,7 @@ export function ChatInput({
         recordedAudioChunksRef.current = [];
         if (!mountedRef.current) return;
         setVoiceInputState("idle");
-        setVoiceInputError("Voice input recording failed. Try again.");
+        setVoiceInputError(ERROR_MESSAGES.voiceInputRecordingFailedTryAgain);
       };
 
       recorder.onstop = () => {
@@ -1171,7 +1172,7 @@ export function ChatInput({
       mediaRecorderRef.current = null;
       setVoiceInputState("idle");
       setVoiceInputError(
-        error instanceof Error ? error.message : "Could not start voice input."
+        error instanceof Error ? error.message : ERROR_MESSAGES.couldNotStartVoiceInput
       );
     }
   }, [
@@ -1208,7 +1209,7 @@ export function ChatInput({
       mediaRecorderRef.current = null;
       setVoiceInputState("idle");
       setVoiceInputError(
-        error instanceof Error ? error.message : "Could not stop voice input."
+        error instanceof Error ? error.message : ERROR_MESSAGES.couldNotStopVoiceInput
       );
       return;
     }

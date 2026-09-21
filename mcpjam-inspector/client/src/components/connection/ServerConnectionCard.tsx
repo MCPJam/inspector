@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useState,
   useEffect,
@@ -477,7 +478,7 @@ export function ServerConnectionCard({
       const errorMessage =
         error instanceof Error ? error.message : "Failed to create tunnel";
       if (errorMessage.includes("No access token available")) {
-        toast.error("Sign in to create tunnels");
+        toast.error(ERROR_MESSAGES.signInToCreateTunnels);
       } else {
         toast.error(`Tunnel creation failed: ${errorMessage}`);
       }
@@ -690,7 +691,7 @@ export function ServerConnectionCard({
                     });
                     if (checked && isHostedHttpReconnectBlocked) {
                       toast.error(
-                        "HTTP servers are not supported in hosted mode"
+                        ERROR_MESSAGES.httpServersAreNotSupportedInHostedMode
                       );
                       return;
                     }
@@ -722,7 +723,7 @@ export function ServerConnectionCard({
                       onClick={() => {
                         if (isHostedHttpReconnectBlocked) {
                           toast.error(
-                            "HTTP servers are not supported in hosted mode"
+                            ERROR_MESSAGES.httpServersAreNotSupportedInHostedMode
                           );
                           return;
                         }
@@ -872,7 +873,7 @@ export function ServerConnectionCard({
                           // well as unsafe.
                           if (server.hasHeaders || server.hasBearerToken) {
                             toast.error(
-                              "This server uses credentials that can't be shared. Organization entries carry only the address and how to sign in."
+                              ERROR_MESSAGES.thisServerUsesCredentialsThatCanTBeSharedOrganizationEntriesCarry
                             );
                             return;
                           }

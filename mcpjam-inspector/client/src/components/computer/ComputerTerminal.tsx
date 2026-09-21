@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import {
@@ -334,7 +335,7 @@ export function ComputerTerminal({
       const files = Array.from(e.dataTransfer?.files ?? []);
       if (files.length === 0) return;
       if (state !== "connected") {
-        toast.error("Connect the terminal first, then drop files.");
+        toast.error(ERROR_MESSAGES.connectTheTerminalFirstThenDropFiles);
         return;
       }
       setUploading(true);
@@ -371,7 +372,7 @@ export function ComputerTerminal({
           new TextEncoder().encode(`\x15ls -la ${quotedDir}/\n`)
         );
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Upload failed.");
+        toast.error(err instanceof Error ? err.message : ERROR_MESSAGES.uploadFailed);
       } finally {
         setUploading(false);
       }

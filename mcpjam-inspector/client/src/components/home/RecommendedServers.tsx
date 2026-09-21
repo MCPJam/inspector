@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "@/lib/toast";
@@ -64,7 +65,7 @@ export function RecommendedServers({
 
   async function handleConnect(server: RecommendedServer) {
     if (!projectId) {
-      toast.error("Select a project before connecting a server.");
+      toast.error(ERROR_MESSAGES.selectAProjectBeforeConnectingAServer);
       return;
     }
     setConnectingUrl(server.url);

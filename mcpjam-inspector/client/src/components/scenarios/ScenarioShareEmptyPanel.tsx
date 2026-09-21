@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * {@link ScenarioShareEmptyPanel} — the Insights empty state, which offers a
  * self-serve run plus the same invite / copy-link actions.
@@ -50,7 +51,7 @@ function useScenarioShareInvite(scenario: ScenarioSettings) {
     if (!shareLink) return;
     const ok = await copyToClipboard(shareLink);
     if (ok) toast.success("Link copied");
-    else toast.error("Failed to copy share link");
+    else toast.error(ERROR_MESSAGES.failedToCopyShareLink);
   };
 
   const handleInvite = async () => {
@@ -66,7 +67,7 @@ function useScenarioShareInvite(scenario: ScenarioSettings) {
       setInviteOpen(false);
       toast.success(`Invited ${normalizedEmail}`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to invite");
+      toast.error(error instanceof Error ? error.message : ERROR_MESSAGES.failedToInvite);
     } finally {
       setIsInviting(false);
     }

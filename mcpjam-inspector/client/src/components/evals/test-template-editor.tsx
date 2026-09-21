@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useServerActionsOptional } from "@/state/server-actions-context";
 import {
   loadEvalToolMetadata,
@@ -1198,7 +1199,7 @@ export function TestTemplateEditor({
       setDeleteCaseOpen(false);
     } catch (error) {
       console.error("Failed to delete test case:", error);
-      toast.error("Failed to delete test case");
+      toast.error(ERROR_MESSAGES.failedToDeleteTestCase);
     } finally {
       setIsDeletingCase(false);
     }
@@ -2547,7 +2548,7 @@ export function TestTemplateEditor({
     if (!validateSteps(editForm.steps)) {
       toast.error(
         getStepsBlockReason(editForm.steps) ??
-          "Fix the test configuration before saving.",
+          ERROR_MESSAGES.fixTheTestConfigurationBeforeSaving,
       );
       return false;
     }
@@ -2586,7 +2587,7 @@ export function TestTemplateEditor({
       onDraftSaved?.(newTestCaseId);
     } catch (error) {
       console.error("Failed to create test case:", error);
-      toast.error(getBillingErrorMessage(error, "Failed to create test case"));
+      toast.error(getBillingErrorMessage(error, ERROR_MESSAGES.failedToCreateTestCase));
       throw error;
     } finally {
       setIsSavingDraft(false);
@@ -2619,7 +2620,7 @@ export function TestTemplateEditor({
     if (!validateSteps(editForm.steps)) {
       toast.error(
         getStepsBlockReason(editForm.steps) ??
-          "Fix the test configuration before saving.",
+          ERROR_MESSAGES.fixTheTestConfigurationBeforeSaving,
       );
       return false;
     }
@@ -2651,7 +2652,7 @@ export function TestTemplateEditor({
       return true;
     } catch (error) {
       console.error("Failed to save:", error);
-      toast.error(getBillingErrorMessage(error, "Failed to save changes"));
+      toast.error(getBillingErrorMessage(error, ERROR_MESSAGES.failedToSaveChanges));
       throw error;
     }
   };
@@ -2712,7 +2713,7 @@ export function TestTemplateEditor({
             "Changes could not be saved. Edit again or retry.",
           );
           toast.error(
-            getBillingErrorMessage(error, "Failed to save evaluator changes"),
+            getBillingErrorMessage(error, ERROR_MESSAGES.failedToSaveEvaluatorChanges),
             {
               action: { label: "Retry", onClick: () => enqueue(true) },
             },
@@ -3000,7 +3001,7 @@ export function TestTemplateEditor({
       Boolean,
     );
     if (runModelValues.length === 0) {
-      toast.error("Select at least one model to run.");
+      toast.error(ERROR_MESSAGES.selectAtLeastOneModelToRun);
       return;
     }
 
@@ -3013,14 +3014,14 @@ export function TestTemplateEditor({
     if (!validateSteps(editForm.steps)) {
       toast.error(
         getStepsBlockReason(editForm.steps) ??
-          "Fix the test configuration before running.",
+          ERROR_MESSAGES.fixTheTestConfigurationBeforeRunning,
       );
       return;
     }
 
     const suiteServers = normalizeSuiteServerRefs(quickRunSuiteServers);
     if (suiteServers.length === 0) {
-      toast.error("No MCP servers are configured for this suite.");
+      toast.error(ERROR_MESSAGES.noMcpServersAreConfiguredForThisSuite);
       return;
     }
     const disconnectedSuiteServers = suiteServers.filter(
@@ -3068,7 +3069,7 @@ export function TestTemplateEditor({
         toast.error(
           getBillingErrorMessage(
             error,
-            "Failed to save test case before running",
+            ERROR_MESSAGES.failedToSaveTestCaseBeforeRunning,
           ),
         );
         return;
@@ -3167,7 +3168,7 @@ export function TestTemplateEditor({
       toast.error(
         getBillingErrorMessage(
           preparationFailures[0]?.error,
-          "Failed to prepare compare run",
+          ERROR_MESSAGES.failedToPrepareCompareRun,
         ),
       );
       return;
@@ -3263,7 +3264,7 @@ export function TestTemplateEditor({
           modelValue,
           modelLabel,
           iteration: null,
-          error: getBillingErrorMessage(error, "Failed to prepare compare run"),
+          error: getBillingErrorMessage(error, ERROR_MESSAGES.failedToPrepareCompareRun),
           startedAt: null,
           completedAt: Date.now(),
         });
@@ -3525,7 +3526,7 @@ export function TestTemplateEditor({
             }
             const message = getBillingErrorMessage(
               error,
-              "Failed to run model",
+              ERROR_MESSAGES.failedToRunModel,
             );
             const failedRecord: CompareRunRecord = {
               ...buildCompareRunRecord({
@@ -3583,7 +3584,7 @@ export function TestTemplateEditor({
           } completed successfully.`,
         );
       } else {
-        toast.error("Compare run failed for all selected models.");
+        toast.error(ERROR_MESSAGES.compareRunFailedForAllSelectedModels);
       }
     } finally {
       compareHandlesInFlightRef.current -= 1;
@@ -3607,7 +3608,7 @@ export function TestTemplateEditor({
     } catch (error) {
       console.error("Failed to clear latest result:", error);
       toast.error(
-        getBillingErrorMessage(error, "Failed to clear latest result"),
+        getBillingErrorMessage(error, ERROR_MESSAGES.failedToClearLatestResult),
       );
     }
   };
@@ -3952,7 +3953,7 @@ export function TestTemplateEditor({
                     toast.error(
                       error instanceof Error
                         ? error.message
-                        : "Could not undo edit",
+                        : ERROR_MESSAGES.couldNotUndoEdit,
                     );
                   }
                 }}

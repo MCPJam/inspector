@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useViewportReporter } from "../browser-pane/use-viewport-reporter";
 import {
   useCallback,
@@ -243,7 +244,7 @@ export function useBrowserSession({
           setNotice(TAKEOVER_RETRY_NOTICE);
           return;
         case "no_session":
-          setError("This browser is no longer running.");
+          setError(ERROR_MESSAGES.thisBrowserIsNoLongerRunning);
           return;
         case "unsupported":
           // No message, because the latch IS the message: the controls this
@@ -253,7 +254,7 @@ export function useBrowserSession({
           setUnsupported(true);
           return;
         default:
-          setError(outcome.detail ?? "The browser did not accept that.");
+          setError(outcome.detail ?? ERROR_MESSAGES.theBrowserDidNotAcceptThat);
       }
     })();
   }, []);
@@ -269,7 +270,7 @@ export function useBrowserSession({
     void current
       .resume()
       .catch(() => {
-        if (isCurrent()) setError("Could not hand the browser back.");
+        if (isCurrent()) setError(ERROR_MESSAGES.couldNotHandTheBrowserBack);
       })
       .finally(async () => {
         if (!isCurrent()) return;

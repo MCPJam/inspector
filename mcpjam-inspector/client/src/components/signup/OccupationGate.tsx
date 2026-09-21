@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { FormEvent, useState } from "react";
 import { useMutation } from "convex/react";
 import { usePostHog } from "posthog-js/react";
@@ -33,7 +34,7 @@ export function OccupationGate({ userId, email }: OccupationGateProps) {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!trimmedOccupation) {
-      setError("Enter your role to continue.");
+      setError(ERROR_MESSAGES.enterYourRoleToContinue);
       return;
     }
 
@@ -57,7 +58,7 @@ export function OccupationGate({ userId, email }: OccupationGateProps) {
       }
     } catch (err) {
       console.error("[signup] Failed to save occupation", err);
-      setError("Could not save your occupation. Please try again.");
+      setError(ERROR_MESSAGES.couldNotSaveYourOccupationPleaseTryAgain);
     } finally {
       setIsSubmitting(false);
     }

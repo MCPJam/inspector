@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -439,7 +440,7 @@ export function ResourcesTab({
   const readResource = async (uri: string) => {
     if (!serverName) return;
     if (!isServerConnected) {
-      setError("Connect this server before reading resources.");
+      setError(ERROR_MESSAGES.connectThisServerBeforeReadingResources);
       return;
     }
     setLoading(true);
@@ -511,7 +512,7 @@ export function ResourcesTab({
   const readTemplateResource = useCallback(async () => {
     if (!selectedTemplate || !serverName) return;
     if (!isServerConnected) {
-      setTemplateError("Connect this server before reading resources.");
+      setTemplateError(ERROR_MESSAGES.connectThisServerBeforeReadingResources);
       return;
     }
 

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useId, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -170,7 +171,7 @@ export function XaaCredentialFields({
       setRevealError(
         error instanceof Error
           ? error.message
-          : "Failed to reveal client secret"
+          : ERROR_MESSAGES.failedToRevealClientSecret
       );
     } finally {
       setIsRevealing(false);

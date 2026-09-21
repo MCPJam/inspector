@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import {
   FormEvent,
@@ -943,7 +944,7 @@ export function ChatTabV2({
         "[ChatTabV2] Failed to sync chat history before send",
         error
       );
-      toast.error("Failed to sync chat history. Try again.");
+      toast.error(ERROR_MESSAGES.failedToSyncChatHistoryTryAgain);
       return false;
     }
     if (detail) {
@@ -1030,7 +1031,7 @@ export function ChatTabV2({
           setActiveHistorySessionId(null);
         }
         console.error("[ChatTabV2] Failed to load chat session", err);
-        toast.error("Failed to load chat history.");
+        toast.error(ERROR_MESSAGES.failedToLoadChatHistory);
       } finally {
         if (historySelectionRequestIdRef.current === selectionRequestId) {
           setLoadingHistorySessionId(null);
@@ -1893,7 +1894,7 @@ export function ChatTabV2({
         });
       } catch (error) {
         console.error("[ChatTabV2] Failed to rewind to message", error);
-        toast.error("Couldn't apply that edit. Try again.");
+        toast.error(ERROR_MESSAGES.couldnTApplyThatEditTryAgain);
         return false;
       }
       // `null` means the rewind was refused — a turn started under the editor

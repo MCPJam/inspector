@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { X, ChevronDown, ChevronUp, SquareSlash, Loader2 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import type { SkillResult, SelectedSkillFile, SkillFile } from "./skill-types";
@@ -52,7 +53,7 @@ export function SkillResultCard({
           setFiles(fetchedFiles);
         })
         .catch((err) => {
-          setError(err.message || "Failed to load files");
+          setError(err.message || ERROR_MESSAGES.failedToLoadFiles);
         })
         .finally(() => {
           setLoading(false);

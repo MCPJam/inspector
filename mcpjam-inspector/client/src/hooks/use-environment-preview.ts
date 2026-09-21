@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "@/lib/session-token";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
@@ -191,7 +192,7 @@ export function useEnvironmentPreview(
             preview: null,
             error: readEnvironmentErrorPayload(
               payload,
-              "This environment couldn't be resolved."
+              ERROR_MESSAGES.thisEnvironmentCouldnTBeResolved
             ),
             isLoading: false,
           });

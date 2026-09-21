@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useCallback,
   useContext,
@@ -1340,7 +1341,7 @@ export function ServersTab({
   const handleJsonImport = (servers: ServerFormData[]) => {
     if (isAppBootstrapping) {
       toast.error(
-        appReadyMessage ?? "App is still loading. Try again in a moment."
+        appReadyMessage ?? ERROR_MESSAGES.appIsStillLoadingTryAgainInAMoment
       );
       return;
     }
@@ -1354,7 +1355,7 @@ export function ServersTab({
     (formData: ServerFormData) => {
       if (isAppBootstrapping) {
         toast.error(
-          appReadyMessage ?? "App is still loading. Try again in a moment."
+          appReadyMessage ?? ERROR_MESSAGES.appIsStillLoadingTryAgainInAMoment
         );
         return;
       }
@@ -1374,7 +1375,7 @@ export function ServersTab({
     ) => {
       if (isAppBootstrapping) {
         toast.error(
-          appReadyMessage ?? "App is still loading. Try again in a moment."
+          appReadyMessage ?? ERROR_MESSAGES.appIsStillLoadingTryAgainInAMoment
         );
         return;
       }
@@ -1430,7 +1431,7 @@ export function ServersTab({
         toast.error(
           err instanceof Error
             ? `Server added, but saving its protocol version failed: ${err.message}`
-            : "Server added, but saving its protocol version failed."
+            : ERROR_MESSAGES.serverAddedButSavingItsProtocolVersionFailed
         );
       } finally {
         isApplyingAddProtocolPinRef.current = false;
@@ -1460,7 +1461,7 @@ export function ServersTab({
   const handleQuickConnect = async (server: EnrichedRegistryServer) => {
     if (isAppBootstrapping) {
       toast.error(
-        appReadyMessage ?? "App is still loading. Try again in a moment."
+        appReadyMessage ?? ERROR_MESSAGES.appIsStillLoadingTryAgainInAMoment
       );
       return;
     }
@@ -1573,7 +1574,7 @@ export function ServersTab({
     if (serverCreationGate.isDenied) {
       toast.error(
         serverCreationGate.denialMessage ??
-          "Upgrade required to add more servers"
+          ERROR_MESSAGES.upgradeRequiredToAddMoreServers
       );
       return;
     }
@@ -1710,7 +1711,7 @@ export function ServersTab({
     if (serverCreationGate.isDenied) {
       toast.error(
         serverCreationGate.denialMessage ??
-          "Upgrade required to add more servers"
+          ERROR_MESSAGES.upgradeRequiredToAddMoreServers
       );
       return;
     }

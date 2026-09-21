@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   Dialog,
   DialogContent,
@@ -103,7 +104,7 @@ export function LocalBrowserConsentGate({
     setError(null);
     try {
       const ok = await onAllow();
-      if (!ok) setError("Couldn't finish Browser setup. Try again.");
+      if (!ok) setError(ERROR_MESSAGES.couldnTFinishBrowserSetupTryAgain);
       track("local_browser_consent_granted", {
         location,
         outcome: ok ? "stored" : "failed",
@@ -112,7 +113,7 @@ export function LocalBrowserConsentGate({
       setError(
         err instanceof Error
           ? err.message
-          : "Couldn't finish Browser setup. Try again.",
+          : ERROR_MESSAGES.couldnTFinishBrowserSetupTryAgain,
       );
       track("local_browser_consent_granted", {
         location,

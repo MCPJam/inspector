@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { WidgetPlaceholder } from "@mcpjam/chat-ui";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { type ToolUIPart, type DynamicToolUIPart, type UITools } from "ai";
@@ -455,11 +456,11 @@ export function PartSwitch({
           return;
         }
         if (res.status === "elicitation_required") {
-          toast.error("Tool requires elicitation (not supported here)");
+          toast.error(ERROR_MESSAGES.toolRequiresElicitationNotSupportedHere);
           return;
         }
         if (res.status === "task_created") {
-          toast.error("Background tasks are not supported here");
+          toast.error(ERROR_MESSAGES.backgroundTasksAreNotSupportedHere);
           return;
         }
         // The run supersedes any manual output edit; anchor metadata to it.
@@ -472,7 +473,7 @@ export function PartSwitch({
           extra: { toolName: toolInfo.toolName },
         });
         if (runSeqRef.current === seq) {
-          toast.error(err instanceof Error ? err.message : "Execution failed");
+          toast.error(err instanceof Error ? err.message : ERROR_MESSAGES.executionFailed);
         }
       } finally {
         if (runSeqRef.current === seq) setIsRunning(false);

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -288,7 +289,7 @@ export function PromptsTab({
       const targetPrompt = promptName ?? selectedPrompt;
       if (!targetPrompt || !serverName) return;
       if (!isServerConnected) {
-        setError("Connect this server before running prompts.");
+        setError(ERROR_MESSAGES.connectThisServerBeforeRunningPrompts);
         return;
       }
 

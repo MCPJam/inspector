@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Suite schedule editor — rendered as a section of the suite settings sheet,
  * behind the `scheduled-evals-enabled` PostHog flag (its own, split out of
@@ -179,7 +180,7 @@ export function ScheduleEditor({
     const effectiveEnvironmentId = args.environmentId ?? draftEnvironmentId;
     if (args.enabled && requiresEnvironmentPin && !effectiveEnvironmentId) {
       toast.error(
-        "Pick which environment scheduled runs should use before enabling."
+        ERROR_MESSAGES.pickWhichEnvironmentScheduledRunsShouldUseBeforeEnabling
       );
       return;
     }
@@ -200,7 +201,7 @@ export function ScheduleEditor({
       toast.success(args.enabled ? "Schedule updated" : "Schedule disabled");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to update schedule"
+        error instanceof Error ? error.message : ERROR_MESSAGES.failedToUpdateSchedule
       );
     } finally {
       setIsSaving(false);

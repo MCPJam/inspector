@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { motion, useReducedMotion, type Variants } from "framer-motion";
 import { Button } from "@mcpjam/design-system/button";
@@ -493,7 +494,7 @@ export function RunOverview({
       })
       .catch((error) => {
         console.error("Failed to delete runs:", error);
-        toast.error("Failed to delete some runs");
+        toast.error(ERROR_MESSAGES.failedToDeleteSomeRuns);
       })
       .finally(() => {
         setDeletingRunId(null);

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useCallback,
   useEffect,
@@ -849,7 +850,7 @@ export function useProjectState({
           toast.error(
             getBillingErrorMessage(
               error,
-              "Some local projects could not be migrated",
+              ERROR_MESSAGES.someLocalProjectsCouldNotBeMigrated,
               canManageBillingForProjectActions,
             ),
           );
@@ -993,7 +994,7 @@ export function useProjectState({
           !hasResolvedProjectOrganizationSelection ||
           organizationId === undefined
         ) {
-          toast.error("Create or join an organization to create projects.");
+          toast.error(ERROR_MESSAGES.createOrJoinAnOrganizationToCreateProjects);
           return "";
         }
         try {
@@ -1012,7 +1013,7 @@ export function useProjectState({
           toast.error(
             getBillingErrorMessage(
               error,
-              "Failed to create project",
+              ERROR_MESSAGES.failedToCreateProject,
               canManageBillingForProjectActions,
             ),
           );
@@ -1025,7 +1026,7 @@ export function useProjectState({
         (!hasResolvedProjectOrganizationSelection ||
           projectOrganizationId === undefined)
       ) {
-        toast.error("Create or join an organization to create projects.");
+        toast.error(ERROR_MESSAGES.createOrJoinAnOrganizationToCreateProjects);
         return "";
       }
 
@@ -1508,7 +1509,7 @@ export function useProjectState({
         const targetProjectId = defaultProject || otherProjectIds[0];
 
         if (!targetProjectId) {
-          toast.error("Cannot delete the only project");
+          toast.error(ERROR_MESSAGES.cannotDeleteTheOnlyProject);
           return false;
         }
 
@@ -1567,7 +1568,7 @@ export function useProjectState({
     async (projectId: string, newName: string) => {
       const sourceProject = effectiveProjects[projectId];
       if (!sourceProject) {
-        toast.error("Project not found");
+        toast.error(ERROR_MESSAGES.projectNotFound);
         return;
       }
 
@@ -1578,7 +1579,7 @@ export function useProjectState({
           !hasResolvedProjectOrganizationSelection ||
           organizationId === undefined
         ) {
-          toast.error("Create or join an organization to create projects.");
+          toast.error(ERROR_MESSAGES.createOrJoinAnOrganizationToCreateProjects);
           return;
         }
         try {
@@ -1605,7 +1606,7 @@ export function useProjectState({
           toast.error(
             getBillingErrorMessage(
               error,
-              "Failed to duplicate project",
+              ERROR_MESSAGES.failedToDuplicateProject,
               canManageBillingForProjectActions,
             ),
           );
@@ -1616,7 +1617,7 @@ export function useProjectState({
           (!hasResolvedProjectOrganizationSelection ||
             projectOrganizationId === undefined)
         ) {
-          toast.error("Create or join an organization to create projects.");
+          toast.error(ERROR_MESSAGES.createOrJoinAnOrganizationToCreateProjects);
           return;
         }
 
@@ -1703,7 +1704,7 @@ export function useProjectState({
     (projectId: string) => {
       const project = effectiveProjects[projectId];
       if (!project) {
-        toast.error("Project not found");
+        toast.error(ERROR_MESSAGES.projectNotFound);
         return;
       }
 
@@ -1729,7 +1730,7 @@ export function useProjectState({
           !hasResolvedProjectOrganizationSelection ||
           organizationId === undefined
         ) {
-          toast.error("Create or join an organization to create projects.");
+          toast.error(ERROR_MESSAGES.createOrJoinAnOrganizationToCreateProjects);
           return;
         }
         try {
@@ -1757,7 +1758,7 @@ export function useProjectState({
           toast.error(
             getBillingErrorMessage(
               error,
-              "Failed to import project",
+              ERROR_MESSAGES.failedToImportProject,
               canManageBillingForProjectActions,
             ),
           );
@@ -1768,7 +1769,7 @@ export function useProjectState({
           (!hasResolvedProjectOrganizationSelection ||
             projectOrganizationId === undefined)
         ) {
-          toast.error("Create or join an organization to create projects.");
+          toast.error(ERROR_MESSAGES.createOrJoinAnOrganizationToCreateProjects);
           return;
         }
         const importedProject: Project = {

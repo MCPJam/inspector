@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect } from "react";
 import { toast } from "@/lib/toast";
 import { track } from "@/lib/analytics";
@@ -73,7 +74,7 @@ export function useCreditTopupReturnFlow({
           clearPendingTopup();
         } catch {
           toast.error(
-            "Credits added, but we couldn't resend your last message. Please send it again."
+            ERROR_MESSAGES.creditsAddedButWeCouldnTResendYourLastMessagePleaseSend
           );
         }
       }

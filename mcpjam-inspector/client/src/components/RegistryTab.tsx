@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useState, useEffect } from "react";
 import {
   Package,
@@ -822,7 +823,7 @@ function OrgRegistrySectionContainer({
         toast.error(
           error instanceof Error
             ? error.message
-            : "Could not disconnect this server."
+            : ERROR_MESSAGES.couldNotDisconnectThisServer
         );
       }
     },
@@ -838,7 +839,7 @@ function OrgRegistrySectionContainer({
       setOrgRemoveTarget(null);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Could not remove this entry."
+        error instanceof Error ? error.message : ERROR_MESSAGES.couldNotRemoveThisEntry
       );
     } finally {
       setOrgRemoving(false);

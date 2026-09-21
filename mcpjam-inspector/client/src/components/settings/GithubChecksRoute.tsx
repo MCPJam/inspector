@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useSettingsDraft } from "./SettingsDraftProvider";
 import { GithubForkCredentialsToggle } from "./github-fork-credentials-toggle";
 import { GithubPrServerOAuthControl } from "./github-pr-server-oauth-control";
@@ -619,7 +620,7 @@ export function GithubChecksRoute({
     // would store a row nobody chose a policy for — the legacy state this whole
     // screen exists to stop creating.
     if (!repo || !suite?.projectId || !pickerPolicy) {
-      toast.error("Pick a repository, a suite, and an outage policy first.");
+      toast.error(ERROR_MESSAGES.pickARepositoryASuiteAndAnOutagePolicyFirst);
       return;
     }
     // Which org this submission belongs to. Compared against the ref after the

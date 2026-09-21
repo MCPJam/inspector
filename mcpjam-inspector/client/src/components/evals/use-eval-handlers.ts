@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useMemo, useState } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "sonner";
@@ -420,7 +421,7 @@ export function useEvalHandlers({
     async (suite: EvalSuite) => {
       const testCases = (await getTestCasesForRerun(suite._id)) as any[];
       if (!testCases || testCases.length === 0) {
-        toast.error("No test cases found in this suite");
+        toast.error(ERROR_MESSAGES.noTestCasesFoundInThisSuite);
         return null;
       }
 
@@ -532,10 +533,10 @@ export function useEvalHandlers({
           // Probe-only suites land here when every probe was skipped above;
           // "add models" would be the wrong prescription for them.
           toast.error(
-            "No tests to run. The suite's render checks are missing their configuration.",
+            ERROR_MESSAGES.noTestsToRunTheSuiteSRenderChecksAreMissingTheir,
           );
         } else {
-          toast.error("No tests to run. Please add models to your test cases.");
+          toast.error(ERROR_MESSAGES.noTestsToRunPleaseAddModelsToYourTestCases);
         }
         return null;
       }
@@ -572,7 +573,7 @@ export function useEvalHandlers({
 
       if (!run.hasServerReplayConfig) {
         toast.error(
-          "This CI run can't be replayed because it doesn't have stored replay config.",
+          ERROR_MESSAGES.thisCiRunCanTBeReplayedBecauseItDoesnTHave,
         );
         return;
       }
@@ -668,7 +669,7 @@ export function useEvalHandlers({
           toast.dismiss(replayToastId);
         } else {
           toast.error(
-            getBillingErrorMessage(error, "Failed to replay eval run"),
+            getBillingErrorMessage(error, ERROR_MESSAGES.failedToReplayEvalRun),
             {
               id: replayToastId,
             },
@@ -781,7 +782,7 @@ export function useEvalHandlers({
         }
         if (options?.stayOnPage)
           throw new Error("Attach a client to this suite before running it.");
-        toast.error("Attach a client to this suite before running it.");
+        toast.error(ERROR_MESSAGES.attachAClientToThisSuiteBeforeRunningIt);
         return;
       }
 
@@ -927,7 +928,7 @@ export function useEvalHandlers({
           : testsPayload;
         if (wantedCaseIds?.length && narrowedTests.length === 0) {
           setRerunningSuiteId(null);
-          toast.error("That case is not in this suite.");
+          toast.error(ERROR_MESSAGES.thatCaseIsNotInThisSuite);
           return;
         }
 
@@ -1146,7 +1147,7 @@ export function useEvalHandlers({
             );
           toast.error(
             getEnvironmentConflictMessage(error) ??
-              getBillingErrorMessage(error, "Failed to start eval run"),
+              getBillingErrorMessage(error, ERROR_MESSAGES.failedToStartEvalRun),
           );
         }
         if (options?.stayOnPage) throw error;
@@ -1221,7 +1222,7 @@ export function useEvalHandlers({
         modelValuesToRun.length === 0 ||
         !getDefaultTestCaseModelValue(testCase)
       ) {
-        toast.error("Add a model first");
+        toast.error(ERROR_MESSAGES.addAModelFirst);
         return null;
       }
 
@@ -1234,7 +1235,7 @@ export function useEvalHandlers({
       );
 
       if (suiteServers.length === 0) {
-        toast.error("Attach a client to this suite before running it.");
+        toast.error(ERROR_MESSAGES.attachAClientToThisSuiteBeforeRunningIt);
         return null;
       }
 
@@ -1311,7 +1312,7 @@ export function useEvalHandlers({
           toast.error(
             getBillingErrorMessage(
               preparationFailures[0]?.error,
-              "Failed to run test case",
+              ERROR_MESSAGES.failedToRunTestCase,
             ),
           );
           return null;
@@ -1425,7 +1426,7 @@ export function useEvalHandlers({
             toast.error(
               getBillingErrorMessage(
                 totalFailedRuns[0]?.error,
-                "Failed to run test case",
+                ERROR_MESSAGES.failedToRunTestCase,
               ),
             );
           }
@@ -1433,7 +1434,7 @@ export function useEvalHandlers({
           toast.error(
             getBillingErrorMessage(
               totalFailedRuns[0]?.error,
-              "Failed to run test case",
+              ERROR_MESSAGES.failedToRunTestCase,
             ),
           );
         }
@@ -1454,7 +1455,7 @@ export function useEvalHandlers({
       } catch (error) {
         console.error("Failed to run test case:", error);
         if (!openEvalIterationWall(error)) {
-          toast.error(getBillingErrorMessage(error, "Failed to run test case"));
+          toast.error(getBillingErrorMessage(error, ERROR_MESSAGES.failedToRunTestCase));
         }
         return null;
       } finally {
@@ -1505,7 +1506,7 @@ export function useEvalHandlers({
       return true;
     } catch (error) {
       console.error("Failed to delete suite:", error);
-      toast.error(getBillingErrorMessage(error, "Failed to delete test suite"));
+      toast.error(getBillingErrorMessage(error, ERROR_MESSAGES.failedToDeleteTestSuite));
       return false;
     } finally {
       setDeletingSuiteId(null);
@@ -1552,7 +1553,7 @@ export function useEvalHandlers({
       } catch (error) {
         console.error("Failed to duplicate suite:", error);
         toast.error(
-          getBillingErrorMessage(error, "Failed to duplicate test suite"),
+          getBillingErrorMessage(error, ERROR_MESSAGES.failedToDuplicateTestSuite),
         );
       } finally {
         setDuplicatingSuiteId(null);
@@ -1630,7 +1631,7 @@ export function useEvalHandlers({
         } else {
           console.error("Failed to cancel run:", stillRunning[0]);
           toast.error(
-            getBillingErrorMessage(stillRunning[0], "Failed to cancel run"),
+            getBillingErrorMessage(stillRunning[0], ERROR_MESSAGES.failedToCancelRun),
           );
         }
       } finally {
@@ -1674,7 +1675,7 @@ export function useEvalHandlers({
       setRunToDelete(null);
     } catch (error) {
       console.error("Failed to delete run:", error);
-      toast.error(getBillingErrorMessage(error, "Failed to delete run"));
+      toast.error(getBillingErrorMessage(error, ERROR_MESSAGES.failedToDeleteRun));
     } finally {
       setDeletingRunId(null);
     }
@@ -1779,7 +1780,7 @@ export function useEvalHandlers({
       setTestCaseToDelete(null);
     } catch (error) {
       console.error("Failed to delete test case:", error);
-      toast.error(getBillingErrorMessage(error, "Failed to delete test case"));
+      toast.error(getBillingErrorMessage(error, ERROR_MESSAGES.failedToDeleteTestCase));
     } finally {
       setDeletingTestCaseId(null);
     }
@@ -1829,7 +1830,7 @@ export function useEvalHandlers({
       } catch (error) {
         console.error("Failed to duplicate test case:", error);
         toast.error(
-          getBillingErrorMessage(error, "Failed to duplicate test case"),
+          getBillingErrorMessage(error, ERROR_MESSAGES.failedToDuplicateTestCase),
         );
         return null;
       } finally {
@@ -1863,7 +1864,7 @@ export function useEvalHandlers({
             "Attach servers to this suite before generating cases.",
           );
         toast.error(
-          "Add at least one server to this suite before generating cases.",
+          ERROR_MESSAGES.addAtLeastOneServerToThisSuiteBeforeGeneratingCases,
         );
         return;
       }
@@ -2037,7 +2038,7 @@ export function useEvalHandlers({
           error_message: rawMessage.slice(0, 200),
         });
         toast.error(
-          getBillingErrorMessage(error, "Failed to generate test cases"),
+          getBillingErrorMessage(error, ERROR_MESSAGES.failedToGenerateTestCases),
         );
       } finally {
         setIsGeneratingTests(false);

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -97,7 +98,7 @@ export function NameEnvironmentDialog({
       onOpenChange(false);
       onNamed?.(named);
     } catch (err) {
-      setError(convexErrMessage(err, "Failed to save the environment."));
+      setError(convexErrMessage(err, ERROR_MESSAGES.failedToSaveTheEnvironment));
     } finally {
       setIsSaving(false);
     }

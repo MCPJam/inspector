@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useState } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
@@ -293,7 +294,7 @@ export function AuthenticationSection({
       setRevealError(
         error instanceof Error
           ? error.message
-          : "Failed to reveal client secret"
+          : ERROR_MESSAGES.failedToRevealClientSecret
       );
     } finally {
       setIsRevealingClientSecret(false);

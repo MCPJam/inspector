@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { Component, useCallback, useState } from "react";
 import { toast } from "@/lib/toast";
 import { track } from "@/lib/analytics";
@@ -159,7 +160,7 @@ export function ComputerView({
           useMCPJamLimitDialogStore.getState().notifyLimitHit();
         } else {
           toast.error(
-            getBillingErrorMessage(err, "Could not start the computer."),
+            getBillingErrorMessage(err, ERROR_MESSAGES.couldNotStartTheComputer),
           );
         }
       } finally {
@@ -177,7 +178,7 @@ export function ComputerView({
       toast.success("Computer deleted.");
     } catch (err) {
       toast.error(
-        getBillingErrorMessage(err, "Could not delete the computer."),
+        getBillingErrorMessage(err, ERROR_MESSAGES.couldNotDeleteTheComputer),
       );
     } finally {
       setDeleting(false);
@@ -194,7 +195,7 @@ export function ComputerView({
       toast.success("Computer hibernated. It'll wake next time you use it.");
     } catch (err) {
       toast.error(
-        getBillingErrorMessage(err, "Could not hibernate the computer."),
+        getBillingErrorMessage(err, ERROR_MESSAGES.couldNotHibernateTheComputer),
       );
     } finally {
       setHibernating(false);
@@ -213,7 +214,7 @@ export function ComputerView({
           : "Nothing to reset.",
       );
     } catch (err) {
-      toast.error(getBillingErrorMessage(err, "Could not reset the computer."));
+      toast.error(getBillingErrorMessage(err, ERROR_MESSAGES.couldNotResetTheComputer));
     } finally {
       setResetting(false);
       setConfirmingReset(false);
@@ -288,13 +289,13 @@ export function ComputerView({
               "execution_failed",
               getBillingErrorMessage(
                 err,
-                "Daily computer start limit reached.",
+                ERROR_MESSAGES.dailyComputerStartLimitReached,
               ),
             );
           }
           throw createInspectorCommandClientError(
             "execution_failed",
-            getBillingErrorMessage(err, "Could not start the computer."),
+            getBillingErrorMessage(err, ERROR_MESSAGES.couldNotStartTheComputer),
           );
         }
       },
@@ -312,7 +313,7 @@ export function ComputerView({
         } catch (err) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            getBillingErrorMessage(err, "Could not hibernate the computer."),
+            getBillingErrorMessage(err, ERROR_MESSAGES.couldNotHibernateTheComputer),
           );
         }
       },
@@ -338,7 +339,7 @@ export function ComputerView({
         } catch (err) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            getBillingErrorMessage(err, "Could not reset the computer."),
+            getBillingErrorMessage(err, ERROR_MESSAGES.couldNotResetTheComputer),
           );
         }
       },
@@ -351,7 +352,7 @@ export function ComputerView({
         } catch (err) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            getBillingErrorMessage(err, "Could not delete the computer."),
+            getBillingErrorMessage(err, ERROR_MESSAGES.couldNotDeleteTheComputer),
           );
         }
       },

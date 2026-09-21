@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { track } from "@/lib/analytics";
 import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
@@ -476,7 +477,7 @@ export function LoggerView({
       );
       toast.success("Logs copied to clipboard");
     } catch {
-      toast.error("Failed to copy logs");
+      toast.error(ERROR_MESSAGES.failedToCopyLogs);
     }
   };
 
@@ -716,11 +717,11 @@ export function LoggerView({
                                     );
                                   else
                                     toast.error(
-                                      res?.error || "Failed to update",
+                                      res?.error || ERROR_MESSAGES.failedToUpdate,
                                     );
                                 })
                                 .catch(() =>
-                                  toast.error("Failed to update"),
+                                  toast.error(ERROR_MESSAGES.failedToUpdate),
                                 );
                             };
 

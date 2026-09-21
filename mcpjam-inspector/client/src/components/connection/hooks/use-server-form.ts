@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState, useEffect, useRef } from "react";
 import {
   ServerFormData,
@@ -908,7 +909,7 @@ export function useServerForm(
       setClientCapabilitiesOverrideError(null);
     } catch (error) {
       setClientCapabilitiesOverrideError(
-        error instanceof Error ? error.message : "Invalid JSON"
+        error instanceof Error ? error.message : ERROR_MESSAGES.invalidJson
       );
     }
   };

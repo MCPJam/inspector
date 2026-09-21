@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Collapsed description-experiment card on the Evaluate run page.
  *
@@ -121,7 +122,7 @@ export function RunDescriptionExperimentCard({
     if (!rewriteText) return;
     const ok = await copyToClipboard(rewriteText);
     if (ok) toast.success("New description copied");
-    else toast.error("Copy failed");
+    else toast.error(ERROR_MESSAGES.copyFailed);
   }
 
   return (

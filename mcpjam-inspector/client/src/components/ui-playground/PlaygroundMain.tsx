@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
@@ -3050,7 +3051,7 @@ export function PlaygroundMain({
         "[PlaygroundMain] Failed to sync chat history before send",
         error,
       );
-      toast.error("Failed to sync chat history. Try again.");
+      toast.error(ERROR_MESSAGES.failedToSyncChatHistoryTryAgain);
       return false;
     }
     if (detail) return true;
@@ -3119,7 +3120,7 @@ export function PlaygroundMain({
           setViewingHistoryReplay(false);
         }
         console.error("[PlaygroundMain] Failed to load chat session", err);
-        toast.error("Failed to load chat history.");
+        toast.error(ERROR_MESSAGES.failedToLoadChatHistory);
       } finally {
         if (historySelectionRequestIdRef.current === selectionRequestId) {
           setLoadingHistorySessionId(null);
@@ -3205,7 +3206,7 @@ export function PlaygroundMain({
           (error.status === 403 || error.status === 404)
         ) {
           if (error.status === 403) {
-            toast.error("You no longer have access to that chat.");
+            toast.error(ERROR_MESSAGES.youNoLongerHaveAccessToThatChat);
           }
           return "unavailable";
         }
@@ -3780,7 +3781,7 @@ export function PlaygroundMain({
       if (phase === "unavailable") {
         toast.error(
           localHarnessRef.current.reason ??
-            "This Inspector can't run Claude Code on this machine.",
+            ERROR_MESSAGES.thisInspectorCanTRunClaudeCodeOnThisMachine,
         );
         return false;
       }
@@ -4385,7 +4386,7 @@ export function PlaygroundMain({
           toast.error(
             getBillingErrorMessage(
               err,
-              "Could not upload attachments to the computer.",
+              ERROR_MESSAGES.couldNotUploadAttachmentsToTheComputer,
             ),
           );
         }
@@ -4506,7 +4507,7 @@ export function PlaygroundMain({
           "[PlaygroundMain] Failed to prepare the server for an edit",
           error,
         );
-        toast.error("Couldn't prepare the server for that edit. Try again.");
+        toast.error(ERROR_MESSAGES.couldnTPrepareTheServerForThatEditTryAgain);
         return false;
       }
       if (!serverReady) return false;
@@ -4562,7 +4563,7 @@ export function PlaygroundMain({
         });
       } catch (error) {
         console.error("[PlaygroundMain] Failed to rewind to message", error);
-        toast.error("Couldn't apply that edit. Try again.");
+        toast.error(ERROR_MESSAGES.couldnTApplyThatEditTryAgain);
         return false;
       }
       // `null` means the rewind was refused — nothing branched, so say nothing.

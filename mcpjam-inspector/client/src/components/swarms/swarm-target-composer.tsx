@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Swarm's clients-and-servers section on Describe.
  *
@@ -84,7 +85,7 @@ export function SwarmTargetComposer({
         : null,
     });
     if (!saved) {
-      toast.error("Could not save draft on this device.");
+      toast.error(ERROR_MESSAGES.couldNotSaveDraftOnThisDevice);
       return;
     }
     toast.success("Draft saved — open Environments to finish it.");

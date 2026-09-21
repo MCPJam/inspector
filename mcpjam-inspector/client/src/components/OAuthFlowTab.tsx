@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   EMPTY_OAUTH_FLOW_STATE,
@@ -459,7 +460,7 @@ export const OAuthFlowTab = ({
         extra: { step: oauthFlowState.currentStep, protocolVersion },
       });
       toast.error(
-        err instanceof Error ? err.message : "Failed to advance the OAuth flow",
+        err instanceof Error ? err.message : ERROR_MESSAGES.failedToAdvanceTheOauthFlow,
       );
     } finally {
       setIsAdvancing(false);

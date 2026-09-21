@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useRef, useState } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { authoringRequest } from "@/lib/apis/eval-authoring-api";
@@ -71,20 +72,20 @@ export function ImportDatasetDialog({
     setError(null);
     if (!files?.length) return;
     if (files.length !== 1) {
-      setError("Choose one Markdown file.");
+      setError(ERROR_MESSAGES.chooseOneMarkdownFile);
       return;
     }
     const candidate = files[0];
     if (!/\.md$/i.test(candidate.name)) {
-      setError("Only Markdown (.md) files are supported.");
+      setError(ERROR_MESSAGES.onlyMarkdownMdFilesAreSupported);
       return;
     }
     if (!candidate.size) {
-      setError("The file is empty.");
+      setError(ERROR_MESSAGES.theFileIsEmpty);
       return;
     }
     if (candidate.size > MAX_MARKDOWN_BYTES) {
-      setError("Split the file into documents of at most 100 KB.");
+      setError(ERROR_MESSAGES.splitTheFileIntoDocumentsOfAtMost100Kb);
       return;
     }
     setFile(candidate);
@@ -145,7 +146,7 @@ export function ImportDatasetDialog({
       } else {
         setWarnings(response.warnings);
         setError(
-          "No test cases were extracted. Review the warnings or choose another file.",
+          ERROR_MESSAGES.noTestCasesWereExtractedReviewTheWarningsOrChooseAnotherFile,
         );
       }
     } catch (e) {
@@ -153,7 +154,7 @@ export function ImportDatasetDialog({
         setError(
           e instanceof Error
             ? e.message
-            : "Could not read or extract this file.",
+            : ERROR_MESSAGES.couldNotReadOrExtractThisFile,
         );
     } finally {
       if (current === generation.current) {

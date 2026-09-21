@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useRef, useState } from "react";
 import {
   Copy,
@@ -156,7 +157,7 @@ export function ServerInfoContent({
         setHostedTokenError(
           error instanceof Error
             ? error.message
-            : "Failed to reveal hosted OAuth tokens"
+            : ERROR_MESSAGES.failedToRevealHostedOauthTokens
         );
       }
     } finally {

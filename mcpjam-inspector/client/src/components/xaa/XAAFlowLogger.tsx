@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -529,12 +530,12 @@ export function XAAFlowLogger({
         generateXAAFlowText(flowState, summary)
       );
       if (!success) {
-        setCopyError("Copy failed");
+        setCopyError(ERROR_MESSAGES.copyFailed);
         return;
       }
       setCopySuccess(true);
     } catch {
-      setCopyError("Copy failed");
+      setCopyError(ERROR_MESSAGES.copyFailed);
       return;
     }
 

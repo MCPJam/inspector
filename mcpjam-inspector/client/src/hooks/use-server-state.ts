@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "@/lib/toast";
@@ -3920,7 +3921,7 @@ export function useServerState({
 
       const serverName = formData.name.trim();
       if (!serverName) {
-        toast.error("Server name is required");
+        toast.error(ERROR_MESSAGES.serverNameIsRequired);
         return false;
       }
 
@@ -4080,7 +4081,7 @@ export function useServerState({
             logger.error("Failed to sync server to Convex", {
               error: "Server sync returned no server id",
             });
-            toast.error("Could not save the server. Please try again.");
+            toast.error(ERROR_MESSAGES.couldNotSaveTheServerPleaseTryAgain);
             return false;
           }
         } catch (error) {
@@ -4090,7 +4091,7 @@ export function useServerState({
           toast.error(
             error instanceof Error
               ? error.message
-              : "Could not save the server. Please try again."
+              : ERROR_MESSAGES.couldNotSaveTheServerPleaseTryAgain
           );
           return false;
         }
@@ -5799,7 +5800,7 @@ export function useServerState({
     ): Promise<ServerUpdateResult> => {
       const nextServerName = formData.name.trim();
       if (!nextServerName) {
-        toast.error("Server name is required");
+        toast.error(ERROR_MESSAGES.serverNameIsRequired);
         return { ok: false, serverName: originalServerName };
       }
       const isRename = nextServerName !== originalServerName;
@@ -5897,7 +5898,7 @@ export function useServerState({
             toast.error(
               synced.reason === "workspace-name-taken"
                 ? `A server named "${nextServerName}" already exists in this workspace. Choose a different name.`
-                : "Could not save the server configuration. Please try again."
+                : ERROR_MESSAGES.couldNotSaveTheServerConfigurationPleaseTryAgain
             );
             return { ok: false, serverName: originalServerName };
           }

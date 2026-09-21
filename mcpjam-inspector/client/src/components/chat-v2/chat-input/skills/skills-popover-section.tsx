@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   Tooltip,
   TooltipContent,
@@ -338,7 +339,7 @@ export function SkillsPopoverSection({
         // failure THROWS. Without this catch the second is an unhandled
         // rejection and the row just stops spinning with no explanation.
         setServerSkillError(
-          error instanceof Error ? error.message : "Unknown error"
+          error instanceof Error ? error.message : ERROR_MESSAGES.unknownError
         );
       } finally {
         setLoadingSkillName(null);

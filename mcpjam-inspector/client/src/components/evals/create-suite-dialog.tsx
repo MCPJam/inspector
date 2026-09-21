@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useConvexAuth } from "convex/react";
@@ -279,7 +280,7 @@ export function CreateSuiteDialog({
         toast.error(
           err instanceof Error
             ? err.message
-            : "Could not resolve where this suite runs.",
+            : ERROR_MESSAGES.couldNotResolveWhereThisSuiteRuns,
         );
         setIsSaving(false);
         return;

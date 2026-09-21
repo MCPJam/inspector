@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * The data-bound picker: trigger + popover + `ServerPickerPanel`.
  *
@@ -601,7 +602,7 @@ export function ServerPicker({
       // name derived against a list that has not arrived collides — and
       // throwing keeps the draft rather than costing the user what they picked.
       if (!attachmentsKnown) {
-        toast.error("Still loading this project's server groups.");
+        toast.error(ERROR_MESSAGES.stillLoadingThisProjectSServerGroups);
         throw new Error("Attachments not loaded");
       }
       /**
@@ -610,7 +611,7 @@ export function ServerPicker({
        * first, because the panel's catch reports nothing.
        */
       if (writing.current) {
-        toast.error("Still saving the last change. Try again in a moment.");
+        toast.error(ERROR_MESSAGES.stillSavingTheLastChangeTryAgainInAMoment);
         throw new Error("A write is already in flight");
       }
       writing.current = true;
@@ -672,7 +673,7 @@ export function ServerPicker({
       // Deleting what the parent stores, with no way to tell it, leaves that
       // id pointing at nothing while the surface keeps launching against it.
       if (value === groupId && !onClearSelection) {
-        toast.error("Pick a different server first: this one is in use here.");
+        toast.error(ERROR_MESSAGES.pickADifferentServerFirstThisOneIsInUseHere);
         return;
       }
       writing.current = true;
@@ -698,7 +699,7 @@ export function ServerPicker({
       } catch (err) {
         if (!isCurrent()) return;
         const raw = err instanceof Error ? err.message : "";
-        toast.error(raw || "Couldn't delete that server group.");
+        toast.error(raw || ERROR_MESSAGES.couldnTDeleteThatServerGroup);
       } finally {
         if (isCurrent()) {
           setCreating(false);

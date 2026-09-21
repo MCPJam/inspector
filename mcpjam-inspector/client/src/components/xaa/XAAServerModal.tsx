@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -153,7 +154,7 @@ export function XAAServerModal({
 
     const trimmedName = serverName.trim();
     if (!trimmedName) {
-      setError("Server name is required.");
+      setError(ERROR_MESSAGES.serverNameIsRequired2);
       return;
     }
     // Renaming has to collide-check too: only the server being edited is exempt
@@ -170,14 +171,14 @@ export function XAAServerModal({
 
     const trimmedUrl = serverUrl.trim();
     if (!trimmedUrl) {
-      setError("Server URL is required.");
+      setError(ERROR_MESSAGES.serverUrlIsRequired2);
       return;
     }
     try {
       // eslint-disable-next-line no-new
       new URL(trimmedUrl);
     } catch {
-      setError("Enter a valid server URL (e.g. https://staging.example.com).");
+      setError(ERROR_MESSAGES.enterAValidServerUrlEGHttpsStagingExampleCom);
       return;
     }
 
@@ -185,7 +186,7 @@ export function XAAServerModal({
     // Client ID is only required for pre-registered clients. DCR mints one and
     // CIMD addresses the client via a metadata URL, so both leave it optional.
     if (registrationStrategy === "preregistered" && !trimmedClientId) {
-      setError("Client ID is required for pre-registered clients.");
+      setError(ERROR_MESSAGES.clientIdIsRequiredForPreRegisteredClients);
       return;
     }
 
@@ -195,7 +196,7 @@ export function XAAServerModal({
         // eslint-disable-next-line no-new
         new URL(trimmedIssuer);
       } catch {
-        setError("Authorization Server Issuer must be a valid URL, or blank.");
+        setError(ERROR_MESSAGES.authorizationServerIssuerMustBeAValidUrlOrBlank);
         return;
       }
     }
@@ -269,7 +270,7 @@ export function XAAServerModal({
       setError(
         saveError instanceof Error
           ? saveError.message
-          : "Couldn't save this server. Your changes were kept — try again."
+          : ERROR_MESSAGES.couldnTSaveThisServerYourChangesWereKeptTryAgain
       );
     } finally {
       setSaving(false);

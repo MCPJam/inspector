@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { DEFAULTS } from "../evals/constants";
 import { type ReactNode, useRef, useState } from "react";
 import { Loader2, Play, Settings2 } from "lucide-react";
@@ -196,7 +197,7 @@ export function SuiteRunReviewContent({
       setError(
         failure instanceof Error
           ? failure.message
-          : "Could not start this run. Try again.",
+          : ERROR_MESSAGES.couldNotStartThisRunTryAgain,
       );
     } finally {
       lock.current = false;

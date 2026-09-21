@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useRef, useState } from "react";
 import { useConvexAuth, useMutation } from "convex/react";
 import { useHostList } from "@/hooks/useClients";
@@ -164,7 +165,7 @@ export function SuiteClientsSettings({
       });
     } catch (error) {
       setDraft(previous);
-      toast.error(convexErrMessage(error, "Failed to update clients"));
+      toast.error(convexErrMessage(error, ERROR_MESSAGES.failedToUpdateClients));
     } finally {
       inFlight.current = false;
       setSaving(false);

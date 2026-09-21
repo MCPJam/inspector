@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -95,7 +96,7 @@ export function AutoTopupSettings({
       thresholdCredits > topupCredits
     ) {
       setError(
-        "Enter 500–1,000,000 whole credits per refill and a minimum balance from 1 through the refill size.",
+        ERROR_MESSAGES.enter5001000000WholeCreditsPerRefillAndAMinimum,
       );
       return;
     }
@@ -104,7 +105,7 @@ export function AutoTopupSettings({
       (!Number.isSafeInteger(parsedLimit) || parsedLimit <= 0)
     ) {
       setError(
-        "Enter a positive dollar limit with at most two decimal places, or leave it blank for unlimited.",
+        ERROR_MESSAGES.enterAPositiveDollarLimitWithAtMostTwoDecimalPlacesOr,
       );
       return;
     }
@@ -114,7 +115,7 @@ export function AutoTopupSettings({
       view?.refillPriceCents != null &&
       parsedLimit < view.refillPriceCents
     ) {
-      setError("Maximum monthly spend must cover at least one refill.");
+      setError(ERROR_MESSAGES.maximumMonthlySpendMustCoverAtLeastOneRefill);
       return;
     }
     if (

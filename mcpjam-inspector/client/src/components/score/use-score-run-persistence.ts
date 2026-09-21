@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useCallback,
   useEffect,
@@ -65,7 +66,7 @@ export function useScoreRunPersistence({
         setError(
           error instanceof Error
             ? `Scan finished, but the shareable link could not be saved: ${error.message}`
-            : "Scan finished, but the shareable link could not be saved.",
+            : ERROR_MESSAGES.scanFinishedButTheShareableLinkCouldNotBeSaved,
         );
       } finally {
         setPhase("done");

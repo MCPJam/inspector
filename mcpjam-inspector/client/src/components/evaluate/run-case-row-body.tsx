@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * What broke inside one case, and what to do about it.
  *
@@ -60,7 +61,7 @@ async function copyPrompt(text: string) {
   if (ok) {
     toast.success("Fix prompt copied. Paste it into your coding agent");
   } else {
-    toast.error("Copy failed");
+    toast.error(ERROR_MESSAGES.copyFailed);
   }
 }
 

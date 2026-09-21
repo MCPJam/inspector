@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { canCheckoutPlan } from "@/lib/pricing-catalog";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
@@ -341,7 +342,7 @@ export function useUpgradeCheckout({
       monthlySupported,
     );
     if (!checkoutInterval) {
-      toast.error("Checkout is not available for this plan right now.");
+      toast.error(ERROR_MESSAGES.checkoutIsNotAvailableForThisPlanRightNow);
       track("plan_limit_upgrade_failed", {
         location: "plan_limit_dialog",
         organization_id: organizationId,
@@ -433,7 +434,7 @@ export function useUpgradeCheckout({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Couldn't start checkout. Please try again.",
+          : ERROR_MESSAGES.couldnTStartCheckoutPleaseTryAgain,
       );
       track("plan_limit_upgrade_failed", {
         location: "plan_limit_dialog",

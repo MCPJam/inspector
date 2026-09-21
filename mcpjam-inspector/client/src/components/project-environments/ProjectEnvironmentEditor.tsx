@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, TriangleAlert, X } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -217,11 +218,11 @@ export function ProjectEnvironmentEditor({
 
   const save = async () => {
     if (!trimmedName) {
-      toast.error("Give the environment a name.");
+      toast.error(ERROR_MESSAGES.giveTheEnvironmentAName);
       return;
     }
     if (!draft.hostId) {
-      toast.error("Pick a client for this environment.");
+      toast.error(ERROR_MESSAGES.pickAClientForThisEnvironment);
       return;
     }
     setSaving(true);
@@ -314,15 +315,15 @@ export function ProjectEnvironmentEditor({
         // review the refreshed values explicitly.
         setConflicted(true);
         toast.error(
-          "This environment was changed by someone else — review the refreshed values before saving again.",
+          ERROR_MESSAGES.thisEnvironmentWasChangedBySomeoneElseReviewTheRefreshedValuesBefore,
         );
       } else {
         toast.error(
           convexErrMessage(
             err,
             environment
-              ? "Could not save the environment."
-              : "Could not create the environment.",
+              ? ERROR_MESSAGES.couldNotSaveTheEnvironment
+              : ERROR_MESSAGES.couldNotCreateTheEnvironment,
           ),
         );
       }

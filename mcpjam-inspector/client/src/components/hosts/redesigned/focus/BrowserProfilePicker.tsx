@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useState } from "react";
 import { toast } from "@/lib/toast";
 import {
@@ -31,7 +32,7 @@ export function BrowserProfilePicker({
           toast.error(
             error instanceof Error
               ? error.message
-              : "Could not load saved browser profiles.",
+              : ERROR_MESSAGES.couldNotLoadSavedBrowserProfiles,
           );
         }
       });

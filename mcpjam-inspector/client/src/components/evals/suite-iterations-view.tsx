@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { JudgeInstructionsEditor } from "./judge-instructions-editor";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { AssertionBacktestPanel } from "./assertion-backtest-panel";
@@ -896,7 +897,7 @@ export function SuiteIterationsView({
       // colleague saved first is the outcome the precondition exists to
       // prevent, not one to implement on its refusal.
       toast.error(
-        "This suite changed since you opened it. Your edits are still here — review them against the new values and save again.",
+        ERROR_MESSAGES.thisSuiteChangedSinceYouOpenedItYourEditsAreStillHere,
       );
       // No rebase here on purpose. `suite` is still the document we already
       // had — the one the server just told us is stale — so rebasing onto it
@@ -1304,7 +1305,7 @@ export function SuiteIterationsView({
         attachments.length === 0 ? "Clients cleared" : "Clients updated",
       );
     } catch (error) {
-      toast.error(getBillingErrorMessage(error, "Failed to update clients"));
+      toast.error(getBillingErrorMessage(error, ERROR_MESSAGES.failedToUpdateClients));
       console.error("Failed to update host attachments:", error);
       throw error;
     }
@@ -1321,7 +1322,7 @@ export function SuiteIterationsView({
       toast.success("Server group updated");
     } catch (error) {
       toast.error(
-        getBillingErrorMessage(error, "Failed to update server group"),
+        getBillingErrorMessage(error, ERROR_MESSAGES.failedToUpdateServerGroup),
       );
     }
   };

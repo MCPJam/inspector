@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState, useRef, useCallback, useMemo } from "react";
 import { Loader2, Upload, FolderOpen, File, X } from "lucide-react";
 import { useConvexAuth } from "convex/react";
@@ -179,7 +180,7 @@ export function SkillUploadDialog({
     );
 
     if (!skillMdFile) {
-      setError("No SKILL.md file found. Skills must contain a SKILL.md file.");
+      setError(ERROR_MESSAGES.noSkillMdFileFoundSkillsMustContainASkillMdFile);
       return;
     }
 
@@ -190,7 +191,7 @@ export function SkillUploadDialog({
 
       if (!parsed) {
         setError(
-          "Invalid SKILL.md format. Must contain frontmatter with 'name' and 'description' fields.",
+          ERROR_MESSAGES.invalidSkillMdFormatMustContainFrontmatterWithNameAndDescriptionFields,
         );
         return;
       }
@@ -206,7 +207,7 @@ export function SkillUploadDialog({
       setFiles(filesArray);
       setError(null);
     } catch (err) {
-      setError("Failed to read SKILL.md file.");
+      setError(ERROR_MESSAGES.failedToReadSkillMdFile);
     }
   }, []);
 

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { ProjectSecretsBoundary } from "./ProjectSecretsBoundary";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { useSettingsDraft } from "../settings/SettingsDraftProvider";
@@ -154,7 +155,7 @@ function ProjectSecretsContent({
     } catch (error) {
       if (!owned()) return;
       setDeleteError(
-        error instanceof Error ? error.message : "Failed to delete the secret.",
+        error instanceof Error ? error.message : ERROR_MESSAGES.failedToDeleteTheSecret,
       );
     } finally {
       if (owned()) setBusy(false);
@@ -559,7 +560,7 @@ function CreateSecretForm({
       // button the user cannot see the reason for.
       setAdvancedOpen(true);
       setError(
-        'Add the hosts and header this secret is sent with, or choose "Set as an environment variable" under Advanced settings.',
+        ERROR_MESSAGES.addTheHostsAndHeaderThisSecretIsSentWithOrChoose,
       );
       setTimeout(() => document.getElementById("secret-hosts")?.focus(), 0);
       return;
@@ -590,7 +591,7 @@ function CreateSecretForm({
       setError(
         caught instanceof Error
           ? caught.message
-          : "Failed to create the secret.",
+          : ERROR_MESSAGES.failedToCreateTheSecret,
       );
     } finally {
       if (attempt.current === mine) setBusy(false);
@@ -863,7 +864,7 @@ function RotateSecretDialog({
       setError(
         caught instanceof Error
           ? caught.message
-          : "Failed to rotate the secret.",
+          : ERROR_MESSAGES.failedToRotateTheSecret,
       );
     } finally {
       if (attempt.current === mine) setBusy(false);

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { useSettingsDraft } from "../settings/SettingsDraftProvider";
 import {
@@ -362,7 +363,7 @@ export function ShareProjectDialog({
       });
     } catch {
       setCurrentVisibility(prev);
-      toast.error("Failed to update project visibility");
+      toast.error(ERROR_MESSAGES.failedToUpdateProjectVisibility);
     } finally {
       setIsUpdatingVisibility(false);
     }
@@ -374,7 +375,7 @@ export function ShareProjectDialog({
     if (memberInviteGate.isDenied) {
       toast.error(
         memberInviteGate.denialMessage ??
-          "Upgrade required to add more members",
+          ERROR_MESSAGES.upgradeRequiredToAddMoreMembers,
       );
       return;
     }
@@ -419,7 +420,7 @@ export function ShareProjectDialog({
         project_visibility: currentVisibility,
       });
     } catch (error) {
-      toast.error(getBillingErrorMessage(error, "Failed to invite member"));
+      toast.error(getBillingErrorMessage(error, ERROR_MESSAGES.failedToInviteMember));
     } finally {
       setIsInviting(false);
     }
@@ -448,7 +449,7 @@ export function ShareProjectDialog({
         `${member.user?.name || member.email} is now ${newRole === "admin" ? "an Admin" : "an Editor"}`,
       );
     } catch (error) {
-      toast.error((error as Error).message || "Failed to update role");
+      toast.error((error as Error).message || ERROR_MESSAGES.failedToUpdateRole);
     }
   };
 
@@ -483,7 +484,7 @@ export function ShareProjectDialog({
       });
       setMemberToRemove(null);
     } catch (error) {
-      toast.error((error as Error).message || "Failed to remove member");
+      toast.error((error as Error).message || ERROR_MESSAGES.failedToRemoveMember);
     } finally {
       removingMemberRef.current = false;
       setIsRemovingMember(false);

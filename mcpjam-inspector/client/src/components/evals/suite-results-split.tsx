@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Master-detail results surface for a multi-host suite. Replaces the
  * Runs ⟷ Cases tab switcher with one screen:
@@ -553,7 +554,7 @@ export function SuiteResultsSplit({
       setDeleteTarget(null);
     } catch (error) {
       console.error("Failed to delete run(s):", error);
-      toast.error("Failed to delete run");
+      toast.error(ERROR_MESSAGES.failedToDeleteRun);
     } finally {
       setIsDeletingRuns(false);
     }

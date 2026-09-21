@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "@/lib/toast";
 import { useConvexAuth, useQuery } from "convex/react";
@@ -641,7 +642,7 @@ export function useAppState({
     ) => {
       const newProject = effectiveProjects[projectId];
       if (!newProject) {
-        toast.error("Project not found");
+        toast.error(ERROR_MESSAGES.projectNotFound);
         return;
       }
 
@@ -686,7 +687,7 @@ export function useAppState({
     async (projectId: string) => {
       const project = effectiveProjects[projectId];
       if (!project) {
-        toast.error("Project not found");
+        toast.error(ERROR_MESSAGES.projectNotFound);
         return;
       }
 
@@ -699,7 +700,7 @@ export function useAppState({
       const targetProjectId = defaultProject || otherProjectIds[0];
 
       if (!targetProjectId) {
-        toast.error("Cannot leave the only project");
+        toast.error(ERROR_MESSAGES.cannotLeaveTheOnlyProject);
         return;
       }
 

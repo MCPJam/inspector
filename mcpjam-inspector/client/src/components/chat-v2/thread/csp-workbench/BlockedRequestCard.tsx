@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState } from "react";
 import { ChevronRight, Copy, Check, ExternalLink } from "lucide-react";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -86,7 +87,7 @@ export function BlockedRequestCard({
       );
       setTimeout(() => setCopied(false), 1500);
     } else {
-      toast.error("Could not copy to clipboard");
+      toast.error(ERROR_MESSAGES.couldNotCopyToClipboard);
     }
   };
 

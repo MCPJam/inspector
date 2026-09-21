@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "@/lib/toast";
@@ -308,7 +309,7 @@ export function AddServerModal({
     e.preventDefault();
 
     if (isAppBootstrapping) {
-      toast.error(appReadyMessage ?? "App is still loading. Try again in a moment.");
+      toast.error(appReadyMessage ?? ERROR_MESSAGES.appIsStillLoadingTryAgainInAMoment);
       return;
     }
 

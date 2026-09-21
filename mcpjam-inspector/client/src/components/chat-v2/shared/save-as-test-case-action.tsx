@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useAction, useConvexAuth, useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { FlaskConical, Loader2 } from "lucide-react";
@@ -234,7 +235,7 @@ export function SaveAsTestCaseAction({
     } catch (error) {
       const message = getBillingErrorMessage(
         error,
-        "Failed to save as test case",
+        ERROR_MESSAGES.failedToSaveAsTestCase,
       );
       toast.error(message);
     } finally {

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RotateCcw, Save, Settings2 } from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
@@ -207,7 +208,7 @@ export function SuiteExecutionConfigEditor({
       // feedback. Mirrors the parent-provided onSave handler the
       // pre-Phase-3 component used.
       toast.error(
-        getBillingErrorMessage(err, "Failed to update suite execution config")
+        getBillingErrorMessage(err, ERROR_MESSAGES.failedToUpdateSuiteExecutionConfig)
       );
       console.error("Failed to update suite execution config:", err);
     } finally {
@@ -245,7 +246,7 @@ export function SuiteExecutionConfigEditor({
       toast.success("Suite reset to project default");
     } catch (err) {
       toast.error(
-        getBillingErrorMessage(err, "Failed to reset suite to project default")
+        getBillingErrorMessage(err, ERROR_MESSAGES.failedToResetSuiteToProjectDefault)
       );
       console.error("Failed to reset suite to project default:", err);
     } finally {

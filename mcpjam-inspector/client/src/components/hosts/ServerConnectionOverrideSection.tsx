@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Label } from "@mcpjam/design-system/label";
@@ -56,13 +57,13 @@ function HeadersEditor({
     try {
       const parsed = JSON.parse(value);
       if (typeof parsed !== "object" || Array.isArray(parsed)) {
-        setParseError("Must be a JSON object");
+        setParseError(ERROR_MESSAGES.mustBeAJsonObject);
         return;
       }
       setParseError(null);
       onChange(parsed as Record<string, string>);
     } catch {
-      setParseError("Invalid JSON");
+      setParseError(ERROR_MESSAGES.invalidJson);
     }
   };
 

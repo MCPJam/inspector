@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * The suite's "where this runs" bar.
  *
@@ -353,7 +354,7 @@ function EnvironmentModeBar({
         if (commitVersion.current === mine) setState(previous);
         // Verbatim: this is where a schedule-pin conflict names the schedule
         // blocking the change, and a resolve failure explains itself.
-        toast.error(convexErrMessage(err, "Failed to update where this runs"));
+        toast.error(convexErrMessage(err, ERROR_MESSAGES.failedToUpdateWhereThisRuns));
       } finally {
         if (commitVersion.current === mine) setSaving(false);
       }
@@ -513,7 +514,7 @@ function LegacyModeBar({
         });
         toast.success(next ? "Computer image set" : "Computer image cleared");
       } catch (error) {
-        toast.error(convexErrMessage(error, "Failed to update the suite"));
+        toast.error(convexErrMessage(error, ERROR_MESSAGES.failedToUpdateTheSuite));
       }
     },
     [suite._id, suite.environment?.serverBindings, suite.environment?.servers, updateSuite]

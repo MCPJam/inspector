@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import {
   DataManagementSettings,
@@ -337,7 +338,7 @@ function useLeaveOrganization(organization: Organization) {
       setLeaveConfirmOpen(false);
       appNavigate("/servers");
     } catch (error) {
-      toast.error((error as Error).message || "Failed to leave organization");
+      toast.error((error as Error).message || ERROR_MESSAGES.failedToLeaveOrganization);
     } finally {
       setIsLeaving(false);
     }
@@ -787,13 +788,13 @@ function OrganizationPage({
 
     // Validate file type
     if (!file.type.startsWith("image/")) {
-      toast.error("Please select an image file");
+      toast.error(ERROR_MESSAGES.pleaseSelectAnImageFile);
       return;
     }
 
     // Validate file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
-      toast.error("Image must be less than 5MB");
+      toast.error(ERROR_MESSAGES.imageMustBeLessThan5mb);
       return;
     }
 
@@ -825,7 +826,7 @@ function OrganizationPage({
       });
     } catch (error) {
       console.error("Failed to upload logo:", error);
-      toast.error("Failed to upload logo. Please try again.");
+      toast.error(ERROR_MESSAGES.failedToUploadLogoPleaseTryAgain);
     } finally {
       setIsUploadingLogo(false);
       // Reset input so the same file can be selected again
@@ -843,7 +844,7 @@ function OrganizationPage({
     if (memberInviteGate.isDenied) {
       toast.error(
         memberInviteGate.denialMessage ??
-          "Upgrade required to add more members",
+          ERROR_MESSAGES.upgradeRequiredToAddMoreMembers,
       );
       return;
     }
@@ -871,7 +872,7 @@ function OrganizationPage({
       toast.error(
         getBillingErrorMessage(
           error,
-          "Failed to invite member",
+          ERROR_MESSAGES.failedToInviteMember,
           billingStatus?.canManageBilling ?? false,
         ),
       );
@@ -897,7 +898,7 @@ function OrganizationPage({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Payment was not completed. The member was not added.",
+          : ERROR_MESSAGES.paymentWasNotCompletedTheMemberWasNotAdded,
       );
     }
   };
@@ -920,7 +921,7 @@ function OrganizationPage({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Payment was not completed. The member was not added.",
+          : ERROR_MESSAGES.paymentWasNotCompletedTheMemberWasNotAdded,
       );
     }
   };
@@ -956,20 +957,20 @@ function OrganizationPage({
         toast.success("Pending seat payment canceled.");
       } else if (result.outcome === "deferred") {
         toast.error(
-          "Stripe could not confirm cancellation yet. The payment is still pending; try again.",
+          ERROR_MESSAGES.stripeCouldNotConfirmCancellationYetThePaymentIsStillPendingTry,
         );
       } else if (result.outcome === "paid") {
         toast.success(
           "Payment completed before cancellation; the member was added.",
         );
       } else {
-        toast.error("This seat payment is no longer active.");
+        toast.error(ERROR_MESSAGES.thisSeatPaymentIsNoLongerActive);
       }
     } catch (error) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Failed to cancel pending seat payment",
+          : ERROR_MESSAGES.failedToCancelPendingSeatPayment,
       );
     } finally {
       if (isInviteRemoval) {
@@ -1009,7 +1010,7 @@ function OrganizationPage({
       setRemoveMemberError(
         getBillingErrorMessage(
           error,
-          "Could not remove this member. Please try again.",
+          ERROR_MESSAGES.couldNotRemoveThisMemberPleaseTryAgain,
           billingStatus?.canManageBilling ?? false,
         ),
       );
@@ -1039,7 +1040,7 @@ function OrganizationPage({
       });
       toast.success(`Updated role for ${member.email}`);
     } catch (error) {
-      toast.error((error as Error).message || "Failed to update member role");
+      toast.error((error as Error).message || ERROR_MESSAGES.failedToUpdateMemberRole);
     } finally {
       setRoleUpdatingEmail(null);
     }
@@ -1064,7 +1065,7 @@ function OrganizationPage({
       setTransferTargetMember(null);
     } catch (error) {
       toast.error(
-        (error as Error).message || "Failed to transfer organization ownership",
+        (error as Error).message || ERROR_MESSAGES.failedToTransferOrganizationOwnership,
       );
     } finally {
       setIsTransferringOwnership(false);
@@ -1082,7 +1083,7 @@ function OrganizationPage({
         appNavigate("/servers");
       }
     } catch (error) {
-      toast.error((error as Error).message || "Failed to delete organization");
+      toast.error((error as Error).message || ERROR_MESSAGES.failedToDeleteOrganization);
     } finally {
       setIsDeleting(false);
     }
@@ -1137,7 +1138,7 @@ function OrganizationPage({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Failed to open billing portal",
+          : ERROR_MESSAGES.failedToOpenBillingPortal,
       );
     }
   };
@@ -1155,7 +1156,7 @@ function OrganizationPage({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Failed to open billing interval change",
+          : ERROR_MESSAGES.failedToOpenBillingIntervalChange,
       );
     }
   };
@@ -1203,7 +1204,7 @@ function OrganizationPage({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Failed to cancel scheduled billing change",
+          : ERROR_MESSAGES.failedToCancelScheduledBillingChange,
       );
     }
   };
@@ -1219,7 +1220,7 @@ function OrganizationPage({
       setPendingDowngradeConfirmation(null);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to change plan",
+        error instanceof Error ? error.message : ERROR_MESSAGES.failedToChangePlan,
       );
     }
   };
@@ -1257,7 +1258,7 @@ function OrganizationPage({
       openBillingUrl(billingUrl, options.navigation);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to change plan",
+        error instanceof Error ? error.message : ERROR_MESSAGES.failedToChangePlan,
       );
     }
   };
@@ -1322,7 +1323,7 @@ function OrganizationPage({
           )
         ) {
           toast.error(
-            error instanceof Error ? error.message : "Failed to change plan",
+            error instanceof Error ? error.message : ERROR_MESSAGES.failedToChangePlan,
           );
         }
         throw error;

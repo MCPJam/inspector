@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { PricingFeatureSignInGate } from "./components/billing/PricingFeatureSignInGate";
 import { useCurrentPathname } from "./lib/app-navigation";
 import { SettingsDraftProvider } from "./components/settings/SettingsDraftProvider";
@@ -973,7 +974,7 @@ export function HostsRoute() {
     if (bouncedDeadHostIdRef.current === idShapedHostId) return;
     bouncedDeadHostIdRef.current = idShapedHostId;
     navigate(routePaths.hosts, { replace: true });
-    toast.error("That client no longer exists. It may have been deleted.");
+    toast.error(ERROR_MESSAGES.thatClientNoLongerExistsItMayHaveBeenDeleted);
   }, [urlHostState, idShapedHostId, navigate]);
 
   // URL is the source of truth for the open host canvas. Sync into shared
@@ -1163,7 +1164,7 @@ function useTemplateVerifyDeepLink({
         // committed before it timed out. Retrying means opening the link again,
         // which remounts this hook and clears the latch.
         toast.error(
-          err instanceof Error ? err.message : "Couldn't open that client",
+          err instanceof Error ? err.message : ERROR_MESSAGES.couldnTOpenThatClient,
         );
       }
     })();
@@ -2257,7 +2258,7 @@ export function OAuthFlowRoute() {
           void navigator.clipboard
             ?.writeText(details)
             .then(() => toast.success("Copied OAuth debugger error"))
-            .catch(() => toast.error("Could not copy OAuth debugger error"));
+            .catch(() => toast.error(ERROR_MESSAGES.couldNotCopyOauthDebuggerError));
         };
 
         return (
@@ -4443,7 +4444,7 @@ export default function App() {
     }
 
     if (billingEntitlementsUiEnabled === false) {
-      toast.error("Checkout isn't available in this environment.");
+      toast.error(ERROR_MESSAGES.checkoutIsnTAvailableInThisEnvironment);
       consumeCheckoutIntent();
       return;
     }
@@ -4458,7 +4459,7 @@ export default function App() {
         .then(() => signIn())
         .catch(() => {
           billingSignInStartedRef.current = false;
-          toast.error("Could not start sign in. Try again.");
+          toast.error(ERROR_MESSAGES.couldNotStartSignInTryAgain);
           consumeCheckoutIntent();
         });
       return;
@@ -4477,7 +4478,7 @@ export default function App() {
     );
 
     if (!orgId) {
-      toast.error("Create or join an organization to continue with checkout.");
+      toast.error(ERROR_MESSAGES.createOrJoinAnOrganizationToContinueWithCheckout);
       consumeCheckoutIntent();
       return;
     }
@@ -5404,7 +5405,7 @@ export default function App() {
                         "This organization is now on the Free plan.",
                       );
                     } catch {
-                      toast.error("Could not update plan. Try again.");
+                      toast.error(ERROR_MESSAGES.couldNotUpdatePlanTryAgain);
                     }
                   })();
                 }}

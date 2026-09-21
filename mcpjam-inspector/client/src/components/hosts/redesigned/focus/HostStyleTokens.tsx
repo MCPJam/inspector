@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Style-token browser for the Apps tab.
  *
@@ -257,7 +258,7 @@ export function HostStyleTokens({ draft }: { draft: HostConfigInputV2 }) {
       copiedTimer.current = setTimeout(() => setCopiedToken(null), 1500);
       return;
     }
-    toast.error("Couldn't copy to clipboard");
+    toast.error(ERROR_MESSAGES.couldnTCopyToClipboard);
   };
 
   return (

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState } from "react";
 import {
   useOrganizationMutations,
@@ -70,7 +71,7 @@ export function InviteTeamMembersDialog({
       setError(
         cause instanceof Error
           ? cause.message
-          : "Could not send invitation. Please try again.",
+          : ERROR_MESSAGES.couldNotSendInvitationPleaseTryAgain,
       );
     } finally {
       setBusy(false);

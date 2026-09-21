@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { hydrateTurnRequestPayloads } from "@/components/evals/turn-trace-spans";
 import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 import { withWebMcpTraffic } from "@/lib/webmcp-traffic";
@@ -2244,7 +2245,7 @@ export function useChatSession(
           const sessionId = chatSessionIdRef.current;
           if (!server || !sessionId) {
             toast.error(
-              "Authorization is required, but this conversation cannot be resumed automatically. Authorize, then retry the tool.",
+              ERROR_MESSAGES.authorizationIsRequiredButThisConversationCannotBeResumedAutomaticallyAuthorizeThen,
             );
             return;
           }
@@ -2331,7 +2332,7 @@ export function useChatSession(
               // Exactly-once: a side-effecting call may or may not have run, so
               // never auto-retry — say so and let the user decide.
               toast.error(
-                "That tool call was interrupted and may or may not have run. Check the server before retrying.",
+                ERROR_MESSAGES.thatToolCallWasInterruptedAndMayOrMayNotHaveRun,
               );
             } else if (event.outcome === "expired") {
               toast.info(
@@ -3685,8 +3686,8 @@ export function useChatSession(
         clearPendingChatScopeStepUp(claimed.event.continuationId);
         toast.error(
           wasCancelled
-            ? "Authorization was cancelled, but the suspended tool call could not be updated."
-            : "The authorized tool call could not be resumed safely. Check whether it ran before retrying manually.",
+            ? ERROR_MESSAGES.authorizationWasCancelledButTheSuspendedToolCallCouldNotBeUpdated
+            : ERROR_MESSAGES.theAuthorizedToolCallCouldNotBeResumedSafelyCheckWhetherIt,
         );
       })
       .finally(() => {
@@ -3724,7 +3725,7 @@ export function useChatSession(
           reason: "no unresolved tool call to resume",
         }).catch(() => {});
         toast.error(
-          "This chat no longer has the tool call that needed input, so the operation was cancelled.",
+          ERROR_MESSAGES.thisChatNoLongerHasTheToolCallThatNeededInputSo,
         );
         return;
       }
@@ -4229,7 +4230,7 @@ export function useChatSession(
               pendingWidgetModelContextRef.current = undefined;
               resolvedHostedServersRef.current = null;
               toast.error(
-                "The chat target changed while this message was being prepared. Send it again to run it against the current selection.",
+                ERROR_MESSAGES.theChatTargetChangedWhileThisMessageWasBeingPreparedSendIt,
               );
               return false;
             }
@@ -4241,7 +4242,7 @@ export function useChatSession(
               pendingWidgetModelContextRef.current = undefined;
               resolvedHostedServersRef.current = null;
               toast.error(
-                "The chat changed while this message was being prepared. Send it again to run it in the current thread.",
+                ERROR_MESSAGES.theChatChangedWhileThisMessageWasBeingPreparedSendItAgain,
               );
               return false;
             }
@@ -4255,7 +4256,7 @@ export function useChatSession(
             toast.error(
               error instanceof Error
                 ? error.message
-                : "Couldn't prepare the selected servers for this run.",
+                : ERROR_MESSAGES.couldnTPrepareTheSelectedServersForThisRun,
             );
             return false; // fail closed — do not send with unresolved servers
           }
@@ -4276,7 +4277,7 @@ export function useChatSession(
           toast.error(
             error instanceof Error
               ? error.message
-              : "Couldn't return browser control.",
+              : ERROR_MESSAGES.couldnTReturnBrowserControl,
           );
           return false;
         }
@@ -5302,7 +5303,7 @@ export function useChatSession(
         }
       } catch (error) {
         console.warn("[elicitation] respond failed", error);
-        toast.error("Couldn't send your response. The request will time out.");
+        toast.error(ERROR_MESSAGES.couldnTSendYourResponseTheRequestWillTimeOut);
       } finally {
         setElicitationResponding(false);
       }

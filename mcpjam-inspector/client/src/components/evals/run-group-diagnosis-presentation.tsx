@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Presentational pieces for cross-host group findings, shared by the
  * scope-adaptive insights banner (SuiteInsightsCollapsible group mode). Pure
@@ -74,7 +75,7 @@ export function buildGroupFixPrompt(
 async function copyWithToast(text: string, successLabel: string) {
   const ok = await copyToClipboard(text);
   if (ok) toast.success(successLabel);
-  else toast.error("Copy failed");
+  else toast.error(ERROR_MESSAGES.copyFailed);
 }
 
 function HostChips({ hosts, tone }: { hosts: string[]; tone: string }) {

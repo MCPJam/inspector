@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useId, useState } from "react";
 import { Check, Pencil, Plus, Trash2 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@mcpjam/design-system/avatar";
@@ -157,7 +158,7 @@ export function PersonForm({
       }
       onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't save this identity");
+      setError(e instanceof Error ? e.message : ERROR_MESSAGES.couldnTSaveThisIdentity);
     } finally {
       setBusy(false);
     }
@@ -173,7 +174,7 @@ export function PersonForm({
       onDone();
     } catch (e) {
       setError(
-        e instanceof Error ? e.message : "Couldn't delete this identity"
+        e instanceof Error ? e.message : ERROR_MESSAGES.couldnTDeleteThisIdentity
       );
     } finally {
       setBusy(false);

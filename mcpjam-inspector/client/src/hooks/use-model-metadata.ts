@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
@@ -20,7 +21,7 @@ export function useModelMetadata() {
   useEffect(() => {
     if (!isAuthenticated) {
       setModels([]);
-      setError("Sign in to view model metadata");
+      setError(ERROR_MESSAGES.signInToViewModelMetadata);
       return;
     }
 
@@ -51,7 +52,7 @@ export function useModelMetadata() {
         setModels(data.data);
       } catch (err) {
         console.error("Failed to fetch model metadata:", err);
-        setError(err instanceof Error ? err.message : "Unknown error");
+        setError(err instanceof Error ? err.message : ERROR_MESSAGES.unknownError);
         setModels([]);
       } finally {
         setIsLoading(false);

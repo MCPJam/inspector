@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -141,7 +142,7 @@ export function CreateHostDialog({
     const trimmed = name.trim();
     if (!trimmed || !selectedTemplateInput || catalogState.status !== "live") {
       if (trimmed && catalogState.status !== "loading") {
-        toast.error("Could not load live client templates");
+        toast.error(ERROR_MESSAGES.couldNotLoadLiveClientTemplates);
       }
       return;
     }
@@ -186,7 +187,7 @@ export function CreateHostDialog({
         // swallow — analytics must not block the success path
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create client");
+      toast.error(err instanceof Error ? err.message : ERROR_MESSAGES.failedToCreateClient);
     } finally {
       setIsSaving(false);
     }

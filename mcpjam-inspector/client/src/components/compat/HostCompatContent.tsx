@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -186,7 +187,7 @@ export function HostCompatContent({
       ? getCatalogTemplate(catalog, templateId)
       : undefined;
     if (!template) {
-      toast.error("Could not load live client templates");
+      toast.error(ERROR_MESSAGES.couldNotLoadLiveClientTemplates);
       return;
     }
     const label =

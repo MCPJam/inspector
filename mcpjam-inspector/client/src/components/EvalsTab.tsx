@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useAuth } from "@workos-inc/authkit-react";
@@ -432,7 +433,7 @@ function EvalsTabContent({
   const handleExcalidrawQuickstart = useCallback(async () => {
     if (!handleConnect || isQuickstartRunning) return;
     if (!projectId) {
-      toast.error("Select or create a project before running the quickstart.");
+      toast.error(ERROR_MESSAGES.selectOrCreateAProjectBeforeRunningTheQuickstart);
       return;
     }
     setIsQuickstartRunning(true);
@@ -515,7 +516,7 @@ function EvalsTabContent({
             toast.error(
               getBillingErrorMessage(
                 error,
-                "Suite created, but attaching its environments failed",
+                ERROR_MESSAGES.suiteCreatedButAttachingItsEnvironmentsFailed,
               ),
             );
           }
@@ -527,7 +528,7 @@ function EvalsTabContent({
           suiteId: createdSuite._id,
         });
       } catch (error) {
-        toast.error(getBillingErrorMessage(error, "Failed to create suite"));
+        toast.error(getBillingErrorMessage(error, ERROR_MESSAGES.failedToCreateSuite));
         throw error;
       }
     },

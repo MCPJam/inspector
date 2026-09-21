@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useAction, useConvexAuth, useQuery } from "convex/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, Loader2, Plus } from "lucide-react";
@@ -748,7 +749,7 @@ function ConvertSessionDialogCoreInner({
       // upgrade wording.
       toast.error(
         getPromotionBlockedCopy(error) ??
-          getBillingErrorMessage(error, "Failed to promote session"),
+          getBillingErrorMessage(error, ERROR_MESSAGES.failedToPromoteSession),
       );
     } finally {
       setIsSubmitting(false);

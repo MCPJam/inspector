@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useState } from "react";
 import { Check, ChevronDown, Loader2, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -28,7 +29,7 @@ export function BrowserProfilesSettings({ projectId }: { projectId: string }) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Could not load browser profiles.",
+          : ERROR_MESSAGES.couldNotLoadBrowserProfiles,
       );
     } finally {
       setLoading(false);
@@ -59,7 +60,7 @@ export function BrowserProfilesSettings({ projectId }: { projectId: string }) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Could not select that profile.",
+          : ERROR_MESSAGES.couldNotSelectThatProfile,
       );
     }
   };
@@ -79,7 +80,7 @@ export function BrowserProfilesSettings({ projectId }: { projectId: string }) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Could not delete that profile.",
+          : ERROR_MESSAGES.couldNotDeleteThatProfile,
       );
     }
   };

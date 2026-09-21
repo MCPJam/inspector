@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppReady, useAppReadyMessage } from "@/hooks/use-app-ready";
 import { useConformanceRun } from "@/hooks/use-conformance-run";
@@ -230,7 +231,7 @@ export function useScoreRunnerController({
     // is worse than no tick.
     const write = navigator.clipboard?.writeText?.(resultUrl);
     if (!write) {
-      setError("Could not copy the link. Copy it manually.");
+      setError(ERROR_MESSAGES.couldNotCopyTheLinkCopyItManually);
       return;
     }
     void write
@@ -238,7 +239,7 @@ export function useScoreRunnerController({
         setCopied(true);
         window.setTimeout(() => setCopied(false), 2000);
       })
-      .catch(() => setError("Could not copy the link. Copy it manually."));
+      .catch(() => setError(ERROR_MESSAGES.couldNotCopyTheLinkCopyItManually));
   }, [resultUrl]);
 
   const authorizeServer = useCallback(() => {

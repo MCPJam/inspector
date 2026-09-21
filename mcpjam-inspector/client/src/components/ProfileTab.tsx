@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { SettingsPageShell } from "./settings/SettingsPageShell";
 import { useSettingsDraft } from "./settings/SettingsDraftProvider";
@@ -110,7 +111,7 @@ export function ProfileTab() {
     if (isSaving || isUploading || !dirty) return;
     setSaved(false);
     if (!name.trim()) {
-      setSaveError("Enter your name.");
+      setSaveError(ERROR_MESSAGES.enterYourName);
       return;
     }
     setIsSaving(true);
@@ -126,7 +127,7 @@ export function ProfileTab() {
       }
       setSaved(true);
     } catch {
-      setSaveError("Could not save your changes. Please try again.");
+      setSaveError(ERROR_MESSAGES.couldNotSaveYourChangesPleaseTryAgain);
     } finally {
       setIsSaving(false);
     }

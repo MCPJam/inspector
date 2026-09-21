@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { describeEvalIterationError } from "@/lib/eval-iteration-error";
 import { ErrorCard } from "@/components/ui/error-card";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
@@ -444,7 +445,7 @@ export function IterationDetails({
         if (!cancelled) setLoadedBlob({ identity: traceIdentity, data });
       } catch (e: any) {
         if (!cancelled) {
-          setError(e?.message || "Failed to load blob");
+          setError(e?.message || ERROR_MESSAGES.failedToLoadBlob);
           console.error("Blob load error:", e);
         }
       } finally {

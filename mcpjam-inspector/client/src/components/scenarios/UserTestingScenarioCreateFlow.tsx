@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { ChevronDown, ChevronLeft, Loader2 } from "lucide-react";
@@ -604,7 +605,7 @@ export function UserTestingScenarioCreateFlow({
       // just created is the bug this whole path exists to stop.
       if (!created) {
         toast.error(
-          "This client and server already have a study on this deployment. Change the setup, or open the existing study from User Testing.",
+          ERROR_MESSAGES.thisClientAndServerAlreadyHaveAStudyOnThisDeploymentChange,
         );
         savingRef.current = false;
         setIsSaving(false);
@@ -628,7 +629,7 @@ export function UserTestingScenarioCreateFlow({
         // creation the user can see succeeded.
         surfacesFailed = true;
         toast.error(
-          "Study created, but its ratings and task list didn't save. Set them from the study's settings.",
+          ERROR_MESSAGES.studyCreatedButItsRatingsAndTaskListDidnTSaveSet,
         );
       }
 
@@ -675,7 +676,7 @@ export function UserTestingScenarioCreateFlow({
       // said exactly what was wrong ("requires project admin"), so the one
       // person who could act on it — the creator — was the only one who never
       // saw it.
-      toast.error(convexErrMessage(err, "Failed to create the study"));
+      toast.error(convexErrMessage(err, ERROR_MESSAGES.failedToCreateTheStudy));
       savingRef.current = false;
       setIsSaving(false);
     }

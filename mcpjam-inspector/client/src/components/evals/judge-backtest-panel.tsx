@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * What a rubric edit would have done to a run that already finished.
  *
@@ -111,8 +112,8 @@ export function JudgeBacktestPanel({
         caught instanceof Error ? caught.message : String(caught ?? "");
       setError(
         message.includes("EVAL_JUDGE_BACKTEST_COOLDOWN")
-          ? "Wait a minute before running another backtest."
-          : message || "The backtest could not run.",
+          ? ERROR_MESSAGES.waitAMinuteBeforeRunningAnotherBacktest
+          : message || ERROR_MESSAGES.theBacktestCouldNotRun,
       );
     } finally {
       setIsRunning(false);

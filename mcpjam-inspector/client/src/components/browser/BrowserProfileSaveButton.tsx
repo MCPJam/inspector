@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { Loader2, Save } from "lucide-react";
 import { useState } from "react";
 import { DropdownMenuItem } from "@mcpjam/design-system/dropdown-menu";
@@ -41,7 +42,7 @@ export function BrowserProfileSaveButton({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Could not save the browser profile.",
+          : ERROR_MESSAGES.couldNotSaveTheBrowserProfile,
       );
     } finally {
       setSaving(false);

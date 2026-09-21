@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   dependentFilterOptions,
   selectedFilter,
@@ -232,7 +233,7 @@ export function SuiteDetailOverview({
       setCaseToDelete(null);
     } catch (error) {
       console.error("Failed to delete test case:", error);
-      toast.error("Failed to delete test case");
+      toast.error(ERROR_MESSAGES.failedToDeleteTestCase);
     } finally {
       setIsDeletingCase(false);
     }

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * The suite's schedule, read as an AUTOMATION rather than a checkbox.
  *
@@ -164,7 +165,7 @@ export function SuiteAutomationRow({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Failed to update the schedule",
+          : ERROR_MESSAGES.failedToUpdateTheSchedule,
       );
     } finally {
       setIsWriting(false);

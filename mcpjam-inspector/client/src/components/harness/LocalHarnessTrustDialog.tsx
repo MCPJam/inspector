@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useState } from "react";
 import { ChevronRight, FolderOpen, Laptop, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -137,7 +138,7 @@ export function LocalHarnessTrustDialog({
     try {
       if (!(await useSuggestedIfNeeded())) {
         setError(
-          "Choose a folder for Claude Code to work in before allowing it.",
+          ERROR_MESSAGES.chooseAFolderForClaudeCodeToWorkInBeforeAllowingIt,
         );
         return;
       }
@@ -156,7 +157,7 @@ export function LocalHarnessTrustDialog({
         scopeKey,
       });
       if (approval === null) {
-        setError("Choose a folder for Claude Code to work in.");
+        setError(ERROR_MESSAGES.chooseAFolderForClaudeCodeToWorkIn);
         return;
       }
 
@@ -206,7 +207,7 @@ export function LocalHarnessTrustDialog({
       setError(
         error instanceof Error
           ? error.message
-          : "That folder could not be registered.",
+          : ERROR_MESSAGES.thatFolderCouldNotBeRegistered,
       );
       return;
     }

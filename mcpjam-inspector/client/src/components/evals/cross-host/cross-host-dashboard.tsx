@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Network, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -114,7 +115,7 @@ export function CrossHostDashboard({
       setCaseToDelete(null);
     } catch (error) {
       console.error("Failed to delete test case:", error);
-      toast.error("Failed to delete test case");
+      toast.error(ERROR_MESSAGES.failedToDeleteTestCase);
     } finally {
       setIsDeletingCase(false);
     }

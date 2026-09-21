@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { Input } from "@mcpjam/design-system/input";
 import { useCallback, useMemo, useState } from "react";
 import {
@@ -137,7 +138,7 @@ export function EditServerFormContent({
           : setHeadersRevealError;
 
       if (!projectId || !hostedServerId) {
-        setError("Server secrets can only be revealed after saving.");
+        setError(ERROR_MESSAGES.serverSecretsCanOnlyBeRevealedAfterSaving);
         return;
       }
 
@@ -156,7 +157,7 @@ export function EditServerFormContent({
         }
       } catch {
         setError(
-          "Couldn't reveal saved secrets. Try again, or re-save this server's env vars/headers."
+          ERROR_MESSAGES.couldnTRevealSavedSecretsTryAgainOrReSaveThisServer
         );
       } finally {
         setRevealing(false);

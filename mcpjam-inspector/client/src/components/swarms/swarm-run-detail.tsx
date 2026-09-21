@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Dedicated Swarm Run (wave) detail at `/swarms/:swarmId`.
  *
@@ -212,7 +213,7 @@ export function SwarmRunDetail({
       await navigator.clipboard.writeText(url);
       toast.success("Link copied");
     } catch {
-      toast.error("Could not copy link");
+      toast.error(ERROR_MESSAGES.couldNotCopyLink);
     }
   }, [selParam, sessionParam, swarmId, tab]);
 
@@ -310,7 +311,7 @@ export function SwarmRunDetail({
       );
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Could not start swarm run",
+        err instanceof Error ? err.message : ERROR_MESSAGES.couldNotStartSwarmRun,
       );
     } finally {
       setRunAgainBusy(false);

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { useAppNavigate, useCurrentPathname } from "@/lib/app-navigation";
 import { useSettingsDraft } from "../settings/SettingsDraftProvider";
@@ -258,7 +259,7 @@ function OrganizationProviderSettings({
       toast.success(`${deleteTarget.name} removed`);
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Failed to remove provider",
+        err instanceof Error ? err.message : ERROR_MESSAGES.failedToRemoveProvider,
       );
     } finally {
       setDeleteConfirmOpen(false);
@@ -391,7 +392,7 @@ function OrganizationProviderSettings({
               setConfigTarget(null);
             } catch (err) {
               toast.error(
-                err instanceof Error ? err.message : "Failed to save provider",
+                err instanceof Error ? err.message : ERROR_MESSAGES.failedToSaveProvider,
               );
             }
           }}
@@ -422,7 +423,7 @@ function OrganizationProviderSettings({
             toast.error(
               err instanceof Error
                 ? err.message
-                : "Failed to save custom provider",
+                : ERROR_MESSAGES.failedToSaveCustomProvider,
             );
           }
         }}
@@ -1016,17 +1017,17 @@ function OrgCustomProviderDialog({
 
     const trimmedName = displayName.trim();
     if (!trimmedName) {
-      setValidationError("Provider name is required");
+      setValidationError(ERROR_MESSAGES.providerNameIsRequired);
       return;
     }
     if (trimmedName.includes("/") || trimmedName.includes(":")) {
-      setValidationError("Provider name cannot contain '/' or ':'");
+      setValidationError(ERROR_MESSAGES.providerNameCannotContainOr);
       return;
     }
 
     const trimmedBaseUrl = baseUrl.trim();
     if (!trimmedBaseUrl) {
-      setValidationError("Base URL is required");
+      setValidationError(ERROR_MESSAGES.baseUrlIsRequired);
       return;
     }
 
@@ -1035,7 +1036,7 @@ function OrgCustomProviderDialog({
       .map((id) => id.trim())
       .filter(Boolean);
     if (parsedModelIds.length === 0) {
-      setValidationError("At least one model name is required");
+      setValidationError(ERROR_MESSAGES.atLeastOneModelNameIsRequired);
       return;
     }
 

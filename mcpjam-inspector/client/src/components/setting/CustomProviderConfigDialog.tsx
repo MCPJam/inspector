@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState, useEffect } from "react";
 import type { CompatibleProtocol, CustomProvider } from "@mcpjam/sdk/browser";
 import { Button } from "@mcpjam/design-system/button";
@@ -67,17 +68,17 @@ export function CustomProviderConfigDialog({
 
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setError("Provider name is required");
+      setError(ERROR_MESSAGES.providerNameIsRequired);
       return;
     }
     if (trimmedName.includes("/") || trimmedName.includes(":")) {
-      setError("Provider name cannot contain '/' or ':'");
+      setError(ERROR_MESSAGES.providerNameCannotContainOr);
       return;
     }
 
     const trimmedBaseUrl = baseUrl.trim();
     if (!trimmedBaseUrl) {
-      setError("API URL is required");
+      setError(ERROR_MESSAGES.apiUrlIsRequired);
       return;
     }
 
@@ -86,7 +87,7 @@ export function CustomProviderConfigDialog({
       .map((id) => id.trim())
       .filter(Boolean);
     if (parsedModelIds.length === 0) {
-      setError("At least one model name is required");
+      setError(ERROR_MESSAGES.atLeastOneModelNameIsRequired);
       return;
     }
 

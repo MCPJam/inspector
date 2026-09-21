@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Stop a running swarm wave — the one cancel, shared by every surface that
  * watches a live wave (the create flow's Run swarm step and `/swarms/:id`).
@@ -97,7 +98,7 @@ export function useStopSwarmRun(runningRunIds: readonly string[]) {
       // and one goal genuinely refused, ordering these the other way reported
       // "already finished" and buried the failure the viewer has to act on.
       if (canceled === 0 && refused.length > 0) {
-        toast.error(convexErrMessage(refused[0], "Could not stop the run"));
+        toast.error(convexErrMessage(refused[0], ERROR_MESSAGES.couldNotStopTheRun));
         return "refused";
       }
       if (canceled === 0) {

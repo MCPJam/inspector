@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Full-page create-suite flow at `/evals/create`.
  *
@@ -358,7 +359,7 @@ export function CreateSuitePage({
         toast.error(
           err instanceof Error
             ? err.message
-            : "Could not resolve where this suite runs.",
+            : ERROR_MESSAGES.couldNotResolveWhereThisSuiteRuns,
         );
         setIsSaving(false);
         return;

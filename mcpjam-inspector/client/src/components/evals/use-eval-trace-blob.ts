@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useAction } from "convex/react";
 import { useEffect, useRef, useState } from "react";
 import type { EvalIteration } from "./types";
@@ -57,7 +58,7 @@ export function useEvalTraceBlob({
         }
       } catch (loadError: any) {
         if (!cancelled) {
-          setError(loadError?.message || "Failed to load trace");
+          setError(loadError?.message || ERROR_MESSAGES.failedToLoadTrace);
           setBlob(null);
         }
       } finally {

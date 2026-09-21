@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import type { JpegDeliveryStats } from "@/shared/browser-viewport-policy";
 import {
   releaseBrowserForChat,
@@ -446,7 +447,7 @@ export function HostedBrowserBody({
         setLease(outcome.lease);
         setHolding(outcome.yours);
         if (!outcome.took) {
-          setError("Someone else is using this browser right now.");
+          setError(ERROR_MESSAGES.someoneElseIsUsingThisBrowserRightNow);
           return false;
         }
         // Taking control revokes every watcher the daemon had, including this

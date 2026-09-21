@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router";
 import { Loader2, Save } from "lucide-react";
@@ -458,7 +459,7 @@ export function HostBuilderViewRedesigned({
             isDirty: true,
             isSaving: false,
             issues: nextAttention,
-          }) ?? "Fix validation errors before saving",
+          }) ?? ERROR_MESSAGES.fixValidationErrorsBeforeSaving,
         );
         return false;
       }
@@ -512,7 +513,7 @@ export function HostBuilderViewRedesigned({
         return true;
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Failed to save client",
+          err instanceof Error ? err.message : ERROR_MESSAGES.failedToSaveClient,
         );
         return false;
       } finally {
@@ -560,7 +561,7 @@ export function HostBuilderViewRedesigned({
         setSelectedNodeId(`server-card:${serverId}`);
         toast.success(`Server "${formData.name}" added`);
       } catch (err) {
-        toast.error(getBillingErrorMessage(err, "Failed to add server"));
+        toast.error(getBillingErrorMessage(err, ERROR_MESSAGES.failedToAddServer));
       }
     },
     [createServer, projectId],

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState, useRef } from "react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
@@ -33,7 +34,7 @@ export function JsonImportModal({
     if (!file) return;
 
     if (file.type !== "application/json" && !file.name.endsWith(".json")) {
-      toast.error("Please select a valid JSON file");
+      toast.error(ERROR_MESSAGES.pleaseSelectAValidJsonFile);
       return;
     }
 
@@ -77,7 +78,7 @@ export function JsonImportModal({
 
   const handleImport = async () => {
     if (!validationResult?.success) {
-      toast.error("Please fix the JSON validation errors before importing");
+      toast.error(ERROR_MESSAGES.pleaseFixTheJsonValidationErrorsBeforeImporting);
       return;
     }
 
@@ -85,7 +86,7 @@ export function JsonImportModal({
     try {
       const servers = parseJsonConfig(jsonContent);
       if (servers.length === 0) {
-        toast.error("No valid servers found in the JSON config");
+        toast.error(ERROR_MESSAGES.noValidServersFoundInTheJsonConfig);
         return;
       }
 

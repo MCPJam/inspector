@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useQuery, useMutation } from "convex/react";
 import type { ServerFormData } from "@/shared/types.js";
@@ -516,7 +517,7 @@ export function useRegistryServers({
           toast.error(
             error instanceof WebApiError
               ? error.message
-              : "Could not merge guest stars",
+              : ERROR_MESSAGES.couldNotMergeGuestStars,
           );
         }
         // Schedule a retry by bumping the nonce, which is in this effect's

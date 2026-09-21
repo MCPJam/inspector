@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useState,
   useCallback,
@@ -252,7 +253,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         toast.success("Suite name updated");
       } catch (error) {
         toast.error(
-          getBillingErrorMessage(error, "Failed to update suite name"),
+          getBillingErrorMessage(error, ERROR_MESSAGES.failedToUpdateSuiteName),
         );
         console.error("Failed to update suite name:", error);
         setEditedName(suite.name);

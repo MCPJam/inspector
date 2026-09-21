@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Conformance history, detail, and sharing — Convex-backed.
  *
@@ -410,7 +411,7 @@ export function ConformanceRunDetailPage({
         }
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "Could not update sharing"
+          error instanceof Error ? error.message : ERROR_MESSAGES.couldNotUpdateSharing
         );
       } finally {
         setShareBusy(false);

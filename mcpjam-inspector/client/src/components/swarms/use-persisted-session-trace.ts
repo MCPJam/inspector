@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   requestPayloadEnvelopeFields,
   useRequestPayloads,
@@ -140,7 +141,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
         const extracted = extractMessages(data);
         if (!extracted) {
           setMessages(null);
-          setError("Transcript blob had no messages");
+          setError(ERROR_MESSAGES.transcriptBlobHadNoMessages);
           return;
         }
         setMessages(extracted);
@@ -149,7 +150,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setMessages(null);
         setError(
-          err instanceof Error ? err.message : "Failed to load transcript",
+          err instanceof Error ? err.message : ERROR_MESSAGES.failedToLoadTranscript,
         );
       } finally {
         if (active) setLoadingMessages(false);

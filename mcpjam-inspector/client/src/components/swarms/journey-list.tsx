@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { swarmVerdictValueLabel } from "@mcpjam/sdk/contract";
 import { swarmTargetCaseId } from "@mcpjam/sdk/contract";
 import type { GoalJudgePolicy } from "@/shared/judge-defaults";
@@ -384,7 +385,7 @@ function JourneyBlock({
       // plus the actions that clear it. Repeating it inline under the goal
       // would say the same thing twice with nothing to act on.
       if (e instanceof LaunchJourneyRunError && e.limitDialogRaised) return;
-      setLaunchError(e instanceof Error ? e.message : "Failed to start run");
+      setLaunchError(e instanceof Error ? e.message : ERROR_MESSAGES.failedToStartRun);
     } finally {
       setLaunching(false);
     }
@@ -697,7 +698,7 @@ function JourneyGradingEditor({
       toast.success("Grading updated — applies to future runs");
       setOpen(false);
     } catch (e) {
-      toast.error(getBillingErrorMessage(e, "Failed to update grading"));
+      toast.error(getBillingErrorMessage(e, ERROR_MESSAGES.failedToUpdateGrading));
     } finally {
       setSaving(false);
     }
@@ -832,7 +833,7 @@ function JourneyEnvironmentsEditor({
     const payload = buildEnvJourneyPayload(draft, environments);
     if (!payload) {
       toast.error(
-        "Pick at least one environment that resolves to a valid client.",
+        ERROR_MESSAGES.pickAtLeastOneEnvironmentThatResolvesToAValidClient,
       );
       return;
     }
@@ -846,7 +847,7 @@ function JourneyEnvironmentsEditor({
       toast.success("Goal environments updated");
       setOpen(false);
     } catch (e) {
-      toast.error(getBillingErrorMessage(e, "Failed to update environments"));
+      toast.error(getBillingErrorMessage(e, ERROR_MESSAGES.failedToUpdateEnvironments));
     } finally {
       setSaving(false);
     }
@@ -880,7 +881,7 @@ function JourneyEnvironmentsEditor({
       toast.success("Goal switched back to clients");
       setOpen(false);
     } catch (e) {
-      toast.error(getBillingErrorMessage(e, "Failed to update environments"));
+      toast.error(getBillingErrorMessage(e, ERROR_MESSAGES.failedToUpdateEnvironments));
     } finally {
       setSaving(false);
     }

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { ChevronDown } from "lucide-react";
 import { useSettingsDraft } from "./settings/SettingsDraftProvider";
 import {
@@ -94,7 +95,7 @@ function XaaTestDefaultsSection({
     const bothEmpty = trimmedSubject === "" && trimmedEmail === "";
     if (!bothSet && !bothEmpty) {
       setValidationError(
-        "Enter both a subject and an email, or clear both fields.",
+        ERROR_MESSAGES.enterBothASubjectAndAnEmailOrClearBothFields,
       );
       return;
     }

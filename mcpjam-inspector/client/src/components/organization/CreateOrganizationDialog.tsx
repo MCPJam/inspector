@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -61,7 +62,7 @@ export function CreateOrganizationDialog({
       onCreated?.(organizationId);
     } catch (error) {
       toast.error(
-        getBillingErrorMessage(error, "Failed to create organization"),
+        getBillingErrorMessage(error, ERROR_MESSAGES.failedToCreateOrganization),
       );
     } finally {
       setIsCreating(false);

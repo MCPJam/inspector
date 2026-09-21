@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useRef, useState } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
@@ -84,7 +85,7 @@ export function PreparedEvalServerPage({
 
   useEffect(() => {
     void ensure({ projectId, serverId: server.id }).catch(() =>
-      setError("Could not start preparation. Try again."),
+      setError(ERROR_MESSAGES.couldNotStartPreparationTryAgain),
     );
   }, [ensure, projectId, server.id]);
 
@@ -130,7 +131,7 @@ export function PreparedEvalServerPage({
         setError(
           cause instanceof Error
             ? cause.message
-            : "Could not save your review. Reload before continuing.",
+            : ERROR_MESSAGES.couldNotSaveYourReviewReloadBeforeContinuing,
         );
       });
   };
@@ -258,7 +259,7 @@ export function PreparedEvalServerPage({
               void onReconnect()
                 .catch(() =>
                   setError(
-                    "Could not reconnect. Check the server connection and try again.",
+                    ERROR_MESSAGES.couldNotReconnectCheckTheServerConnectionAndTryAgain,
                   ),
                 )
                 .finally(() => setBusy(false));
@@ -274,7 +275,7 @@ export function PreparedEvalServerPage({
             onClick={() => {
               setError(null);
               void ensure(args).catch(() =>
-                setError("Could not start preparation."),
+                setError(ERROR_MESSAGES.couldNotStartPreparation),
               );
             }}
           >
@@ -451,7 +452,7 @@ export function PreparedEvalServerPage({
                   setError(
                     cause instanceof Error
                       ? cause.message
-                      : "Could not start evaluations.",
+                      : ERROR_MESSAGES.couldNotStartEvaluations,
                   ),
                 )
                 .finally(() => setBusy(false));

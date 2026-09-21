@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -67,13 +68,13 @@ export const ToolInvokePane = forwardRef<ToolInvokeHandle, ToolInvokePaneProps>(
             parsed === null ||
             Array.isArray(parsed)
           ) {
-            setRawError("Input must be a JSON object.");
+            setRawError(ERROR_MESSAGES.inputMustBeAJsonObject);
             return;
           }
           setRawError(undefined);
           onInvoke(parsed as Record<string, unknown>);
         } catch (error) {
-          setRawError(error instanceof Error ? error.message : "Invalid JSON.");
+          setRawError(error instanceof Error ? error.message : ERROR_MESSAGES.invalidJson2);
         }
         return;
       }

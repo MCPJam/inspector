@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   isEvalContextReady,
   readEvalContext,
@@ -76,7 +77,7 @@ export function DescribeProposal({
             setError(
               cause instanceof Error
                 ? cause.message
-                : "Could not create tests. Try again.",
+                : ERROR_MESSAGES.couldNotCreateTestsTryAgain,
             );
           }
         }}

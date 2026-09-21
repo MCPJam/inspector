@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useState } from "react";
 import {
   Dialog,
@@ -181,7 +182,7 @@ export function OrgRegistryServerDialog({
 
   async function handleSave() {
     if (!isEdit && !derived) {
-      setError("Check the server before adding it to the registry.");
+      setError(ERROR_MESSAGES.checkTheServerBeforeAddingItToTheRegistry);
       return;
     }
     setSaving(true);

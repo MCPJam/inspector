@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { authFetch } from "@/lib/session-token";
@@ -128,7 +129,7 @@ export function AssertionBacktestPanel({
         setError(
           caught instanceof Error
             ? caught.message
-            : "The preview could not run",
+            : ERROR_MESSAGES.thePreviewCouldNotRun,
         );
     } finally {
       if (!controller.signal.aborted) setPending(false);

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { toast } from "@/lib/toast";
 import type { UpdateStatus } from "@/types/electron";
@@ -72,8 +73,8 @@ export function useUpdateNotification() {
       const autoUpdateGaveUp = statusRef.current.kind === "manual";
       toast.error(
         autoUpdateGaveUp
-          ? "Automatic update isn't working on this install. Download the new version instead."
-          : "Update failed. Try again later.",
+          ? ERROR_MESSAGES.automaticUpdateIsnTWorkingOnThisInstallDownloadTheNewVersion
+          : ERROR_MESSAGES.updateFailedTryAgainLater,
         {
           action: {
             label: "Download manually",

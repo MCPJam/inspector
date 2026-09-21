@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Confirm step of the New swarm create flow.
  *
@@ -1116,7 +1117,7 @@ export function NewSwarmConfirmStep({
         toast.error(
           error instanceof Error
             ? error.message
-            : "Couldn't save this persona. Your changes are still here."
+            : ERROR_MESSAGES.couldnTSaveThisPersonaYourChangesAreStillHere
         );
       } finally {
         setSavingReusedId(null);

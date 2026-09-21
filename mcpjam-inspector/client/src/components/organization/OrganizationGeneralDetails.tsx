@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { useState } from "react";
 import { Camera, Loader2, Save } from "lucide-react";
@@ -89,7 +90,7 @@ export function OrganizationGeneralDetails({
           event.preventDefault();
           if (!canEdit || saving || !dirty) return;
           if (!value.trim()) {
-            setError("Enter an organization name.");
+            setError(ERROR_MESSAGES.enterAnOrganizationName);
             return;
           }
           setSaving(true);
@@ -100,7 +101,7 @@ export function OrganizationGeneralDetails({
             setDraft(null);
             setSaved(true);
           } catch {
-            setError("Could not save the organization name. Please try again.");
+            setError(ERROR_MESSAGES.couldNotSaveTheOrganizationNamePleaseTryAgain);
           } finally {
             setSaving(false);
           }

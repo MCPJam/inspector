@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { ScopedNavigate } from "@/components/routing/scoped-navigate";
@@ -640,7 +641,7 @@ function EnvironmentDetail({
       toast.success(`Archived “${environment.name}”.`);
       setConfirmingArchive(false);
     } catch (err) {
-      toast.error(convexErrMessage(err, "Could not archive the environment."));
+      toast.error(convexErrMessage(err, ERROR_MESSAGES.couldNotArchiveTheEnvironment));
     } finally {
       setBusy(false);
     }
@@ -656,7 +657,7 @@ function EnvironmentDetail({
       });
       toast.success(`Restored “${environment.name}”.`);
     } catch (err) {
-      toast.error(convexErrMessage(err, "Could not restore the environment."));
+      toast.error(convexErrMessage(err, ERROR_MESSAGES.couldNotRestoreTheEnvironment));
     } finally {
       setBusy(false);
     }

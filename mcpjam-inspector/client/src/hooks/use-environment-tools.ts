@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Tool } from "@modelcontextprotocol/client";
 import { authFetch } from "@/lib/session-token";
@@ -104,7 +105,7 @@ export function useEnvironmentTools(
             // Shared with `use-environment-preview` — same routes, same codes.
             error: readEnvironmentErrorPayload(
               payload,
-              "Couldn't load this environment's tools."
+              ERROR_MESSAGES.couldnTLoadThisEnvironmentSTools
             ),
             isLoading: false,
           });

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { LocalBrowserConsentGate } from "@/components/browser/LocalBrowserConsentGate";
 import { useLocalBrowserConsent } from "@/hooks/useLocalBrowserConsent";
 import { authFetch } from "@/lib/session-token";
@@ -361,7 +362,7 @@ export function WebmcpInspectorTab() {
   const copyActivity = async (entries: WebMcpActivityEntry[]) => {
     const copied = await copyToClipboard(JSON.stringify(entries, null, 2));
     if (copied) toast.success("Activity copied");
-    else toast.error("Could not copy activity to your clipboard");
+    else toast.error(ERROR_MESSAGES.couldNotCopyActivityToYourClipboard);
   };
 
   const clearProfile = async (legacy = false) => {
@@ -384,7 +385,7 @@ export function WebmcpInspectorTab() {
     if (response.ok) {
       if (!legacy) await closeSession();
       toast.success("Inspection site data cleared");
-    } else toast.error("Could not clear inspection site data");
+    } else toast.error(ERROR_MESSAGES.couldNotClearInspectionSiteData);
   };
   const overflowActions = [
     ...(!HOSTED_MODE && !hosted && consent.granted

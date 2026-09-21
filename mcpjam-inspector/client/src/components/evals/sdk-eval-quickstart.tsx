@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
@@ -262,7 +263,7 @@ function CreateApiKeyStep({
         setMintError(
           error instanceof Error
             ? error.message
-            : "Failed to create API key. Please try again.",
+            : ERROR_MESSAGES.failedToCreateApiKeyPleaseTryAgain,
         );
         throw error;
       }

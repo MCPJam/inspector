@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * The study's "what to try" list, edited after the fact — the same list create
  * step 2 authors, in the same editor, so the two surfaces cannot drift into
@@ -108,7 +109,7 @@ export function ScenarioTasksSection({
           : "Tasks cleared — testers just get the chat",
       );
     } catch (error) {
-      toast.error(convexErrMessage(error, "Failed to save tasks"));
+      toast.error(convexErrMessage(error, ERROR_MESSAGES.failedToSaveTasks));
     } finally {
       setSaving(false);
     }

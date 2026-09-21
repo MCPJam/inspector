@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router";
@@ -292,7 +293,7 @@ export function UserTestingScenarioDetail({
           // silent skip here would leave the strip showing a setup the
           // scenario does not run.
           setComposer(previous);
-          toast.error("Could not resolve this setup to an environment.");
+          toast.error(ERROR_MESSAGES.couldNotResolveThisSetupToAnEnvironment);
           return;
         }
         if (nextEnvironmentId !== committedEnvironmentIdRef.current) {
@@ -309,10 +310,10 @@ export function UserTestingScenarioDetail({
         setComposer(previous);
         toast.error(
           isAdhocUnavailable(err)
-            ? "This workspace's backend doesn't support editing a scenario's setup yet."
+            ? ERROR_MESSAGES.thisWorkspaceSBackendDoesnTSupportEditingAScenarioSSetup
             : getBillingErrorMessage(
                 err,
-                "Could not update this scenario's setup",
+                ERROR_MESSAGES.couldNotUpdateThisScenarioSSetup,
               ),
         );
       } finally {
@@ -377,7 +378,7 @@ export function UserTestingScenarioDetail({
     try {
       await updateScenario({ scenarioId: scenario.scenarioId, name } as any);
     } catch (err) {
-      toast.error(getBillingErrorMessage(err, "Failed to rename the scenario"));
+      toast.error(getBillingErrorMessage(err, ERROR_MESSAGES.failedToRenameTheScenario));
       // Rethrow so EditableTitle reverts to the persisted name.
       throw err;
     }
@@ -416,7 +417,7 @@ export function UserTestingScenarioDetail({
       // resyncing from here would drop it.
       if (generation !== descriptionSaveRef.current) return;
       toast.error(
-        getBillingErrorMessage(err, "Failed to save the description"),
+        getBillingErrorMessage(err, ERROR_MESSAGES.failedToSaveTheDescription),
       );
       // Also rolls the marked seed back to what is actually stored.
       adoptRemoteDescription();
@@ -518,7 +519,7 @@ export function UserTestingScenarioDetail({
       onDeleted();
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Failed to delete the scenario",
+        err instanceof Error ? err.message : ERROR_MESSAGES.failedToDeleteTheScenario,
       );
       // Rethrow: the dialog closes itself when `onConfirm` RESOLVES, so
       // swallowing here would dismiss the confirmation on a delete that

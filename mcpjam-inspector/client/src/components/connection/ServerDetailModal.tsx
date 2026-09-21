@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   useCallback,
   useEffect,
@@ -274,7 +275,7 @@ export function ServerDetailModal({
   ): Promise<void> => {
     if (!canQueryProjectServerConfig || !projectId) {
       toast.error(
-        "Wire mode override requires a project context; cannot save without projectId."
+        ERROR_MESSAGES.wireModeOverrideRequiresAProjectContextCannotSaveWithoutProjectid
       );
       return;
     }
@@ -289,7 +290,7 @@ export function ServerDetailModal({
     // hint instead.
     if (projectServerConfigDto === undefined) {
       toast.error(
-        "Project configuration is still loading. Try again in a moment."
+        ERROR_MESSAGES.projectConfigurationIsStillLoadingTryAgainInAMoment
       );
       return;
     }
@@ -337,7 +338,7 @@ export function ServerDetailModal({
       toast.error(
         err instanceof Error
           ? err.message
-          : "Failed to update wire mode override"
+          : ERROR_MESSAGES.failedToUpdateWireModeOverride
       );
     }
   };
@@ -389,7 +390,7 @@ export function ServerDetailModal({
           setToolsLoadError(
             error instanceof Error
               ? error.message
-              : "Failed to load tools metadata"
+              : ERROR_MESSAGES.failedToLoadToolsMetadata
           );
           setToolsData(null);
         }
@@ -457,7 +458,7 @@ export function ServerDetailModal({
       if (formState.needsStoredHeaderReveal) {
         if (!projectId || !hostedServerId) {
           toast.error(
-            "Reveal saved headers before changing authentication so existing hidden headers aren't lost."
+            ERROR_MESSAGES.revealSavedHeadersBeforeChangingAuthenticationSoExistingHiddenHeadersArenT
           );
           return;
         }
@@ -474,7 +475,7 @@ export function ServerDetailModal({
           revealedHeaders = secrets.headers;
         } catch {
           toast.error(
-            "Couldn't load this server's saved headers to apply this change. Reveal saved headers in Advanced settings and try again."
+            ERROR_MESSAGES.couldnTLoadThisServerSSavedHeadersToApplyThisChange
           );
           return;
         }

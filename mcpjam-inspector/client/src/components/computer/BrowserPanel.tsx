@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Browser Panel — watch the browser an agent is driving, and take it when a
  * login or a challenge needs a person.
@@ -243,8 +244,8 @@ export function BrowserPanel({
         setSession(null);
         setError(
           body?.error === "no_browser_session"
-            ? "No browser is running on this computer yet."
-            : (body?.detail ?? body?.error ?? "Could not reach the browser."),
+            ? ERROR_MESSAGES.noBrowserIsRunningOnThisComputerYet
+            : (body?.detail ?? body?.error ?? ERROR_MESSAGES.couldNotReachTheBrowser),
         );
         return;
       }
@@ -346,8 +347,8 @@ export function BrowserPanel({
         if (!res.ok) {
           setError(
             body?.lease?.holder
-              ? "Someone else is using this browser right now."
-              : "Could not change control of the browser.",
+              ? ERROR_MESSAGES.someoneElseIsUsingThisBrowserRightNow
+              : ERROR_MESSAGES.couldNotChangeControlOfTheBrowser,
           );
           return;
         }

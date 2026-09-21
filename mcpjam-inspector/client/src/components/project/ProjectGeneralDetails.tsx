@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { useState, type ReactNode } from "react";
 import { Save } from "lucide-react";
@@ -60,7 +61,7 @@ export function ProjectGeneralDetails({
           event.preventDefault();
           if (!canEdit || saving || !dirty) return;
           if (!value.name.trim()) {
-            setError("Enter a project name.");
+            setError(ERROR_MESSAGES.enterAProjectName);
             return;
           }
           setSaving(true);
@@ -72,7 +73,7 @@ export function ProjectGeneralDetails({
             });
             setDraft(null);
           } catch {
-            setError("Could not save project details. Please try again.");
+            setError(ERROR_MESSAGES.couldNotSaveProjectDetailsPleaseTryAgain);
           } finally {
             setSaving(false);
           }

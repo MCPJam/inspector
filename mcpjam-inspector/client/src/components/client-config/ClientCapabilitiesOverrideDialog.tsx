@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -71,12 +72,12 @@ export function ClientCapabilitiesOverrideDialog({
     try {
       const parsed = JSON.parse(value || "{}");
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        setError("Value must be a JSON object");
+        setError(ERROR_MESSAGES.valueMustBeAJsonObject);
         return;
       }
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid JSON");
+      setError(err instanceof Error ? err.message : ERROR_MESSAGES.invalidJson);
     }
   }, []);
 
@@ -86,13 +87,13 @@ export function ClientCapabilitiesOverrideDialog({
     try {
       const parsed = JSON.parse(text || "{}") as Record<string, unknown>;
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        setError("Value must be a JSON object");
+        setError(ERROR_MESSAGES.valueMustBeAJsonObject);
         return;
       }
       onSave(parsed);
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid JSON");
+      setError(err instanceof Error ? err.message : ERROR_MESSAGES.invalidJson);
     }
   }, [text, onSave, onOpenChange]);
 

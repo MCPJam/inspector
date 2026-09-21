@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   CallToolResult,
@@ -813,7 +814,7 @@ export function ToolsTab({
     // ParametersPanel's own Enter handler both funnel into this function.
     if (taskRequiredButTasksOff) {
       setError(
-        "This tool requires task execution, and tasks are disabled by the host configuration."
+        ERROR_MESSAGES.thisToolRequiresTaskExecutionAndTasksAreDisabledByTheHost
       );
       setNormalizedError(null);
       return;
@@ -827,7 +828,7 @@ export function ToolsTab({
         serverId: serverName,
         connectionStatus: serverConnectionStatus,
       });
-      setError("Connect this server before running tools.");
+      setError(ERROR_MESSAGES.connectThisServerBeforeRunningTools);
       setNormalizedError(null);
       return;
     }

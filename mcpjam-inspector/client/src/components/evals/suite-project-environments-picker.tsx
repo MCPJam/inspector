@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "@/lib/toast";
@@ -50,7 +51,7 @@ export function SuiteProjectEnvironmentsPicker({
     } catch (err) {
       // Includes the backend's schedule-pin conflict rejection — surface it
       // verbatim so the user sees which enabled schedule blocks the change.
-      toast.error(convexErrMessage(err, "Failed to update environments"));
+      toast.error(convexErrMessage(err, ERROR_MESSAGES.failedToUpdateEnvironments));
     } finally {
       setSaving(false);
     }

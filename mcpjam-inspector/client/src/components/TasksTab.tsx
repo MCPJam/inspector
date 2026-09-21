@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { isHostedMode } from "@/lib/apis/mode-client";
 import {
@@ -906,7 +907,7 @@ export function TasksTab({
 
       setTasks(allTasks);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch tasks");
+      setError(err instanceof Error ? err.message : ERROR_MESSAGES.failedToFetchTasks);
     } finally {
       setFetchingTasks(false);
     }
@@ -1091,7 +1092,7 @@ export function TasksTab({
         setError(
           err instanceof Error
             ? err.message
-            : "Failed to respond to elicitation"
+            : ERROR_MESSAGES.failedToRespondToElicitation
         );
       }
     },
@@ -1110,7 +1111,7 @@ export function TasksTab({
         setTaskResult(result);
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Failed to fetch task result"
+          err instanceof Error ? err.message : ERROR_MESSAGES.failedToFetchTaskResult
         );
       } finally {
         setLoading(false);
@@ -1138,7 +1139,7 @@ export function TasksTab({
       // Refresh task list to get updated status
       await fetchTasks();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to cancel task");
+      setError(err instanceof Error ? err.message : ERROR_MESSAGES.failedToCancelTask);
     } finally {
       setCancelling(false);
     }
@@ -1157,7 +1158,7 @@ export function TasksTab({
         return true;
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Failed to submit task input"
+          err instanceof Error ? err.message : ERROR_MESSAGES.failedToSubmitTaskInput
         );
         return false;
       } finally {

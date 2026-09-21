@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Shared ClientConfigEditor.
  *
@@ -2212,7 +2213,7 @@ function JsonRecordEditor({
       try {
         const parsed = JSON.parse(next || "{}");
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-          setError("Must be a JSON object");
+          setError(ERROR_MESSAGES.mustBeAJsonObject);
           return;
         }
         setError(null);
@@ -2226,7 +2227,7 @@ function JsonRecordEditor({
         );
         onChange(parsed as Record<string, unknown>);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Invalid JSON");
+        setError(err instanceof Error ? err.message : ERROR_MESSAGES.invalidJson);
       }
     },
     [onChange, setError],

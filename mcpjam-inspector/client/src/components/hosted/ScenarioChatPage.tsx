@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { ScenarioSignInGate } from "./ScenarioSignInGate";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
@@ -1066,12 +1067,12 @@ export function ScenarioChatPage({
     // Copy link work across reloads.
     const token = shareableToken;
     if (!session || !token) {
-      toast.error("Link unavailable");
+      toast.error(ERROR_MESSAGES.linkUnavailable);
       return;
     }
 
     if (!navigator.clipboard?.writeText) {
-      toast.error("Copy is not available in this browser");
+      toast.error(ERROR_MESSAGES.copyIsNotAvailableInThisBrowser);
       return;
     }
 
@@ -1081,7 +1082,7 @@ export function ScenarioChatPage({
       );
       toast.success("Link copied");
     } catch {
-      toast.error("Failed to copy link");
+      toast.error(ERROR_MESSAGES.failedToCopyLink);
     }
   }, [session, shareableToken]);
 

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -37,7 +38,7 @@ export function CopyableCodeBlock({
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } else {
-      toast.error("Could not copy");
+      toast.error(ERROR_MESSAGES.couldNotCopy);
     }
   }, [code, onCopySuccess]);
 

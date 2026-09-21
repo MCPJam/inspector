@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Committing a settings draft: one mutation, one toast, one revision.
  *
@@ -170,7 +171,7 @@ export function useSuiteSettingsCommit() {
       } catch (error) {
         const message = getBillingErrorMessage(
           error,
-          "Failed to save settings",
+          ERROR_MESSAGES.failedToSaveSettings,
         );
         toast.error(message);
         console.error("Failed to save suite settings:", error);

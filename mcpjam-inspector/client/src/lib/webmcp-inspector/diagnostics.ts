@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * One paste-able description of what the viewport is actually doing.
  *
@@ -127,6 +128,6 @@ export async function copyWebMcpDiagnostics(
     JSON.stringify(buildWebMcpDiagnostics(input), null, 2),
   );
   if (copied) toast.success("Viewport diagnostics copied");
-  else toast.error("Could not copy the diagnostics to your clipboard");
+  else toast.error(ERROR_MESSAGES.couldNotCopyTheDiagnosticsToYourClipboard);
   return copied;
 }

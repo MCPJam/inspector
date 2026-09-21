@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
@@ -142,10 +143,10 @@ export function ComparisonBrowser({
       if (!result.ok) {
         setError(
           result.reason === "lease_held"
-            ? "Someone else has control of this browser."
+            ? ERROR_MESSAGES.someoneElseHasControlOfThisBrowser
             : result.reason === "no_session"
-              ? "This browser is no longer running."
-              : "The browser could not complete that action. Try again.",
+              ? ERROR_MESSAGES.thisBrowserIsNoLongerRunning
+              : ERROR_MESSAGES.theBrowserCouldNotCompleteThatActionTryAgain,
         );
         return;
       }
@@ -160,7 +161,7 @@ export function ComparisonBrowser({
         useBrowserComparisonStore.getState().select(workspaceId, id);
     } catch {
       if (current.current === transports)
-        setError("Could not reach this browser. Try again.");
+        setError(ERROR_MESSAGES.couldNotReachThisBrowserTryAgain);
     } finally {
       if (current.current === transports) setBusy(false);
     }

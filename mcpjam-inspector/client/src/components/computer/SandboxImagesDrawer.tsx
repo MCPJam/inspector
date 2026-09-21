@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
@@ -154,7 +155,7 @@ export function SandboxImagesDrawer({
       await setComputerEnvironment({ projectId, environmentId: null });
       toast.success("Switched to the base image. Rebuilding your computer…");
     } catch (err) {
-      toast.error(errMessage(err, "Could not switch to the base image."));
+      toast.error(errMessage(err, ERROR_MESSAGES.couldNotSwitchToTheBaseImage));
     }
   }
 }
@@ -300,7 +301,7 @@ function NewEnvironmentForm({
 
   const create = async () => {
     if (!name.trim()) {
-      toast.error("Give the sandbox image a name.");
+      toast.error(ERROR_MESSAGES.giveTheSandboxImageAName);
       return;
     }
     setSaving(true);
@@ -313,7 +314,7 @@ function NewEnvironmentForm({
       toast.success(`Created “${env.name}”. Build it to use it.`);
       onCreated(env);
     } catch (err) {
-      toast.error(errMessage(err, "Could not create the sandbox image."));
+      toast.error(errMessage(err, ERROR_MESSAGES.couldNotCreateTheSandboxImage));
     } finally {
       setSaving(false);
     }
@@ -413,7 +414,7 @@ function EnvironmentDetail({
       toast.success("Saved.");
       return true;
     } catch (err) {
-      toast.error(errMessage(err, "Could not save."));
+      toast.error(errMessage(err, ERROR_MESSAGES.couldNotSave));
       return false;
     } finally {
       setSaving(false);
@@ -431,7 +432,7 @@ function EnvironmentDetail({
         res.reused ? "Reused an existing build." : "Build started."
       );
     } catch (err) {
-      toast.error(errMessage(err, "Could not start the build."));
+      toast.error(errMessage(err, ERROR_MESSAGES.couldNotStartTheBuild));
     } finally {
       setBuilding(false);
     }
@@ -448,7 +449,7 @@ function EnvironmentDetail({
     } catch (err) {
       // Includes the by-design rejection when the builder/computer providers
       // are incompatible (e.g. stub build + e2b computer).
-      toast.error(errMessage(err, "Could not use this sandbox image."));
+      toast.error(errMessage(err, ERROR_MESSAGES.couldNotUseThisSandboxImage));
     } finally {
       setAttaching(false);
       setConfirmingUse(false);
@@ -464,7 +465,7 @@ function EnvironmentDetail({
       toast.success("Shared with the project.");
     } catch (err) {
       toast.error(
-        errMessage(err, "Only project admins can share sandbox images.")
+        errMessage(err, ERROR_MESSAGES.onlyProjectAdminsCanShareSandboxImages)
       );
     }
   };
@@ -476,7 +477,7 @@ function EnvironmentDetail({
       onDeleted();
     } catch (err) {
       toast.error(
-        errMessage(err, "Only project admins can delete shared sandbox images.")
+        errMessage(err, ERROR_MESSAGES.onlyProjectAdminsCanDeleteSharedSandboxImages)
       );
     }
   };

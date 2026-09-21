@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { useMutation } from "convex/react";
@@ -501,7 +502,7 @@ export function BenchRunnerPage({
     event.preventDefault();
     const normalized = normalizeUrlInput(urlInput);
     if (!normalized) {
-      setError("Enter a valid http(s) MCP server URL.");
+      setError(ERROR_MESSAGES.enterAValidHttpSMcpServerUrl);
       return;
     }
     // `authorizing` leaves the form enabled, so a visitor can walk away from an

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useState } from "react";
 import { Copy, Loader2, RotateCw } from "lucide-react";
 import { toast } from "sonner";
@@ -45,7 +46,7 @@ async function copyWithToast(text: string, successLabel: string) {
   if (ok) {
     toast.success(successLabel);
   } else {
-    toast.error("Copy failed");
+    toast.error(ERROR_MESSAGES.copyFailed);
   }
 }
 

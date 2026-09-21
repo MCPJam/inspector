@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   requestPayloadEnvelopeFields,
   useRequestPayloads,
@@ -392,7 +393,7 @@ export function ShareUsageThreadDetail({
         if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("Failed to load thread messages:", err);
         setError(
-          err instanceof Error ? err.message : "Failed to load messages",
+          err instanceof Error ? err.message : ERROR_MESSAGES.failedToLoadMessages,
         );
       } finally {
         if (isActive) {
@@ -650,7 +651,7 @@ export function ShareUsageThreadDetail({
         sessionLink ? "Session link copied" : "Session reference copied",
       );
     } else {
-      toast.error("Failed to copy");
+      toast.error(ERROR_MESSAGES.failedToCopy);
     }
   }, [thread, sessionLink]);
 

@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { toast } from "sonner";
 import { mintCaseId } from "@mcpjam/sdk/contract";
 import { track } from "@/lib/analytics";
@@ -212,7 +213,7 @@ export async function runExcalidrawQuickstart(
   const excalidrawServerId = await waitForExcalidrawServerId(convex, projectId);
   if (!excalidrawServerId) {
     toast.error(
-      "Could not connect to the Excalidraw server in time. Try again in a moment.",
+      ERROR_MESSAGES.couldNotConnectToTheExcalidrawServerInTimeTryAgainIn,
     );
     return;
   }
@@ -227,7 +228,7 @@ export async function runExcalidrawQuickstart(
     );
   } catch (error) {
     console.error("Excalidraw quickstart: server attachment failed", error);
-    toast.error("Could not prepare the Excalidraw quickstart. Try again.");
+    toast.error(ERROR_MESSAGES.couldNotPrepareTheExcalidrawQuickstartTryAgain);
     return;
   }
 
@@ -251,12 +252,12 @@ export async function runExcalidrawQuickstart(
     createdSuiteId = created?._id ?? null;
   } catch (error) {
     console.error("Excalidraw quickstart: create suite failed", error);
-    toast.error("Could not create the Excalidraw quickstart. Try again.");
+    toast.error(ERROR_MESSAGES.couldNotCreateTheExcalidrawQuickstartTryAgain);
     return;
   }
 
   if (!createdSuiteId) {
-    toast.error("Could not create the Excalidraw quickstart. Try again.");
+    toast.error(ERROR_MESSAGES.couldNotCreateTheExcalidrawQuickstartTryAgain);
     return;
   }
 

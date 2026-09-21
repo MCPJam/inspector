@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useState } from "react";
 import {
   Dialog,
@@ -100,7 +101,7 @@ export function DirectoryEndpointDialog({
   const handleSubmit = () => {
     if (isOptions) {
       if (!selected) {
-        setLocalError("Choose an endpoint to continue.");
+        setLocalError(ERROR_MESSAGES.chooseAnEndpointToContinue);
         return;
       }
       setLocalError(null);
@@ -110,16 +111,16 @@ export function DirectoryEndpointDialog({
 
     const url = typed.trim();
     if (!url) {
-      setLocalError("Enter your instance URL to continue.");
+      setLocalError(ERROR_MESSAGES.enterYourInstanceUrlToContinue);
       return;
     }
     if (!/^https?:\/\//i.test(url)) {
-      setLocalError("A connector URL must start with http:// or https://.");
+      setLocalError(ERROR_MESSAGES.aConnectorUrlMustStartWithHttpOrHttps);
       return;
     }
     if (pattern && !matchesEndpointPatternLocally(pattern, url)) {
       setLocalError(
-        "That does not look like a valid instance URL for this connector."
+        ERROR_MESSAGES.thatDoesNotLookLikeAValidInstanceUrlForThisConnector
       );
       return;
     }

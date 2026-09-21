@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -234,7 +235,7 @@ export function OAuthProfileModal({
     const trimmedUrl = draft.serverUrl.trim();
 
     if (!trimmedUrl) {
-      setError("Server URL is required");
+      setError(ERROR_MESSAGES.serverUrlIsRequired);
       return null;
     }
 
@@ -243,7 +244,7 @@ export function OAuthProfileModal({
       parsedUrl = new URL(trimmedUrl);
     } catch (err) {
       console.error("Invalid OAuth target URL", err);
-      setError("Enter a valid MCP base URL (e.g., https://example.com)");
+      setError(ERROR_MESSAGES.enterAValidMcpBaseUrlEGHttpsExampleCom);
       return null;
     }
 
@@ -285,7 +286,7 @@ export function OAuthProfileModal({
     if (!validated) return;
     const trimmedName = serverName.trim();
     if (!trimmedName) {
-      setError("Server name is required");
+      setError(ERROR_MESSAGES.serverNameIsRequired);
       return;
     }
     // Add mode has no `server`, so every collision is rejected; edit mode
@@ -354,7 +355,7 @@ export function OAuthProfileModal({
       setError(
         saveError instanceof Error
           ? saveError.message
-          : "Could not save the server. Please try again.",
+          : ERROR_MESSAGES.couldNotSaveTheServerPleaseTryAgain,
       );
     } finally {
       setSaving(false);

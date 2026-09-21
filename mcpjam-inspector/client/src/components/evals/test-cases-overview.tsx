@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConvex, useQuery } from "convex/react";
 import { track } from "@/lib/analytics";
@@ -290,7 +291,7 @@ export function TestCasesOverview({
       );
     } catch (error) {
       console.error("Failed to delete test cases:", error);
-      toast.error(getBillingErrorMessage(error, "Failed to delete test cases"));
+      toast.error(getBillingErrorMessage(error, ERROR_MESSAGES.failedToDeleteTestCases));
     } finally {
       setIsBatchDeleting(false);
     }

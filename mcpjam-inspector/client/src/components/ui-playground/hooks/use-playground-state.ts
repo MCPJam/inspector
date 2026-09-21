@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * usePlaygroundState
  *
@@ -433,7 +434,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     } catch (err) {
       console.error("Failed to fetch tools:", err);
       setExecutionError(
-        err instanceof Error ? err.message : "Failed to fetch tools"
+        err instanceof Error ? err.message : ERROR_MESSAGES.failedToFetchTools
       );
     } finally {
       setFetchingTools(false);

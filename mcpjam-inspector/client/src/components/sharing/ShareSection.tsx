@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useMemo, useState, type ReactNode } from "react";
 import {
   ChevronDown,
@@ -161,7 +162,7 @@ export function ShareSection<TEnvelope>({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Failed to update access settings",
+          : ERROR_MESSAGES.failedToUpdateAccessSettings,
       );
     } finally {
       setIsModeBusy(false);
@@ -176,7 +177,7 @@ export function ShareSection<TEnvelope>({
       setEmail("");
       toast.success(`Invited ${normalizedEmail}`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to invite");
+      toast.error(error instanceof Error ? error.message : ERROR_MESSAGES.failedToInvite);
     } finally {
       setIsInviting(false);
     }
@@ -189,7 +190,7 @@ export function ShareSection<TEnvelope>({
       toast.success(`Removed ${member.email}`);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to remove member",
+        error instanceof Error ? error.message : ERROR_MESSAGES.failedToRemoveMember,
       );
     } finally {
       setIsMemberBusy(false);
@@ -200,7 +201,7 @@ export function ShareSection<TEnvelope>({
     if (disabledReason || !shareUrl) return;
     const ok = await copyToClipboard(shareUrl);
     if (ok) toast.success("Link copied");
-    else toast.error("Failed to copy share link");
+    else toast.error(ERROR_MESSAGES.failedToCopyShareLink);
   };
 
   const handleRotate = async () => {
@@ -216,7 +217,7 @@ export function ShareSection<TEnvelope>({
         return;
       }
       toast.error(
-        error instanceof Error ? error.message : "Failed to rotate link",
+        error instanceof Error ? error.message : ERROR_MESSAGES.failedToRotateLink,
       );
     } finally {
       setIsRotateBusy(false);
@@ -231,7 +232,7 @@ export function ShareSection<TEnvelope>({
       toast.success("All share access revoked");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to revoke access",
+        error instanceof Error ? error.message : ERROR_MESSAGES.failedToRevokeAccess,
       );
     } finally {
       setIsMemberBusy(false);

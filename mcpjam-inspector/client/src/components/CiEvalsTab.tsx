@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { createElement } from "react";
 import { ModelDisplayNamesContext } from "@/lib/model-display-name";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -430,7 +431,7 @@ export function CiEvalsTab({
         }
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "Failed to delete suite",
+          error instanceof Error ? error.message : ERROR_MESSAGES.failedToDeleteSuite,
         );
       } finally {
         setDeletingSuiteId(null);
@@ -465,7 +466,7 @@ export function CiEvalsTab({
         }
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "Failed to delete run",
+          error instanceof Error ? error.message : ERROR_MESSAGES.failedToDeleteRun,
         );
       } finally {
         setDeletingRunId(null);

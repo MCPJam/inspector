@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * The Evaluate run body: what broke, and what to do about it.
  *
@@ -284,7 +285,7 @@ export function SingleRunContent({
     if (ok) {
       toast.success("Prompt copied. Paste it into your coding agent");
     } else {
-      toast.error("Copy failed");
+      toast.error(ERROR_MESSAGES.copyFailed);
     }
   }, [improvePrompt]);
 

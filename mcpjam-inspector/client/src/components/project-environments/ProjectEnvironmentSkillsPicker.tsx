@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, SquareSlash } from "lucide-react";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
@@ -124,7 +125,7 @@ export function ProjectEnvironmentSkillsPicker({
       } catch (err) {
         if (!active) return;
         setLoadError(
-          err instanceof Error ? err.message : "Failed to load skills",
+          err instanceof Error ? err.message : ERROR_MESSAGES.failedToLoadSkills,
         );
       }
     })();

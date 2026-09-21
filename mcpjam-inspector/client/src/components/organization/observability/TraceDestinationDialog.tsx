@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useSettingsDraft } from "../../settings/SettingsDraftProvider";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
@@ -294,12 +295,12 @@ export function TraceDestinationDialog({
     }
     if (sourceTypes.length === 0) {
       setLocalError(
-        "Pick at least one source, or the destination sends nothing.",
+        ERROR_MESSAGES.pickAtLeastOneSourceOrTheDestinationSendsNothing,
       );
       return;
     }
     if (!allProjects && projectIds.length === 0) {
-      setLocalError("Pick at least one project, or choose all projects.");
+      setLocalError(ERROR_MESSAGES.pickAtLeastOneProjectOrChooseAllProjects);
       return;
     }
     setLocalError(null);

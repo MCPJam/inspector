@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import {
   releaseBrowserForChat,
   useBrowserChatHandoff,
@@ -1201,7 +1202,7 @@ export function LocalBrowserBody({
             // they hand it back, so keep asking rather than latching an error
             // nothing will ever clear.
             setError(
-              "Somebody else has taken control of this browser. The view will resume when they hand it back.",
+              ERROR_MESSAGES.somebodyElseHasTakenControlOfThisBrowserTheViewWillResume,
             );
             setFrame(null);
             retry = setTimeout(() => {
@@ -1216,7 +1217,7 @@ export function LocalBrowserBody({
             // report it as somebody else's handoff the whole time.
             setError(
               event.reason ||
-                "This machine's authorization changed. Reopen the pane to watch again.",
+                ERROR_MESSAGES.thisMachineSAuthorizationChangedReopenThePaneToWatchAgain,
             );
             setFrame(null);
           }

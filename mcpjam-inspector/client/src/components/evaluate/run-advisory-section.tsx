@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 /**
  * Judge findings, folded away.
  *
@@ -28,7 +29,7 @@ async function copyPrompt(row: TriageRow) {
   if (ok) {
     toast.success("Fix prompt copied. Paste it into your coding agent");
   } else {
-    toast.error("Copy failed");
+    toast.error(ERROR_MESSAGES.copyFailed);
   }
 }
 

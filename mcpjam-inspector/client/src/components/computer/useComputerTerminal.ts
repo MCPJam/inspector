@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useCallback, useState } from "react";
 import { toast } from "@/lib/toast";
 import { track } from "@/lib/analytics";
@@ -99,7 +100,7 @@ export function useComputerTerminal({
           useMCPJamLimitDialogStore.getState().notifyLimitHit();
         } else {
           toast.error(
-            getBillingErrorMessage(err, "Could not start the computer.")
+            getBillingErrorMessage(err, ERROR_MESSAGES.couldNotStartTheComputer)
           );
         }
       } finally {
@@ -123,7 +124,7 @@ export function useComputerTerminal({
       toast.success("Computer deleted.");
     } catch (err) {
       toast.error(
-        getBillingErrorMessage(err, "Could not delete the computer.")
+        getBillingErrorMessage(err, ERROR_MESSAGES.couldNotDeleteTheComputer)
       );
     } finally {
       setDeleting(false);

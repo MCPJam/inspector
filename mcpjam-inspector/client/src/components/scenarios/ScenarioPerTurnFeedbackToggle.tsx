@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useEffect, useRef, useState } from "react";
 import { Switch } from "@mcpjam/design-system/switch";
 
@@ -108,7 +109,7 @@ export function ScenarioPerTurnFeedbackToggle({
     } catch (err) {
       setOptimistic((prev) => ({ ...prev, enabled: null }));
       toast.error(
-        convexErrMessage(err, "Failed to update the per-turn ratings setting"),
+        convexErrMessage(err, ERROR_MESSAGES.failedToUpdateThePerTurnRatingsSetting),
       );
     } finally {
       inFlightRef.current = false;
@@ -133,7 +134,7 @@ export function ScenarioPerTurnFeedbackToggle({
     } catch (err) {
       setOptimistic((prev) => ({ ...prev, style: null }));
       toast.error(
-        convexErrMessage(err, "Failed to update the rating widget style"),
+        convexErrMessage(err, ERROR_MESSAGES.failedToUpdateTheRatingWidgetStyle),
       );
     } finally {
       inFlightRef.current = false;

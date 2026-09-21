@@ -1,3 +1,4 @@
+import { ERROR_MESSAGES } from "@/lib/error-messages";
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useMutation } from "convex/react";
 import { track } from "@/lib/analytics";
@@ -302,7 +303,7 @@ export function useOnboarding({
     } else if (excalidrawServer?.lastError) {
       setPhase("connect_error");
       setConnectError(
-        excalidrawServer.lastError || "Failed to connect to Excalidraw",
+        excalidrawServer.lastError || ERROR_MESSAGES.failedToConnectToExcalidraw,
       );
       track("onboarding_connect_excalidraw_error", {
         location: "onboarding",
