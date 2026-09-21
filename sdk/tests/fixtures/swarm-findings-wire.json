@@ -1,6 +1,9 @@
 {
   "contractVersion": 1,
-  "coverageNotes": ["chainUnmeasured", "toolCatalogMissing"],
+  "coverageNotes": [
+    "chainUnmeasured",
+    "toolCatalogMissing"
+  ],
   "disclosure": {
     "evidenceSent": [
       "Redacted session transcripts",
@@ -16,8 +19,12 @@
       "chainStage": "response",
       "chainStageBasis": "reported",
       "chainStageState": "failed",
-      "citations": ["00000000000000010011chatSessions/m:0"],
-      "coverageNotes": ["chainUnmeasured"],
+      "citations": [
+        "00000000000000010011chatSessions/m:0"
+      ],
+      "coverageNotes": [
+        "chainUnmeasured"
+      ],
       "disposition": "blockedByResponse",
       "fixPhrase": "Accept the requested change.",
       "goal": {
@@ -40,7 +47,9 @@
       },
       "reportExcerpt": null,
       "scopeLevel": "goal",
-      "sessionIds": ["00000000000000010011chatSessions"],
+      "sessionIds": [
+        "00000000000000010011chatSessions"
+      ],
       "target": {
         "id": "000000000000000000000010007hosts",
         "kind": "host",
@@ -55,8 +64,12 @@
       "chainStage": null,
       "chainStageBasis": "unmeasured",
       "chainStageState": null,
-      "citations": ["00000000000000010011chatSessions/m:0"],
-      "coverageNotes": ["chainUnmeasured"],
+      "citations": [
+        "00000000000000010011chatSessions/m:0"
+      ],
+      "coverageNotes": [
+        "chainUnmeasured"
+      ],
       "disposition": "goalMissed",
       "fixPhrase": null,
       "goal": {
@@ -80,10 +93,14 @@
       "reportExcerpt": {
         "account": "She tried to save her changes and the app would not take them. She gave up without the work saved.",
         "actual": "The change was rejected.",
-        "citations": ["00000000000000010011chatSessions/m:0"]
+        "citations": [
+          "00000000000000010011chatSessions/m:0"
+        ]
       },
       "scopeLevel": "session",
-      "sessionIds": ["00000000000000010011chatSessions"],
+      "sessionIds": [
+        "00000000000000010011chatSessions"
+      ],
       "target": {
         "id": "000000000000000000000010007hosts",
         "kind": "host",
@@ -98,7 +115,9 @@
   "personas": [
     {
       "disposition": "blockedByResponse",
-      "goalRunIds": ["000000000000000010009journeyRuns"],
+      "goalRunIds": [
+        "000000000000000010009journeyRuns"
+      ],
       "persona": {
         "name": "Ana",
         "personaRefId": null
@@ -117,7 +136,7 @@
     "withdrawn": 0
   },
   "reasoningModel": "z-ai/glm-5.3-flash",
-  "sourceRevision": "407724f6afae4caa04103a0f5d5bafa7fb2a502e7c1ca817c0c8881f340c2a91",
+  "sourceRevision": "d13d7064f3fce7f5dc1e93dc37c0cbd2f659057f9497745db53048917c9d7932",
   "summaryKind": "broken",
   "verification": {
     "confirmed": 1,
