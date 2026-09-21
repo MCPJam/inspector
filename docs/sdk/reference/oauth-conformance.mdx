@@ -260,6 +260,7 @@ for (const flow of result.results) {
 | `httpAttempts` | `HttpHistoryEntry[]` | All HTTP traces including retries |
 | `error` | `{ message, details? }` | Error info (if failed) |
 | `teachableMoments` | `string[]` | Educational hints for this step |
+| `intrusiveness` | `"active" \| "passive"` | Whether the step makes outbound calls to the server under test (`active`) or only inspects already-collected data (`passive`). Present on profile verification steps. |
 
 ### VerificationResult
 
