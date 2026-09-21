@@ -158,7 +158,7 @@ describe("document case import", () => {
     });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Review Draft Cases" }),
+      screen.getByRole("button", { name: "Review imported cases" }),
     ).toHaveAttribute("aria-expanded", "true");
     // The draft lands open in the step editor: the case is what gets agreed
     // to, so it is what the reader is shown.
@@ -342,7 +342,7 @@ describe("document case import", () => {
       <EvalGeneratedDrafts {...props} suiteName="Suite" defaultOpen={false} />,
     );
     expect(
-      screen.getByRole("button", { name: "Review Draft Cases" }),
+      screen.getByRole("button", { name: "Review imported cases" }),
     ).toHaveAttribute("aria-expanded", "false");
     expect(
       useEvalGeneration.getState().suites[evalSuiteKey(props)].drafts[0]

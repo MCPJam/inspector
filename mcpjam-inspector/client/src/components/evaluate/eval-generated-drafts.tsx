@@ -5,7 +5,7 @@ import type { GeneratedDraft } from "@/lib/mcpjam-agent/eval-workspace";
 import { resolveAuthoringIssue } from "@/lib/mcpjam-agent/eval-workspace";
 import { EVAL_DESCRIBE_ONLY_AGENT } from "@/shared/eval-agent-scope";
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronDown, Loader2, Trash2 } from "lucide-react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -203,6 +203,40 @@ export function EvalGeneratedDrafts({
   );
   const saving = saveTargets.some((draft) => draft.saving);
   const running = !saveVisibleOnly && state.status === "running";
+  /**
+   * An import and a generation are different jobs and this panel serves both,
+   * so it says which one it is. "Draft" named neither: the reader imported a
+   * document or generated from their tools, and never asked for a draft.
+   */
+  const importing =
+    state.authoringSource === "import" ||
+    state.authoringSource === "markdown" ||
+    state.drafts.some((draft) => draft.authoring?.source);
+  const noun = importing ? "import" : "generation";
+  const heading = running
+    ? importing
+      ? "Importing test cases"
+      : "Generating test cases"
+    : importing
+      ? "Review imported cases"
+      : state.authoringSource
+        ? "Review generated cases"
+        : "Review draft cases";
+  /**
+   * Counts, not a verdict. Every case here WAS written; some of them cannot be
+   * added until a person decides something. A cross would say the import
+   * broke, which it did not, so the numbers carry it and the button says how
+   * many it will actually add.
+   */
+  const written = state.drafts.length;
+  const ready = readyTargets.length;
+  const statusLine = running
+    ? written
+      ? `${written} written so far`
+      : "Reading your document"
+    : written === ready
+      ? `${written} ${written === 1 ? "case" : "cases"} written`
+      : `${written} cases written · ${ready} ready to add`;
   return (
     <Collapsible open={open} onOpenChange={setOpen} asChild>
       <section
@@ -226,19 +260,45 @@ export function EvalGeneratedDrafts({
                   className="size-4 -rotate-90 transition-transform group-data-[state=open]:rotate-0"
                   aria-hidden
                 />
-                Review Draft Cases
+                {heading}
               </Button>
             </CollapsibleTrigger>
           </h3>
+          {!saveVisibleOnly && (state.authoringJobId || written > 0) && (
+            <p
+              role="status"
+              className="flex items-center gap-2 text-xs text-muted-foreground"
+            >
+              {running ? (
+                <Loader2
+                  className="size-4 animate-spin motion-reduce:animate-none"
+                  aria-hidden
+                />
+              ) : (
+                written > 0 && (
+                  <CheckCircle2
+                    className={cn(
+                      "size-4",
+                      written === ready ? "text-success" : "text-muted-foreground",
+                    )}
+                    aria-hidden
+                  />
+                )
+              )}
+              {statusLine}
+            </p>
+          )}
           {state.authoringJobId && (
             <Button
-              variant="outline"
+              // Stopping is the way out, not the thing the reader came to do,
+              // so it does not carry an outline against the primary action.
+              variant="ghost"
               size="sm"
               onClick={() =>
                 void controlAuthoringJob(scope, running ? "cancel" : "retry")
               }
             >
-              {running ? "Cancel drafting" : "Retry failed cases"}
+              {running ? `Cancel ${noun}` : `Try the ${noun} again`}
             </Button>
           )}
           {state.drafts.length > 0 && (
@@ -251,17 +311,17 @@ export function EvalGeneratedDrafts({
                 ? "Adding cases…"
                 : saveVisibleOnly
                   ? "Save all"
-                  : readyTargets.length < saveTargets.length
-                    ? "Add ready cases"
+                  : ready < saveTargets.length
+                    ? `Add the ${ready} ready ${ready === 1 ? "case" : "cases"}`
                     : "Add all to suite"}
             </Button>
           )}
         </div>
         <CollapsibleContent className="space-y-4 p-4">
           <p className="text-xs text-muted-foreground">
-            These drafts aren’t in your suite yet and won’t run. Review them
-            below, then add individual cases or add them all to make them
-            available to Run.
+            {running
+              ? "Cases appear here as they are written."
+              : "Not in your suite yet, so they will not run. Add the ones you want."}
           </p>
           {/* Reaching here means there ARE drafts or an authoring job — the
               early return above handles the bare-error case, which belongs to

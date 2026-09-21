@@ -1,4 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+// An open authoring draft renders the model picker, which reads shared app
+// state this suite does not mount.
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({ availableModels: [] }),
+}));
 import { renderWithProviders, screen, userEvent, waitFor } from "@/test";
 import {
   EvalGeneratedDrafts,
@@ -12,6 +17,44 @@ import {
 
 vi.mock("../../evals/step-list-editor", () => ({ StepListEditor: () => null }));
 const scope = { projectId: "project", suiteId: "suite", suiteName: "Suite" };
+/** A draft an import authored, with document provenance and given issues. */
+function draftWithAuthoring(
+  id: string,
+  authoring: { issues: Array<Record<string, unknown>> },
+) {
+  return {
+    id,
+    revision: "r1",
+    authoring: {
+      version: 1,
+      draftId: id,
+      revision: 0,
+      source: { fileName: "cases.md" },
+      additions: [],
+      review: "required",
+      case: {
+        title: id,
+        steps: [{ id: "p", kind: "prompt", prompt: "Find ticket" }],
+        expectedOutput: "Found",
+        isNegativeTest: false,
+        runs: 1,
+        models: [],
+      },
+      ...authoring,
+    },
+    input: {
+      suiteId: "suite",
+      title: id,
+      query: "Find ticket",
+      models: [],
+      expectedToolCalls: [],
+      runs: 1,
+      isNegativeTest: false,
+      expectedOutput: "Found",
+      steps: [{ id: "p", kind: "prompt" as const, prompt: "Find ticket" }],
+    },
+  };
+}
 const key = evalSuiteKey(scope);
 const save = vi.fn();
 let cleanup: () => void;
@@ -54,7 +97,7 @@ afterEach(() => {
 it("adds all staged cases explicitly and clears the draft section after saving", async () => {
   renderWithProviders(<EvalGeneratedDrafts {...scope} />);
   expect(screen.queryByText("Draft Test Cases Generated")).toBeNull();
-  expect(screen.getByRole("button", { name: "Review Draft Cases" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Review draft cases" })).toBeVisible();
   expect(save).not.toHaveBeenCalled();
   await userEvent
     .setup()
@@ -188,16 +231,16 @@ it("saves shared case-body outcome edits without losing generated actions", asyn
 it("keeps retained drafts collapsed on return without losing them", async () => {
   const user = userEvent.setup();
   const view = renderWithProviders(<EvalGeneratedDrafts {...scope} defaultOpen={false} />);
-  expect(screen.getByRole("button", { name: "Review Draft Cases" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByRole("button", { name: "Review draft cases" })).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByRole("article", { name: "Draft: First" })).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Review Draft Cases" }));
+  await user.click(screen.getByRole("button", { name: "Review draft cases" }));
   expect(screen.getByRole("article", { name: "Draft: First" })).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Review Draft Cases" }));
+  await user.click(screen.getByRole("button", { name: "Review draft cases" }));
   expect(screen.queryByRole("article", { name: "Draft: First" })).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Review Draft Cases" }));
+  await user.click(screen.getByRole("button", { name: "Review draft cases" }));
   view.unmount();
   renderWithProviders(<EvalGeneratedDrafts {...scope} defaultOpen={false} />);
-  expect(screen.getByRole("button", { name: "Review Draft Cases" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByRole("button", { name: "Review draft cases" })).toHaveAttribute("aria-expanded", "false");
   expect(useEvalGeneration.getState().suites[key].drafts).toHaveLength(2);
   expect(save).not.toHaveBeenCalled();
 });
@@ -334,4 +377,47 @@ it("does not put the model's own contract error on screen", () => {
   expect(describeEvalDraftError("You cannot import into this suite.")).toBe(
     "You cannot import into this suite.",
   );
+});
+
+it("counts what was written and what can be added, without calling it a failure", async () => {
+  // Every case here WAS written. One of them needs a decision before it can
+  // be added, which is not the same as the import breaking, so the numbers
+  // carry it and the button says how many it will actually add.
+  useEvalGeneration.setState({
+    suites: {
+      [evalSuiteKey(scope)]: {
+        status: "ready",
+        authoringSource: "import",
+        drafts: [
+          draftWithAuthoring("ready-1", { issues: [] }),
+          draftWithAuthoring("blocked-1", {
+            issues: [
+              {
+                code: "unknown_tool",
+                blocking: true,
+                message: "Tool place-order is missing or ambiguous.",
+              },
+            ],
+          }),
+        ],
+      } as never,
+    },
+  });
+  renderWithProviders(
+    <EvalGeneratedDrafts
+      projectId={scope.projectId}
+      suiteId={scope.suiteId}
+      suiteName="Suite"
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "2 cases written · 1 ready to add",
+  );
+  expect(
+    screen.getByRole("button", { name: "Add the 1 ready case" }),
+  ).toBeEnabled();
+  // The panel names the job it ran, not "drafts".
+  expect(
+    screen.getByRole("button", { name: /Review imported cases/ }),
+  ).toBeVisible();
 });
