@@ -1,3 +1,7 @@
+import {
+  listBaseServers,
+  removeServerConnections,
+} from "../../utils/mcp-connections.js";
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
 import {
@@ -202,7 +206,8 @@ servers.delete("/:serverId", async (c) => {
       });
     }
 
-    mcpClientManager.removeServer(serverId);
+    await removeServerConnections(mcpClientManager, serverId);
+    await mcpClientManager.removeServer(serverId);
     // The replay buffer is keyed by server id and nothing ever removed a key,
     // so every disconnect used to leave its retained frames behind for the life
     // of the process. Dropped HERE rather than inside `removeServer` on
@@ -268,7 +273,7 @@ servers.post("/reconnect", async (c) => {
 
 // Stream JSON-RPC messages over SSE for all servers.
 servers.get("/rpc/stream", async (c) => {
-  const serverIds = c.mcpClientManager.listServers();
+  const serverIds = listBaseServers(c.mcpClientManager);
   const url = new URL(c.req.url);
   const replay = parseInt(url.searchParams.get("replay") || "0", 10);
 

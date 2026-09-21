@@ -10,6 +10,8 @@ import { logger } from "./logger.js";
 
 /** Everything the backend hands back when it cannot refresh a credential itself. */
 export type PrivateAuthorizationServerRefreshMaterial = {
+  connectionId?: string;
+  expectedVaultObjectId?: string;
   authorizationServerUrl: string;
   serverUrl: string;
   oauthResourceUrl: string | null;

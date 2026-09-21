@@ -1,3 +1,5 @@
+import { ConnectionAccountsSection } from "./ConnectionAccountsSection";
+import type { ConnectionIntent } from "@/shared/oauth-connections";
 import {
   useCallback,
   useEffect,
@@ -87,6 +89,7 @@ interface ServerDetailModalProps {
     serverName: string,
     options?: {
       forceOAuthFlow?: boolean;
+      connectionIntent?: ConnectionIntent;
       allowInteractiveOAuthFlow?: boolean;
     }
   ) => Promise<void>;
@@ -489,6 +492,7 @@ export function ServerDetailModal({
 
   const handleConnect = async (options?: {
     forceOAuthFlow?: boolean;
+    connectionIntent?: ConnectionIntent;
     allowInteractiveOAuthFlow?: boolean;
   }) => {
     setReconnectsInFlight((count) => count + 1);
@@ -728,6 +732,22 @@ export function ServerDetailModal({
                 className="mt-0 flex-none max-h-[60vh] overflow-y-auto data-[state=inactive]:invisible"
               >
                 <div className="pl-1 pr-6">
+                  <ConnectionAccountsSection
+                    projectId={projectId}
+                    serverId={hostedServerId}
+                    enabled={isUserReady && server.useOAuth === true}
+                    onAuthenticate={(connectionIntent) =>
+                      onReconnect(server.name, {
+                        forceOAuthFlow: true,
+                        connectionIntent,
+                      })
+                    }
+                    onSwitch={() =>
+                      onReconnect(server.name, {
+                        allowInteractiveOAuthFlow: false,
+                      })
+                    }
+                  />
                   <EditServerFormContent
                     formState={formState}
                     isDuplicateServerName={isDuplicateServerName}

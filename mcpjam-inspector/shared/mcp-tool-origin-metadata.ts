@@ -187,3 +187,53 @@ export function samePageToolBinding(
     a.registrationSeq === b.registrationSeq
   );
 }
+
+export interface McpConnectionAttribution {
+  serverId: string;
+  connectionId: string;
+  label: string;
+  profileId?: string;
+}
+export function mergeMcpToolConnectionMetadata(
+  metadata: unknown,
+  connection: McpConnectionAttribution | undefined,
+) {
+  const base = toProviderMetadata(metadata);
+  if (!connection || base.mcpjam?.connection)
+    return Object.keys(base).length ? base : undefined;
+  return { ...base, mcpjam: { ...base.mcpjam, connection: { ...connection } } };
+}
+export function toolConnectionAttribution(
+  tool: unknown,
+  input: unknown,
+  toolCallId?: unknown,
+): McpConnectionAttribution | undefined {
+  const t = tool as
+    | {
+        _connectionForInput?: (input: unknown) => {
+          serverId: string;
+          connectionId: string;
+          label: string;
+          profile?: { id: string };
+        };
+        _connectionForCall?: (id: string) => {
+          serverId: string;
+          connectionId: string;
+          label: string;
+          profile?: { id: string };
+        };
+      }
+    | undefined;
+  const c =
+    (typeof toolCallId === "string"
+      ? t?._connectionForCall?.(toolCallId)
+      : undefined) ?? t?._connectionForInput?.(input);
+  return c
+    ? {
+        serverId: c.serverId,
+        connectionId: c.connectionId,
+        label: c.label,
+        ...(c.profile ? { profileId: c.profile.id } : {}),
+      }
+    : undefined;
+}

@@ -1,3 +1,4 @@
+import { listBaseServers } from "../utils/mcp-connections.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCreditExhaustion } from "../../shared/credit-exhaustion.js";
 import { EVAL_SANDBOX_CAPACITY_POLICY } from "../utils/run-supervisor/capacity-retry.js";
@@ -1399,7 +1400,7 @@ export function resolveConfiguredServerIds(args: {
     return [];
   }
 
-  const availableServerIds = args.mcpClientManager.listServers();
+  const availableServerIds = listBaseServers(args.mcpClientManager);
   if (availableServerIds.length === 0) {
     return configuredServerRefs;
   }
@@ -4316,6 +4317,7 @@ const runLocalIteration = async ({
         null,
       );
       prepared = await prepareChatV2({
+        connectionsByServerId: {},
         mcpClientManager,
         selectedServers,
         modelDefinition,
@@ -5810,6 +5812,7 @@ const runHostedIterationWithBrowser = async (
     builtInTools = await buildBuiltInTools(sandboxBinding);
 
     prepared = await prepareChatV2({
+        connectionsByServerId: {},
       mcpClientManager,
       selectedServers,
       modelDefinition,
