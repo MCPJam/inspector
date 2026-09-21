@@ -7,7 +7,10 @@ import {
   type OAuthTraceStepSnapshot,
   type OAuthTraceStepStatus,
 } from "@mcpjam/sdk/browser";
-import { traceOAuthErrorMessage } from "./trace-redaction";
+import {
+  sanitizeOAuthTraceValue,
+  traceOAuthErrorMessage,
+} from "./trace-redaction";
 
 export type OAuthTraceSource =
   | "interactive_connect"
@@ -297,11 +300,12 @@ export function clearPersistedOAuthTraces(): void {
   }
 }
 
+// Live local diagnostics may remain raw; every storage write must redact.
 export function saveOAuthTrace(serverName: string, trace: OAuthTrace): void {
   try {
     localStorage.setItem(
       storageKey(serverName),
-      JSON.stringify(buildPersistableTrace(trace)),
+      JSON.stringify(sanitizeOAuthTraceValue(buildPersistableTrace(trace))),
     );
   } catch (error) {
     console.warn("Failed to persist OAuth trace with HTTP history.", error);
@@ -309,7 +313,11 @@ export function saveOAuthTrace(serverName: string, trace: OAuthTrace): void {
     try {
       localStorage.setItem(
         storageKey(serverName),
-        JSON.stringify(buildPersistableTrace(trace, { dropHttpHistory: true })),
+        JSON.stringify(
+          sanitizeOAuthTraceValue(
+            buildPersistableTrace(trace, { dropHttpHistory: true }),
+          ),
+        ),
       );
     } catch (retryError) {
       console.warn("Failed to persist OAuth trace.", retryError);
@@ -334,7 +342,7 @@ export function saveOAuthTraceToSession(
   try {
     sessionStorage.setItem(
       sessionTraceKey(serverName),
-      JSON.stringify(buildPersistableTrace(trace)),
+      JSON.stringify(sanitizeOAuthTraceValue(buildPersistableTrace(trace))),
     );
   } catch {
     // sessionStorage full or unavailable — trace will be lost across redirect.

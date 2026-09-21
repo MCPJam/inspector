@@ -1392,6 +1392,54 @@ describe("mcp-oauth", () => {
       });
     });
 
+    it("removes legacy persisted tokens while preserving issuer and redirect state", async () => {
+      localStorage.setItem("mcp-oauth-flow-state-legacy", JSON.stringify({
+        version: 1,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "dcr",
+        state: {
+          isInitiatingAuth: true,
+          currentStep: "authorization_request",
+          recordedIssuer: "https://issuer.example",
+          state: "callback-state",
+          codeVerifier: "callback-verifier",
+          accessToken: "legacy-access-credential",
+          refreshToken: "legacy-refresh-credential",
+          authorizationCode: "legacy-code-credential",
+        },
+      }));
+      const { resolveStoredIssuer } = await import("../mcp-oauth");
+      expect(resolveStoredIssuer("legacy")).toBe("https://issuer.example");
+      const stored = localStorage.getItem("mcp-oauth-flow-state-legacy")!;
+      expect(stored).not.toContain("legacy-access-credential");
+      expect(stored).not.toContain("legacy-refresh-credential");
+      expect(stored).not.toContain("legacy-code-credential");
+      expect(JSON.parse(stored).state.codeVerifier).toBe("callback-verifier");
+    });
+
+    it("does not persist credentials left in redirect flow state", async () => {
+      const run = mockRunOAuthStateMachine.getMockImplementation()!;
+      mockRunOAuthStateMachine.mockImplementation((config: any) => run({
+        ...config,
+        updateState: (updates: Record<string, unknown>) => config.updateState({
+          ...updates,
+          accessToken: "stale-access-credential",
+          refreshToken: "stale-refresh-credential",
+          authorizationCode: "stale-authorization-code",
+        }),
+      }));
+      mockDiscoverOAuthServerInfo.mockResolvedValue(createAsanaDiscoveryState());
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({ serverName: "asana", serverUrl: "https://mcp.asana.com/v2/mcp" });
+      expect(result.success).toBe(true);
+      const stored = JSON.parse(localStorage.getItem("mcp-oauth-flow-state-asana")!);
+      expect(stored.state.accessToken).toBeUndefined();
+      expect(stored.state.refreshToken).toBeUndefined();
+      expect(stored.state.authorizationCode).toBeUndefined();
+      expect(stored.state.codeVerifier).toBeTruthy();
+      expect(stored.state.state).toBe("mock-state");
+    });
+
     it("keeps live oauth traces in memory while preserving redirect resume state", async () => {
       mockDiscoverOAuthServerInfo.mockResolvedValue(
         createAsanaDiscoveryState()

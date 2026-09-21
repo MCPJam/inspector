@@ -277,6 +277,10 @@ function stripOAuthTraceDataFromFlowState(
   return {
     ...cloneFlowState(state),
     clientSecret: undefined,
+    // Tokens and redeemed codes are never needed to resume a redirect.
+    accessToken: undefined,
+    refreshToken: undefined,
+    authorizationCode: undefined,
     httpHistory: [],
     infoLogs: [],
     lastRequest: undefined,
@@ -388,11 +392,16 @@ function loadOAuthFlowSession(
       return undefined;
     }
 
-    return {
+    const session: StoredOAuthFlowSession = {
       ...parsed,
       protocolVersion: parsed.protocolVersion ?? "2025-11-25",
       state: stripOAuthTraceDataFromFlowState(parsed.state),
     };
+    // Remove credentials left by older versions from disk as well as memory.
+    if (JSON.stringify(session) !== raw) {
+      saveOAuthFlowSession(serverName, session);
+    }
+    return session;
   } catch {
     return undefined;
   }
