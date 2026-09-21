@@ -27,6 +27,7 @@ interface CreditTopupDialogProps {
   chatSessionId: string;
   lastUserMessage: string;
   organizationId?: string | null;
+  organizationName?: string;
   /** Surface the user came from. Forwarded to telemetry events. */
   source: CreditTopupSource;
 }
@@ -37,6 +38,7 @@ export function CreditTopupDialog({
   chatSessionId,
   lastUserMessage,
   organizationId,
+  organizationName = "your organization",
   source,
 }: CreditTopupDialogProps) {
   const navigate = useAppNavigate();
@@ -159,10 +161,15 @@ export function CreditTopupDialog({
       <DialogContent className="sm:max-w-md">
         {quotePreset.requiresUpgrade && <JamIllustration />}
         <DialogHeader>
-          <DialogTitle>Buy credits to keep testing</DialogTitle>
+          <DialogTitle>
+            {quotePreset.requiresUpgrade
+              ? "Get more testing capacity"
+              : "Buy credits to keep testing"}
+          </DialogTitle>
           <DialogDescription>
-            Credits cover usage across our product: evaluate, swarm, user
-            testing, and CI/CD.
+            {quotePreset.requiresUpgrade
+              ? "Pro and Team include a larger monthly credit allowance and let you buy extra credits when you need them."
+              : `Add shared credits to ${organizationName} to run more evaluations, Swarms, user tests, and CI/CD checks before your included allowance renews.`}
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4">
@@ -177,7 +184,7 @@ export function CreditTopupDialog({
             </div>
           ) : quotePreset.requiresUpgrade ? (
             <div role="status" className="text-sm text-muted-foreground">
-              Upgrade to Pro or Team to buy credits.
+              Only an organization owner can upgrade the plan.
             </div>
           ) : presetsLoading ? (
             <div className="text-sm text-muted-foreground">
@@ -191,10 +198,9 @@ export function CreditTopupDialog({
             <div className="grid grid-cols-3 gap-2" role="radiogroup">
               {presets.map((preset, packageIndex) => {
                 const isSelected = preset.packageId === selectedPackageId;
-                const creditsAmount = preset.displayCredits.replace(
-                  /\s*credits\s*$/i,
-                  "",
-                );
+                const creditsAmount = (
+                  quotePreset(preset)?.displayCredits ?? preset.displayCredits
+                ).replace(/\s*credits\s*$/i, "");
                 return (
                   <CreditAmountOption
                     key={preset.packageId}
@@ -229,7 +235,7 @@ export function CreditTopupDialog({
                 navigate(buildOrganizationPath(organizationId, "plans"));
               }}
             >
-              Explore plan
+              Compare plans
             </Button>
           ) : (
             <Button
@@ -245,7 +251,7 @@ export function CreditTopupDialog({
               {isStartingCheckout
                 ? "Redirecting…"
                 : selectedQuote
-                ? `Continue with ${selectedQuote.displayPrice}`
+                ? `Continue with ${selectedQuote.displayCredits} for ${selectedQuote.displayPrice}`
                 : "Continue"}
             </Button>
           )}

@@ -1309,7 +1309,7 @@ describe("TestTemplateEditor run view from route", () => {
     });
     await user.click(
       screen.getByRole("button", {
-        name: 'Edit Response contains "marcelo@mcpjam.com"',
+        name: "Edit Check what the answer says",
       }),
     );
     await user.type(screen.getByLabelText("Needle"), "!");
@@ -1628,7 +1628,9 @@ describe("TestTemplateEditor run view from route", () => {
 
     fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
     await waitFor(() => {
-      expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
+      expect(
+        screen.getAllByTestId("scorecard-group-state").length,
+      ).toBeGreaterThan(0);
     });
     // The chain is a strip inside the Scorecard now, not a slot above it.
     expect(screen.queryByTestId("iteration-trial-chain")).toBeNull();
@@ -1711,7 +1713,9 @@ describe("TestTemplateEditor run view from route", () => {
     // The finished run lands in the timeline; its evidence opens in the drawer.
     fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
     await waitFor(() => {
-      expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
+      expect(
+        screen.getAllByTestId("scorecard-group-state").length,
+      ).toBeGreaterThan(0);
     });
   });
 
@@ -1789,8 +1793,10 @@ describe("TestTemplateEditor run view from route", () => {
 
     const card = await screen.findByTestId("trial-scorecard");
     expect(card).toBeInTheDocument();
-    // The chain describes the trial, so it opens with the Scorecard.
-    expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
+    // The chain describes the iteration, so its state words open with the Scorecard.
+    expect(
+      screen.getAllByTestId("scorecard-group-state").length,
+    ).toBeGreaterThan(0);
   });
 
   it("runs compare across case-configured models and reuses the compare session id for per-model retry", async () => {

@@ -1,3 +1,4 @@
+import { listBaseServers } from "../../utils/mcp-connections.js";
 import { suppressedSuiteStandardCheckIdsSchema } from "@mcpjam/sdk/contract";
 import { githubExecutionPolicy } from "../../services/github-checks/credential-policy.js";
 import { ConvexHttpClient } from "convex/browser";
@@ -1169,7 +1170,7 @@ export function resolveServerIdsOrThrow(
   requestedIds: string[],
   clientManager: MCPClientManager,
 ): string[] {
-  const available = clientManager.listServers();
+  const available = listBaseServers(clientManager);
   const resolved: string[] = [];
 
   for (const requestedId of requestedIds) {
@@ -3113,7 +3114,8 @@ export async function runEvalTestCaseWithManager(
     matchOptions: resolveMatchOptions(
       suiteDefaultMatchOptions,
       (testCaseOverrides?.matchOptions ?? testCase.matchOptions) as
-        MatchOptionsDTO | undefined,
+        | MatchOptionsDTO
+        | undefined,
       matchOptionsOverride,
     ),
     // Thread the predicate gate into the runtime case so the runner
@@ -3124,20 +3126,24 @@ export async function runEvalTestCaseWithManager(
     successPredicates: resolveCaseSuccessPredicates({
       suiteDefaults: suiteDefaultPredicates,
       runOverride: testCaseOverrides?.successPredicates as
-        import("@/shared/eval-matching").Predicate[] | undefined,
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
       suppressedSuiteStandardCheckIds:
         testCaseOverrides?.suppressedSuiteStandardCheckIds ??
         (testCase as { suppressedSuiteStandardCheckIds?: string[] })
           .suppressedSuiteStandardCheckIds,
       envelope: (testCaseOverrides?.predicates ??
         (testCase as { predicates?: unknown }).predicates) as
-        import("@/shared/eval-matching").CasePredicates | undefined,
+        | import("@/shared/eval-matching").CasePredicates
+        | undefined,
       legacyCase: (testCase as { successPredicates?: unknown })
         .successPredicates as
-        import("@/shared/eval-matching").Predicate[] | undefined,
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
     }),
     hostConfigOverride: hostConfigOverride as
-      Record<string, unknown> | undefined,
+      | Record<string, unknown>
+      | undefined,
     testCaseId: testCase._id,
   };
 
@@ -3252,7 +3258,7 @@ export function buildManagerKeyToDisplayNameMap(
   ) {
     return map;
   }
-  const available = clientManager.listServers();
+  const available = listBaseServers(clientManager);
   for (let i = 0; i < requestServerIds.length; i++) {
     const requestedId = requestServerIds[i];
     const displayName = requestServerNames[i];
@@ -3540,7 +3546,8 @@ export async function streamEvalTestCaseWithManager(
     matchOptions: resolveMatchOptions(
       suiteDefaultMatchOptions,
       (testCaseOverrides?.matchOptions ?? testCase.matchOptions) as
-        MatchOptionsDTO | undefined,
+        | MatchOptionsDTO
+        | undefined,
       matchOptionsOverride,
     ),
     // Thread the predicate gate into the runtime case so the runner evaluates
@@ -3548,20 +3555,24 @@ export async function streamEvalTestCaseWithManager(
     successPredicates: resolveCaseSuccessPredicates({
       suiteDefaults: suiteDefaultPredicates,
       runOverride: testCaseOverrides?.successPredicates as
-        import("@/shared/eval-matching").Predicate[] | undefined,
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
       suppressedSuiteStandardCheckIds:
         testCaseOverrides?.suppressedSuiteStandardCheckIds ??
         (testCase as { suppressedSuiteStandardCheckIds?: string[] })
           .suppressedSuiteStandardCheckIds,
       envelope: (testCaseOverrides?.predicates ??
         (testCase as { predicates?: unknown }).predicates) as
-        import("@/shared/eval-matching").CasePredicates | undefined,
+        | import("@/shared/eval-matching").CasePredicates
+        | undefined,
       legacyCase: (testCase as { successPredicates?: unknown })
         .successPredicates as
-        import("@/shared/eval-matching").Predicate[] | undefined,
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
     }),
     hostConfigOverride: hostConfigOverride as
-      Record<string, unknown> | undefined,
+      | Record<string, unknown>
+      | undefined,
     testCaseId: testCase._id,
   };
 

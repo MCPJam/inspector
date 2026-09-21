@@ -701,3 +701,5 @@ steps:
 `command` replaces `project` and `suite`: the action runs your tests, then reports the runs they uploaded. It finds each run through a receipt the SDK writes, so `@mcpjam/sdk` must be **8.8.0 or newer** — an older SDK uploads normally but writes no receipt, and the step reports that it found no run.
 
 The comment carries the client/model table, the failed cases, and links into MCPJam. The checks summary carries the full report. Without `pull-requests: write` the action warns and leaves the eval verdict alone.
+
+Runs uploaded together — `runWithClient` given several clients — read as one report: one row per client and model in the same table, with a link to each client's run.

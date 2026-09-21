@@ -1,3 +1,9 @@
+import { getManagerConnections } from "../mcp-connections.js";
+import {
+  mergeMcpToolConnectionMetadata,
+  toolConnectionAttribution,
+  type McpConnectionAttribution,
+} from "@/shared/mcp-tool-origin-metadata";
 /**
  * `runHarnessTurn` — the real Claude Code runtime behind a host's
  * `harness: "claude-code"` field. Drop-in alternative to `runChatEngineLoop`:
@@ -1193,7 +1199,12 @@ export async function runHarnessTurn(
       // Which of the two delivery modes this adapter uses. Mutually exclusive
       // by construction (`HarnessMcpDelivery`), so the model can never see the
       // same MCP tool twice.
-      const nativeMcpDelivery = harnessAdapter.mcpDelivery === "native";
+      // Account selectors and resource conversion must execute together in
+      // the inspector; native sandbox MCP clients cannot own that dispatch.
+      const accountGroups = evalIterationId ? {} : getManagerConnections(mcpClientManager) ?? {};
+      const hasAccountRouting = Object.entries(accountGroups).some(([serverId, group]) => group.length > 1 || group.some(connection => connection.key !== serverId));
+      const nativeMcpDelivery =
+        harnessAdapter.mcpDelivery === "native" && !hasAccountRouting;
       // Fail closed: with MCP servers selected but no plane strategy, a NATIVE
       // adapter would silently get zero MCP tools (the exact failure we hit).
       // Host-executed delivery needs no proxy at all — its tools run in THIS
@@ -1265,6 +1276,7 @@ export async function runHarnessTurn(
           ? await projectSelectedMcpServersAsHostTools({
               manager: mcpClientManager,
               selectedServerIds: selectedServers ?? [],
+              connectionsByServerId: accountGroups,
               ...(pluginServerOrigins
                 ? { pluginOrigins: pluginServerOrigins }
                 : {}),
@@ -1987,34 +1999,34 @@ export async function runHarnessTurn(
         localPrepared !== null
           ? localPrepared.sandbox
           : createE2BHarnessSandboxProvider({
-        sandboxId: sandboxId!,
-        defaultWorkingDirectory,
-        // The materialized secrets, as a session-wide env bag on every `run`
-        // and `spawn`. This is the whole of materialized delivery on the
-        // harness path: the agent runs `stripe customers list`, and
-        // `STRIPE_API_KEY` is simply in that process's environment.
-        //
-        // In `envs`, never in the command line — the rule `plugin-box.ts`
-        // already states: argv is readable by every process in the box through
-        // `/proc`, and it lands in shell history.
-        ...(sessionSecretEnv && Object.keys(sessionSecretEnv).length > 0
-          ? {
-              sessionEnv: sessionSecretEnv,
-              // Stamped when the env is MERGED INTO A COMMAND, not here.
+              sandboxId: sandboxId!,
+              defaultWorkingDirectory,
+              // The materialized secrets, as a session-wide env bag on every `run`
+              // and `spawn`. This is the whole of materialized delivery on the
+              // harness path: the agent runs `stripe customers list`, and
+              // `STRIPE_API_KEY` is simply in that process's environment.
               //
-              // Constructing this provider only puts the values in a local
-              // object — nothing has reached E2B yet, and harness setup can
-              // still throw before any command runs (`startHarnessModelBroker`
-              // below is the usual one). Stamping at construction made
-              // `lastDeliveredAt` mean "a turn got this far", when the question
-              // it is read for, before deleting a credential believed dormant,
-              // is "did anything actually receive it".
-              ...(onSecretEnvDelivered
-                ? { onSessionEnvUsed: onSecretEnvDelivered }
+              // In `envs`, never in the command line — the rule `plugin-box.ts`
+              // already states: argv is readable by every process in the box through
+              // `/proc`, and it lands in shell history.
+              ...(sessionSecretEnv && Object.keys(sessionSecretEnv).length > 0
+                ? {
+                    sessionEnv: sessionSecretEnv,
+                    // Stamped when the env is MERGED INTO A COMMAND, not here.
+                    //
+                    // Constructing this provider only puts the values in a local
+                    // object — nothing has reached E2B yet, and harness setup can
+                    // still throw before any command runs (`startHarnessModelBroker`
+                    // below is the usual one). Stamping at construction made
+                    // `lastDeliveredAt` mean "a turn got this far", when the question
+                    // it is read for, before deleting a credential believed dormant,
+                    // is "did anything actually receive it".
+                    ...(onSecretEnvDelivered
+                      ? { onSessionEnvUsed: onSecretEnvDelivered }
+                      : {}),
+                  }
                 : {}),
-            }
-          : {}),
-      });
+            });
 
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
       // known, so have Convex mint the lease, keep the sandbox on its own
@@ -2722,9 +2734,9 @@ export async function runHarnessTurn(
                   output: toToolResultOutput(tr.output, tr.isError),
                   ...(tr.serverId
                     ? {
-                        providerOptions: mergeMcpToolOriginMetadata(
-                          undefined,
-                          tr.serverId,
+                        providerOptions: mergeMcpToolConnectionMetadata(
+                          mergeMcpToolOriginMetadata(undefined, tr.serverId),
+                          accountByCall.get(tr.toolCallId),
                         ),
                       }
                     : {}),
@@ -2749,6 +2761,7 @@ export async function runHarnessTurn(
         // step. finishStep emits the emulated engine's onStepFinish contract
         // (eval's stream runner turns it into a `step_finish` SSE snapshot).
         let stepIndex = 0;
+        const accountByCall = new Map<string, McpConnectionAttribution>();
         const toolMeta = new Map<
           string,
           { serverId?: string; toolName: string }
@@ -2901,6 +2914,12 @@ export async function runHarnessTurn(
                   keyToServerId: harnessKeyToServerId,
                 })
               : harnessAdapter.parseToolName(rawToolName, harnessKeyToServerId);
+            const account = toolConnectionAttribution(
+              hostExecutedMcp.tools[rawToolName],
+              input,
+              toolCallId,
+            );
+            if (account) accountByCall.set(toolCallId, account);
             toolMeta.set(toolCallId, {
               ...(serverId ? { serverId } : {}),
               toolName,
@@ -2913,9 +2932,9 @@ export async function runHarnessTurn(
             // (Claude Code executes them itself). Without it the client treats
             // these as client-side tools to fulfill and `sendAutomaticallyWhen`
             // auto-continues, re-submitting the turn forever.
-            const providerMetadata = mergeMcpToolOriginMetadata(
-              undefined,
-              serverId,
+            const providerMetadata = mergeMcpToolConnectionMetadata(
+              mergeMcpToolOriginMetadata(undefined, serverId),
+              account,
             );
             writer.write({
               type: "tool-input-available",
@@ -3050,6 +3069,10 @@ export async function runHarnessTurn(
             emitToolOutput(writer, {
               toolCallId,
               output,
+              providerMetadata: mergeMcpToolConnectionMetadata(
+                undefined,
+                accountByCall.get(toolCallId),
+              ),
               providerExecuted: true,
             });
             // A policy block is neither a tool result nor a tool span: it never
@@ -3085,6 +3108,11 @@ export async function runHarnessTurn(
                 toolCallId,
                 toolName: meta.toolName,
                 ...(meta.serverId ? { serverId: meta.serverId } : {}),
+                ...(accountByCall.get(toolCallId)
+                  ? {
+                      connectionId: accountByCall.get(toolCallId)!.connectionId,
+                    }
+                  : {}),
               });
             }
             // `!policyBlock` for the SAME reason the result and span above

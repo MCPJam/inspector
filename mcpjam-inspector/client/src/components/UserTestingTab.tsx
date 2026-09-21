@@ -496,7 +496,7 @@ export function UserTestingTab({
         <ScenarioNotice
           icon={<Inbox className="size-8 text-muted-foreground/70" />}
           title="Select a project first"
-          body="Scenarios belong to a project — pick one, then create a scenario in it."
+          body="Scenarios belong to a project. Pick one, then create a scenario in it."
           onBack={goOverview}
         />
       );
