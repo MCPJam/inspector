@@ -129,7 +129,7 @@ export function ConnectionAccountsSection({
       {connections.length > 1 && (
         <p className="text-xs text-muted-foreground">
           In chat the model picks an account per call. The default is what
-          everything else uses — evals, the Tools tab, resource reads and the
+          everything else uses: evals, the Tools tab, resource reads and the
           CLI.
         </p>
       )}
@@ -164,7 +164,7 @@ export function ConnectionAccountsSection({
                       renameHeldFocus.current = true;
                     }}
                     aria-label={`Name for ${identity}${
-                      caption ? ` — ${caption}` : ""
+                      caption ? `: ${caption}` : ""
                     }`}
                     defaultValue={connection.label ?? ""}
                     placeholder="Add a name"
@@ -210,7 +210,7 @@ export function ConnectionAccountsSection({
                     // Two accounts can share an address, so the caption has
                     // to disambiguate or both buttons read the same.
                     aria-label={`Manage ${identity}${
-                      caption ? ` — ${caption}` : ""
+                      caption ? `: ${caption}` : ""
                     }`}
                   >
                     <MoreHorizontal className="size-4" />
