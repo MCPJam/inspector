@@ -428,6 +428,7 @@ counts, never a finding about the server.
 | `partialRead` | Only part of this wave was read |
 | `toolCatalogMissing` | Tool catalog unavailable |
 | `mechanismsRejected` | A possible cause was rejected |
+| `analysisUnavailable` | Causes could not be analysed |
 
 ### Bases
 

@@ -107,6 +107,38 @@ export type WireLeadMechanism = {
   chainStageBasis: SwarmJourneyFinding["chainStageBasis"];
 };
 
+/** Confidence order, so a group can only claim the weakest basis any row had. */
+const BASIS_STRENGTH: Record<SwarmJourneyFinding["chainStageBasis"], number> = {
+  unmeasured: 0,
+  reported: 1,
+  derived: 2,
+};
+
+/**
+ * The stage a grouped mechanism can honestly claim.
+ *
+ * The rows of one mechanism are the same cause seen per persona, goal and
+ * target, and they need not agree on where it was noticed. Taking `rows[0]`
+ * let payload order decide which stage the card named. When they disagree the
+ * answer is no stage at all; when they agree, the basis is the weakest any row
+ * had, because "recorded at" claims the chain worker measured it and one row
+ * where it did not is enough to make that untrue.
+ */
+function agreedStage(rows: readonly SwarmJourneyFinding[]): {
+  chainStage: SwarmJourneyFinding["chainStage"];
+  chainStageBasis: SwarmJourneyFinding["chainStageBasis"];
+} {
+  const stages = new Set(rows.map((row) => row.chainStage));
+  const stage = stages.size === 1 ? [...stages][0]! : null;
+  if (!stage) return { chainStage: null, chainStageBasis: "unmeasured" };
+  const basis = rows
+    .map((row) => row.chainStageBasis)
+    .reduce((weakest, next) =>
+      BASIS_STRENGTH[next] < BASIS_STRENGTH[weakest] ? next : weakest,
+    );
+  return { chainStage: stage, chainStageBasis: basis };
+}
+
 export function selectLeadWireMechanism(
   wire: SwarmJourneyFindings,
 ): WireLeadMechanism | null {
@@ -136,8 +168,7 @@ export function selectLeadWireMechanism(
       // recommendation would tell a reader to fix something the headline
       // never mentioned.
       fixPhrase: withFix?.fixPhrase?.trim() ?? null,
-      chainStage: rows[0]!.chainStage,
-      chainStageBasis: rows[0]!.chainStageBasis,
+      ...agreedStage(rows),
     };
   }
   return lead;
@@ -199,18 +230,16 @@ function personaAccount(
   "issue" | "account" | "accountSessionId" | "cited" | "signal"
 > {
   const leadGoal = goals.find((goal) => goal.diagnosisStage);
-  const lead =
-    rows.find(
-      (row) =>
-        row.basis === "verifiedMechanism" &&
-        (!leadGoal || row.goal.runId === leadGoal.runId),
-    ) ??
-    rows.find(
-      (row) => row.signal && (!leadGoal || row.goal.runId === leadGoal.runId),
-    ) ??
-    null;
-  const supporting = (
-    lead
+  /**
+   * The account as it will actually be RENDERED, which is the only version
+   * worth ranking by. `account` is a nullable free-prose field: a whitespace-
+   * only one is truthy, so ranking on the raw value could pick a row over one
+   * with real words, and the trim below would then hand the card nothing.
+   */
+  const accountOf = (row: SwarmJourneyFinding | null | undefined) =>
+    row?.reportExcerpt?.account?.trim() || undefined;
+  const reportsFor = (lead: SwarmJourneyFinding | null) =>
+    (lead
       ? rows.filter(
           (row) =>
             row.basis === "sessionReport" &&
@@ -219,13 +248,39 @@ function personaAccount(
             row.sessionIds.some((id) => lead.sessionIds.includes(id)),
         )
       : rows.filter((row) => row.basis === "sessionReport")
-  ).sort((a, b) => {
-    const account =
-      Number(!!b.reportExcerpt?.account) - Number(!!a.reportExcerpt?.account);
-    if (account !== 0) return account;
-    return (a.sessionIds[0] ?? "").localeCompare(b.sessionIds[0] ?? "");
-  })[0];
-  const account = supporting?.reportExcerpt?.account?.trim();
+    ).sort((a, b) => {
+      const account = Number(!!accountOf(b)) - Number(!!accountOf(a));
+      if (account !== 0) return account;
+      return (a.sessionIds[0] ?? "").localeCompare(b.sessionIds[0] ?? "");
+    })[0] ?? null;
+  /**
+   * The lead and its quote are chosen TOGETHER.
+   *
+   * One diagnosed goal can carry several verified rows, one per target, and
+   * only some of their sessions may have written an account. Ranking the lead
+   * alone — by id, or by whatever the payload listed first — could land on a
+   * target whose sessions said nothing, and the card would fall back to
+   * diagnostic prose while a real quote sat one row away. So candidates are
+   * ranked by whether they actually yield an account, and only then by id,
+   * which keeps the choice stable without letting it be empty for no reason.
+   */
+  const rankLead = (candidates: readonly SwarmJourneyFinding[]) =>
+    [...candidates]
+      .filter((row) => !leadGoal || row.goal.runId === leadGoal.runId)
+      .map((row) => ({ row, report: reportsFor(row) }))
+      .sort((a, b) => {
+        const account =
+          Number(!!accountOf(b.report)) - Number(!!accountOf(a.report));
+        if (account !== 0) return account;
+        return a.row.id.localeCompare(b.row.id);
+      })[0] ?? null;
+  const chosen =
+    rankLead(rows.filter((row) => row.basis === "verifiedMechanism")) ??
+    rankLead(rows.filter((row) => row.signal)) ??
+    null;
+  const lead = chosen?.row ?? null;
+  const supporting = chosen ? chosen.report : reportsFor(null);
+  const account = accountOf(supporting);
   return {
     // Never empty on this path. The old expression bottomed out at `""`
     // whenever no goal had a located failure, which rendered as an empty
