@@ -618,9 +618,49 @@ console.log(result.text);
 
 ---
 
+### getToolsForAiSdkByServer()
+
+Returns tools in Vercel AI SDK format, keyed by server ID. Use this when you need per-connection toolsets — for example, to pass them to `mergeConnectionToolsets` for multi-account routing.
+
+```typescript
+getToolsForAiSdkByServer(
+  serverIds?: string[] | string,
+  options?: {
+    schemas?: ToolSchemaOverrides | "automatic";
+    needsApproval?: boolean;
+    includeAppOnly?: boolean;
+  }
+): Promise<Record<string, ToolSet>>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverIds` | `string[] \| string` | Optional. Server IDs to include. If omitted, uses all connected servers. |
+| `options.schemas` | `ToolSchemaOverrides \| "automatic"` | Optional. Control JSON schema conversion. |
+| `options.needsApproval` | `boolean` | Optional. When true, each tool call requires user approval before execution. |
+| `options.includeAppOnly` | `boolean` | Optional. When true, includes tools with `_meta.ui.visibility = ["app"]`. Defaults to `false`. |
+
+#### Returns
+
+`Promise<Record<string, ToolSet>>` — A map from server ID to its `ToolSet`.
+
+#### Example
+
+```typescript
+const perServer = await manager.getToolsForAiSdkByServer(["serverA", "serverB"]);
+// perServer["serverA"] — tools from serverA
+// perServer["serverB"] — tools from serverB
+```
+
+---
+
 ### getToolsForAiSdk()
 
 Returns tools in Vercel AI SDK format, ready to pass directly to `generateText()` or `streamText()`. App-only tools are filtered out by default per SEP-1865.
+
+This is a convenience flatten over `getToolsForAiSdkByServer`: it merges all per-server toolsets into one object (last-in wins on name collisions). For servers with multiple credentials on the same logical server, use `getToolsForAiSdkByServer` + `mergeConnectionToolsets` instead.
 
 ```typescript
 getToolsForAiSdk(
