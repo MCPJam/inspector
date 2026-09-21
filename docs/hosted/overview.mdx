@@ -111,6 +111,16 @@ Getting eval traces OUT of the hosted app is a different thing, and it does work
 
 ## Billing
 
+### Upgrading or changing your plan
+
+When you click **Upgrade** or **Change plan** on the organization Plans page, a confirmation dialog opens before you are sent to Stripe. The dialog lets you:
+
+- Review the current plan and the plan you are moving to.
+- Switch between **Annual** and **Monthly** billing at the point the decision is made. Changing the interval here also updates the comparison table behind the dialog.
+- See the actual charge — the annual price is a full year billed at once, not a per-month figure. For per-seat plans the total is multiplied by the seat count Stripe holds for your organization; if no seat count is available yet, the total is confirmed at checkout instead.
+
+Once you click **Continue to checkout** (new subscription) or **Confirm [plan name]** (existing subscription), the browser goes to Stripe. The button and **Cancel** are both locked while the redirect is in flight so the dialog cannot be dismissed mid-checkout. Closing the dialog without confirming cancels the change — nothing is sent to Stripe.
+
 ### Payment history
 
 The **Payment history** card on the org billing page lists your recent credit top-ups. Each row shows:
