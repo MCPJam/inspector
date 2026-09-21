@@ -601,3 +601,93 @@ describe("a reordered payload says the same thing", () => {
     ).toContain("The explanation points at the tool response.");
   });
 });
+
+describe("the persona quotes a session that actually spoke", () => {
+  it("prefers the lead whose sessions wrote an account, not the lowest id", () => {
+    const wire = truncatedWire({ signalRows: false });
+    const mechanism = wire.findings.find(
+      (row) => row.basis === "verifiedMechanism",
+    )!;
+    const report = wire.findings.find((row) => row.basis === "sessionReport")!;
+    // Two verified rows for the SAME goal, on different targets. The one that
+    // sorts first by id has a supporting session that said nothing; the other
+    // has the account. Ranking leads by id alone drops the quote.
+    const silent = {
+      ...mechanism,
+      id: "aaa-silent",
+      target: { ...mechanism.target, id: "host-silent" },
+      sessionIds: ["silent-1"],
+    };
+    const silentReport = {
+      ...report,
+      id: "report-silent",
+      target: { ...mechanism.target, id: "host-silent" },
+      sessionIds: ["silent-1"],
+      reportExcerpt: {
+        actual: "Nothing was recorded in this session's words.",
+        citations: ["silent-1/m:0"],
+      },
+    };
+    const speaking = {
+      ...mechanism,
+      id: "zzz-speaking",
+      target: { ...mechanism.target, id: "host-speaking" },
+      sessionIds: ["spoke-1"],
+    };
+    const speakingReport = {
+      ...report,
+      id: "report-speaking",
+      target: { ...mechanism.target, id: "host-speaking" },
+      sessionIds: ["spoke-1"],
+      reportExcerpt: {
+        actual: "The reply stopped at its output limit.",
+        account: WIRE_ACCOUNT,
+        citations: ["spoke-1/m:0"],
+      },
+    };
+    const built = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: [silent, silentReport, speaking, speakingReport],
+    });
+    const persona = deriveSwarmFindingsModelFromWire({
+      journeyFindings: built,
+      personas: [],
+      runs: [],
+    }).personas[0]!;
+    expect(persona.account).toBe(WIRE_ACCOUNT);
+    expect(persona.accountSessionId).toBe("spoke-1");
+    expect(persona.cited?.actual).toBe(
+      "The reply stopped at its output limit.",
+    );
+  });
+
+  it("still breaks ties by id when neither candidate has an account", () => {
+    const wire = truncatedWire({ signalRows: false });
+    const mechanism = wire.findings.find(
+      (row) => row.basis === "verifiedMechanism",
+    )!;
+    const bare = (id: string, host: string) => ({
+      ...mechanism,
+      id,
+      target: { ...mechanism.target, id: host },
+      sessionIds: [`${host}-1`],
+    });
+    const built = swarmJourneyFindingsSchema.parse({
+      ...wire,
+      findings: [bare("zzz", "host-z"), bare("aaa", "host-a")],
+    });
+    const of = (w: typeof built) =>
+      deriveSwarmFindingsModelFromWire({
+        journeyFindings: w,
+        personas: [],
+        runs: [],
+      }).personas[0]!;
+    expect(of(built).account).toBeUndefined();
+    // Deterministic, and identical under reversal.
+    const reversed = swarmJourneyFindingsSchema.parse({
+      ...built,
+      findings: [...built.findings].reverse(),
+    });
+    expect(of(reversed).issue).toBe(of(built).issue);
+  });
+});

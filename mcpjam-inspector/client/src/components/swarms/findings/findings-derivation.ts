@@ -230,19 +230,8 @@ function personaAccount(
   "issue" | "account" | "accountSessionId" | "cited" | "signal"
 > {
   const leadGoal = goals.find((goal) => goal.diagnosisStage);
-  // Ranked, not `find`: two rows can both qualify, and picking whichever the
-  // payload happened to list first made the quoted session depend on wire
-  // order. Row id is the stable tie-break.
-  const rankLead = (candidates: readonly SwarmJourneyFinding[]) =>
-    [...candidates]
-      .filter((row) => !leadGoal || row.goal.runId === leadGoal.runId)
-      .sort((a, b) => a.id.localeCompare(b.id))[0] ?? null;
-  const lead =
-    rankLead(rows.filter((row) => row.basis === "verifiedMechanism")) ??
-    rankLead(rows.filter((row) => row.signal)) ??
-    null;
-  const supporting = (
-    lead
+  const reportsFor = (lead: SwarmJourneyFinding | null) =>
+    (lead
       ? rows.filter(
           (row) =>
             row.basis === "sessionReport" &&
@@ -251,12 +240,40 @@ function personaAccount(
             row.sessionIds.some((id) => lead.sessionIds.includes(id)),
         )
       : rows.filter((row) => row.basis === "sessionReport")
-  ).sort((a, b) => {
-    const account =
-      Number(!!b.reportExcerpt?.account) - Number(!!a.reportExcerpt?.account);
-    if (account !== 0) return account;
-    return (a.sessionIds[0] ?? "").localeCompare(b.sessionIds[0] ?? "");
-  })[0];
+    ).sort((a, b) => {
+      const account =
+        Number(!!b.reportExcerpt?.account) - Number(!!a.reportExcerpt?.account);
+      if (account !== 0) return account;
+      return (a.sessionIds[0] ?? "").localeCompare(b.sessionIds[0] ?? "");
+    })[0] ?? null;
+  /**
+   * The lead and its quote are chosen TOGETHER.
+   *
+   * One diagnosed goal can carry several verified rows, one per target, and
+   * only some of their sessions may have written an account. Ranking the lead
+   * alone — by id, or by whatever the payload listed first — could land on a
+   * target whose sessions said nothing, and the card would fall back to
+   * diagnostic prose while a real quote sat one row away. So candidates are
+   * ranked by whether they actually yield an account, and only then by id,
+   * which keeps the choice stable without letting it be empty for no reason.
+   */
+  const rankLead = (candidates: readonly SwarmJourneyFinding[]) =>
+    [...candidates]
+      .filter((row) => !leadGoal || row.goal.runId === leadGoal.runId)
+      .map((row) => ({ row, report: reportsFor(row) }))
+      .sort((a, b) => {
+        const account =
+          Number(!!b.report?.reportExcerpt?.account) -
+          Number(!!a.report?.reportExcerpt?.account);
+        if (account !== 0) return account;
+        return a.row.id.localeCompare(b.row.id);
+      })[0] ?? null;
+  const chosen =
+    rankLead(rows.filter((row) => row.basis === "verifiedMechanism")) ??
+    rankLead(rows.filter((row) => row.signal)) ??
+    null;
+  const lead = chosen?.row ?? null;
+  const supporting = chosen ? chosen.report : reportsFor(null);
   const account = supporting?.reportExcerpt?.account?.trim();
   return {
     // Never empty on this path. The old expression bottomed out at `""`
