@@ -19,19 +19,24 @@
 
 import {
   SWARM_FINDING_COVERAGE_NOTE_LABELS,
+  SWARM_FINDING_SIGNAL_LABELS,
+  type SwarmJourneyFinding,
   type SwarmJourneyFindings,
 } from "@mcpjam/sdk/contract";
 import type { SwarmWaveSignals } from "@/lib/swarm-api";
 import {
   JOURNEY_STAGES,
+  JOURNEY_STAGE_BY_CHAIN,
   journeyStageTitle,
   type JourneyStageId,
 } from "./journey-stages";
-import type {
-  GoalFindingsModel,
-  LaunchTotals,
-  PersonaFindingsModel,
-  SwarmFindingsModel,
+import {
+  selectLeadWireMechanism,
+  wireSignalTotals,
+  type GoalFindingsModel,
+  type LaunchTotals,
+  type PersonaFindingsModel,
+  type SwarmFindingsModel,
 } from "./findings-derivation";
 
 const LINE_MAX_WORDS = 16;
@@ -247,7 +252,10 @@ function composeLines(
   ) {
     if (launch.failed > 0) {
       lines.push(
-        `${launch.failed} of ${plural(launch.total, "session")} failed to launch.`,
+        `${launch.failed} of ${plural(
+          launch.total,
+          "session",
+        )} failed to launch.`,
       );
     }
     if (launch.rateLimited > 0) {
@@ -269,7 +277,9 @@ function composeLines(
 
     lines.push(
       diagnosisIsGoalSpecific(goal)
-        ? `"${shortenGoalTitle(goal.title)}" broke at ${stage} for ${lead.name}.`
+        ? `"${shortenGoalTitle(goal.title)}" broke at ${stage} for ${
+            lead.name
+          }.`
         : `The ${stage} stage broke for ${lead.name}.`,
     );
 
@@ -393,7 +403,12 @@ export function deriveHonestyFootnotes(args: {
   const notes: string[] = [];
   if (args.narration?.modelRan === false)
     notes.push(
-      `No model narration, ${Math.max(0, args.narration.sessionCount - args.narration.unanalyzedSessionCount)} of ${args.narration.sessionCount} sessions covered by deterministic checks only`,
+      `No model narration, ${Math.max(
+        0,
+        args.narration.sessionCount - args.narration.unanalyzedSessionCount,
+      )} of ${
+        args.narration.sessionCount
+      } sessions covered by deterministic checks only`,
     );
   if (!signals || !hasGroupId) {
     // Legacy wave (or a backend that has not answered): the deterministic
@@ -488,6 +503,82 @@ function genericWireLine(wire: SwarmJourneyFindings): string {
  * the chain never located, say) the goal and persona are still named from the
  * wire, and only a model with no personas falls back to a generic sentence.
  */
+/**
+ * How a stage is worded depends on how it was ESTABLISHED. A stage the chain
+ * worker measured is reported as measured; a stage a model merely pointed at
+ * is reported as a reading. Saying "recorded at" for a model's guess would
+ * dress an opinion as a measurement.
+ */
+function stageLine(
+  chainStage: SwarmJourneyFinding["chainStage"],
+  basis: SwarmJourneyFinding["chainStageBasis"],
+): string | null {
+  if (!chainStage || basis === "unmeasured") return null;
+  const stage = journeyStageTitle(
+    JOURNEY_STAGE_BY_CHAIN[chainStage],
+  ).toLowerCase();
+  return basis === "derived"
+    ? `Recorded at the ${stage} stage.`
+    : `The explanation points at the ${stage}.`;
+}
+
+/** "in N of M sessions read", plus the goal span when the cause crosses goals. */
+function populationClause(count: number, read: number, goals: number): string {
+  const across = goals > 1 ? ` across ${goals} goals` : "";
+  return ` in ${count} of ${read} sessions read${across}`;
+}
+
+/**
+ * Which goal and whose, for a cause that may span several of both.
+ *
+ * Chosen by reach and then by id, never by position: the rows of one mechanism
+ * arrive in whatever order the producer listed them, and naming `rows[0]`'s
+ * goal let a reordered but identical payload name a different one.
+ */
+function personaGoalLine(rows: readonly SwarmJourneyFinding[]): string | null {
+  const byGoal = new Map<string, { title: string; sessions: Set<string> }>();
+  for (const row of rows) {
+    const entry = byGoal.get(row.goal.runId) ?? {
+      title: row.goal.title,
+      sessions: new Set<string>(),
+    };
+    for (const id of row.sessionIds) entry.sessions.add(id);
+    byGoal.set(row.goal.runId, entry);
+  }
+  const lead = [...byGoal.entries()].sort(
+    ([aId, a], [bId, b]) =>
+      b.sessions.size - a.sessions.size || aId.localeCompare(bId),
+  )[0];
+  if (!lead) return null;
+  // The FULL title. `shortenGoalTitle` cuts to four words, which turns most
+  // real goals into an ellipsis and tells the reader nothing.
+  //
+  // Only the personas who actually had THIS goal. One mechanism can span
+  // non-cartesian pairs -- Zoe on goal A, Amy on goal B -- and naming every
+  // persona on the lead goal's title told the reader Amy tried a goal she was
+  // never given. How far the cause reaches is the population clause's job.
+  const names = [
+    ...new Set(
+      rows
+        .filter((row) => row.goal.runId === lead[0])
+        .map((row) => row.persona.name),
+    ),
+  ].sort();
+  const who =
+    names.length > 1
+      ? `${names[0]} and ${plural(names.length - 1, "other persona")}`
+      : names[0];
+  return `"${shortenGoalTitle(lead[1].title, 12)}" for ${who}.`;
+}
+
+/**
+ * The summary for a run the shared findings pipeline published.
+ *
+ * Built from the ROWS, not delegated to the legacy composer: that composer
+ * takes its stage from whichever stage the chain marked failed and its title
+ * from a four-word truncation, so a verified cause could be named on the wire
+ * and still reach the card as "the judge said no" about `"They want to quic…"`.
+ */
 export function composeWireFindingsSummary(
   wire: SwarmJourneyFindings,
   model: SwarmFindingsModel,
@@ -498,6 +589,38 @@ export function composeWireFindingsSummary(
   if (kind === "unread" || model.personas.length === 0) {
     return { kind, lines: [genericWireLine(wire)] };
   }
+  const lead = selectLeadWireMechanism(wire);
+  if (lead?.mechanismPhrase) {
+    const phrase = lead.mechanismPhrase.replace(/[.!?]+$/, "");
+    const lines = [
+      `${phrase}${populationClause(
+        lead.sessionCount,
+        wire.population.read,
+        lead.goalRunIds.length,
+      )}.`,
+    ];
+    const stage = stageLine(lead.chainStage, lead.chainStageBasis);
+    if (stage) lines.push(stage);
+    const persona = personaGoalLine(lead.rows);
+    if (persona) lines.push(persona);
+    return { kind, lines };
+  }
+  // No confirmed cause, but something WAS recorded. This is the honest floor:
+  // the wave says what was observed rather than shrugging.
+  const signals = wireSignalTotals(wire);
+  const signal = signals[0];
+  if (signal) {
+    const lines = [
+      `${SWARM_FINDING_SIGNAL_LABELS[signal.signal]} in ${signal.count} of ${
+        wire.population.read
+      } sessions read.`,
+    ];
+    const persona = personaGoalLine(
+      wire.findings.filter((row) => row.signal === signal.signal),
+    );
+    if (persona) lines.push(persona);
+    return { kind, lines };
+  }
   const composed = composeFindingsSummary(model, {
     terminal: kind === "not_launched" ? true : opts.terminal,
   });
@@ -507,21 +630,41 @@ export function composeWireFindingsSummary(
     for (const persona of model.personas) {
       const goal = persona.goals.find((g) => g.sentiment.tone === tone);
       if (!goal) continue;
-      const title = shortenGoalTitle(goal.title);
       const lines = [
         kind === "broken"
-          ? `"${title}" broke for ${persona.name}.`
-          : `"${title}" showed friction for ${persona.name}.`,
+          ? `"${shortenGoalTitle(goal.title, 12)}" broke for ${persona.name}.`
+          : `"${shortenGoalTitle(goal.title, 12)}" showed friction for ${
+              persona.name
+            }.`,
       ];
       const feeling = feelingLine(persona);
       if (feeling) lines.push(feeling);
-      return { kind, lines: lines.map((line) => limitWords(line)) };
+      return { kind, lines };
     }
   }
   return { kind, lines: [genericWireLine(wire)] };
 }
+
 export function wireFindingsFootnotes(wire: SwarmJourneyFindings): string[] {
-  return wire.coverageNotes.map(
+  const notes = wire.coverageNotes.map(
     (note) => SWARM_FINDING_COVERAGE_NOTE_LABELS[note],
   );
+  const verification = wire.verification;
+  if (!verification) return notes;
+  // Only proposals that were LOOKED AT and did not hold. An empty reply, an
+  // unavailable model and a publication cap are none of them a rejected cause.
+  if (verification.rejected > 0)
+    notes.push(
+      `${plural(verification.rejected, "possible cause")} ${
+        verification.rejected === 1 ? "was" : "were"
+      } rejected.`,
+    );
+  if (verification.unverified > 0)
+    notes.push(
+      `${plural(
+        verification.unverified,
+        "possible cause",
+      )} could not be verified.`,
+    );
+  return notes;
 }

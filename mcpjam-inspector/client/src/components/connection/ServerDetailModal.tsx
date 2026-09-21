@@ -1,3 +1,5 @@
+import { ConnectionAccountsSection } from "./ConnectionAccountsSection";
+import type { ConnectionIntent } from "@/shared/oauth-connections";
 import {
   useCallback,
   useEffect,
@@ -69,6 +71,7 @@ import { shouldQueryProjectId } from "@/hooks/useProjects";
 export type ServerDetailTab =
   | "overview"
   | "configuration"
+  | "authorization"
   | "tools-metadata"
   | "compatibility"
   | "history";
@@ -77,7 +80,6 @@ interface ServerDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   server: ServerWithName;
-  needsReconnect?: boolean;
   defaultTab?: ServerDetailTab;
   onSubmit: (
     formData: ServerFormData,
@@ -88,6 +90,7 @@ interface ServerDetailModalProps {
     serverName: string,
     options?: {
       forceOAuthFlow?: boolean;
+      connectionIntent?: ConnectionIntent;
       allowInteractiveOAuthFlow?: boolean;
     }
   ) => Promise<void>;
@@ -115,7 +118,6 @@ export function ServerDetailModal({
   isOpen,
   onClose,
   server,
-  needsReconnect = false,
   defaultTab = "overview",
   onSubmit,
   onDisconnect,
@@ -130,6 +132,12 @@ export function ServerDetailModal({
   projectXaaDefaultIdentity = null,
 }: ServerDetailModalProps) {
   const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
+  // Any HTTP server, matching the token section's own guard rather than
+  // `useOAuth`: a server that has since had OAuth turned off can still hold
+  // stored tokens, or unparseable ones, and "Saved auth data is invalid" has
+  // to stay reachable. The sections inside hide themselves when there is
+  // nothing to show.
+  const showAuthorization = "url" in server.config;
   // Reconnects overlap: two quick wire-mode changes start a second one while
   // the first is still running. A boolean would be cleared by whichever
   // finished first and let a configuration save through mid-reconnect, so the
@@ -491,6 +499,7 @@ export function ServerDetailModal({
 
   const handleConnect = async (options?: {
     forceOAuthFlow?: boolean;
+    connectionIntent?: ConnectionIntent;
     allowInteractiveOAuthFlow?: boolean;
   }) => {
     setReconnectsInFlight((count) => count + 1);
@@ -708,6 +717,11 @@ export function ServerDetailModal({
               >
                 Tools
               </TabsTrigger>
+              {showAuthorization && (
+                <TabsTrigger value="authorization" className={tabTriggerClass}>
+                  Auth
+                </TabsTrigger>
+              )}
               <TabsTrigger
                 value="compatibility"
                 aria-label="Client compatibility"
@@ -806,14 +820,51 @@ export function ServerDetailModal({
                     </div>
                   ) : (
                     <ServerInfoContent
+                      sections="info"
                       server={server}
-                      needsReconnect={needsReconnect}
                       projectId={projectId}
                       hostedServerId={hostedServerId}
                     />
                   )}
                 </div>
               </TabsContent>
+
+              {showAuthorization && (
+                <TabsContent
+                  value="authorization"
+                  // Overlays the force-mounted configuration panel, like every
+                  // other tab. Configuration's own classes are NOT reusable
+                  // here: it keeps `invisible` while inactive, which still
+                  // occupies layout, so a sibling in normal flow stacks below
+                  // its full height and spills out of the dialog.
+                  className="mt-0 flex-none absolute inset-0 overflow-y-auto bg-background"
+                >
+                  <div className="space-y-4 pl-1 pr-6">
+                  <ConnectionAccountsSection
+                    projectId={projectId}
+                    serverId={hostedServerId}
+                    enabled={isUserReady && server.useOAuth === true}
+                    onAuthenticate={(connectionIntent) =>
+                      onReconnect(server.name, {
+                        forceOAuthFlow: true,
+                        connectionIntent,
+                      })
+                    }
+                    onSwitch={() =>
+                      onReconnect(server.name, {
+                        allowInteractiveOAuthFlow: false,
+                      })
+                    }
+                  />
+                    <ServerInfoContent
+                      sections="auth"
+                      server={server}
+                      projectId={projectId}
+                      hostedServerId={hostedServerId}
+                    />
+                  </div>
+                </TabsContent>
+              )}
 
               {/* Tools Metadata: overlays the configuration panel + footer to use full space */}
               <TabsContent

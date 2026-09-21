@@ -47,6 +47,7 @@ import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
+import { PlatformLaunchAnnouncement } from "@/components/sidebar/platform-launch-announcement";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { InviteTeamSignUpDialog } from "@/components/auth/InviteTeamSignUpDialog";
 import { consumePendingInviteDialog } from "@/lib/pending-invite-dialog";
@@ -917,6 +918,13 @@ export function MCPSidebar({
           <SidebarUser onBeforeSignOut={onBeforeSignOut} />
         </SidebarFooter>
       </Sidebar>
+      {!authResolving && (
+        <PlatformLaunchAnnouncement
+          onNavigate={appNavigate}
+          audience={user ? "signed_in" : "guest"}
+          sandboxesEnabled={sandboxesEnabled === true}
+        />
+      )}
       {canOpenInviteDialog && showInviteDialog && activeOrganizationId ? (
         <InviteTeamMembersDialog
           key={activeOrganizationId}

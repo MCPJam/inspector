@@ -247,7 +247,7 @@ describe("ServerDetailModal", () => {
   });
 
   it("keeps the footer in the DOM but visually hidden when not on configuration tab", () => {
-    render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
+    render(<ServerDetailModal {...defaultProps} defaultTab="authorization" />);
 
     const footer = screen.getByTestId("modal-footer");
     expect(footer).toBeInTheDocument();
@@ -273,7 +273,7 @@ describe("ServerDetailModal", () => {
 
     // Overview tab uses overflow-y-auto for scrolling
     const { unmount } = render(
-      <ServerDetailModal {...defaultProps} defaultTab="overview" />
+      <ServerDetailModal {...defaultProps} defaultTab="authorization" />
     );
 
     const overviewPanel = document.querySelector(
@@ -668,14 +668,196 @@ describe("ServerDetailModal", () => {
   });
 
   it("does not show a conformance launch button in overview", () => {
-    render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
+    render(<ServerDetailModal {...defaultProps} defaultTab="authorization" />);
 
     expect(
       screen.queryByRole("button", { name: "Run conformance" })
     ).not.toBeInTheDocument();
   });
 
-  it("renders local OAuth tokens from localStorage in overview", () => {
+  it("overlays the auth panel instead of stacking under the config panel", () => {
+    // The configuration panel is force-mounted and stays `invisible` while
+    // inactive, which still occupies its full height. A sibling panel in
+    // normal flow therefore renders BELOW that height and spills out of the
+    // dialog, so every non-configuration tab has to overlay it.
+    render(<ServerDetailModal {...defaultProps} defaultTab="authorization" />);
+    // The dialog is portalled, so query the document rather than the container.
+    const panels = screen.getAllByRole("tabpanel", { hidden: true });
+    const auth = panels.find(
+      (panel) => panel.getAttribute("data-state") === "active",
+    );
+    expect(auth).toBeTruthy();
+    for (const positioning of ["absolute", "inset-0", "overflow-y-auto"])
+      expect(auth?.className).toContain(positioning);
+    expect(auth?.className).not.toContain("max-h-[60vh]");
+  });
+
+  const connectedServerInfo = {
+    serverVersion: {
+      name: "Linear MCP",
+      title: "Linear MCP",
+    },
+    protocolVersion: "2026-07-28",
+    transport: "streamable-http",
+    instructions: "When passing string values to tools, send the content directly.",
+    serverCapabilities: { tools: { listChanged: false } },
+  };
+
+  it("keeps handshake metadata on overview, not the auth tab", () => {
+    const server = createServer({
+      useOAuth: true,
+      initializationInfo: connectedServerInfo,
+      oauthTokens: {
+        access_token: "local-access-token",
+        refresh_token: "local-refresh-token",
+        token_type: "Bearer",
+      },
+    });
+
+    const { unmount } = render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={server}
+        defaultTab="authorization"
+      />
+    );
+
+    const authPanel = screen
+      .getAllByRole("tabpanel", { hidden: true })
+      .find((panel) => panel.getAttribute("data-state") === "active");
+    expect(authPanel).toBeTruthy();
+    expect(within(authPanel!).getByText("OAuth Tokens")).toBeInTheDocument();
+    expect(
+      within(authPanel!).queryByText("MCP Protocol Version")
+    ).not.toBeInTheDocument();
+    expect(within(authPanel!).queryByText("Transport")).not.toBeInTheDocument();
+    expect(
+      within(authPanel!).queryByText("Instructions")
+    ).not.toBeInTheDocument();
+    expect(
+      within(authPanel!).queryByText("Server Capabilities")
+    ).not.toBeInTheDocument();
+    unmount();
+
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={server}
+        defaultTab="overview"
+      />
+    );
+
+    const overviewPanel = screen
+      .getAllByRole("tabpanel", { hidden: true })
+      .find((panel) => panel.getAttribute("data-state") === "active");
+    expect(overviewPanel).toBeTruthy();
+    expect(within(overviewPanel!).getByText("Server Name")).toBeInTheDocument();
+    expect(
+      within(overviewPanel!).getByText("MCP Protocol Version")
+    ).toBeInTheDocument();
+    expect(within(overviewPanel!).getByText("Instructions")).toBeInTheDocument();
+    expect(
+      within(overviewPanel!).queryByText("OAuth Tokens")
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps successful OAuth trace payloads closed until a step is opened", async () => {
+    const user = userEvent.setup();
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({
+          lastOAuthTrace: {
+            version: 1,
+            source: "hosted_callback",
+            currentStep: "complete",
+            steps: [
+              {
+                step: "request_authorization_server_metadata",
+                title: "Fetch Authorization Server Metadata",
+                status: "success",
+                message: "Authorization server metadata loaded.",
+                details: {
+                  request: {
+                    url: "https://multiaccount.mcpjam.com/.well-known/oauth-authorization-server",
+                  },
+                },
+                startedAt: 1,
+              },
+              {
+                step: "token_request",
+                title: "Token Request",
+                status: "error",
+                error: "token endpoint rejected the grant",
+                startedAt: 2,
+              },
+            ],
+            httpHistory: [
+              {
+                step: "request_authorization_server_metadata",
+                timestamp: 1,
+                request: {
+                  method: "GET",
+                  url: "https://hidden.example/http-history",
+                  headers: {},
+                },
+              },
+            ],
+          },
+        })}
+        defaultTab="authorization"
+      />
+    );
+
+    const authPanel = screen
+      .getAllByRole("tabpanel", { hidden: true })
+      .find((panel) => panel.getAttribute("data-state") === "active");
+    expect(authPanel).toBeTruthy();
+    const trace = within(authPanel!)
+      .getByText("Last OAuth Trace")
+      .closest("details");
+    expect(trace).not.toBeNull();
+    expect(trace).not.toHaveAttribute("open");
+
+    await user.click(within(authPanel!).getByText("Last OAuth Trace"));
+    expect(trace).toHaveAttribute("open");
+
+    const successStep = within(authPanel!)
+      .getByText("Fetch Authorization Server Metadata")
+      .closest("details");
+    const httpHistory = within(authPanel!)
+      .getByText("HTTP History")
+      .closest("details");
+    const errorStep = within(authPanel!)
+      .getByText("Token Request")
+      .closest("details");
+    expect(successStep).not.toBeNull();
+    expect(httpHistory).not.toBeNull();
+    expect(errorStep).not.toBeNull();
+    expect(successStep).not.toHaveAttribute("open");
+    expect(httpHistory).not.toHaveAttribute("open");
+    expect(errorStep).toHaveAttribute("open");
+    expect(
+      within(authPanel!).getByText("Fetch Authorization Server Metadata")
+    ).toHaveClass("text-success");
+    expect(within(authPanel!).getByText("success")).toHaveClass("sr-only");
+    expect(within(authPanel!).getByText("Token Request")).toHaveClass(
+      "text-destructive"
+    );
+    expect(
+      within(authPanel!).getByText("token endpoint rejected the grant")
+    ).toBeInTheDocument();
+
+    await user.click(
+      within(authPanel!).getByText("Fetch Authorization Server Metadata")
+    );
+    expect(successStep).toHaveAttribute("open");
+
+    await user.click(within(authPanel!).getByText("HTTP History"));
+    expect(httpHistory).toHaveAttribute("open");
+  });
+
+  it("renders local OAuth tokens from localStorage on the auth tab", () => {
     localStorage.setItem(
       "mcp-tokens-test-server",
       JSON.stringify({
@@ -691,7 +873,7 @@ describe("ServerDetailModal", () => {
       <ServerDetailModal
         {...defaultProps}
         server={createServer({ useOAuth: true })}
-        defaultTab="overview"
+        defaultTab="authorization"
       />
     );
 
@@ -774,7 +956,7 @@ describe("ServerDetailModal", () => {
     render(
       <ServerDetailModal
         {...defaultProps}
-        defaultTab="overview"
+        defaultTab="authorization"
         onSubmit={onSubmit}
       />
     );
@@ -824,7 +1006,7 @@ describe("ServerDetailModal", () => {
   it("shows a reconnect message instead of crashing when stored auth data is invalid", () => {
     localStorage.setItem("mcp-tokens-test-server", '{"access_token":"broken"');
 
-    render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
+    render(<ServerDetailModal {...defaultProps} defaultTab="authorization" />);
 
     expect(
       screen.getByText(
