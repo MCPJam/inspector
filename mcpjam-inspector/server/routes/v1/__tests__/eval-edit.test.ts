@@ -2489,6 +2489,8 @@ describe("v1 eval-edit routes", () => {
     body?: Record<string, unknown>;
     /** Applied AFTER `withNoPriorLedger`, which otherwise clobbers it. */
     query?: (name: string) => Promise<unknown> | undefined;
+    /** Ends the compatibility wait early, the way a disconnect does. */
+    signal?: AbortSignal;
   }) {
     createAuthorizedManagerMock.mockResolvedValue({
       manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
@@ -2514,6 +2516,7 @@ describe("v1 eval-edit routes", () => {
           content: "# Case 1\nSearch for coffee.",
           ...(init.body ?? {}),
         }),
+        ...(init.signal ? { signal: init.signal } : {}),
       },
     );
   }
@@ -2552,12 +2555,22 @@ describe("v1 eval-edit routes", () => {
     try {
       const response = await importWith({
         body: { content: "title,prompt\nA,B" },
+        // Completed on the first poll. What this test is about is the payload
+        // we hand the backend, and leaving the job pending only bought a
+        // 15-second wait for the compatibility window to expire.
         query: (name) =>
           name === "evalAuthoringState:status"
-            ? Promise.resolve({ jobId: "job", status: "pending" })
+            ? Promise.resolve({
+                jobId: "job",
+                projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+                source: "import",
+                status: "completed",
+                drafts: [],
+              })
             : undefined,
       });
-      expect(response.status).toBe(202);
+      expect(response.status).toBe(200);
       const sent = JSON.parse(
         (fetchMock.mock.calls[0]?.[1] as RequestInit).body as string,
       );
@@ -2568,6 +2581,46 @@ describe("v1 eval-edit routes", () => {
         // the name — it is only the label a reviewer sees.
         fileName: "import.txt",
       });
+    } finally {
+      capture.mockRestore();
+      fetchMock.mockRestore();
+      if (oldFlag === undefined)
+        delete process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+      else process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = oldFlag;
+      if (oldUrl === undefined) delete process.env.CONVEX_HTTP_URL;
+      else process.env.CONVEX_HTTP_URL = oldUrl;
+    }
+  });
+
+  it("answers 202 with a job id when the wait runs out", async () => {
+    // The caller disconnecting is what ends the wait early here; a real slow
+    // job ends it by the clock. Either way the job is NOT cancelled — the id
+    // is how the caller comes back for it.
+    const oldFlag = process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+    const oldUrl = process.env.CONVEX_HTTP_URL;
+    process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = "true";
+    process.env.CONVEX_HTTP_URL = "https://backend.test";
+    const capture = vi
+      .spyOn(authoringHelpers, "captureToolSnapshotForEvalAuthoring")
+      .mockResolvedValue({ toolSnapshot: [] } as any);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        Response.json(
+          { version: 1, jobId: "job", status: "pending" },
+          { status: 202 },
+        ),
+      );
+    try {
+      const response = await importWith({
+        signal: AbortSignal.abort(),
+        query: (name) =>
+          name === "evalAuthoringState:status"
+            ? Promise.resolve({ jobId: "job", status: "pending" })
+            : undefined,
+      });
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({ jobId: "job" });
     } finally {
       capture.mockRestore();
       fetchMock.mockRestore();
