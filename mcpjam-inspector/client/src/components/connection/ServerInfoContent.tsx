@@ -426,10 +426,12 @@ export function ServerInfoContent({
     }
 
     return (
-      <div className="space-y-3 text-xs pt-2">
-        <div className="text-sm font-medium text-muted-foreground">
+      <details className="group/trace space-y-3 text-xs pt-2">
+        <summary className="mb-2 flex cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
+          <ChevronRight className="size-3.5 shrink-0 group-open/trace:hidden" />
+          <ChevronDown className="hidden size-3.5 shrink-0 group-open/trace:block" />
           Last OAuth Trace
-        </div>
+        </summary>
         <div className="space-y-3 rounded-md bg-muted/40 p-3">
           <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
             <span>Source: {oauthTrace.source.replaceAll("_", " ")}</span>
@@ -442,62 +444,90 @@ export function ServerInfoContent({
           </div>
 
           <div className="space-y-2">
-            {oauthTrace.steps.map((step, index) => (
-              <div
-                key={`${step.step}-${index}-${step.startedAt}`}
-                className="rounded-md border border-border/40 bg-background/60 p-2"
-              >
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="font-medium text-foreground">
+            {oauthTrace.steps.map((step, index) => {
+              const hasBody = Boolean(
+                step.message || step.error || step.details,
+              );
+              const statusClass =
+                step.status === "error"
+                  ? "text-destructive"
+                  : step.status === "success"
+                    ? "text-success"
+                    : "text-warning";
+              const header = (
+                <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
+                  <span className={`font-medium ${statusClass}`}>
                     {step.title}
                   </span>
-                  <span
-                    className={
-                      step.status === "error"
-                        ? "text-destructive"
-                        : step.status === "success"
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : "text-amber-600 dark:text-amber-400"
-                    }
-                  >
-                    {step.status}
-                  </span>
+                  <span className="sr-only">{step.status}</span>
                 </div>
-                {step.message ? (
-                  <div className="mt-1 text-sm text-muted-foreground">
-                    {step.message}
+              );
+              const body = (
+                <>
+                  {step.message ? (
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      {step.message}
+                    </div>
+                  ) : null}
+                  {step.error ? (
+                    <div className="mt-1 break-all text-sm text-destructive">
+                      {step.error}
+                    </div>
+                  ) : null}
+                  {step.details ? (
+                    <ScrollableJsonView
+                      value={step.details}
+                      showLineNumbers={false}
+                      containerClassName="mt-2 max-h-48 rounded-lg"
+                    />
+                  ) : null}
+                </>
+              );
+
+              if (!hasBody) {
+                return (
+                  <div
+                    key={`${step.step}-${index}-${step.startedAt}`}
+                    className="rounded-md border border-border/40 bg-background/60 p-2"
+                  >
+                    {header}
                   </div>
-                ) : null}
-                {step.error ? (
-                  <div className="mt-1 break-all text-sm text-destructive">
-                    {step.error}
-                  </div>
-                ) : null}
-                {step.details ? (
-                  <ScrollableJsonView
-                    value={step.details}
-                    showLineNumbers={false}
-                    containerClassName="mt-2 max-h-48 rounded-lg"
-                  />
-                ) : null}
-              </div>
-            ))}
+                );
+              }
+
+              return (
+                <details
+                  key={`${step.step}-${index}-${step.startedAt}`}
+                  className="group/step rounded-md border border-border/40 bg-background/60 p-2"
+                  open={step.status === "error"}
+                >
+                  <summary className="flex cursor-pointer list-none items-center gap-1.5 [&::-webkit-details-marker]:hidden">
+                    <ChevronRight className="size-3.5 shrink-0 text-muted-foreground group-open/step:hidden" />
+                    <ChevronDown className="hidden size-3.5 shrink-0 text-muted-foreground group-open/step:block" />
+                    {header}
+                  </summary>
+                  {body}
+                </details>
+              );
+            })}
           </div>
 
           {oauthTrace.httpHistory.length > 0 ? (
-            <div>
-              <div className="mb-2 text-sm font-medium text-muted-foreground">
+            <details className="group/http">
+              <summary className="mb-2 flex cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
+                <ChevronRight className="size-3.5 shrink-0 group-open/http:hidden" />
+                <ChevronDown className="hidden size-3.5 shrink-0 group-open/http:block" />
                 HTTP History
-              </div>
+              </summary>
               <ScrollableJsonView
                 value={oauthTrace.httpHistory}
                 showLineNumbers={false}
                 containerClassName="max-h-96 rounded-lg"
               />
-            </div>
+            </details>
           ) : null}
         </div>
-      </div>
+      </details>
     );
   };
 

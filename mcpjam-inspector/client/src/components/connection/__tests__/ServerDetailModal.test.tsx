@@ -761,6 +761,102 @@ describe("ServerDetailModal", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("keeps successful OAuth trace payloads closed until a step is opened", async () => {
+    const user = userEvent.setup();
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({
+          lastOAuthTrace: {
+            version: 1,
+            source: "hosted_callback",
+            currentStep: "complete",
+            steps: [
+              {
+                step: "request_authorization_server_metadata",
+                title: "Fetch Authorization Server Metadata",
+                status: "success",
+                message: "Authorization server metadata loaded.",
+                details: {
+                  request: {
+                    url: "https://multiaccount.mcpjam.com/.well-known/oauth-authorization-server",
+                  },
+                },
+                startedAt: 1,
+              },
+              {
+                step: "token_request",
+                title: "Token Request",
+                status: "error",
+                error: "token endpoint rejected the grant",
+                startedAt: 2,
+              },
+            ],
+            httpHistory: [
+              {
+                step: "request_authorization_server_metadata",
+                timestamp: 1,
+                request: {
+                  method: "GET",
+                  url: "https://hidden.example/http-history",
+                  headers: {},
+                },
+              },
+            ],
+          },
+        })}
+        defaultTab="authorization"
+      />
+    );
+
+    const authPanel = screen
+      .getAllByRole("tabpanel", { hidden: true })
+      .find((panel) => panel.getAttribute("data-state") === "active");
+    expect(authPanel).toBeTruthy();
+    const trace = within(authPanel!)
+      .getByText("Last OAuth Trace")
+      .closest("details");
+    expect(trace).not.toBeNull();
+    expect(trace).not.toHaveAttribute("open");
+
+    await user.click(within(authPanel!).getByText("Last OAuth Trace"));
+    expect(trace).toHaveAttribute("open");
+
+    const successStep = within(authPanel!)
+      .getByText("Fetch Authorization Server Metadata")
+      .closest("details");
+    const httpHistory = within(authPanel!)
+      .getByText("HTTP History")
+      .closest("details");
+    const errorStep = within(authPanel!)
+      .getByText("Token Request")
+      .closest("details");
+    expect(successStep).not.toBeNull();
+    expect(httpHistory).not.toBeNull();
+    expect(errorStep).not.toBeNull();
+    expect(successStep).not.toHaveAttribute("open");
+    expect(httpHistory).not.toHaveAttribute("open");
+    expect(errorStep).toHaveAttribute("open");
+    expect(
+      within(authPanel!).getByText("Fetch Authorization Server Metadata")
+    ).toHaveClass("text-success");
+    expect(within(authPanel!).getByText("success")).toHaveClass("sr-only");
+    expect(within(authPanel!).getByText("Token Request")).toHaveClass(
+      "text-destructive"
+    );
+    expect(
+      within(authPanel!).getByText("token endpoint rejected the grant")
+    ).toBeInTheDocument();
+
+    await user.click(
+      within(authPanel!).getByText("Fetch Authorization Server Metadata")
+    );
+    expect(successStep).toHaveAttribute("open");
+
+    await user.click(within(authPanel!).getByText("HTTP History"));
+    expect(httpHistory).toHaveAttribute("open");
+  });
+
   it("renders local OAuth tokens from localStorage on the auth tab", () => {
     localStorage.setItem(
       "mcp-tokens-test-server",
