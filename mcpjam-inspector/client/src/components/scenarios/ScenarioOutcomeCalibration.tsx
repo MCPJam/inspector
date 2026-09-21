@@ -60,9 +60,9 @@ export function ScenarioOutcomeCalibration({
             Not an accuracy score. Feedback measures satisfaction, not whether
             the goal was met, and only a few percent of sessions leave any. Read
             this as a smell test: thumbs-down concentrated in sessions labeled
-            &ldquo;completed&rdquo; is worth investigating &mdash; it can mean
-            the outcome extraction is wrong, or that users got what they asked
-            for and disliked it.
+            &ldquo;completed&rdquo; is worth investigating. It can mean the
+            outcome extraction is wrong, or that users got what they asked for
+            and disliked it.
           </TooltipContent>
         </Tooltip>
       </div>

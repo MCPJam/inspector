@@ -326,7 +326,7 @@ export function ShareSection<TEnvelope>({
             data-testid={testIds.unrunnable}
           >
             {disabledReason} Point this at a working environment to share it
-            again — its link and its sessions are unchanged.
+            again. Its link and its sessions are unchanged.
           </p>
         ) : null}
       </div>

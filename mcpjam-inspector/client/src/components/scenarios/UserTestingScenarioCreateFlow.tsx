@@ -876,7 +876,7 @@ export function UserTestingScenarioCreateFlow({
                     data-testid="user-testing-create-cloud-note"
                   >
                     Tester-session computer commands run in MCPJam cloud
-                    sandboxes — never on the machine serving this inspector.
+                    sandboxes, never on the machine serving this inspector.
                   </p>
                 ) : null}
               </div>
