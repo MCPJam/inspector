@@ -247,7 +247,7 @@ describe("ServerDetailModal", () => {
   });
 
   it("keeps the footer in the DOM but visually hidden when not on configuration tab", () => {
-    render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
+    render(<ServerDetailModal {...defaultProps} defaultTab="authorization" />);
 
     const footer = screen.getByTestId("modal-footer");
     expect(footer).toBeInTheDocument();
@@ -273,7 +273,7 @@ describe("ServerDetailModal", () => {
 
     // Overview tab uses overflow-y-auto for scrolling
     const { unmount } = render(
-      <ServerDetailModal {...defaultProps} defaultTab="overview" />
+      <ServerDetailModal {...defaultProps} defaultTab="authorization" />
     );
 
     const overviewPanel = document.querySelector(
@@ -668,14 +668,14 @@ describe("ServerDetailModal", () => {
   });
 
   it("does not show a conformance launch button in overview", () => {
-    render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
+    render(<ServerDetailModal {...defaultProps} defaultTab="authorization" />);
 
     expect(
       screen.queryByRole("button", { name: "Run conformance" })
     ).not.toBeInTheDocument();
   });
 
-  it("renders local OAuth tokens from localStorage in overview", () => {
+  it("renders local OAuth tokens from localStorage on the auth tab", () => {
     localStorage.setItem(
       "mcp-tokens-test-server",
       JSON.stringify({
@@ -691,7 +691,7 @@ describe("ServerDetailModal", () => {
       <ServerDetailModal
         {...defaultProps}
         server={createServer({ useOAuth: true })}
-        defaultTab="overview"
+        defaultTab="authorization"
       />
     );
 
@@ -774,7 +774,7 @@ describe("ServerDetailModal", () => {
     render(
       <ServerDetailModal
         {...defaultProps}
-        defaultTab="overview"
+        defaultTab="authorization"
         onSubmit={onSubmit}
       />
     );
@@ -824,7 +824,7 @@ describe("ServerDetailModal", () => {
   it("shows a reconnect message instead of crashing when stored auth data is invalid", () => {
     localStorage.setItem("mcp-tokens-test-server", '{"access_token":"broken"');
 
-    render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
+    render(<ServerDetailModal {...defaultProps} defaultTab="authorization" />);
 
     expect(
       screen.getByText(

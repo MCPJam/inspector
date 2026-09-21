@@ -24,9 +24,6 @@ import {
 } from "@/lib/credential-origin";
 
 interface EditServerFormContentProps {
-  /** Connected OAuth accounts, rendered under Authentication. HTTP only:
-   *  a stdio server has no OAuth connections to show. */
-  accountsSlot?: React.ReactNode;
   formState: ReturnType<typeof useServerForm>;
   isDuplicateServerName: boolean;
   projectId?: string | null;
@@ -56,7 +53,6 @@ interface EditServerFormContentProps {
 }
 
 export function EditServerFormContent({
-  accountsSlot,
   formState,
   isDuplicateServerName,
   projectId = null,
@@ -373,7 +369,6 @@ export function EditServerFormContent({
             xaaDcrRegisteredAt={formState.xaaDcrRegisteredAt}
             xaaDcrStatus={formState.xaaDcrStatus}
           />
-          {accountsSlot}
         </div>
       )}
 
