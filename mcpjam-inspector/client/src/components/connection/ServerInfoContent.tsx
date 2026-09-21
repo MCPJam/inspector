@@ -84,7 +84,6 @@ export function ServerInfoContent({
   // Extract server info
   const serverName = initializationInfo?.serverVersion?.name;
   const serverTitle = initializationInfo?.serverVersion?.title;
-  const serverIcon = initializationInfo?.serverVersion?.icons?.[0];
   const websiteUrl = initializationInfo?.serverVersion?.websiteUrl;
   const protocolVersion = initializationInfo?.protocolVersion;
   const transport = initializationInfo?.transport;
@@ -502,23 +501,6 @@ export function ServerInfoContent({
     );
   };
 
-  const renderIconRow = () => (
-    <div>
-      <div className="text-sm font-medium text-muted-foreground mb-1">Icon</div>
-      {serverIcon?.src ? (
-        <img
-          src={serverIcon.src}
-          alt={serverTitle || serverName || "Server icon"}
-          className="h-10 w-10 rounded border border-border/40 bg-muted object-contain"
-        />
-      ) : (
-        <div className="text-sm text-muted-foreground italic">
-          No icon provided
-        </div>
-      )}
-    </div>
-  );
-
   return (
     <div className="space-y-4">
       {server.lastError ? (
@@ -534,109 +516,112 @@ export function ServerInfoContent({
           />
         </div>
       ) : null}
-      {serverName && (
-        <div>
-          <div className="text-sm font-medium text-muted-foreground mb-1">
-            Server Name
-          </div>
-          <div className="text-sm font-mono">{serverName}</div>
-        </div>
-      )}
 
-      {serverTitle && (
-        <div>
-          <div className="text-sm font-medium text-muted-foreground mb-1">
-            Server Title
-          </div>
-          <div className="text-sm">{serverTitle}</div>
-        </div>
-      )}
-
-      {renderIconRow()}
-
-      {protocolVersion && (
-        <div>
-          <div className="text-sm font-medium text-muted-foreground mb-1">
-            MCP Protocol Version
-          </div>
-          <div className="text-sm">{protocolVersion}</div>
-          {protocolVersion === "2026-07-28" && (
-            <div className="text-xs text-muted-foreground mt-1">
-              As of 2026-07-28, <code>logging/setLevel</code> is deprecated
-              (SEP-2577). This server already uses the modern per-request opt-in
-              instead — see the Logs panel's log-level control.
+      {sections !== "auth" && (
+        <>
+          {serverName && (
+            <div>
+              <div className="text-sm font-medium text-muted-foreground mb-1">
+                Server Name
+              </div>
+              <div className="text-sm font-mono">{serverName}</div>
             </div>
           )}
-        </div>
-      )}
 
-      {transport && (
-        <div>
-          <div className="text-sm font-medium text-muted-foreground mb-1">
-            Transport
-          </div>
-          <div className="text-sm font-mono">{transport}</div>
-        </div>
-      )}
+          {serverTitle && (
+            <div>
+              <div className="text-sm font-medium text-muted-foreground mb-1">
+                Server Title
+              </div>
+              <div className="text-sm">{serverTitle}</div>
+            </div>
+          )}
 
-      {capabilities.length > 0 && (
-        <div>
-          <div className="text-sm font-medium text-muted-foreground mb-1">
-            Capabilities
-          </div>
-          <div className="text-sm">{capabilities.join(", ")}</div>
-        </div>
-      )}
+          {protocolVersion && (
+            <div>
+              <div className="text-sm font-medium text-muted-foreground mb-1">
+                MCP Protocol Version
+              </div>
+              <div className="text-sm">{protocolVersion}</div>
+              {protocolVersion === "2026-07-28" && (
+                <div className="text-xs text-muted-foreground mt-1">
+                  As of 2026-07-28, <code>logging/setLevel</code> is deprecated
+                  (SEP-2577). This server already uses the modern per-request
+                  opt-in instead — see the Logs panel's log-level control.
+                </div>
+              )}
+            </div>
+          )}
 
-      {instructions && (
-        <div>
-          <div className="text-sm font-medium text-muted-foreground mb-2">
-            Instructions
-          </div>
-          <div className="text-sm whitespace-pre-wrap bg-muted/30 p-3 rounded border border-border/20">
-            {instructions}
-          </div>
-        </div>
-      )}
+          {transport && (
+            <div>
+              <div className="text-sm font-medium text-muted-foreground mb-1">
+                Transport
+              </div>
+              <div className="text-sm font-mono">{transport}</div>
+            </div>
+          )}
 
-      {serverCapabilities && (
-        <div>
-          <div className="text-sm font-medium text-muted-foreground mb-2">
-            Server Capabilities
-          </div>
-          <ScrollableJsonView
-            value={serverCapabilities}
-            showLineNumbers={false}
-            containerClassName="max-h-96 rounded-lg"
-          />
-        </div>
-      )}
+          {capabilities.length > 0 && (
+            <div>
+              <div className="text-sm font-medium text-muted-foreground mb-1">
+                Capabilities
+              </div>
+              <div className="text-sm">{capabilities.join(", ")}</div>
+            </div>
+          )}
 
-      {clientCapabilities && (
-        <div>
-          <div className="text-sm font-medium text-muted-foreground mb-2">
-            Client Capabilities
-          </div>
-          <ScrollableJsonView
-            value={clientCapabilities}
-            showLineNumbers={false}
-            containerClassName="max-h-96 rounded-lg"
-          />
-        </div>
-      )}
+          {instructions && (
+            <div>
+              <div className="text-sm font-medium text-muted-foreground mb-2">
+                Instructions
+              </div>
+              <div className="text-sm whitespace-pre-wrap bg-muted/30 p-3 rounded border border-border/20">
+                {instructions}
+              </div>
+            </div>
+          )}
 
-      {websiteUrl && websiteUrl.startsWith("https://") && (
-        <div>
-          <a
-            href={websiteUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm text-primary hover:underline inline-flex items-center gap-1"
-          >
-            Visit documentation
-            <ExternalLink className="h-4 w-4" />
-          </a>
-        </div>
+          {serverCapabilities && (
+            <div>
+              <div className="text-sm font-medium text-muted-foreground mb-2">
+                Server Capabilities
+              </div>
+              <ScrollableJsonView
+                value={serverCapabilities}
+                showLineNumbers={false}
+                containerClassName="max-h-96 rounded-lg"
+              />
+            </div>
+          )}
+
+          {clientCapabilities && (
+            <div>
+              <div className="text-sm font-medium text-muted-foreground mb-2">
+                Client Capabilities
+              </div>
+              <ScrollableJsonView
+                value={clientCapabilities}
+                showLineNumbers={false}
+                containerClassName="max-h-96 rounded-lg"
+              />
+            </div>
+          )}
+
+          {websiteUrl && websiteUrl.startsWith("https://") && (
+            <div>
+              <a
+                href={websiteUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-primary hover:underline inline-flex items-center gap-1"
+              >
+                Visit documentation
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            </div>
+          )}
+        </>
       )}
 
       {sections !== "info" && renderOAuthTokensSection()}

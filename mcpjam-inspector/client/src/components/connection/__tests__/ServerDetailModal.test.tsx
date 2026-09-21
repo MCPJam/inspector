@@ -692,6 +692,75 @@ describe("ServerDetailModal", () => {
     expect(auth?.className).not.toContain("max-h-[60vh]");
   });
 
+  const connectedServerInfo = {
+    serverVersion: {
+      name: "Linear MCP",
+      title: "Linear MCP",
+    },
+    protocolVersion: "2026-07-28",
+    transport: "streamable-http",
+    instructions: "When passing string values to tools, send the content directly.",
+    serverCapabilities: { tools: { listChanged: false } },
+  };
+
+  it("keeps handshake metadata on overview, not the auth tab", () => {
+    const server = createServer({
+      useOAuth: true,
+      initializationInfo: connectedServerInfo,
+      oauthTokens: {
+        access_token: "local-access-token",
+        refresh_token: "local-refresh-token",
+        token_type: "Bearer",
+      },
+    });
+
+    const { unmount } = render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={server}
+        defaultTab="authorization"
+      />
+    );
+
+    const authPanel = screen
+      .getAllByRole("tabpanel", { hidden: true })
+      .find((panel) => panel.getAttribute("data-state") === "active");
+    expect(authPanel).toBeTruthy();
+    expect(within(authPanel!).getByText("OAuth Tokens")).toBeInTheDocument();
+    expect(
+      within(authPanel!).queryByText("MCP Protocol Version")
+    ).not.toBeInTheDocument();
+    expect(within(authPanel!).queryByText("Transport")).not.toBeInTheDocument();
+    expect(
+      within(authPanel!).queryByText("Instructions")
+    ).not.toBeInTheDocument();
+    expect(
+      within(authPanel!).queryByText("Server Capabilities")
+    ).not.toBeInTheDocument();
+    unmount();
+
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={server}
+        defaultTab="overview"
+      />
+    );
+
+    const overviewPanel = screen
+      .getAllByRole("tabpanel", { hidden: true })
+      .find((panel) => panel.getAttribute("data-state") === "active");
+    expect(overviewPanel).toBeTruthy();
+    expect(within(overviewPanel!).getByText("Server Name")).toBeInTheDocument();
+    expect(
+      within(overviewPanel!).getByText("MCP Protocol Version")
+    ).toBeInTheDocument();
+    expect(within(overviewPanel!).getByText("Instructions")).toBeInTheDocument();
+    expect(
+      within(overviewPanel!).queryByText("OAuth Tokens")
+    ).not.toBeInTheDocument();
+  });
+
   it("renders local OAuth tokens from localStorage on the auth tab", () => {
     localStorage.setItem(
       "mcp-tokens-test-server",
