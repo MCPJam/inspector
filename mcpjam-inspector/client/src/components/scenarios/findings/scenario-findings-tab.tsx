@@ -267,7 +267,7 @@ export function ScenarioFindingsTab({
         {model.unanalyzedCount === 0
           ? "No sessions in this study yet."
           : analysisInFlight
-          ? "Analyzing sessions — grouping goals, behaviors, outcomes, and sentiment. This can take a few minutes."
+          ? "Analyzing sessions to group goals, behaviors, outcomes, and sentiment. This can take a few minutes."
           : "No session has been analyzed yet."}
       </div>
     );

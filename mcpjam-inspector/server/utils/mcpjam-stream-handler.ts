@@ -100,6 +100,8 @@ import {
 } from "@/shared/progressive-tool-discovery";
 import {
   mergeMcpToolOriginMetadata,
+  mergeMcpToolConnectionMetadata,
+  toolConnectionAttribution,
   mergePageToolBindingMetadata,
 } from "@/shared/mcp-tool-origin-metadata";
 import { isWebmcpPageToolName } from "@/shared/declared-tools";
@@ -2183,7 +2185,14 @@ async function processStream(
           const providerMetadata = mergePageToolBindingMetadata(
             mergeMcpToolOriginMetadata(
               withPageToolAttributionMetadata(
-                chunk.providerMetadata,
+                mergeMcpToolConnectionMetadata(
+                  chunk.providerMetadata,
+                  toolConnectionAttribution(
+                    tools[chunk.toolName],
+                    chunk.input,
+                    toolCallId,
+                  ),
+                ),
                 tools[chunk.toolName],
               ),
               serverIdForToolCall,
@@ -2412,6 +2421,7 @@ async function emitToolResults(
           emitToolOutput(writer, {
             toolCallId: part.toolCallId,
             output: outputForUi,
+            providerMetadata: part.providerOptions,
           });
 
           if (traceTurn && typeof stepIndex === "number") {

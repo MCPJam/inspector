@@ -64,12 +64,12 @@ OAuth tokens you connected while signed in remain in your hosted workspace and a
 
 ## OAuth token reveal
 
-When you connect an OAuth server in the hosted app, your OAuth credentials are stored securely in Vault. You can inspect those tokens on demand from the server's **Overview** tab without them ever being written to `localStorage` or shared with other users.
+When you connect an OAuth server in the hosted app, your OAuth credentials are stored securely in Vault. You can inspect those tokens on demand from the server's **Auth** tab without them ever being written to `localStorage` or shared with other users.
 
 To reveal tokens:
 
 1. Open the **Servers** tab and click the server name to open its detail modal.
-2. Go to the **Overview** tab.
+2. Go to the **Auth** tab.
 3. Under **OAuth Tokens**, click **Reveal tokens**.
 4. Each token (access token, refresh token, ID token) is masked by default. Click the eye icon next to a token to reveal its value, or click the copy icon to copy it directly without revealing it.
 
@@ -127,7 +127,7 @@ If a receipt isn't available yet the cell shows **Processing** (for pending char
 To add credits, click **Top up** — either from the empty state when you have no history, or from the credit balance card above.
 
 <Note>
-  **Free plan organizations cannot purchase credits directly.** If your organization is on the Free plan, the Top up dialog shows "Upgrade to Pro or Team to buy credits." with an **Explore plan** button. Clicking it closes the dialog and opens your organization's Plans settings so you can upgrade.
+  **Free plan organizations cannot purchase credits directly.** If your organization is on the Free plan, the Top up dialog shows a message that only an organization owner can upgrade the plan, with a **Compare plans** button. Clicking it closes the dialog and opens your organization's Plans settings so you can upgrade.
 </Note>
 
 ### Spend budget

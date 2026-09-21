@@ -60,6 +60,10 @@ vi.mock("convex/react", () => ({
 vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
+}));
 vi.mock("@/components/project-environments/environment-picker", () => ({
   EnvironmentPicker: ({
     value,
@@ -451,6 +455,15 @@ describe("SwarmTargetComposer — the block's way out", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Connect a server" }));
     expect(navigateAppMock).toHaveBeenCalledWith("/servers");
+  });
+
+  it("opens New Client from Add clients instead of leaving to the clients page", () => {
+    navigateAppMock.mockClear();
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
+    fireEvent.click(screen.getByRole("button", { name: "Add clients" }));
+    expect(navigateAppMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId("create-host-dialog")).toBeInTheDocument();
   });
 });
 

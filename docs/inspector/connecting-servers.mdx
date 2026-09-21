@@ -44,6 +44,27 @@ Click any revision row to expand it. The expanded panel shows:
 
 A **Diff / Snapshot** toggle appears at the top of the expanded panel when a previous revision exists. Revision 1 opens directly in Snapshot view since there is nothing to diff against.
 
+### Multiple OAuth accounts
+
+Personal OAuth servers support connecting more than one account. When a server uses OAuth, the server detail modal's **Config** tab shows a **Connected accounts** section under Authentication that lists every connected credential.
+
+Each row shows the account's email address (or name) on the first line, and a caption on the second line — the name you gave it, plus **Default** when chat uses that account, or **Needs reconnect** when the tokens are expired or revoked.
+
+Open the row menu (⋯) to act on an account:
+
+- **Rename** — opens an inline field to give the account a name. The name appears in chat when the model picks an account.
+- **Use in chat** — promotes the row to the default. The default account is used by non-chat consumers and as the fallback when no account is specified. This option is hidden on the row that is already the default.
+- **Reconnect** — re-runs the OAuth flow for that row, replacing only that credential.
+- **Remove** — deletes the credential. If the removed row was the default, the next available account becomes the default.
+
+To add another account, click **Connect another account** at the bottom of the list. Up to 8 accounts per server.
+
+Shared OAuth servers remain single-account and do not show the **Connect another account** button.
+
+When two or more accounts are live, chat exposes an account selector so you (or the model) can choose which credential each tool call uses. Changing the default mid-conversation does not redirect tool calls that are already in flight.
+
+Rerunning a tool call from the trace view is disabled for calls that ran on a specific account, because rerun resolves a server rather than a connection and would replay through the default credential instead.
+
 ### Server information
 
 Each connected server card displays:

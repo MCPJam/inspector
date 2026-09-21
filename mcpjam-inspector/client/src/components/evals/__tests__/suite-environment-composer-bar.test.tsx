@@ -78,6 +78,10 @@ vi.mock("@/hooks/useClients", () => ({
 vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
+}));
 vi.mock("@/components/project-environments/environment-picker", () => ({
   MAX_SUITE_ENVIRONMENTS: 10,
   EnvironmentPicker: ({ triggerTestId }: { triggerTestId?: string }) => (

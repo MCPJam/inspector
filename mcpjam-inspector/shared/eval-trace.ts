@@ -5,7 +5,12 @@ import type { PredicateResult } from "@mcpjam/sdk/predicates";
 
 /** Persisted eval trace span categories (Convex: use the same literals in traceSpanValidator). */
 export type EvalTraceSpanCategory =
-  "step" | "llm" | "tool" | "error" | "connection" | "discovery";
+  | "step"
+  | "llm"
+  | "tool"
+  | "error"
+  | "connection"
+  | "discovery";
 export type EvalTraceSpanStatus = "ok" | "error";
 
 export type EvalTraceSpan = {
@@ -24,6 +29,7 @@ export type EvalTraceSpan = {
   toolCallId?: string;
   toolName?: string;
   serverId?: string;
+  connectionId?: string;
   modelId?: string;
   inputTokens?: number;
   outputTokens?: number;
@@ -291,7 +297,9 @@ export type EvalTraceBrowserAction =
   | "wait";
 
 export type EvalTraceBrowserStepNote =
-  "no_rendered_widget" | "step_budget_exceeded" | "screenshot_budget_exceeded";
+  | "no_rendered_widget"
+  | "step_budget_exceeded"
+  | "screenshot_budget_exceeded";
 
 const EVAL_TRACE_BROWSER_STEP_NOTES: ReadonlySet<string> = new Set([
   "no_rendered_widget",
@@ -577,6 +585,7 @@ export const evalTraceSpanZ = z.object({
   toolCallId: z.string().optional(),
   toolName: z.string().optional(),
   serverId: z.string().optional(),
+  connectionId: z.string().optional(),
   modelId: z.string().optional(),
   inputTokens: z.number().optional(),
   outputTokens: z.number().optional(),
