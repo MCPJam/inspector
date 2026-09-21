@@ -85,6 +85,44 @@ type OAuthConformanceAuthConfig =
 | `listTools` | `boolean` | `false` | Connect and call `tools/list` after auth |
 | `callTool` | `{ name, params? }` | | Also call the named tool (enables `listTools`) |
 | `timeout` | `number` | `30000` | Verification timeout in ms |
+| `profile` | `{ enabled?: boolean; expectSameAccount?: boolean }` | | Live profile verification options (see below) |
+
+#### Profile verification
+
+When `listTools` is enabled and the server exposes a designated profile tool (marked with `_meta["openai/profile"]: true`), the runner automatically probes it unless you opt out with `profile: { enabled: false }`.
+
+Four steps run in sequence:
+
+| Step ID | What it checks |
+|---------|---------------|
+| `verify_profile_shape` | The tool returns a valid profile in `structuredContent` |
+| `verify_profile_stable` | A second call with the same credentials returns the same `id` |
+| `verify_profile_id_opaque` | Heuristic warning when the `id` resembles display metadata (email, name); warns only, never fails |
+| `verify_profile_stable_after_refresh` | After a token refresh, the profile `id` is unchanged (runs only when a refresh token is available) |
+
+Set `profile: { expectSameAccount: true }` on flows in a suite to assert that every such flow returns the same profile `id`. A flow that declares `expectSameAccount` but supplies no profile identity fails the suite rather than silently passing.
+
+```typescript
+const test = new OAuthConformanceTest({
+  serverUrl: "https://your-server.com/mcp",
+  protocolVersion: "2025-11-25",
+  registrationStrategy: "dcr",
+  auth: { mode: "headless" },
+  verification: {
+    listTools: true,
+    profile: { enabled: true },
+  },
+});
+```
+
+To opt out of profile probing entirely:
+
+```typescript
+verification: {
+  listTools: true,
+  profile: { enabled: false },
+}
+```
 
 ---
 
