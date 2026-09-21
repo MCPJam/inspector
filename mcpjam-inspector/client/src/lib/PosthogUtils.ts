@@ -140,7 +140,9 @@ function attachFailedRequest(properties: Record<string, any>): void {
   const ageMs = Date.now() - failed.at;
   if (ageMs > FAILED_REQUEST_MAX_AGE_MS) return;
 
-  properties.failed_request = `${failed.method} ${scrubSensitiveUrl(failed.target)}`;
+  properties.failed_request = `${failed.method} ${scrubSensitiveUrl(
+    failed.target,
+  )}`;
   properties.failed_request_age_ms = ageMs;
 }
 
@@ -154,6 +156,10 @@ export function sanitizeAnalyticsProperties(
     "$pathname",
     "$session_entry_url",
     "$session_entry_pathname",
+    "$session_entry_referrer",
+    "$initial_current_url",
+    "$initial_pathname",
+    "$initial_referrer",
   ]) {
     if (typeof properties[key] === "string") {
       properties[key] = scrubSensitiveUrl(properties[key]);

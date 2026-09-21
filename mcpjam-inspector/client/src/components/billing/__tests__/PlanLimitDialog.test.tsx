@@ -347,6 +347,28 @@ describe("PlanLimitDialog", () => {
     // Says what it does. It opens a draft; it does not send anything.
     expect(mail).toHaveTextContent(/Request upgrade/);
     expect(screen.getByText(/Opens a draft to Dana Ruiz/)).toBeInTheDocument();
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "plan_limit_upgrade_requested",
+      expect.anything(),
+    );
+  });
+
+  it("groups owner upgrade requests under the limited organization", async () => {
+    const user = userEvent.setup();
+    upgradeState.canManageBilling = false;
+    recipientsState.current = {
+      recipients: [{ email: "dana@acme.test", name: "Dana Ruiz" }],
+      isLoading: false,
+    };
+    openEvalLimit();
+    render(<PlanLimitDialog />);
+
+    await user.click(screen.getByTestId("request-upgrade-mail"));
+
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_upgrade_requested",
+      expect.objectContaining({ organization_id: "org-1" }),
+    );
   });
 
   it("hides the owner email when there is no address to write to", () => {

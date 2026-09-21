@@ -43,17 +43,31 @@ describe("scrubSensitiveUrl", () => {
     );
   });
 
-  it("redacts organization ids from PostHog session-entry URL properties", () => {
+  it("redacts organization ids from PostHog session and initial URL properties", () => {
     const properties = sanitizeAnalyticsProperties({
       $session_entry_url:
         "https://app.mcpjam.com/organizations/org_secret/billing",
       $session_entry_pathname: "/organizations/org_secret/plans",
+      $session_entry_referrer:
+        "https://app.mcpjam.com/organizations/org_secret/plans",
+      $initial_current_url:
+        "https://app.mcpjam.com/organizations/org_secret/billing",
+      $initial_pathname: "/organizations/org_secret/billing",
+      $initial_referrer:
+        "https://app.mcpjam.com/organizations/org_secret/plans",
     });
 
     expect(properties).toMatchObject({
       $session_entry_url:
         "https://app.mcpjam.com/organizations/[redacted]/billing",
       $session_entry_pathname: "/organizations/[redacted]/plans",
+      $session_entry_referrer:
+        "https://app.mcpjam.com/organizations/[redacted]/plans",
+      $initial_current_url:
+        "https://app.mcpjam.com/organizations/[redacted]/billing",
+      $initial_pathname: "/organizations/[redacted]/billing",
+      $initial_referrer:
+        "https://app.mcpjam.com/organizations/[redacted]/plans",
     });
   });
 });

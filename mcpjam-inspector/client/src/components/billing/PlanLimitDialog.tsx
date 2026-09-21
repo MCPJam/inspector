@@ -334,7 +334,8 @@ function PlanLimitWall() {
       impressionTrackedRef.current = false;
       return;
     }
-    if (upgrade.isLoadingBilling || isPricingV2 || impressionTrackedRef.current) return;
+    if (upgrade.isLoadingBilling || isPricingV2 || impressionTrackedRef.current)
+      return;
     if (showRequest && isLoadingRequestRecipients) return;
 
     impressionTrackedRef.current = true;
@@ -354,10 +355,10 @@ function PlanLimitWall() {
       primary_action: showUpgrade
         ? "upgrade"
         : showEnterprise
-        ? "enterprise"
-        : requestRecipients.length > 0
-        ? "request_owner"
-        : "none",
+          ? "enterprise"
+          : requestRecipients.length > 0
+            ? "request_owner"
+            : "none",
       request_recipient_count: requestRecipients.length,
       billing_interval: upgrade.interval,
       annual_supported: upgrade.annualSupported,
@@ -435,7 +436,14 @@ function PlanLimitWall() {
     if (result?.shouldDismiss) close();
   }, [close, upgrade]);
 
-  if (!isOpen || !limit || limit.kind !== "evalIterations" || !isBillingReady || isPricingV2) return null;
+  if (
+    !isOpen ||
+    !limit ||
+    limit.kind !== "evalIterations" ||
+    !isBillingReady ||
+    isPricingV2
+  )
+    return null;
 
   const windowLabel = limit.windowKind === "day" ? "today" : "this month";
   const perWindow = limit.windowKind === "day" ? "a day" : "a month";
@@ -470,18 +478,18 @@ function PlanLimitWall() {
   const upgradeSentence = !isBillingReady
     ? ""
     : isFreePlan
-    ? `The ${upgrade.teamName} plan includes ${
-        upgrade.teamEvalIterations
-          ? `${formatCount(upgrade.teamEvalIterations)} ${
-              upgrade.isFlatPlan ? "each month" : "per seat each month"
-            }`
-          : upgrade.isFlatPlan
-          ? "metered eval usage"
-          : "a monthly allowance instead of a daily cap"
-      }, so evals can run smoothly on every PR instead of limiting your daily quality checks.`
-    : showEnterprise
-    ? "Enterprise adds negotiated usage and a custom LLM budget."
-    : "";
+      ? `The ${upgrade.teamName} plan includes ${
+          upgrade.teamEvalIterations
+            ? `${formatCount(upgrade.teamEvalIterations)} ${
+                upgrade.isFlatPlan ? "each month" : "per seat each month"
+              }`
+            : upgrade.isFlatPlan
+              ? "metered eval usage"
+              : "a monthly allowance instead of a daily cap"
+        }, so evals can run smoothly on every PR instead of limiting your daily quality checks.`
+      : showEnterprise
+        ? "Enterprise adds negotiated usage and a custom LLM budget."
+        : "";
 
   return (
     <PlanLimitDialogView
@@ -497,6 +505,7 @@ function PlanLimitWall() {
       showEnterprise={showEnterprise}
       showRequest={showRequest}
       requestRecipients={requestRecipients}
+      organizationId={limit.organizationId}
       organizationName={upgrade.organizationName}
       origin="evals"
       limitKind={limit.kind}
