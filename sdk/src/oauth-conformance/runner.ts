@@ -1142,13 +1142,30 @@ export class OAuthConformanceTest {
                             prmResource: state.resourceMetadata?.resource,
                             resolved: state.resourceIndicator,
                           }),
-                          fetchFn: (input, init) =>
-                            (this.config.fetchFn ?? fetch)(input, {
+                          // An authorization server that requires one of the
+                          // run's custom headers gets it on discovery and on
+                          // the token exchange; without it here the refresh
+                          // fails and a healthy server is reported as failing
+                          // profile stability. Authorization is excluded —
+                          // `refreshAuthorization` owns that one.
+                          fetchFn: (input, init) => {
+                            const headers = new Headers(init?.headers);
+                            for (const [name, value] of Object.entries(
+                              this.config.customHeaders ?? {}
+                            ))
+                              if (
+                                name.toLowerCase() !== "authorization" &&
+                                !headers.has(name)
+                              )
+                                headers.set(name, value);
+                            return (this.config.fetchFn ?? fetch)(input, {
                               ...init,
+                              headers,
                               signal: AbortSignal.timeout(
                                 this.config.verification.timeout ?? 30_000
                               ),
-                            }),
+                            });
+                          },
                         }
                       );
                       state = {

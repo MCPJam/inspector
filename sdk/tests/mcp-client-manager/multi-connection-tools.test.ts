@@ -130,13 +130,16 @@ describe("multi-connection tools", () => {
   });
   it("preserves single-connection tools and exposes tools only on B", () => {
     const { perKey } = fixture();
-    expect(
-      mergeConnectionToolsets(
-        { [a.key]: perKey[a.key] } as any,
-        { server: [a] },
-        { snapshot }
-      ).search
-    ).toBe(perKey[a.key].search);
+    const lone = mergeConnectionToolsets(
+      { [a.key]: perKey[a.key] } as any,
+      { server: [a] },
+      { snapshot }
+    ).search as any;
+    expect(lone.execute).toBe(perKey[a.key].search.execute);
+    // Even on the bare default key the tool names its connection, so a
+    // continuation saved against it can be bound to that credential.
+    expect(lone._connectionForCall("any")).toBe(a);
+    expect(lone._connectionForInput({})).toBe(a);
     const tools = mergeConnectionToolsets(
       { [a.key]: {}, [b.key]: perKey[b.key] } as any,
       { server: [a, b] },
@@ -146,6 +149,42 @@ describe("multi-connection tools", () => {
       (asSchema(tools.search.inputSchema).jsonSchema as any).properties.account
         .enum
     ).toEqual([b.connectionId]);
+  });
+  it("keeps deduplicated account slugs inside the budget", () => {
+    const shared = "Acme Corporation Production Workspace";
+    const many = Array.from({ length: 11 }, (_unused, index) => ({
+      ...a,
+      connectionId: String(index).padStart(32, "c"),
+      key: `server#${String(index).padStart(32, "c")}`,
+      label: shared,
+      isDefault: false,
+    }));
+    const keys = Object.keys(
+      mergeConnectionToolsets(
+        Object.fromEntries(
+          many.map((c, index) => [
+            c.key,
+            {
+              search_customer_records_by_email_address: {
+                // One differing schema forces the whole name onto the variant
+                // path, which is where the slugs are used.
+                inputSchema: jsonSchema({
+                  type: "object",
+                  properties: index === 0 ? {} : { q: { type: "string" } },
+                }),
+                execute: vi.fn(),
+              },
+            },
+          ])
+        ) as any,
+        { server: many },
+        {
+          snapshot: new Map(many.map((c) => [c.connectionId, c.key])),
+        }
+      )
+    );
+    expect(new Set(keys).size).toBe(11);
+    for (const key of keys) expect(key.length).toBeLessThanOrEqual(64);
   });
   it("round-trips qualified keys without parsing user-typed hashes", () => {
     expect(connectionKey("name#hash", b.connectionId, true)).toBe("name#hash");

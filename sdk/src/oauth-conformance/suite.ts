@@ -90,11 +90,16 @@ export class OAuthConformanceSuite {
 
       const test = new OAuthConformanceTest(merged);
       const result = await test.run();
-      if (merged.verification?.profile?.expectSameAccount && result.profileId) {
+      if (merged.verification?.profile?.expectSameAccount) {
+        // A flow declared to represent a known account but supplying no
+        // identity is not agreement — there is nothing to compare, and
+        // silently skipping would let the suite pass on the strength of a
+        // check that never ran.
         const stable =
-          sameAccountProfileId === undefined ||
-          sameAccountProfileId === result.profileId;
-        if (sameAccountProfileId !== undefined)
+          !!result.profileId &&
+          (sameAccountProfileId === undefined ||
+            sameAccountProfileId === result.profileId);
+        if (sameAccountProfileId !== undefined || !result.profileId)
           result.steps.push({
             step: "verify_profile_identity_stable_across_flows",
             title: "Profile identity across flows",
@@ -107,18 +112,20 @@ export class OAuthConformanceSuite {
               ? {}
               : {
                   error: {
-                    message:
-                      "Flows declared to use the same account returned different profile IDs.",
+                    message: result.profileId
+                      ? "Flows declared to use the same account returned different profile IDs."
+                      : "This flow was declared to use the same account but supplied no profile identity to compare.",
                   },
                 }),
           });
         if (!stable) {
           result.passed = false;
           result.outcome = "failed";
-          result.summary =
-            "OAuth conformance failed: flows declared to use the same account returned different profile identities.";
+          result.summary = result.profileId
+            ? "OAuth conformance failed: flows declared to use the same account returned different profile identities."
+            : "OAuth conformance failed: a flow declared to use the same account supplied no profile identity.";
         }
-        sameAccountProfileId ??= result.profileId;
+        if (result.profileId) sameAccountProfileId ??= result.profileId;
       }
       results.push({ ...result, label });
     }

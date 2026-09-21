@@ -29,6 +29,8 @@ function canonical(value: any): string {
       .join(",")}}`;
   return JSON.stringify(value);
 }
+/** 40 for the tool name + "__" + this stays inside the 64-character limit. */
+const SLUG_BUDGET = 20;
 function slugs(connections: readonly McpToolConnection[]) {
   const result = new Map<string, string>();
   const taken = new Set(["local"]);
@@ -40,11 +42,18 @@ function slugs(connections: readonly McpToolConnection[]) {
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "")
-        .slice(0, 20)
+        .slice(0, SLUG_BUDGET)
         .replace(/-+$/g, "") || "server";
     let slug = base;
     let n = 2;
-    while (taken.has(slug)) slug = `${base}-${n++}`;
+    while (taken.has(slug)) {
+      // Appending to a slug already at its cap pushes the variant past the
+      // 64-character tool-name limit, so the suffix comes out of the base.
+      const suffix = `-${n++}`;
+      slug = `${base
+        .slice(0, SLUG_BUDGET - suffix.length)
+        .replace(/-+$/g, "")}${suffix}`;
+    }
     taken.add(slug);
     result.set(c.connectionId, slug);
   }
@@ -83,19 +92,20 @@ export function mergeConnectionToolsets(
       (c) => options.snapshot.get(c.connectionId) === c.key && perKey[c.key]
     );
     if (live.length === 1) {
+      // Attribution is stamped even when this connection owns the bare server
+      // key. Without it a scope step-up saved here carries no connectionId,
+      // the resume guard has nothing to compare, and a replay that lands after
+      // the credential behind that key changed would run on the new one.
       const connection = live[0];
-      if (connection.key === serverId)
-        Object.assign(output, perKey[connection.key]);
-      else
-        for (const [name, tool] of Object.entries(perKey[connection.key]))
-          output[name] = {
-            ...tool,
-            _serverId: serverId,
-            _mcpToolName: name,
-            _connectionId: connection.connectionId,
-            _connectionForInput: () => connection,
-            _connectionForCall: () => connection,
-          } as Tool & ConnectionToolMetadata;
+      for (const [name, tool] of Object.entries(perKey[connection.key]))
+        output[name] = {
+          ...tool,
+          _serverId: serverId,
+          _mcpToolName: name,
+          _connectionId: connection.connectionId,
+          _connectionForInput: () => connection,
+          _connectionForCall: () => connection,
+        } as Tool & ConnectionToolMetadata;
       continue;
     }
     const names = [...new Set(live.flatMap((c) => Object.keys(perKey[c.key])))];
