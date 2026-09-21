@@ -87,17 +87,17 @@ function describeDraftNotes(authoring: {
   issues: ReadonlyArray<{ blocking: boolean; resolution?: string }>;
   additions: ReadonlyArray<unknown>;
 }): string {
-  const toFix = authoring.issues.filter(
+  const blocking = authoring.issues.filter(
     (issue) => issue.blocking && !issue.resolution,
   ).length;
-  const changed = authoring.additions.length;
+  const notes = authoring.issues.length - blocking + authoring.additions.length;
   const parts = [
-    toFix === 1 ? "1 thing to fix" : toFix > 1 ? `${toFix} things to fix` : "",
-    changed === 1
-      ? "1 change MCPJam made"
-      : changed > 1
-        ? `${changed} changes MCPJam made`
+    blocking === 1
+      ? "1 step MCPJam could not write"
+      : blocking > 1
+        ? `${blocking} steps MCPJam could not write`
         : "",
+    notes === 1 ? "1 note" : notes > 1 ? `${notes} notes` : "",
   ].filter(Boolean);
   return parts.length ? parts.join(", ") : "Notes on this case";
 }
@@ -403,8 +403,8 @@ export function EvalGeneratedDrafts({
                     */}
                     {blockedReason && (
                       <p className="text-destructive">
-                        We could not finish this case. Complete it below before
-                        adding it to the suite.
+                        MCPJam could not finish this case. Fix the steps above,
+                        then add it to the suite.
                       </p>
                     )}
                     {draft.authoring.source && (
