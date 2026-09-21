@@ -1,20 +1,35 @@
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { ConnectionAccountsSection } from "../ConnectionAccountsSection";
 const mocks = vi.hoisted(() => ({
   hook: vi.fn(),
   update: vi.fn(),
   flag: vi.fn(),
 }));
-vi.mock("@/hooks/useMultiAccountConnectionsEnabled", () => ({
-  useMultiAccountConnectionsEnabled: mocks.flag,
-}));
 vi.mock("@/hooks/use-hosted-oauth-connections", () => ({
   useHostedOAuthConnections: mocks.hook,
+}));
+vi.mock("@/hooks/useMultiAccountConnectionsEnabled", () => ({
+  useMultiAccountConnectionsEnabled: mocks.flag,
 }));
 vi.mock("@/lib/apis/web/oauth-connections", () => ({
   updateOAuthConnection: mocks.update,
 }));
+
+// Radix menus read pointer capture, which jsdom does not implement.
+const installPointerCaptureMocks = () => {
+  for (const name of [
+    "hasPointerCapture",
+    "setPointerCapture",
+    "releasePointerCapture",
+  ])
+    Object.defineProperty(HTMLElement.prototype, name, {
+      configurable: true,
+      value: vi.fn(() => false),
+    });
+};
+
 const rows = [
   {
     connectionId: "a",
@@ -25,99 +40,64 @@ const rows = [
     connectionId: "b",
     isDefault: false,
     label: "Side",
-    needsReauth: true,
     profile: { id: "opaque-b", email: "same@example.com" },
   },
 ];
+const mount = (props = {}) =>
+  render(
+    <ConnectionAccountsSection
+      projectId="p"
+      serverId="s"
+      enabled
+      onAuthenticate={vi.fn()}
+      onSwitch={vi.fn()}
+      {...props}
+    />,
+  );
+
 describe("ConnectionAccountsSection", () => {
   beforeEach(() => {
+    installPointerCaptureMocks();
     vi.clearAllMocks();
     mocks.hook.mockReturnValue({ connections: rows, shared: false });
     mocks.flag.mockReturnValue(true);
   });
   afterEach(cleanup);
-  it("shows separate same-email rows and reconnect state without exposing profile IDs", () => {
-    render(
-      <ConnectionAccountsSection
-        projectId="p"
-        serverId="s"
-        enabled
-        onAuthenticate={vi.fn()}
-        onSwitch={vi.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByText("2 accounts"));
+
+  it("names each account once, and captions it with what the user called it", () => {
+    mount();
+    // Both accounts share an email, so the address identifies each row and the
+    // caption carries the DIFFERENT fact. It used to carry the same one twice.
     expect(screen.getAllByText("same@example.com")).toHaveLength(2);
-    expect(screen.getByText("Needs reconnect")).toBeTruthy();
+    expect(screen.getByText("Default")).toBeTruthy();
+    expect(screen.getByText("Side")).toBeTruthy();
     expect(screen.queryByText("opaque-a")).toBeNull();
   });
-  it("starts an explicit add flow", () => {
-    const auth = vi.fn();
-    render(
-      <ConnectionAccountsSection
-        projectId="p"
-        serverId="s"
-        enabled
-        onAuthenticate={auth}
-        onSwitch={vi.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByText("2 accounts"));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Connect another account" }),
-    );
-    expect(auth).toHaveBeenCalledWith({ kind: "add" });
+
+  it("captions a stale account as needing reconnection instead of a label", () => {
+    mocks.hook.mockReturnValue({
+      connections: [{ ...rows[1], needsReauth: true, label: "Side" }],
+      shared: false,
+    });
+    mount();
+    expect(screen.getByText("Needs reconnect")).toBeTruthy();
+    expect(screen.queryByText("Side")).toBeNull();
   });
-  it("hides add behind the rollout flag but still manages what exists", () => {
-    mocks.flag.mockReturnValue(false);
-    render(
-      <ConnectionAccountsSection
-        projectId="p"
-        serverId="s"
-        enabled
-        onAuthenticate={vi.fn()}
-        onSwitch={vi.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByText("2 accounts"));
-    expect(
-      screen.queryByRole("button", { name: "Connect another account" }),
-    ).toBeNull();
-    // A de-flagged org must still see and be able to take down what it has.
-    expect(screen.getAllByText("same@example.com")).toHaveLength(2);
-    expect(screen.getByLabelText("Label for Side")).toBeTruthy();
-  });
-  it("does not offer add for a shared server", () => {
-    mocks.hook.mockReturnValue({ connections: rows.slice(0, 1), shared: true });
-    render(
-      <ConnectionAccountsSection
-        projectId="p"
-        serverId="s"
-        enabled
-        onAuthenticate={vi.fn()}
-        onSwitch={vi.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByText("1 account"));
-    expect(
-      screen.queryByRole("button", { name: "Connect another account" }),
-    ).toBeNull();
-  });
-  it("writes a label against exactly the selected row", () => {
+
+  it("renames from the menu rather than a permanently open field", async () => {
+    const user = userEvent.setup();
     mocks.update.mockResolvedValue(undefined);
-    render(
-      <ConnectionAccountsSection
-        projectId="p"
-        serverId="s"
-        enabled
-        onAuthenticate={vi.fn()}
-        onSwitch={vi.fn()}
-      />,
+    mount();
+    const label = "Name for same@example.com — Side";
+    expect(screen.queryByLabelText(label)).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Manage same@example.com — Side" }),
     );
-    fireEvent.click(screen.getByText("2 accounts"));
-    const input = screen.getByLabelText("Label for Side");
-    fireEvent.change(input, { target: { value: "Personal" } });
-    fireEvent.blur(input);
+    await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+    const input = screen.getByLabelText(label);
+    await user.clear(input);
+    await user.type(input, "Personal");
+    await user.tab();
     expect(mocks.update).toHaveBeenCalledWith(
       "p",
       "s",
@@ -126,4 +106,47 @@ describe("ConnectionAccountsSection", () => {
       "Personal",
     );
   });
+
+  it("offers a default switch only on an account that is not already it", async () => {
+    const user = userEvent.setup();
+    mount();
+    await user.click(
+      screen.getByRole("button", { name: "Manage same@example.com — Side" }),
+    );
+    expect(screen.getByRole("menuitem", { name: "Use in chat" })).toBeTruthy();
+    cleanup();
+    mocks.hook.mockReturnValue({ connections: [rows[0]], shared: false });
+    mount();
+    await user.click(
+      screen.getByRole("button", { name: "Manage same@example.com — Default" }),
+    );
+    expect(screen.queryByRole("menuitem", { name: "Use in chat" })).toBeNull();
+  });
+
+  it("starts an explicit add flow", async () => {
+    const user = userEvent.setup();
+    const auth = vi.fn();
+    mount({ onAuthenticate: auth });
+    await user.click(
+      screen.getByRole("button", { name: /Connect another account/ }),
+    );
+    expect(auth).toHaveBeenCalledWith({ kind: "add" });
+  });
+
+  it.each([
+    ["a shared server", { connections: rows.slice(0, 1), shared: true }, true],
+    ["the rollout flag", { connections: rows, shared: false }, false],
+  ])(
+    "hides add behind %s while still managing what exists",
+    (_label, state, flag) => {
+      mocks.hook.mockReturnValue(state);
+      mocks.flag.mockReturnValue(flag);
+      mount();
+      expect(
+        screen.queryByRole("button", { name: /Connect another account/ }),
+      ).toBeNull();
+      // A de-flagged org must still see and take down what it has.
+      expect(screen.getAllByText("same@example.com").length).toBeGreaterThan(0);
+    },
+  );
 });
