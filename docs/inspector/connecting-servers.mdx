@@ -44,16 +44,22 @@ Click any revision row to expand it. The expanded panel shows:
 
 A **Diff / Snapshot** toggle appears at the top of the expanded panel when a previous revision exists. Revision 1 opens directly in Snapshot view since there is nothing to diff against.
 
+### Auth tab
+
+Any HTTP server has an **Auth** tab in the server detail modal. The tab shows connected OAuth accounts and stored tokens. It remains accessible even after OAuth is switched off, so you can still reach stored or invalid auth data.
+
 ### Multiple OAuth accounts
 
-Personal OAuth servers support connecting more than one account. When a server uses OAuth, the server detail modal's **Config** tab shows a **Connected accounts** section under Authentication that lists every connected credential.
+Personal OAuth servers support connecting more than one account. When a server uses OAuth, the **Auth** tab shows a **Connected accounts** section that lists every connected credential.
 
-Each row shows the account's email address (or name) on the first line, and a caption on the second line — the name you gave it, plus **Default** when chat uses that account, or **Needs reconnect** when the tokens are expired or revoked.
+Each row shows the account's email address (or name) on the first line, and a caption on the second line — the name you gave it, plus **Default** when it is the default account, or **Needs reconnect** when the tokens are expired or revoked.
+
+When two accounts share the same email address, the caption adds a qualifier — workspace name, nickname, or a short account ID — so the rows are always distinguishable.
 
 Open the row menu (⋯) to act on an account:
 
 - **Rename** — opens an inline field to give the account a name. The name appears in chat when the model picks an account.
-- **Use in chat** — promotes the row to the default. The default account is used by non-chat consumers and as the fallback when no account is specified. This option is hidden on the row that is already the default.
+- **Set as default** — promotes the row to the default. The default account is used by everything that is not account-aware in chat: evals, the Tools tab, resource reads, and the CLI. In chat, the model picks an account per call; the default is the fallback when no account is specified. This option is hidden on the row that is already the default.
 - **Reconnect** — re-runs the OAuth flow for that row, replacing only that credential.
 - **Remove** — deletes the credential. If the removed row was the default, the next available account becomes the default.
 
