@@ -10,6 +10,7 @@ const mockState = vi.hoisted(() => ({
   isUserReady: true,
   bundle: undefined as unknown,
   queryCalls: [] as Array<{ name: string; args: unknown }>,
+  startPlanChangeAction: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
@@ -21,7 +22,10 @@ vi.mock("convex/react", () => ({
     return undefined;
   },
   useMutation: () => vi.fn(),
-  useAction: () => vi.fn(),
+  useAction: (name: string) =>
+    name === "billing:startOrganizationPlanChange"
+      ? mockState.startPlanChangeAction
+      : vi.fn(),
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -52,12 +56,29 @@ const premiumness = (plan: string) => ({
   gates: [],
 });
 
+// `startPlanChange` gates on `canCheckoutPlan`, which needs a self-serve entry
+// with a price for the interval. Kept realistic so the guard can pass.
+const checkoutablePlanCatalog = {
+  catalogVersion: "v1",
+  currency: "usd",
+  plans: {
+    free: {},
+    team: {
+      plan: "team",
+      isSelfServe: true,
+      prices: { monthly: 4000, yearly: 40000 },
+      checkout: { plan: "team", supportedIntervals: ["monthly", "yearly"] },
+    },
+    enterprise: {},
+  },
+};
+
 const fullBundle = {
   billingStatus: { organizationId: "org-1", plan: "free" },
   entitlements: { plan: "free", features: {}, limits: {} },
   organizationPremiumness: premiumness("free"),
   projectPremiumness: premiumness("team"),
-  planCatalog: { catalogVersion: "v1", plans: {} },
+  planCatalog: checkoutablePlanCatalog,
 };
 
 function bundleCalls() {
@@ -71,6 +92,7 @@ describe("useOrganizationBilling bundled subscription", () => {
     mockState.isUserReady = true;
     mockState.bundle = undefined;
     mockState.queryCalls = [];
+    mockState.startPlanChangeAction = vi.fn().mockResolvedValue({ ok: true });
   });
 
   it("opens one bundle subscription and maps every field from it", () => {
@@ -176,5 +198,36 @@ describe("useOrganizationBilling bundled subscription", () => {
     expect(bundleCalls()[0].args).toBe("skip");
     expect(result.current.isLoadingBilling).toBe(false);
     expect(result.current.isLoadingProjectPremiumness).toBe(false);
+  });
+
+  // `startPlanChange` reads the plan catalog to decide whether checkout is on
+  // offer. That catalog now arrives on the bundle rather than its own query,
+  // so the guard has to see the bundled copy.
+  it("lets startPlanChange through using the catalog from the bundle", async () => {
+    mockState.bundle = fullBundle;
+
+    const { result } = renderHook(() => useOrganizationBilling("org-1"));
+
+    await result.current.startPlanChange("https://return.example", "team");
+
+    expect(mockState.startPlanChangeAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: "org-1",
+        returnUrl: "https://return.example",
+        tier: "team",
+        billingInterval: "monthly",
+      }),
+    );
+  });
+
+  it("refuses startPlanChange while the bundle has not arrived", async () => {
+    mockState.bundle = undefined;
+
+    const { result } = renderHook(() => useOrganizationBilling("org-1"));
+
+    await expect(
+      result.current.startPlanChange("https://return.example", "team"),
+    ).rejects.toThrow("not offered to this organization");
+    expect(mockState.startPlanChangeAction).not.toHaveBeenCalled();
   });
 });
