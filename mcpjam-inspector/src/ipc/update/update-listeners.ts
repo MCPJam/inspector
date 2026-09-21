@@ -320,15 +320,17 @@ function relaunchMarkerPath(): string {
  * the normal "Update" button on the next launch instead of a hands-free
  * install, which is the pre-existing behaviour, not a new failure.
  */
-function writeRelaunchMarker(attempts: number): void {
+function writeRelaunchMarker(attempts: number): boolean {
   try {
     fs.writeFileSync(
       relaunchMarkerPath(),
       JSON.stringify({ at: Date.now(), attempts }),
       "utf8",
     );
+    return true;
   } catch (error) {
     log.error("Failed to write relaunch marker:", error);
+    return false;
   }
 }
 
@@ -338,41 +340,64 @@ function writeRelaunchMarker(attempts: number): void {
  * Always deletes: a marker that is read once and left behind would re-arm a
  * hands-free install on every later launch.
  */
-function consumeRelaunchMarker(): number {
+function consumeRelaunchMarker(): { attempts: number; resume: boolean } {
+  // Two separate questions, and the cautious answer to each points the other
+  // way. "How many relaunches have we spent?" must never UNDER-count, or the
+  // budget resets and the app can relaunch forever. "Should we install
+  // without asking?" must never OVER-trigger, or a file we could not actually
+  // read starts an install nobody requested. So a marker we cannot make sense
+  // of spends the budget without resuming anything.
+  const spent = { attempts: 1, resume: false };
+  const none = { attempts: 0, resume: false };
+
   const markerPath = relaunchMarkerPath();
   let raw: string;
   try {
     raw = fs.readFileSync(markerPath, "utf8");
-  } catch {
-    return 0;
+  } catch (error) {
+    // Nothing there is the normal case — every launch that did not follow a
+    // relaunch lands here. Any OTHER failure means a marker may well exist
+    // and we simply cannot see it.
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return none;
+    }
+    log.error("Failed to read relaunch marker:", error);
+    return spent;
   }
   try {
     fs.rmSync(markerPath, { force: true });
   } catch (error) {
     log.error("Failed to remove relaunch marker:", error);
   }
+  let parsed: { at?: unknown; attempts?: unknown };
   try {
-    const { at, attempts } = JSON.parse(raw) as {
-      at?: unknown;
-      attempts?: unknown;
-    };
-    if (typeof at !== "number") {
-      return 0;
-    }
-    const age = Date.now() - at;
-    // A negative age means the clock moved; treat it as untrustworthy rather
-    // than as "very fresh".
-    if (age < 0 || age > RELAUNCH_MARKER_MAX_AGE_MS) {
-      return 0;
-    }
-    // A marker we cannot read a count out of still means "we relaunched", so
-    // it counts as one attempt rather than resetting the budget to zero.
-    return Number.isInteger(attempts) && (attempts as number) > 0
-      ? (attempts as number)
-      : 1;
-  } catch {
-    return 0;
+    parsed = JSON.parse(raw) as { at?: unknown; attempts?: unknown };
+  } catch (error) {
+    log.error("Relaunch marker is not readable JSON:", error);
+    return spent;
   }
+  const { at, attempts } = parsed;
+  if (typeof at !== "number" || !Number.isFinite(at)) {
+    return spent;
+  }
+  const age = Date.now() - at;
+  // A negative age means the clock moved; treat it as untrustworthy rather
+  // than as "very fresh".
+  if (age < 0) {
+    return spent;
+  }
+  // Genuinely old: a laptop opened next week must not install on launch, and
+  // the budget is no longer about anything current.
+  if (age > RELAUNCH_MARKER_MAX_AGE_MS) {
+    return none;
+  }
+  return {
+    attempts:
+      Number.isInteger(attempts) && (attempts as number) > 0
+        ? (attempts as number)
+        : 1,
+    resume: true,
+  };
 }
 
 /**
@@ -389,6 +414,8 @@ function consumeRelaunchMarker(): number {
 function relaunchToFinishInstall(reason: string): void {
   clearStalledQuitWatchdog();
   isQuittingForUpdate = false;
+  const version =
+    currentStatus.kind === "downloaded" ? currentStatus.version : undefined;
   // Restarting the app is only a fix if it works. If we already relaunched
   // for this and are back here, restarting again would just do it forever —
   // an app that keeps disappearing on its own is worse than the dead button
@@ -397,15 +424,24 @@ function relaunchToFinishInstall(reason: string): void {
     log.error(
       `Install still refused after ${relaunchAttempts} relaunch(es) (${reason}); offering manual download`,
     );
-    const version =
-      currentStatus.kind === "downloaded" ? currentStatus.version : undefined;
+    setStatus({ kind: "manual", version });
+    broadcastUpdateError();
+    return;
+  }
+  // Relaunching without a marker on disk is the loop this bound exists to
+  // stop: the fresh process would count zero attempts, try again, fail again
+  // and restart again, with nothing ever accumulating. If the count cannot be
+  // persisted, do not spend the restart at all.
+  if (!writeRelaunchMarker(relaunchAttempts + 1)) {
+    log.error(
+      `Install refused by Electron (${reason}) and the retry could not be recorded; offering manual download`,
+    );
     setStatus({ kind: "manual", version });
     broadcastUpdateError();
     return;
   }
   log.error(`Install refused by Electron (${reason}); relaunching to retry`);
   setStatus({ kind: "idle" });
-  writeRelaunchMarker(relaunchAttempts + 1);
   app.relaunch();
   app.quit();
 }
@@ -521,8 +557,9 @@ export function setupAutoUpdaterEvents(): void {
   // Did the previous process relaunch us mid-install? Read it once, here,
   // before any check can fire.
   if (app.isPackaged) {
-    relaunchAttempts = consumeRelaunchMarker();
-    if (relaunchAttempts > 0) {
+    const marker = consumeRelaunchMarker();
+    relaunchAttempts = marker.attempts;
+    if (marker.resume) {
       log.info("Resuming an update install that needed a relaunch");
       installOnNextDownload = true;
     }

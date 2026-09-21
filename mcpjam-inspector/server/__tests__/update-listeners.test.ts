@@ -1002,6 +1002,24 @@ describe("update-listeners", () => {
 });
 
 describe("update polling", () => {
+  // Auto-updates only exist on macOS and Windows, and CI runs Linux — without
+  // pinning this the whole describe passes by doing nothing.
+  const realPlatform = process.platform;
+  const setPlatform = (value: string) => {
+    Object.defineProperty(process, "platform", {
+      value,
+      configurable: true,
+    });
+  };
+
+  beforeEach(() => {
+    setPlatform("darwin");
+  });
+
+  afterEach(() => {
+    setPlatform(realPlatform);
+  });
+
   beforeEach(() => {
     appState.isPackaged = true;
     autoUpdaterHandlers.clear();
@@ -1073,10 +1091,21 @@ describe("update polling", () => {
 
     expect(setFeedURLMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        url: `https://update.electronjs.org/MCPJam/inspector/${process.platform}-${process.arch}/3.8.0`,
+        url: `https://update.electronjs.org/MCPJam/inspector/darwin-${process.arch}/3.8.0`,
         serverType: "default",
       }),
     );
+  });
+
+  it("does not poll on a platform without auto-updates", async () => {
+    setPlatform("linux");
+    const { startUpdatePolling } = await loadUpdateListeners();
+
+    startUpdatePolling();
+    vi.advanceTimersByTime(20 * 60_000);
+
+    expect(checkForUpdatesMock).not.toHaveBeenCalled();
+    expect(setFeedURLMock).not.toHaveBeenCalled();
   });
 
   it("does not poll in development", async () => {
@@ -1216,6 +1245,68 @@ describe("install refused by Electron", () => {
 
     expect(relaunchMock).toHaveBeenCalledTimes(1);
     expect(JSON.parse(fsState.files.get(MARKER) as string).attempts).toBe(1);
+  });
+
+  it("does not relaunch when the retry cannot be recorded", async () => {
+    // A relaunch whose attempt count never reaches disk is the unbounded loop
+    // wearing a disguise: every fresh process would start the budget over.
+    writeFileSyncMock.mockImplementationOnce(() => {
+      throw new Error("EROFS: read-only file system");
+    });
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    emitAutoUpdaterEvent("error", refusedError());
+
+    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(quitMock).not.toHaveBeenCalled();
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toEqual({ kind: "manual", version: "3.8.1" });
+  });
+
+  it("spends the budget on a marker it cannot read back", async () => {
+    // Corrupt or unreadable, the file still says a relaunch happened. Reading
+    // it as "no attempts yet" would hand back an unlimited restart budget.
+    fsState.files.set(MARKER, "{ this is not json");
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    // Not resumed: we never confirmed the user asked for this install.
+    expect(quitAndInstallMock).not.toHaveBeenCalled();
+
+    // …but the attempt was counted, so a refusal now goes manual, not around
+    // the loop again.
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    emitAutoUpdaterEvent("error", refusedError());
+    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toEqual({ kind: "manual", version: "3.8.1" });
+  });
+
+  it("treats a missing marker as a clean start", async () => {
+    // ENOENT is every ordinary launch, and must leave the full budget.
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    emitAutoUpdaterEvent("error", refusedError());
+
+    expect(relaunchMock).toHaveBeenCalledTimes(1);
   });
 
   it("lets the user quit when the install is refused at quit", async () => {
