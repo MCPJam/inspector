@@ -1,39 +1,121 @@
-diff --git a/.changeset/eval-suite-iteration-model.md b/.changeset/eval-suite-iteration-model.md
+diff --git a/.changeset/multi-client-run-with-client.md b/.changeset/multi-client-run-with-client.md
 deleted file mode 100644
-index f5ff1a894..000000000
---- a/.changeset/eval-suite-iteration-model.md
+index 847db4499..000000000
+--- a/.changeset/multi-client-run-with-client.md
 +++ /dev/null
-@@ -1,7 +0,0 @@
+@@ -1,5 +0,0 @@
 ----
--"@mcpjam/sdk": patch
+-"@mcpjam/sdk": minor
 ----
 -
--Report the model on every iteration an `EvalSuite` or `EvalTest` run uploads. A run started with `runWithClient` showed an empty MODEL column, because only the `promptsToEvalResult` path stamped the provider and model that the run had already recorded. When a case fails in setup and never reaches the model, the run now names the model it was configured with — the saved client's, for a `runWithClient` run.
--
--Report per-step verdicts too (`metadata.stepResults`), the same rows the hosted runner writes. An SDK case whose tool call matched still read "0 of 1 assertion passed" on the Steps tab, with a grey unknown icon, because no step ever carried a verdict.
-diff --git a/.changeset/release-inspector-cli-sdk.md b/.changeset/release-inspector-cli-sdk.md
+-`EvalSuite.runWithClient` accepts a list of saved clients. It runs the suite against each in parallel and uploads one run per client, grouped in MCPJam under one run number. Adds `runGroupId` to the reporting config. The evals GitHub Action now shows grouped runs as one table with a row per client and model.
+diff --git a/.changeset/quiet-pandas-repeat.md b/.changeset/quiet-pandas-repeat.md
 deleted file mode 100644
-index 8a8502011..000000000
---- a/.changeset/release-inspector-cli-sdk.md
+index 8334599bd..000000000
+--- a/.changeset/quiet-pandas-repeat.md
 +++ /dev/null
-@@ -1,8 +0,0 @@
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Desktop: fix an Update button that stopped working ten minutes after the update finished downloading. The app kept checking for updates even with a build already staged, and that extra check made Electron forget the staged build — after which clicking Update did nothing at all and quitting the app was refused, leaving the only way out a reinstall. The app now stops checking once a build is staged, always lets you quit, and if the staged build has gone missing a single click restarts the app, downloads it again and installs it.
+diff --git a/.changeset/release-inspector-cli-sdk-2026-09-21.md b/.changeset/release-inspector-cli-sdk-2026-09-21.md
+deleted file mode 100644
+index f7af37d45..000000000
+--- a/.changeset/release-inspector-cli-sdk-2026-09-21.md
++++ /dev/null
+@@ -1,9 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 -"@mcpjam/cli": patch
 -"@mcpjam/sdk": patch
 ----
 -
--Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the
--work already merged into main reaches npm. Version bump only — no code changes.
+-Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+-
+-This changeset carries no code changes. It ships the inspector and SDK work that has been waiting on main since the last release, and bumps @mcpjam/cli in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+diff --git a/.changeset/save-and-connect-label.md b/.changeset/save-and-connect-label.md
+deleted file mode 100644
+index d6019b9e9..000000000
+--- a/.changeset/save-and-connect-label.md
++++ /dev/null
+@@ -1,9 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Rename the server connection modal's "Save Changes" button to "Save & Connect".
+-
+-The button already saved the configuration and connected to the server in one
+-click, but the label only described the save half. The new label makes it
+-clear the click both saves and connects.
+diff --git a/.changeset/scorecard-expected-actual.md b/.changeset/scorecard-expected-actual.md
+deleted file mode 100644
+index 46912f9a6..000000000
+--- a/.changeset/scorecard-expected-actual.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Restyle the iteration scorecard as one column of stage sections. Each stage leads with its name, state word and question, then lists every evaluator that grades it as an EXPECTED / ACTUAL pair, with no separate "added assertions" section and no stage picker. Authored checks are titled by their purpose, and a judge row with no goal sentence names what the judge graded against.
+diff --git a/.changeset/swarm-findings-analysis-unavailable.md b/.changeset/swarm-findings-analysis-unavailable.md
+deleted file mode 100644
+index a32b41974..000000000
+--- a/.changeset/swarm-findings-analysis-unavailable.md
++++ /dev/null
+@@ -1,6 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": patch
+----
+-
+-Swarm findings: add an `analysisUnavailable` coverage note, so a wave whose cause analysis never ran is distinguishable from one where the analysis ran and found nothing.
+diff --git a/.changeset/swarm-findings-headline.md b/.changeset/swarm-findings-headline.md
+deleted file mode 100644
+index b2bbe0418..000000000
+--- a/.changeset/swarm-findings-headline.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+----
+-
+-Swarm findings: the Findings card now names the cause and its fix separately, keeps full goal titles, states a recorded signal when no cause was confirmed, and gives the persona card a real supporting session's words.
+diff --git a/.changeset/swarm-findings-order-independence.md b/.changeset/swarm-findings-order-independence.md
+deleted file mode 100644
+index b1dc6be84..000000000
+--- a/.changeset/swarm-findings-order-independence.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Swarm findings: the Findings card reads the same whichever order a mechanism's rows arrive in, claims a stage only when its rows agree on one, and no longer nests a paragraph inside a paragraph in the suggested-fix line.
+diff --git a/.changeset/swarm-recorded-signals.md b/.changeset/swarm-recorded-signals.md
+deleted file mode 100644
+index 6f2713145..000000000
+--- a/.changeset/swarm-recorded-signals.md
++++ /dev/null
+@@ -1,6 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": patch
+----
+-
+-Swarm findings: carry recorded session signals, a plain-language persona account and proposal verification counts on the wire. All three additions are optional, so existing payloads keep parsing unchanged.
 diff --git a/cli/package.json b/cli/package.json
-index 19f14eee0..38ebf293b 100644
+index 38ebf293b..59b264bf2 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "5.10.1",
-+  "version": "5.10.2",
+-  "version": "5.10.2",
++  "version": "5.10.3",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
@@ -41,21 +123,21 @@ index 19f14eee0..38ebf293b 100644
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^8.10.1",
-+    "@mcpjam/sdk": "^8.11.1",
+-    "@mcpjam/sdk": "^8.11.1",
++    "@mcpjam/sdk": "^8.12.0",
      "@modelcontextprotocol/server": "2.0.0",
      "commander": "^14.0.3",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 03558faf5..c7b754fad 100644
+index c7b754fad..b0a03bc67 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "3.8.0",
-+  "version": "3.8.1",
+-  "version": "3.8.1",
++  "version": "3.9.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -63,24 +145,24 @@ index 03558faf5..c7b754fad 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^8.11.0",
-+    "@mcpjam/sdk": "^8.11.1",
+-    "@mcpjam/sdk": "^8.11.1",
++    "@mcpjam/sdk": "^8.12.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@novnc/novnc": "^1.7.0",
 diff --git a/package-lock.json b/package-lock.json
-index 00ae09596..8bf110326 100644
+index 8bf110326..ef99a69a6 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -64,9 +64,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "5.10.1",
-+      "version": "5.10.2",
+-      "version": "5.10.2",
++      "version": "5.10.3",
        "dependencies": {
--        "@mcpjam/sdk": "^8.10.1",
-+        "@mcpjam/sdk": "^8.11.1",
+-        "@mcpjam/sdk": "^8.11.1",
++        "@mcpjam/sdk": "^8.12.0",
          "@modelcontextprotocol/server": "2.0.0",
          "commander": "^14.0.3",
          "posthog-node": "^5.24.10",
@@ -88,8 +170,8 @@ index 00ae09596..8bf110326 100644
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "3.8.0",
-+      "version": "3.8.1",
+-      "version": "3.8.1",
++      "version": "3.9.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -97,8 +179,8 @@ index 00ae09596..8bf110326 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^8.11.0",
-+        "@mcpjam/sdk": "^8.11.1",
+-        "@mcpjam/sdk": "^8.11.1",
++        "@mcpjam/sdk": "^8.12.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@novnc/novnc": "^1.7.0",
@@ -106,41 +188,46 @@ index 00ae09596..8bf110326 100644
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "8.11.0",
-+      "version": "8.11.1",
+-      "version": "8.11.1",
++      "version": "8.12.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/CHANGELOG.md b/sdk/CHANGELOG.md
-index 5a57500a2..5c655f327 100644
+index 5c655f327..56b2bb9eb 100644
 --- a/sdk/CHANGELOG.md
 +++ b/sdk/CHANGELOG.md
-@@ -1,5 +1,16 @@
+@@ -1,5 +1,21 @@
  # `@mcpjam/sdk` changelog
  
-+## 8.11.1
++## 8.12.0
++
++### Minor Changes
++
++- [#5338](https://github.com/MCPJam/inspector/pull/5338) [`331907a`](https://github.com/MCPJam/inspector/commit/331907a16a25617016f5e3743d48cee1bf6ddb63) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - `EvalSuite.runWithClient` accepts a list of saved clients. It runs the suite against each in parallel and uploads one run per client, grouped in MCPJam under one run number. Adds `runGroupId` to the reporting config. The evals GitHub Action now shows grouped runs as one table with a row per client and model.
++
++- [#5359](https://github.com/MCPJam/inspector/pull/5359) [`2d59e6f`](https://github.com/MCPJam/inspector/commit/2d59e6ff815872a81070bcb8968e22ec146a29f8) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Swarm findings: add an `analysisUnavailable` coverage note, so a wave whose cause analysis never ran is distinguishable from one where the analysis ran and found nothing.
++
++- [#5340](https://github.com/MCPJam/inspector/pull/5340) [`cc8f06a`](https://github.com/MCPJam/inspector/commit/cc8f06a844ee7243a6dbb2ac29bbc0a2b11bbf16) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Swarm findings: carry recorded session signals, a plain-language persona account and proposal verification counts on the wire. All three additions are optional, so existing payloads keep parsing unchanged.
 +
 +### Patch Changes
 +
-+- [#5300](https://github.com/MCPJam/inspector/pull/5300) [`42c058f`](https://github.com/MCPJam/inspector/commit/42c058f0cd41078ee28533f0589bd0af3c7cbf7e) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Report the model on every iteration an `EvalSuite` or `EvalTest` run uploads. A run started with `runWithClient` showed an empty MODEL column, because only the `promptsToEvalResult` path stamped the provider and model that the run had already recorded. When a case fails in setup and never reaches the model, the run now names the model it was configured with — the saved client's, for a `runWithClient` run.
++- [#5390](https://github.com/MCPJam/inspector/pull/5390) [`99bc573`](https://github.com/MCPJam/inspector/commit/99bc573e213994c6aa46beb4dbf3ac88b56dfcf8) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
 +
-+  Report per-step verdicts too (`metadata.stepResults`), the same rows the hosted runner writes. An SDK case whose tool call matched still read "0 of 1 assertion passed" on the Steps tab, with a grey unknown icon, because no step ever carried a verdict.
++  This changeset carries no code changes. It ships the inspector and SDK work that has been waiting on main since the last release, and bumps @mcpjam/cli in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
 +
-+- [#5330](https://github.com/MCPJam/inspector/pull/5330) [`1ad2342`](https://github.com/MCPJam/inspector/commit/1ad2342d2c7bd7ec9ff4051ad1536dba1a37466f) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the
-+  work already merged into main reaches npm. Version bump only — no code changes.
-+
- ## 8.11.0
+ ## 8.11.1
  
- ### Minor Changes
+ ### Patch Changes
 diff --git a/sdk/package.json b/sdk/package.json
-index f99083fc9..5e2bc9398 100644
+index 5e2bc9398..f6906240d 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "8.11.0",
-+  "version": "8.11.1",
+-  "version": "8.11.1",
++  "version": "8.12.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
