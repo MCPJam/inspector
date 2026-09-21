@@ -425,9 +425,12 @@ export function EvalGeneratedDrafts({
                       // saving the case is the agreement.
                       <div className="space-y-1">
                         <p className="font-medium text-foreground">
+                          {/* Not always additions: the model removes a step
+                              the document asked for when the tool behind it
+                              does not exist. "Added" named half of them. */}
                           {draft.authoring.additions.length === 1
-                            ? "Added by MCPJam, beyond the source document:"
-                            : `Added by MCPJam, beyond the source document (${draft.authoring.additions.length}):`}
+                            ? "MCPJam changed this from your document:"
+                            : `MCPJam changed this from your document (${draft.authoring.additions.length}):`}
                         </p>
                         <ul className="list-disc space-y-1 pl-5">
                           {draft.authoring.additions.map((addition) => (
