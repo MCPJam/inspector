@@ -99,17 +99,6 @@ try {
     output: raw,
   });
   const serialized = JSON.stringify(output);
-  assert.ok(
-    serialized.includes(
-      Buffer.from(`PRIVATE RESOURCE FOR ${accounts[1]}`).toString("base64")
-    ),
-    "B output conversion must read B's resource"
-  );
-  assert.ok(
-    !serialized.includes(
-      Buffer.from(`PRIVATE RESOURCE FOR ${accounts[0]}`).toString("base64")
-    )
-  );
   const variant = Object.keys(tools).find(
     (name) => name.startsWith("upstream_account__") && name.endsWith("side")
   );
@@ -148,6 +137,23 @@ try {
     resourceReads.length > 0 &&
       resourceReads.every((e) => e.accountId === accounts[1])
   );
+
+  // Only now ask each connection for the resource directly: this compares the
+  // conversion against what each credential actually returns, and it has to
+  // come AFTER the assertion above or its own reads would pollute the log.
+  const [aBlob, bBlob] = await Promise.all(
+    [a, b].map(
+      async (c) =>
+        (await manager.readResource(c.key, { uri: "account://same" }))
+          .contents[0].blob
+    )
+  );
+  assert.notEqual(aBlob, bBlob, "each account must serve its own resource");
+  assert.ok(
+    serialized.includes(bBlob),
+    "B output conversion must read B's resource"
+  );
+  assert.ok(!serialized.includes(aBlob), "and never A's");
   console.log(
     "PASS: two OAuth grants; distinct same-email identities; B-only resource conversion; selector collision; foreign selector rejected without wire traffic; stable identity after refresh."
   );
