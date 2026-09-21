@@ -427,6 +427,8 @@ counts, never a finding about the server.
 | `sessionsRateLimited` | Some sessions were rate limited |
 | `partialRead` | Only part of this wave was read |
 | `toolCatalogMissing` | Tool catalog unavailable |
+| `mechanismsRejected` | A possible cause was rejected |
+| `analysisUnavailable` | Causes could not be analysed |
 
 ### Bases
 
@@ -449,3 +451,20 @@ How wide a finding reaches. A finding never speaks for more than its scope.
 | `persona` | All of one persona's goals. It cannot single out which goal. |
 | `target` | One environment or host, across personas. |
 | `wave` | The whole swarm run. |
+
+### Signals
+
+A fact the runtime RECORDED about a session, with no model involved. A signal
+says what was observed, never why. Sessions sharing one are grouped so the same
+question can be asked about them together; agreeing on a signal is not evidence
+that they share a cause, and it is not evidence that any of them missed its
+goal. Listed in the priority order a session is keyed by, so a reply that was
+cut off is never filed under the tool error that preceded it.
+
+| Wire value | Label | Meaning |
+| --- | --- | --- |
+| `outputTruncated` | Reply cut off | A turn stopped because it reached its output limit, so whatever it had not written yet was never sent. |
+| `hallucinatedTool` | Called a tool that does not exist | The assistant called a tool name the server does not provide. |
+| `toolErrored` | A tool errored | At least one tool call returned an error. |
+| `noToolCalled` | No tool used | The session finished without using any tool. |
+| `turnCapReached` | Hit the turn limit | The session used every turn it was allowed. |

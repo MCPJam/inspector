@@ -283,7 +283,7 @@ describe("CreditBalanceCard", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByTestId("topup-dialog")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Upgrade to Pro to buy credits" }),
+      screen.getByRole("link", { name: "Compare plans for more monthly credits and top-ups" }),
     ).toHaveAttribute("href", "/organizations/org-1/plans");
     window.history.replaceState({}, "", "/");
   });
@@ -296,7 +296,7 @@ describe("CreditBalanceCard", () => {
     };
     render(<CreditBalanceCard organizationId="org-1" canManageCredits />);
     expect(
-      screen.queryByText("Upgrade to Pro to buy credits"),
+      screen.queryByText("Compare plans for more monthly credits and top-ups"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("usage-wallet-locked")).toBeInTheDocument();
     expect(
@@ -554,7 +554,7 @@ describe("CreditBalanceCard", () => {
       screen.queryByRole("button", { name: /Buy credits/i }),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("usage-ask-admin")).toHaveTextContent(
-      /Ask org admin to top up credits/,
+      /Ask an owner or admin to add credits/,
     );
   });
 

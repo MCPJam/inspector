@@ -1,4 +1,5 @@
 import { getCachedGuestSession } from "./guest-session";
+import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
 import { getLastFailedRequest } from "./failed-request-tracker";
 
@@ -158,15 +159,9 @@ function sanitizeAnalyticsProperties(
 // $pageleave, which is what makes bounce rate and session duration exist in
 // PostHog's Web Analytics tab. The app proper keeps pageviews OFF — track()
 // events already cover it, and in-app route churn would be noise and event
-// cost. Mirrors the server-side landing-host defaults (CANIUSE_LANDING_HOSTS /
-// SCORE_LANDING_HOSTS in server/config.ts) — keep in sync when a vanity
-// domain is added.
-export const LANDING_ANALYTICS_HOSTS = new Set([
-  "caniuse.dev",
-  "www.caniuse.dev",
-  "score.mcpjam.com",
-  "www.score.mcpjam.com",
-]);
+// cost. The host list itself lives in lib/vanity-landing-hosts.ts, which is
+// what the guest-session skip reads too.
+export const LANDING_ANALYTICS_HOSTS = VANITY_LANDING_HOSTS;
 
 // Check if PostHog should be disabled
 export const isPostHogDisabled =

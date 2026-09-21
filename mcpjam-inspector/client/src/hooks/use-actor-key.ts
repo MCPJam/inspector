@@ -5,6 +5,7 @@ import {
   getOrCreateGuestSession,
   subscribeGuestSessionChanges,
 } from "@/lib/guest-session";
+import { shouldSkipGuestSession } from "@/lib/vanity-landing-hosts";
 
 /**
  * Returns a stable key for the active actor (signed-in user or guest), or null
@@ -40,7 +41,7 @@ export function useActorKey(): string | null {
   }, [isLoading, user?.id]);
 
   useEffect(() => {
-    if (isLoading || user || guestId) return;
+    if (isLoading || user || guestId || shouldSkipGuestSession()) return;
     let cancelled = false;
     void getOrCreateGuestSession().then((session) => {
       if (cancelled) return;

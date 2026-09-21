@@ -1,3 +1,4 @@
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -184,7 +185,51 @@ describe("useEvalQueries", () => {
     expect(result.current.enableOverviewQuery).toBe(false);
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "testSuites:getTestSuitesOverview",
-      "skip"
+      "skip",
     );
   });
+});
+
+it("opens the credit wall for a live iteration failure once and preserves completed rows", () => {
+  const store = useMCPJamLimitDialogStore;
+  store.setState({
+    authStatus: "signedIn",
+    isOpen: false,
+    notifiedRunIds: new Set(),
+  });
+  let runs = [{ _id: "live-eval", status: "running" }];
+  const completed = {
+    _id: "done",
+    suiteRunId: "live-eval",
+    status: "completed",
+  };
+  let iterations: any[] = [completed];
+  mocks.useQuery.mockImplementation((query: string) => {
+    if (query === "testSuites:listTestSuiteRuns") return runs;
+    if (query === "testSuites:getAllTestCasesAndIterationsBySuite")
+      return { iterations, testCases: [] };
+    return [];
+  });
+  const { result, rerender } = renderHook(() =>
+    useEvalQueries({
+      isAuthenticated: true,
+      selectedSuiteId: "suite",
+      deletingSuiteId: null,
+      projectId: "project",
+      organizationId: "org",
+    }),
+  );
+  expect(store.getState().isOpen).toBe(false);
+  iterations = [
+    ...iterations,
+    { _id: "blocked", suiteRunId: "live-eval", error: "Credits exhausted" },
+  ];
+  runs = [{ _id: "live-eval", status: "failed" }];
+  rerender();
+  expect(store.getState().isOpen).toBe(true);
+  expect(result.current.sortedIterations).toContain(completed);
+  store.getState().close();
+  iterations = [...iterations];
+  rerender();
+  expect(store.getState().isOpen).toBe(false);
 });
