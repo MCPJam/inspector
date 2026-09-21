@@ -9,6 +9,24 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-21
+
+#### Added
+
+- **OpenAI profile-tool readiness checks** — OpenAI readiness runs now grade servers against the [profile-tool contract](https://developers.openai.com/plugins/build/auth#support-multiple-accounts). A server may optionally designate one tool with `_meta: {"openai/profile": true}` to supply authenticated profile information for multi-account support. Five new checks enforce the contract:
+
+  | Check ID | Lane | What it tests |
+  |---|---|---|
+  | `openai.profile.declared` | directory-policy | Exactly one tool carries the boolean `true` marker; zero ⇒ not-applicable, duplicates or non-boolean markers ⇒ violated |
+  | `openai.profile.input-empty` | directory-policy | The profile tool accepts an empty argument object |
+  | `openai.profile.output-schema` | directory-policy | The profile tool publishes the required response schema (`id` with `\S` pattern, `additionalProperties: false`) |
+  | `openai.profile.read-only` | directory-policy | The profile tool declares read-only behavior |
+  | `openai.profile.description-honesty` | experience-insights | Heuristic — the tool name is consistent with read-only behavior |
+
+  A new `openai.feature.profile-identification` capability badge appears in readiness reports when exactly one profile tool is designated. Servers without a profile tool are not penalized — the checks grade `not-applicable`, and multi-account connections remain supported without one.
+
+- **OpenAI readiness engine version `"2"`** — reports produced after this change carry `engineVersion: "2"`. Reports graded before this change carry `"1"`. The two versions are not directly comparable because the expanded rule set can change a server's verdict; the `engineVersion` field in the run record identifies which rule set applied.
+
 ### 2026-09-18
 
 #### Changed
