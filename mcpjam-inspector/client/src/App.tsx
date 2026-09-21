@@ -680,6 +680,7 @@ function ActiveBillingUpsellGate() {
 
   return (
     <BillingUpsellGate
+      organizationId={billingOrganizationId}
       feature={activeTabBillingFeature}
       currentPlan={
         shellBillingStatus?.effectivePlan ?? shellBillingStatus?.plan ?? "free"

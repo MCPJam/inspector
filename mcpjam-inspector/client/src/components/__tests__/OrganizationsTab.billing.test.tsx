@@ -695,12 +695,12 @@ describe("OrganizationsTab billing", () => {
       expect(impressions[0]?.[1]).toEqual(
         expect.objectContaining({
           location: "organization_billing",
+          organization_id: "org-1",
           source: "billing_page",
           current_plan: "free",
           can_manage_billing: true,
         }),
       );
-      expect(impressions[0]?.[1]).not.toHaveProperty("organization_id");
       expect(impressions[0]?.[1]).not.toHaveProperty("price_cents");
     });
   });
@@ -1177,6 +1177,52 @@ describe("OrganizationsTab billing", () => {
       ),
     );
     expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("reports a retry canceled by the competing cancellation without a generic retry error", async () => {
+    const retrySeatPayment = vi.fn().mockResolvedValue({
+      status: "noop",
+      reason: "seat_payment_canceled",
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
+        retrySeatPayment,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry payment" }));
+
+    await waitFor(() => expect(retrySeatPayment).toHaveBeenCalled());
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "seat_payment_retry",
+        failure_kind: "canceled",
+      }),
+    );
+    expect(toast.error).toHaveBeenCalledWith(
+      errorToastMessage(
+        "This seat payment was canceled. Add the member again to restart payment.",
+      ),
+      { duration: 8000 },
+    );
+    expect(toast.error).not.toHaveBeenCalledWith(
+      errorToastMessage(
+        "This seat payment can no longer be retried. Try adding the member again.",
+      ),
+      { duration: 8000 },
+    );
   });
 
   it.each([

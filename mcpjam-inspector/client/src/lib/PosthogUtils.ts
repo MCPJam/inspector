@@ -144,11 +144,17 @@ function attachFailedRequest(properties: Record<string, any>): void {
   properties.failed_request_age_ms = ageMs;
 }
 
-function sanitizeAnalyticsProperties(
+export function sanitizeAnalyticsProperties(
   properties: Record<string, any>,
   eventName?: string,
 ): Record<string, any> {
-  for (const key of ["$current_url", "$referrer", "$pathname"]) {
+  for (const key of [
+    "$current_url",
+    "$referrer",
+    "$pathname",
+    "$session_entry_url",
+    "$session_entry_pathname",
+  ]) {
     if (typeof properties[key] === "string") {
       properties[key] = scrubSensitiveUrl(properties[key]);
     }

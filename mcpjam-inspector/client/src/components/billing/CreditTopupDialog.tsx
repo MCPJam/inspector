@@ -70,6 +70,7 @@ export function CreditTopupDialog({
     impressionTrackedRef.current = true;
     track("credit_topup_dialog_shown", {
       location: "credit_topup",
+      organization_id: organizationId,
       source,
       organization_resolved: Boolean(organizationId),
       package_count: presets?.length ?? 0,
@@ -99,6 +100,7 @@ export function CreditTopupDialog({
     dismissalTrackedRef.current = true;
     track("credit_topup_dialog_dismissed", {
       location: "credit_topup",
+      organization_id: organizationId,
       source,
       dismissal_method: dismissalMethod,
       had_selection: selectedPreset !== undefined,
@@ -112,6 +114,7 @@ export function CreditTopupDialog({
     setSelectedPackageId(preset.packageId);
     track("credit_topup_package_selected", {
       location: "credit_topup",
+      organization_id: organizationId,
       source,
       package_index: packageIndex,
       package_count: presets?.length ?? 0,

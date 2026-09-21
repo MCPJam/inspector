@@ -194,11 +194,12 @@ export function PaymentsHistorySection({
     const topupList = topups ?? [];
     track("credit_topup_history_viewed", {
       location: "billing_payments_history",
+      organization_id: organizationId,
       entry_count_bucket: bucketEntryCount(topupList.length),
       has_failed: topupList.some((e) => e.status === "failed"),
       has_pending: topupList.some((e) => e.status === "pending"),
     });
-  }, [isLoading, rows, topups]);
+  }, [isLoading, organizationId, rows, topups]);
 
   if (!canViewHistory && !canViewInvoices) return null;
 
@@ -215,14 +216,20 @@ export function PaymentsHistorySection({
         ) : rows.length === 0 ? (
           <EmptyState />
         ) : (
-          <PaymentsTable rows={rows} />
+          <PaymentsTable rows={rows} organizationId={organizationId} />
         )}
       </CardContent>
     </Card>
   );
 }
 
-function PaymentsTable({ rows }: { rows: BillingRow[] }) {
+function PaymentsTable({
+  rows,
+  organizationId,
+}: {
+  rows: BillingRow[];
+  organizationId?: string | null;
+}) {
   return (
     <div data-testid="payments-history-table">
       {/* Desktop: real table at sm+. Cap visible height; older rows scroll
@@ -245,6 +252,7 @@ function PaymentsTable({ rows }: { rows: BillingRow[] }) {
                 <TopupTableRow
                   key={`t_${row.topup.sessionId}`}
                   entry={row.topup}
+                  organizationId={organizationId}
                 />
               ) : (
                 <InvoiceTableRow
@@ -263,6 +271,7 @@ function PaymentsTable({ rows }: { rows: BillingRow[] }) {
             <TopupMobileRow
               key={`tm_${row.topup.sessionId}`}
               entry={row.topup}
+              organizationId={organizationId}
             />
           ) : (
             <InvoiceMobileRow
@@ -276,7 +285,13 @@ function PaymentsTable({ rows }: { rows: BillingRow[] }) {
   );
 }
 
-function TopupTableRow({ entry }: { entry: PaymentHistoryEntry }) {
+function TopupTableRow({
+  entry,
+  organizationId,
+}: {
+  entry: PaymentHistoryEntry;
+  organizationId?: string | null;
+}) {
   return (
     <TableRow>
       <TableCell className="whitespace-nowrap text-sm">
@@ -295,7 +310,7 @@ function TopupTableRow({ entry }: { entry: PaymentHistoryEntry }) {
         <StatusBadge entry={entry} />
       </TableCell>
       <TableCell className="text-right">
-        <ReceiptCell entry={entry} />
+        <ReceiptCell entry={entry} organizationId={organizationId} />
       </TableCell>
     </TableRow>
   );
@@ -381,7 +396,13 @@ function InvoiceLines({ invoice }: { invoice: InvoiceHistoryEntry }) {
   );
 }
 
-function TopupMobileRow({ entry }: { entry: PaymentHistoryEntry }) {
+function TopupMobileRow({
+  entry,
+  organizationId,
+}: {
+  entry: PaymentHistoryEntry;
+  organizationId?: string | null;
+}) {
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-border/60 p-3">
       <div className="flex items-center justify-between text-sm">
@@ -396,7 +417,7 @@ function TopupMobileRow({ entry }: { entry: PaymentHistoryEntry }) {
       <div className="text-xs text-muted-foreground">{entry.details}</div>
       <div className="flex items-center justify-between">
         <StatusBadge entry={entry} />
-        <ReceiptCell entry={entry} />
+        <ReceiptCell entry={entry} organizationId={organizationId} />
       </div>
     </div>
   );
@@ -565,7 +586,13 @@ function StatusBadge({ entry }: { entry: PaymentHistoryEntry }) {
   );
 }
 
-function ReceiptCell({ entry }: { entry: PaymentHistoryEntry }) {
+function ReceiptCell({
+  entry,
+  organizationId,
+}: {
+  entry: PaymentHistoryEntry;
+  organizationId?: string | null;
+}) {
   if (entry.receiptUrl) {
     const ageDays = Math.max(
       0,
@@ -585,6 +612,7 @@ function ReceiptCell({ entry }: { entry: PaymentHistoryEntry }) {
         onClick={() => {
           track("credit_topup_receipt_opened", {
             location: "billing_payments_history",
+            organization_id: organizationId,
             entry_age_days: ageDays,
           });
         }}

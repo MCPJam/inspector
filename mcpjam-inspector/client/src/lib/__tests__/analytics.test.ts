@@ -68,6 +68,37 @@ describe("track()", () => {
     );
   });
 
+  it("groups plan-confirmation events without copying the org into properties", () => {
+    getPropertyMock.mockReturnValue("org_registered");
+    track("plans_upgrade_confirm_shown", {
+      location: "org_plans",
+      organization_id: "org_current",
+      target_plan: "pro",
+    });
+
+    expect(captureMock).toHaveBeenCalledWith(
+      "plans_upgrade_confirm_shown",
+      expect.objectContaining({
+        organization_id: null,
+        target_plan: "pro",
+        $groups: { organization: "org_current" },
+      }),
+    );
+  });
+
+  it("does not fall back to a registered active org for group-only events", () => {
+    getPropertyMock.mockReturnValue("org_registered_but_not_authoritative");
+    track("billing_flow_started", {
+      location: "billing_page",
+      flow: "plan_change",
+    });
+
+    expect(captureMock).toHaveBeenCalledWith(
+      "billing_flow_started",
+      expect.not.objectContaining({ $groups: expect.anything() }),
+    );
+  });
+
   it("drops sensitive billing properties at the capture boundary", () => {
     getPropertyMock.mockReturnValue("org_valid");
     track("billing_flow_failed", {

@@ -17,6 +17,7 @@ describe("BillingUpsellGate", () => {
   it("captures billing_upsell_gate_viewed once on mount", () => {
     render(
       <BillingUpsellGate
+        organizationId="org-1"
         feature="scenarios"
         currentPlan="free"
         upgradePlan="team"
@@ -28,6 +29,7 @@ describe("BillingUpsellGate", () => {
     expect(trackMock).toHaveBeenCalledTimes(1);
     expect(trackMock).toHaveBeenCalledWith("billing_upsell_gate_viewed", {
       location: "billing_upsell_gate",
+      organization_id: "org-1",
       feature: "scenarios",
       current_plan: "free",
       upgrade_plan: "team",
@@ -41,6 +43,7 @@ describe("BillingUpsellGate", () => {
     const onNavigate = vi.fn();
     render(
       <BillingUpsellGate
+        organizationId="org-1"
         feature="evals"
         currentPlan="free"
         upgradePlan="team"
@@ -60,6 +63,7 @@ describe("BillingUpsellGate", () => {
   it("shows ask-admin copy when user cannot manage billing", () => {
     render(
       <BillingUpsellGate
+        organizationId="org-1"
         feature="scenarios"
         currentPlan="free"
         upgradePlan="team"

@@ -302,6 +302,7 @@ export function useUpgradeCheckout({
       setInterval(nextInterval);
       track("plan_limit_interval_selected", {
         location: "plan_limit_dialog",
+        organization_id: organizationId,
         limit_kind: limitKind,
         origin,
         billing_interval: nextInterval,
@@ -342,6 +343,7 @@ export function useUpgradeCheckout({
       toast.error("Checkout is not available for this plan right now.");
       track("plan_limit_upgrade_failed", {
         location: "plan_limit_dialog",
+        organization_id: organizationId,
         limit_kind: limitKind,
         origin,
         error_kind: "no_supported_interval",
@@ -372,6 +374,7 @@ export function useUpgradeCheckout({
       );
       track("plan_limit_upgrade_clicked", {
         location: "plan_limit_dialog",
+        organization_id: organizationId,
         limit_kind: limitKind,
         origin,
         billing_interval: checkoutInterval,
@@ -414,6 +417,7 @@ export function useUpgradeCheckout({
       }
       track("plan_limit_upgrade_resolved", {
         location: "plan_limit_dialog",
+        organization_id: organizationId,
         limit_kind: limitKind,
         origin,
         result_kind: result.kind,
@@ -431,6 +435,7 @@ export function useUpgradeCheckout({
       );
       track("plan_limit_upgrade_failed", {
         location: "plan_limit_dialog",
+        organization_id: organizationId,
         limit_kind: limitKind,
         origin,
         error_kind: "start_plan_change_failed",

@@ -163,13 +163,13 @@ describe("CreditTopupDialog", () => {
       expect(impressions[0]?.[1]).toEqual(
         expect.objectContaining({
           source: "chat_banner",
+          organization_id: "org-1",
           package_count: 3,
           organization_resolved: true,
           packages_available: true,
           has_resume_context: true,
         }),
       );
-      expect(impressions[0]?.[1]).not.toHaveProperty("organization_id");
       expect(impressions[0]?.[1]).not.toHaveProperty("default_package_id");
     });
   });

@@ -791,7 +791,10 @@ export function OrganizationBillingSection({
   onCheckoutIntentConsumed,
   currentPlanPanel,
 }: OrganizationBillingSectionProps) {
-  useCreditTopupReturnFlowBilling({ enabled: showCredits });
+  useCreditTopupReturnFlowBilling({
+    enabled: showCredits,
+    organizationId,
+  });
 
   // Plans sit below credits and payment history, so a deep link that lands at
   // the top of the page hides the one thing the user clicked for.

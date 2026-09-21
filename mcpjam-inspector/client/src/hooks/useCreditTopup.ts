@@ -13,6 +13,7 @@ export interface CreditTopupPreset {
 export interface PendingTopupContext {
   chatSessionId: string;
   message: string;
+  organizationId: string;
   storedAt: number;
 }
 
@@ -80,6 +81,7 @@ const normalizePresets = (raw: unknown): CreditTopupPreset[] | undefined => {
 export function stashPendingTopup(context: {
   chatSessionId: string;
   message: string;
+  organizationId: string;
 }): void {
   if (typeof window === "undefined") return;
   // Don't stash a useless entry — empty chat-session id or empty message
@@ -91,6 +93,7 @@ export function stashPendingTopup(context: {
     const payload: PendingTopupContext = {
       chatSessionId: context.chatSessionId,
       message: context.message,
+      organizationId: context.organizationId,
       storedAt: Date.now(),
     };
     window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
@@ -132,6 +135,7 @@ export function peekPendingTopup(): PendingTopupContext | null {
     if (
       typeof parsed.chatSessionId !== "string" ||
       typeof parsed.message !== "string" ||
+      typeof parsed.organizationId !== "string" ||
       typeof parsed.storedAt !== "number"
     ) {
       // Malformed entry — drop it.
@@ -146,6 +150,7 @@ export function peekPendingTopup(): PendingTopupContext | null {
     return {
       chatSessionId: parsed.chatSessionId,
       message: parsed.message,
+      organizationId: parsed.organizationId,
       storedAt: parsed.storedAt,
     };
   } catch {
@@ -219,7 +224,11 @@ export function useCreditTopup() {
     }: StartCheckoutInput): Promise<StartCheckoutResult> => {
       setIsStartingCheckout(true);
       setError(null);
-      stashPendingTopup({ chatSessionId, message: lastUserMessage });
+      stashPendingTopup({
+        chatSessionId,
+        message: lastUserMessage,
+        organizationId,
+      });
       // Track the most specific failure category we know about. Defaults to
       // `action_threw` (the fallback when the Convex action itself rejects)
       // and gets refined by the URL guards below.
@@ -235,6 +244,7 @@ export function useCreditTopup() {
         } as any);
         track("credit_topup_checkout_started", {
           location: "credit_topup",
+          organization_id: organizationId,
           source,
           has_resume_context: Boolean(chatSessionId && lastUserMessage),
           has_return_url: Boolean(returnUrl),
@@ -276,6 +286,7 @@ export function useCreditTopup() {
         setError(message);
         track("credit_topup_checkout_failed", {
           location: "credit_topup",
+          organization_id: organizationId,
           error_kind: errorKind,
           source,
         });

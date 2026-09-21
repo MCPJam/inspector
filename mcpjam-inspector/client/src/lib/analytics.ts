@@ -74,13 +74,13 @@ export function track(
   } = props;
   try {
     const organizationGroupOnlyEvent = usesOrganizationGroupOnly(event);
-    const registeredOrganizationId = organizationGroupOnlyEvent
-      ? posthog.get_property?.("organization_id")
+    const suppliedOrganizationId = organizationGroupOnlyEvent
+      ? rest.organization_id
       : undefined;
     const billingOrganizationId =
-      typeof registeredOrganizationId === "string" &&
-      registeredOrganizationId.length > 0
-        ? registeredOrganizationId
+      typeof suppliedOrganizationId === "string" &&
+      suppliedOrganizationId.length > 0
+        ? suppliedOrganizationId
         : undefined;
     const eventProperties = organizationGroupOnlyEvent
       ? Object.fromEntries(

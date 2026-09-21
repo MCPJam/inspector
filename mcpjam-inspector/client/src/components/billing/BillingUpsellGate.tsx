@@ -19,6 +19,7 @@ const FEATURE_DESCRIPTIONS: Partial<Record<BillingFeatureName, string>> = {
 };
 
 export interface BillingUpsellGateProps {
+  organizationId: string | null;
   feature: BillingFeatureName;
   /** Plan the org is effectively on (for context copy). */
   currentPlan: OrganizationPlan;
@@ -29,6 +30,7 @@ export interface BillingUpsellGateProps {
 }
 
 export function BillingUpsellGate({
+  organizationId,
   feature,
   currentPlan,
   upgradePlan,
@@ -50,13 +52,14 @@ export function BillingUpsellGate({
     viewedRef.current = true;
     track("billing_upsell_gate_viewed", {
       location: "billing_upsell_gate",
+      organization_id: organizationId,
       feature,
       current_plan: currentPlan,
       upgrade_plan: upgradePlan,
       can_manage_billing: canManageBilling,
       surface: window.location.pathname,
     });
-  }, [canManageBilling, currentPlan, feature, upgradePlan]);
+  }, [canManageBilling, currentPlan, feature, organizationId, upgradePlan]);
 
   return (
     <div

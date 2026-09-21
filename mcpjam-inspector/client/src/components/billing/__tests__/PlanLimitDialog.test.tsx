@@ -223,13 +223,13 @@ describe("PlanLimitDialog", () => {
     expect(impressions[0]?.[1]).toEqual(
       expect.objectContaining({
         wall_kind: "eval_iterations",
+        organization_id: "org-1",
         current_plan: "free",
         effective_plan: "free",
         can_manage_billing: true,
         primary_action: "upgrade",
       }),
     );
-    expect(impressions[0]?.[1]).not.toHaveProperty("organization_id");
   });
 
   it("waits for owner recipients before reporting a request impression", () => {
@@ -755,7 +755,7 @@ describe("PlanLimitDialog", () => {
       expect(window.location.search).toBe("");
     });
 
-    it("uses the ticket organization and does not leak it into analytics", async () => {
+    it("uses the authoritative ticket organization for analytics grouping", async () => {
       // A tampered or stale `upgrade_org` must not redirect the confirmation:
       // the ticket records the org THIS tab actually started checkout for, and
       // that is the only one we report on.
@@ -772,12 +772,12 @@ describe("PlanLimitDialog", () => {
 
       expect(trackMock).toHaveBeenCalledWith(
         "plan_limit_upgrade_returned",
-        expect.objectContaining({ upgraded: true, plan: "team" }),
+        expect.objectContaining({
+          organization_id: "org-1",
+          upgraded: true,
+          plan: "team",
+        }),
       );
-      const returned = trackMock.mock.calls.find(
-        ([event]) => event === "plan_limit_upgrade_returned",
-      );
-      expect(returned?.[1]).not.toHaveProperty("organization_id");
       expect(useOrganizationBillingMock).toHaveBeenCalledWith("org-1");
       expect(useOrganizationBillingMock).not.toHaveBeenCalledWith("org-2");
     });

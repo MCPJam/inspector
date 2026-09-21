@@ -4,6 +4,7 @@ import {
   getPageviewCaptureOptions,
   isPostHogBooleanFlagOn,
   options,
+  sanitizeAnalyticsProperties,
   scrubSensitiveUrl,
   standardEventProps,
 } from "../PosthogUtils";
@@ -40,6 +41,20 @@ describe("scrubSensitiveUrl", () => {
     expect(scrubSensitiveUrl("/organizations/org_secret/plans")).toBe(
       "/organizations/[redacted]/plans",
     );
+  });
+
+  it("redacts organization ids from PostHog session-entry URL properties", () => {
+    const properties = sanitizeAnalyticsProperties({
+      $session_entry_url:
+        "https://app.mcpjam.com/organizations/org_secret/billing",
+      $session_entry_pathname: "/organizations/org_secret/plans",
+    });
+
+    expect(properties).toMatchObject({
+      $session_entry_url:
+        "https://app.mcpjam.com/organizations/[redacted]/billing",
+      $session_entry_pathname: "/organizations/[redacted]/plans",
+    });
   });
 });
 
