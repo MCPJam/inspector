@@ -196,14 +196,13 @@ function copyText(normalized: NormalizedError): string {
  * down or the port is wrong is exactly what its catalog entry spells out and
  * a generic "check your configuration" would erase.
  *
- * `user_server` and `user_config` share one badge on purpose. The distinction
- * matters to capture policy, not to the person reading the card — both mean
- * "waiting on MCPJam will not fix this".
+ * Only `mcpjam` origin gets a badge. User-side failures (`user_server`,
+ * `user_config`) stay quiet — a "not our outage" chip reads as defensive
+ * and the catalog one-liner already says what happened.
  *
- * Returns `null` — no badge at all — for two distinct cases that both mean
- * "no claim to make": an `ambiguous` origin, and an origin that is missing
- * entirely (a normalized payload from an older server, which crosses the wire
- * without the field). Guessing in either case is worse than staying quiet.
+ * Returns `null` for user-side origins, `ambiguous`, and a missing origin
+ * (a normalized payload from an older server, which crosses the wire
+ * without the field). Guessing in those cases is worse than staying quiet.
  */
 function originBadge(
   normalized: NormalizedError,
@@ -214,10 +213,9 @@ function originBadge(
   switch (originOf(normalized)) {
     case "user_server":
     case "user_config":
-      return {
-        label: "Not an MCPJam outage",
-        className: "border-border bg-muted/60 text-muted-foreground",
-      };
+      // Never show a "not our outage" chip. The catalog one-liner already
+      // says what happened; a disclaimer next to it reads as defensive.
+      return null;
     case "mcpjam":
       return {
         label: "MCPJam issue",

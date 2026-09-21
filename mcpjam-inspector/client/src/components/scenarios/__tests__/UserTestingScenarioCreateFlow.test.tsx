@@ -81,6 +81,10 @@ vi.mock("@/hooks/useProjects", async (importOriginal) => ({
 vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
+}));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
 }));

@@ -84,6 +84,12 @@ export type ServerPickerPanelProps = {
    * jsdom, so the budget is what a test can pin.
    */
   chipRoomPx?: number;
+  /**
+   * Leave an empty catalog. Only callers that can send the user somewhere
+   * pass it, and only they get the control — a dead "Add server" is worse
+   * than the empty copy alone.
+   */
+  onAddServer?: () => void;
 };
 
 const ROW = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left";
@@ -119,6 +125,26 @@ const TAB =
   "w-full justify-center rounded-md border-0 px-3 py-1.5 text-sm font-medium text-muted-foreground shadow-none " +
   "data-[state=active]:bg-accent data-[state=active]:text-foreground data-[state=active]:shadow-none";
 
+function AddServerButton({
+  onAddServer,
+  busy,
+}: {
+  onAddServer: () => void;
+  busy: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onAddServer}
+      disabled={busy}
+      className={cn(ROW, "text-sm hover:bg-accent disabled:opacity-50")}
+    >
+      <Plus className="size-3.5 shrink-0 text-muted-foreground" />
+      <span>Add server</span>
+    </button>
+  );
+}
+
 function SelectionDot() {
   // The design marks the current row with a brand-orange dot on the right.
   // `aria-current` on the row carries the meaning; this is only its paint.
@@ -147,6 +173,7 @@ export function ServerPickerPanel({
   onDeleteGroup,
   canDeleteSelected = true,
   chipRoomPx = 200,
+  onAddServer,
 }: ServerPickerPanelProps) {
   // The draft is transient UI, not app state, so it lives here. The SELECTION
   // stays controlled by the caller — that is the part that persists.
@@ -181,6 +208,9 @@ export function ServerPickerPanel({
     draftName.trim().length > 0 &&
     !submitting &&
     !busy;
+
+  const offerAddServer =
+    servers.length === 0 && catalogKnown && Boolean(onAddServer);
 
   const submitDraft = async () => {
     setSubmitting(true);
@@ -238,6 +268,9 @@ export function ServerPickerPanel({
               ? "No servers in this project yet."
               : "Loading servers…"}
           </p>
+        ) : null}
+        {offerAddServer && onAddServer ? (
+          <AddServerButton onAddServer={onAddServer} busy={busy} />
         ) : null}
         {servers.map((server) => {
           const selected = server.id === selectedServerId;
@@ -447,10 +480,15 @@ export function ServerPickerPanel({
             })}
         {!showForm && groups.length === 0 && !busy ? (
           <p className="px-2 py-1.5 text-xs italic text-muted-foreground">
-            No server groups yet — create one below.
+            {servers.length === 0 && catalogKnown
+              ? "No servers in this project yet."
+              : "No server groups yet — create one below."}
           </p>
         ) : null}
-        {!showForm ? (
+        {!showForm && offerAddServer && onAddServer ? (
+          <AddServerButton onAddServer={onAddServer} busy={busy} />
+        ) : null}
+        {!showForm && !offerAddServer ? (
           <button
             type="button"
             onClick={() => setShowForm(true)}

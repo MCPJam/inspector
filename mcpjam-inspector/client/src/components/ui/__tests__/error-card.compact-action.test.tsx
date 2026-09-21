@@ -59,14 +59,32 @@ describe("ErrorCard compact action face", () => {
         "This server needs your permission before it can connect.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByTestId("error-card-origin-badge")).toHaveTextContent(
-      "Not an MCPJam outage",
-    );
+    expect(
+      screen.queryByTestId("error-card-origin-badge"),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Why this happened")).toBeInTheDocument();
     expect(screen.getByTestId("error-card-copy")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Hide details" }),
     ).toBeInTheDocument();
+  });
+
+  it("carries the MCPJam badge into the panel it opens", () => {
+    render(
+      <ErrorCard
+        error={describeAsSlug(
+          "sdk/not_yet_supported_in_stateless",
+          new Error("x"),
+        )}
+        action={{ label: "Reconnect", onClick: vi.fn() }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+
+    expect(screen.getByTestId("error-card-origin-badge")).toHaveTextContent(
+      "MCPJam issue",
+    );
   });
 
   it("does not compact a card that has no action to keep", () => {

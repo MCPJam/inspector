@@ -78,6 +78,24 @@ const CASES: Case[] = [
     expectRawCode: -32603,
   },
   {
+    name: "-32603 invalid response format",
+    build: () => makeError("Invalid response format", { code: -32603 }),
+    expectSlug: "jsonrpc/invalid_response_format",
+    expectRawCode: -32603,
+  },
+  {
+    name: "-32603 invalid response format (MCP error wrapping)",
+    build: () =>
+      makeError("MCP error -32603: Invalid response format", { code: -32603 }),
+    expectSlug: "jsonrpc/invalid_response_format",
+    expectRawCode: -32603,
+  },
+  {
+    name: "invalid response format without numeric code",
+    build: () => makeError("Invalid response format"),
+    expectSlug: "jsonrpc/invalid_response_format",
+  },
+  {
     name: "-32000 connection closed",
     build: () => makeError("Connection closed", { code: -32000 }),
     expectSlug: "jsonrpc/connection_closed",
@@ -409,6 +427,27 @@ describe("describeError — table-driven", () => {
       expect(out.rawMessage.length).toBeGreaterThan(0);
     });
   }
+});
+
+describe("describeError — invalid response format copy", () => {
+  it("points at the result shape, not a retry", () => {
+    const out = describeError(
+      makeError("Invalid response format", { code: -32603 }),
+    );
+    expect(out.slug).toBe("jsonrpc/invalid_response_format");
+    expect(out.likelyCauses).toHaveLength(1);
+    expect(out.nextSteps.join(" ")).toMatch(/Traffic Log/);
+    expect(out.nextSteps.join(" ").toLowerCase()).not.toMatch(/retry/);
+  });
+
+  it("does not treat a buried phrase as invalid response format", () => {
+    const out = describeError(
+      makeError("Internal error: logs mention invalid response format", {
+        code: -32603,
+      }),
+    );
+    expect(out.slug).toBe("jsonrpc/internal_error");
+  });
 });
 
 describe("describeError — fallback shapes (>= 8)", () => {
