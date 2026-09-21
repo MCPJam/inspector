@@ -39,17 +39,6 @@ deployment is performed by this implementation.
 - An isolated local Convex deployment passed live connection insertion, default
   switching, stale-delete rejection, reconnect, merge and default promotion checks.
   All six connection HTTP routes rejected unauthenticated requests.
-- `node sdk/scripts/verify-multi-account-lab.mjs` exercises real DCR/PKCE grants,
-  same-email distinct profiles, account-specific attachment conversion, selector
-  collisions, invalid selector rejection, token refresh and live profile
-  conformance checks. It runs against the email lab — three mailboxes behind one
-  login, source in `MCPJam/mcpjam-multiaccount`, deployed at
-  `https://multiaccount.mcpjam.com`. Point it anywhere with
-  `MULTI_ACCOUNT_LAB_URL` (default `http://127.0.0.1:18811` for a local copy).
-  It needs the lab's `read_attachment` and `create_filter` tools: the first
-  serves different bytes per mailbox under one URI, the second declares its own
-  `account` field, so together they cover credential isolation and the selector
-  collision.
 
 Rerunning an edited tool call from the trace view is disabled for a call that
 ran on a specific account: rerun resolves a server, not a connection, so it
@@ -57,5 +46,11 @@ would replay through the default credential. Threading the connection through
 `tools/execute` is a follow-up.
 
 A full signed-in browser walkthrough and production vault integration have not
-been exercised. Unit/integration tests cover their account-management paths; the
-live lab and local backend checks run separately.
+been exercised. Unit/integration tests cover their account-management paths.
+
+There is no end-to-end test in this repository. Multi-account routing was
+verified against a lab MCP server that is its own authorization server —
+`MCPJam/mcpjam-multiaccount`, deployed at `https://multiaccount.mcpjam.com` —
+run out of tree. That repository is private, so a script in this one could not
+be run from this one, and it is gone. An in-repo end-to-end test that starts its
+own fixture server, and so needs no network, is the follow-up.
