@@ -865,10 +865,11 @@ it("keeps draft review out of the suite, but still warns drafts are waiting", as
   expect(
     screen.queryByRole("button", { name: "Review Draft Cases" }),
   ).toBeNull();
-  expect(
-    screen.getByRole("button", { name: "Generate", exact: true }),
-  ).toBeVisible();
-  expect(screen.getByRole("button", { name: "Import cases" })).toBeVisible();
+  // A suite with nothing but drafts is still an empty suite, so it keeps the
+  // same empty-state hero rather than a shrunken second version of it.
+  expect(screen.getByTestId("suite-detail-empty-cases")).toBeTruthy();
+  expect(screen.getByTestId("suite-empty-action-generate")).toBeVisible();
+  expect(screen.getByTestId("suite-empty-action-import")).toBeVisible();
   // The run button still says drafts are waiting — that is the pointer back to
   // the generate tab, and the only place the suite page mentions them.
   await userEvent
@@ -916,6 +917,9 @@ it("gives imported drafts their own surface with a way back to the suite", async
     suites: {
       [evalSuiteKey({ projectId: "project-1", suiteId: "suite-1" })]: {
         status: "ready",
+        // Staged, then dismissed: the reader has already been shown them.
+        reviewRequestId: "review-1",
+        reviewSeenId: "review-1",
         drafts: [
           {
             id: "draft-1",
@@ -974,6 +978,56 @@ it("gives imported drafts their own surface with a way back to the suite", async
   expect(onGeneratingChange).toHaveBeenCalledWith(
     expect.objectContaining({ label: "Import test cases" }),
   );
+});
+
+it("lands on the drafts an import just staged", () => {
+  // The page unmounts on navigation and on reload, so "has the reader seen
+  // these?" cannot live in component state. Drafts nobody has been shown yet
+  // are what an import is FOR, and they open on their own.
+  useEvalGeneration.setState({
+    suites: {
+      [evalSuiteKey({ projectId: "project-1", suiteId: "suite-1" })]: {
+        status: "ready",
+        reviewRequestId: "review-2",
+        drafts: [
+          {
+            id: "draft-1",
+            revision: "r1",
+            authoring: {
+              draftId: "d1",
+              source: { fileName: "cases.md" },
+              issues: [],
+              additions: [],
+            },
+            input: {
+              suiteId: "suite-1",
+              title: "Imported grocery case",
+              query: "Browse the Grocery category.",
+              expectedOutput: "The grocery list renders.",
+              steps: [],
+            },
+          },
+        ],
+      } as never,
+    },
+  });
+  renderWithProviders(
+    <SuiteDetailOverview
+      projectId="project-1"
+      suite={makeSuite()}
+      cases={[makeCase({ _id: "case-1" })]}
+      runs={[]}
+      runsLoading={false}
+      allIterations={[]}
+      hostNamesById={hostNamesById}
+      onRerun={vi.fn()}
+      onEditSuite={vi.fn()}
+      onRunClick={vi.fn()}
+      onTestCaseClick={vi.fn()}
+      rerunningSuiteId={null}
+    />,
+  );
+  expect(screen.getByTestId("suite-import-review")).toBeVisible();
 });
 
 /**

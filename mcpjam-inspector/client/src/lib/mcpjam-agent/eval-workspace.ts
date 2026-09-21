@@ -211,6 +211,15 @@ export interface GenerationState {
   suiteServers?: string[];
   authoringJobId?: string;
   reviewRequestId?: string;
+  /**
+   * The `reviewRequestId` the reader has already been shown and dismissed.
+   *
+   * Lives in the store, not in component state, because the suite page
+   * unmounts: navigating away and back, or a reload, made a dismissal look
+   * like a fresh import, and a fresh import look like one already dismissed.
+   * Persisted with the drafts it is about.
+   */
+  reviewSeenId?: string;
   status: "running" | "ready" | "error";
   error?: string;
   drafts: GeneratedDraft[];
@@ -693,6 +702,26 @@ export async function followAuthoringJob(
     authoringPolls.delete(jobId);
   }
 }
+/** The reader has seen this suite's waiting drafts; stop opening on them. */
+export function markImportReviewSeen(
+  scope: Pick<EvalAgentScope, "projectId" | "suiteId">,
+) {
+  updateGeneration(evalSuiteKey(scope), (state) => ({
+    ...state,
+    reviewSeenId: state.reviewRequestId,
+  }));
+}
+
+/** Show this suite's waiting drafts again, on request. */
+export function reopenImportReview(
+  scope: Pick<EvalAgentScope, "projectId" | "suiteId">,
+) {
+  updateGeneration(evalSuiteKey(scope), (state) => ({
+    ...state,
+    reviewSeenId: undefined,
+  }));
+}
+
 export async function runScopedEvalSuite(scope: EvalAgentScope) {
   const key = evalSuiteKey(scope);
   const run = getEvalSuite(scope).run;

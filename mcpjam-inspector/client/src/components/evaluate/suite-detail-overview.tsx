@@ -28,7 +28,11 @@ import { GenerateCasesDialog } from "./generate-cases-dialog";
 import type { GenerateCasesConfig } from "@/lib/evals/eval-generation-config";
 import { EvalGenerationWorkspace } from "./eval-generation-workspace";
 import { EvalGeneratedDrafts } from "./eval-generated-drafts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  markImportReviewSeen,
+  reopenImportReview,
+} from "@/lib/mcpjam-agent/eval-workspace";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Code2,
   FileUp,
@@ -400,9 +404,9 @@ export function SuiteDetailOverview({
    */
   const showRunHistory = runs.length > 0 || runsLoading;
   const hasRuns = runs.length > 0;
-  const hasGeneratedContent =
-    Boolean(generation?.drafts.length) || generation?.status === "running";
-  const showEmptyCasesHero = !hasCases && !hasGeneratedContent;
+  // Waiting drafts are not cases: until one is added the suite is still empty,
+  // and the way out of empty is the same three choices either way.
+  const showEmptyCasesHero = !hasCases;
 
   /**
    * Imported drafts get their OWN surface, the way generation does. They are
@@ -415,13 +419,6 @@ export function SuiteDetailOverview({
    */
   const importedDrafts =
     generation?.drafts.filter((draft) => draft.authoring?.source) ?? [];
-  // Drafts that were already waiting when the suite opened must not replace
-  // it: one leftover draft would hide every case the suite actually has. They
-  // wait behind a button instead. Arriving on a review link is the exception —
-  // that IS the request to review them.
-  const [importReviewClosed, setImportReviewClosed] = useState(
-    () => !importJobId && importedDrafts.length > 0,
-  );
   useEffect(() => {
     // Linked-to jobs are followed, not assumed: the poll stages whatever the
     // job still holds, and committed drafts are already excluded from it, so
@@ -429,18 +426,24 @@ export function SuiteDetailOverview({
     if (!projectId || !importJobId) return;
     void followAuthoringJob({ projectId, suiteId: suite._id }, importJobId);
   }, [projectId, importJobId, suite._id]);
-  const hadImportedDrafts = useRef(importedDrafts.length > 0);
-  useEffect(() => {
-    // A fresh import reopens the review; leaving it closed would strand the
-    // drafts with no way back to them.
-    if (importedDrafts.length && !hadImportedDrafts.current)
-      setImportReviewClosed(false);
-    hadImportedDrafts.current = importedDrafts.length > 0;
-  }, [importedDrafts.length]);
+  /**
+   * An import lands on its drafts; a later visit lands on the suite.
+   *
+   * The difference is whether the reader has been shown THESE drafts, which is
+   * a fact about the import and not about this component — the page unmounts
+   * on navigation and on reload, so component state made a dismissal look like
+   * a fresh import and a fresh import look like one already dismissed. The
+   * store answers it instead. A review link is always the request to review.
+   */
   const reviewingImport = Boolean(
-    projectId && importedDrafts.length && !importReviewClosed,
+    projectId &&
+      importedDrafts.length &&
+      (Boolean(importJobId) ||
+        generation?.reviewRequestId !== generation?.reviewSeenId),
   );
-  const exitImportReview = useCallback(() => setImportReviewClosed(true), []);
+  const exitImportReview = useCallback(() => {
+    if (projectId) markImportReviewSeen({ projectId, suiteId: suite._id });
+  }, [projectId, suite._id]);
   useEffect(() => {
     if (!reviewingImport) return;
     onGeneratingChange?.({
@@ -604,7 +607,12 @@ export function SuiteDetailOverview({
               size="sm"
               className="h-8"
               data-testid="suite-resume-import-review"
-              onClick={() => setImportReviewClosed(false)}
+              // Clearing the marker is what reopens the review: the reader is
+              // asking to be shown these drafts again.
+              onClick={() =>
+                projectId &&
+                reopenImportReview({ projectId, suiteId: suite._id })
+              }
             >
               {importedDrafts.length === 1
                 ? "Review 1 draft case"
@@ -768,7 +776,9 @@ export function SuiteDetailOverview({
           onGenerate={() => void handleGenerateCases()}
           canGenerate={canGenerate}
           generateDisabledReason={generateTestCasesDisabledReason}
-          isGenerating={isGeneratingTestCases}
+          isGenerating={
+            isGeneratingTestCases || generation?.status === "running"
+          }
           onImport={onImportCases}
           fillRemaining={!showRunHistory}
         />
@@ -871,31 +881,6 @@ export function SuiteDetailOverview({
             ))}
           </ul>
         </section>
-      ) : !readOnlyConfig ? (
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onDescribeCases ?? onEditCases}
-          >
-            Describe another case
-          </Button>
-          {onGenerateTestCases && (
-            <GenerateCasesButton
-              onGenerate={handleGenerateCases}
-              canGenerate={canGenerate}
-              disabledReason={generateTestCasesDisabledReason}
-              isGenerating={
-                isGeneratingTestCases || generation?.status === "running"
-              }
-            />
-          )}
-          {onImportCases && (
-            <Button variant="outline" size="sm" onClick={onImportCases}>
-              Import cases
-            </Button>
-          )}
-        </div>
       ) : null}
 
       <Dialog
@@ -935,57 +920,6 @@ export function SuiteDetailOverview({
         </DialogContent>
       </Dialog>
     </div>
-  );
-}
-
-function GenerateCasesButton({
-  onGenerate,
-  canGenerate,
-  disabledReason,
-  isGenerating,
-}: {
-  onGenerate: () => void;
-  canGenerate: boolean;
-  disabledReason?: string;
-  isGenerating: boolean;
-}) {
-  const blocked = isGenerating
-    ? "Generating test cases…"
-    : !canGenerate
-    ? disabledReason ?? "Configure suite servers before generating cases."
-    : null;
-
-  const button = (
-    <Button
-      type="button"
-      variant="outline"
-      size="sm"
-      className="h-8 gap-1.5"
-      data-testid="suite-detail-generate-cases"
-      disabled={Boolean(blocked)}
-      aria-busy={isGenerating}
-      onClick={onGenerate}
-    >
-      {isGenerating ? (
-        <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
-      ) : (
-        <Sparkles className="size-3.5 shrink-0" aria-hidden />
-      )}
-      Generate
-    </Button>
-  );
-
-  if (!blocked) return button;
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="inline-flex">{button}</span>
-      </TooltipTrigger>
-      <TooltipContent variant="muted" side="bottom" className="max-w-[16rem]">
-        {blocked}
-      </TooltipContent>
-    </Tooltip>
   );
 }
 
