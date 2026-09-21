@@ -13,9 +13,23 @@ const {
   logInfoMock,
   logWarnMock,
   quitAndInstallMock,
+  relaunchMock,
+  quitMock,
+  setFeedURLMock,
+  fsState,
+  readFileSyncMock,
+  writeFileSyncMock,
+  rmSyncMock,
   windows,
 } = vi.hoisted(() => {
-  const appState = { isPackaged: true };
+  const appState = {
+    isPackaged: true,
+    getVersion: () => "3.8.0",
+    getPath: (_name: string) => "/tmp/userData",
+  };
+  // One in-memory file: the relaunch marker. Keyed by path so a stray write
+  // somewhere else would show up as a failure rather than silently pass.
+  const fsState: { files: Map<string, string> } = { files: new Map() };
   const autoUpdaterHandlers = new Map<
     string,
     Array<(...args: any[]) => void>
@@ -43,12 +57,37 @@ const {
     logInfoMock: vi.fn(),
     logWarnMock: vi.fn(),
     quitAndInstallMock: vi.fn(),
+    relaunchMock: vi.fn(),
+    quitMock: vi.fn(),
+    setFeedURLMock: vi.fn(),
+    fsState,
+    readFileSyncMock: vi.fn((file: string) => {
+      const value = fsState.files.get(String(file));
+      if (value === undefined) {
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      }
+      return value;
+    }),
+    writeFileSyncMock: vi.fn((file: string, data: string) => {
+      fsState.files.set(String(file), String(data));
+    }),
+    rmSyncMock: vi.fn((file: string) => {
+      fsState.files.delete(String(file));
+    }),
     windows,
   };
 });
 
+vi.mock("fs", () => ({
+  default: {
+    readFileSync: readFileSyncMock,
+    writeFileSync: writeFileSyncMock,
+    rmSync: rmSyncMock,
+  },
+}));
+
 vi.mock("electron", () => ({
-  app: appState,
+  app: Object.assign(appState, { relaunch: relaunchMock, quit: quitMock }),
   autoUpdater: {
     checkForUpdates: checkForUpdatesMock,
     on: vi.fn((event: string, handler: (...args: any[]) => void) => {
@@ -57,6 +96,7 @@ vi.mock("electron", () => ({
       autoUpdaterHandlers.set(event, handlers);
     }),
     quitAndInstall: quitAndInstallMock,
+    setFeedURL: setFeedURLMock,
   },
   BrowserWindow: {
     getAllWindows: getAllWindowsMock,
@@ -114,6 +154,13 @@ describe("update-listeners", () => {
     windows.splice(0, windows.length);
     checkForUpdatesMock.mockReset();
     quitAndInstallMock.mockReset();
+    relaunchMock.mockReset();
+    quitMock.mockReset();
+    setFeedURLMock.mockReset();
+    writeFileSyncMock.mockClear();
+    readFileSyncMock.mockClear();
+    rmSyncMock.mockClear();
+    fsState.files.clear();
     logErrorMock.mockReset();
     logInfoMock.mockReset();
     logWarnMock.mockReset();
@@ -951,5 +998,396 @@ describe("update-listeners", () => {
     // attempt quitAndInstall again (mock no longer throws).
     ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
     expect(quitAndInstallMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("update polling", () => {
+  // Auto-updates only exist on macOS and Windows, and CI runs Linux — without
+  // pinning this the whole describe passes by doing nothing.
+  const realPlatform = process.platform;
+  const setPlatform = (value: string) => {
+    Object.defineProperty(process, "platform", {
+      value,
+      configurable: true,
+    });
+  };
+
+  beforeEach(() => {
+    setPlatform("darwin");
+  });
+
+  afterEach(() => {
+    setPlatform(realPlatform);
+  });
+
+  beforeEach(() => {
+    appState.isPackaged = true;
+    autoUpdaterHandlers.clear();
+    ipcHandlers.clear();
+    ipcListeners.clear();
+    windows.splice(0, windows.length);
+    checkForUpdatesMock.mockReset();
+    quitAndInstallMock.mockReset();
+    relaunchMock.mockReset();
+    quitMock.mockReset();
+    setFeedURLMock.mockReset();
+    logErrorMock.mockReset();
+    logInfoMock.mockReset();
+    logWarnMock.mockReset();
+    writeFileSyncMock.mockClear();
+    readFileSyncMock.mockClear();
+    rmSyncMock.mockClear();
+    fsState.files.clear();
+  });
+
+  afterEach(() => {
+    lastLoadedModule?.__resetUpdateStateForTests();
+    lastLoadedModule = null;
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("stops polling once a build is staged", async () => {
+    // THE BUG. update-electron-app polls forever. The poll that lands after a
+    // download answers `update-not-available` — correctly, nothing IS newer —
+    // and Electron clears g_update_available on that answer, so from then on
+    // quitAndInstall() only emits "No update available, can't quit and
+    // install". Sophie clicked Update 6 times against exactly that state.
+    const { startUpdatePolling } = await loadUpdateListeners();
+
+    startUpdatePolling();
+    expect(checkForUpdatesMock).toHaveBeenCalledTimes(1);
+
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+
+    vi.advanceTimersByTime(30 * 60_000);
+
+    // Still one: the three polls that would have fired were all skipped.
+    expect(checkForUpdatesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps polling while no build is staged", async () => {
+    const { startUpdatePolling } = await loadUpdateListeners();
+
+    startUpdatePolling();
+    vi.advanceTimersByTime(20 * 60_000);
+
+    expect(checkForUpdatesMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("asks the update service for the same feed as before", async () => {
+    // update-electron-app built this URL; the service matches assets on it,
+    // so a change here silently stops every update.
+    const { startUpdatePolling } = await loadUpdateListeners();
+
+    startUpdatePolling();
+
+    expect(setFeedURLMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: `https://update.electronjs.org/MCPJam/inspector/darwin-${process.arch}/3.8.0`,
+        serverType: "default",
+      }),
+    );
+  });
+
+  it("does not poll on a platform without auto-updates", async () => {
+    setPlatform("linux");
+    const { startUpdatePolling } = await loadUpdateListeners();
+
+    startUpdatePolling();
+    vi.advanceTimersByTime(20 * 60_000);
+
+    expect(checkForUpdatesMock).not.toHaveBeenCalled();
+    expect(setFeedURLMock).not.toHaveBeenCalled();
+  });
+
+  it("does not poll in development", async () => {
+    appState.isPackaged = false;
+    const { startUpdatePolling } = await loadUpdateListeners();
+
+    startUpdatePolling();
+    vi.advanceTimersByTime(20 * 60_000);
+
+    expect(checkForUpdatesMock).not.toHaveBeenCalled();
+    expect(setFeedURLMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("install refused by Electron", () => {
+  beforeEach(() => {
+    appState.isPackaged = true;
+    autoUpdaterHandlers.clear();
+    ipcHandlers.clear();
+    ipcListeners.clear();
+    windows.splice(0, windows.length);
+    checkForUpdatesMock.mockReset();
+    quitAndInstallMock.mockReset();
+    relaunchMock.mockReset();
+    quitMock.mockReset();
+    setFeedURLMock.mockReset();
+    logErrorMock.mockReset();
+    logInfoMock.mockReset();
+    logWarnMock.mockReset();
+    writeFileSyncMock.mockClear();
+    readFileSyncMock.mockClear();
+    rmSyncMock.mockClear();
+    fsState.files.clear();
+  });
+
+  afterEach(() => {
+    lastLoadedModule?.__resetUpdateStateForTests();
+    lastLoadedModule = null;
+  });
+
+  const MARKER = "/tmp/userData/.install-update-on-relaunch";
+  const refusedError = () =>
+    new Error("No update available, can't quit and install");
+
+  it("relaunches to re-download when a click is refused", async () => {
+    // Sophie's state: a staged build on disk that Electron will not install.
+    // Clicking again can only produce the same error, so the button has to
+    // stop being the answer — a fresh process is.
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+    emitAutoUpdaterEvent("error", refusedError());
+
+    expect(fsState.files.has(MARKER)).toBe(true);
+    expect(relaunchMock).toHaveBeenCalledTimes(1);
+    expect(quitMock).toHaveBeenCalledTimes(1);
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toEqual({ kind: "idle" });
+  });
+
+  it("finishes the install by itself on the next launch", async () => {
+    // The other half of the relaunch: the user clicked once, in the previous
+    // process. They should not have to click again.
+    fsState.files.set(MARKER, JSON.stringify({ at: Date.now() }));
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    // The marker is consumed at setup, so the app never installs twice.
+    expect(fsState.files.has(MARKER)).toBe(false);
+
+    emitAutoUpdaterEvent("update-available");
+    expect(window.webContents.send).toHaveBeenCalledWith("update-status", {
+      kind: "pending",
+      installRequested: true,
+    });
+
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("disarms the hands-free install when the retry finds nothing", async () => {
+    // The relaunch is for ONE install. If that check comes back empty the
+    // recovery is over, and a release that shows up later must not install
+    // itself and take the app down with no click behind it.
+    fsState.files.set(MARKER, JSON.stringify({ at: Date.now(), attempts: 1 }));
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-not-available");
+
+    // Much later, an unrelated release lands on its own.
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.9.0");
+
+    expect(quitAndInstallMock).not.toHaveBeenCalled();
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toEqual(
+      expect.objectContaining({ kind: "downloaded", version: "3.9.0" }),
+    );
+  });
+
+  it("disarms the hands-free install after an updater error", async () => {
+    fsState.files.set(MARKER, JSON.stringify({ at: Date.now(), attempts: 1 }));
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("error", new Error("network is offline"));
+
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.9.0");
+
+    expect(quitAndInstallMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the hands-free install when a concurrent check is refused", async () => {
+    // That error is about the POLL that collided, not the download it
+    // collided with — which is still running and can still land.
+    fsState.files.set(MARKER, JSON.stringify({ at: Date.now(), attempts: 1 }));
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent(
+      "error",
+      Object.assign(new Error("refused"), { domain: "RACCommandErrorDomain" }),
+    );
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a marker left over from an older session", async () => {
+    fsState.files.set(MARKER, JSON.stringify({ at: Date.now() - 60 * 60_000 }));
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+
+    // No click, no relaunch behind us: the button waits for the user.
+    expect(quitAndInstallMock).not.toHaveBeenCalled();
+  });
+
+  it("stops relaunching if the fresh process cannot install either", async () => {
+    // The relaunch is a recovery, not a habit. If it did not work once it
+    // will not work twice, and an app that keeps restarting itself is worse
+    // than the dead button it was trying to fix.
+    fsState.files.set(MARKER, JSON.stringify({ at: Date.now(), attempts: 1 }));
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    emitAutoUpdaterEvent("error", refusedError());
+
+    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(fsState.files.has(MARKER)).toBe(false);
+    // The releases page is the one path left that always works.
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toEqual({ kind: "manual", version: "3.8.1" });
+    expect(window.webContents.send).toHaveBeenCalledWith("update-error");
+  });
+
+  it("counts the relaunch it is about to make", async () => {
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    emitAutoUpdaterEvent("error", refusedError());
+
+    expect(relaunchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fsState.files.get(MARKER) as string).attempts).toBe(1);
+  });
+
+  it("does not relaunch when the retry cannot be recorded", async () => {
+    // A relaunch whose attempt count never reaches disk is the unbounded loop
+    // wearing a disguise: every fresh process would start the budget over.
+    writeFileSyncMock.mockImplementationOnce(() => {
+      throw new Error("EROFS: read-only file system");
+    });
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    emitAutoUpdaterEvent("error", refusedError());
+
+    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(quitMock).not.toHaveBeenCalled();
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toEqual({ kind: "manual", version: "3.8.1" });
+  });
+
+  it("spends the budget on a marker it cannot read back", async () => {
+    // Corrupt or unreadable, the file still says a relaunch happened. Reading
+    // it as "no attempts yet" would hand back an unlimited restart budget.
+    fsState.files.set(MARKER, "{ this is not json");
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    // Not resumed: we never confirmed the user asked for this install.
+    expect(quitAndInstallMock).not.toHaveBeenCalled();
+
+    // …but the attempt was counted, so a refusal now goes manual, not around
+    // the loop again.
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    emitAutoUpdaterEvent("error", refusedError());
+    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toEqual({ kind: "manual", version: "3.8.1" });
+  });
+
+  it("treats a missing marker as a clean start", async () => {
+    // ENOENT is every ordinary launch, and must leave the full budget.
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    emitAutoUpdaterEvent("error", refusedError());
+
+    expect(relaunchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the user quit when the install is refused at quit", async () => {
+    // Sophie hit Cmd+Q three times and the app refused every time:
+    // installUpdateOnQuit() returns true, before-quit preventDefault()s, and
+    // the install then fails asynchronously with nothing to undo the block.
+    // She deleted the app. Quitting must always win.
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners, installUpdateOnQuit } =
+      await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+
+    expect(installUpdateOnQuit()).toBe(true);
+    emitAutoUpdaterEvent("error", refusedError());
+
+    // The quit the user asked for is completed here, not relaunched.
+    expect(quitMock).toHaveBeenCalledTimes(1);
+    expect(relaunchMock).not.toHaveBeenCalled();
+    // And a second before-quit falls straight through instead of blocking.
+    expect(installUpdateOnQuit()).toBe(false);
   });
 });
