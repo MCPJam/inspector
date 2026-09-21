@@ -675,6 +675,23 @@ describe("ServerDetailModal", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("overlays the auth panel instead of stacking under the config panel", () => {
+    // The configuration panel is force-mounted and stays `invisible` while
+    // inactive, which still occupies its full height. A sibling panel in
+    // normal flow therefore renders BELOW that height and spills out of the
+    // dialog, so every non-configuration tab has to overlay it.
+    render(<ServerDetailModal {...defaultProps} defaultTab="authorization" />);
+    // The dialog is portalled, so query the document rather than the container.
+    const panels = screen.getAllByRole("tabpanel", { hidden: true });
+    const auth = panels.find(
+      (panel) => panel.getAttribute("data-state") === "active",
+    );
+    expect(auth).toBeTruthy();
+    for (const positioning of ["absolute", "inset-0", "overflow-y-auto"])
+      expect(auth?.className).toContain(positioning);
+    expect(auth?.className).not.toContain("max-h-[60vh]");
+  });
+
   it("renders local OAuth tokens from localStorage on the auth tab", () => {
     localStorage.setItem(
       "mcp-tokens-test-server",
