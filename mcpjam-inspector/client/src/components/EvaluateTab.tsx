@@ -1208,7 +1208,11 @@ function EvaluateTabContent({
             (testCase) => testCase._id === selectedTestId,
           )?.title || "Test case"
       : route.type === "suite-edit"
-        ? "Test Suite Evaluators"
+        ? route.fromCaseChecks
+          ? (suiteDetails?.testCases.find(
+              (testCase) => testCase._id === route.fromCaseChecks,
+            )?.title ?? "Test case")
+          : "Test Suite Evaluators"
         : route.type === "run-detail"
           ? runBreadcrumbLabel
           : null;
@@ -1558,7 +1562,18 @@ function EvaluateTabContent({
             }
             detailCrumb={
               route.type === "suite-edit" && route.fromCaseChecks
-                ? { label: "Test Suite Evaluators" }
+                ? [
+                    {
+                      label: "Test Case Evaluators",
+                      onClick: () =>
+                        playgroundNavigation.toTestEdit(
+                          route.suiteId,
+                          route.fromCaseChecks!,
+                          { checks: true },
+                        ),
+                    },
+                    { label: "Test Suite Evaluators" },
+                  ]
                 : route.type === "test-edit" && route.checks
                   ? { label: "Test Case Evaluators" }
                   : undefined
@@ -1569,7 +1584,6 @@ function EvaluateTabContent({
                     playgroundNavigation.toTestEdit(
                       route.suiteId,
                       route.fromCaseChecks!,
-                      { checks: true },
                     )
                 : route.type === "test-edit" && route.checks
                   ? () =>
@@ -1604,17 +1618,15 @@ function EvaluateTabContent({
                     : undefined
             }
           >
-            {route.type === "suite-edit" && route.fromCaseChecks
-              ? "Test Case Evaluators"
-              : route.type === "eval-server"
-                ? evalServer?.name
-                : route.type === "test-edit" && route.fromEvalServer
-                  ? (previewCaseTitleFromDraft(
-                      route.fromEvalServer,
-                      route.suiteId,
-                      route.testId,
-                    ) ?? nestedPageLabel)
-                  : renderPlaygroundBreadcrumb()}
+            {route.type === "eval-server"
+              ? evalServer?.name
+              : route.type === "test-edit" && route.fromEvalServer
+                ? (previewCaseTitleFromDraft(
+                    route.fromEvalServer,
+                    route.suiteId,
+                    route.testId,
+                  ) ?? nestedPageLabel)
+                : renderPlaygroundBreadcrumb()}
           </EvalsHeader>
         )
       }

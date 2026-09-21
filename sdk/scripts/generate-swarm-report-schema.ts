@@ -7,6 +7,12 @@ import {
   journeyRunVerdictSummarySchema,
 } from "../src/contract/swarm-report.js";
 import { evalVerdictDecisionSchema } from "../src/contract/verdict-policy.js";
+import { STAGE_STATE_LABELS } from "../src/contract/decision-labels.js";
+import {
+  swarmJourneyFindingSchema,
+  swarmJourneyFindingsSchema,
+  swarmJourneyFindingsJobSchema,
+} from "../src/contract/swarm-finding.js";
 const path = new URL("../../docs/reference/openapi.json", import.meta.url);
 const original = readFileSync(path, "utf8");
 const document = JSON.parse(original);
@@ -14,6 +20,9 @@ for (const [name, schema] of Object.entries({
   SwarmSessionVerdict: swarmSessionVerdictSchema,
   JourneyRunVerdictSummary: journeyRunVerdictSummarySchema,
   SwarmReport: swarmReportSchema,
+  SwarmJourneyFinding: swarmJourneyFindingSchema,
+  SwarmJourneyFindings: swarmJourneyFindingsSchema,
+  SwarmJourneyFindingsJob: swarmJourneyFindingsJobSchema,
   EvalVerdictDecision: evalVerdictDecisionSchema,
 })) {
   const { $schema: _schema, ...component } = z.toJSONSchema(schema, {
@@ -22,6 +31,23 @@ for (const [name, schema] of Object.entries({
   document.components.schemas[name] = component;
 }
 const schemas = document.components.schemas;
+schemas.SwarmJourneyFinding.properties.chainStageState.description =
+  Object.entries(STAGE_STATE_LABELS)
+    .map(([key, label]) => "`" + key + "`: " + label)
+    .join("; ");
+schemas.SwarmJourneyFindings.properties.findings.items = {
+  $ref: "#/components/schemas/SwarmJourneyFinding",
+};
+for (const [property, name] of [
+  ["journeyFindings", "SwarmJourneyFindings"],
+  ["journeyFindingsJob", "SwarmJourneyFindingsJob"],
+]) {
+  schemas.InsightsEnvelope.properties[property] = {
+    allOf: [{ $ref: `#/components/schemas/${name}` }],
+    nullable: true,
+  };
+}
+
 schemas.JourneyRun.properties.verdictSummary = {
   $ref: "#/components/schemas/JourneyRunVerdictSummary",
 };
@@ -107,6 +133,10 @@ for (const name of [
   "SwarmSessionVerdict",
   "JourneyRunVerdictSummary",
   "SwarmReport",
+  "SwarmJourneyFinding",
+  "SwarmJourneyFindings",
+  "SwarmJourneyFindingsJob",
+  "InsightsEnvelope",
   "EvalVerdictDecision",
 ]) {
   const marker = `      "${name}": `;

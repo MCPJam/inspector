@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   describeAsSlug,
+  mcpjamLimitSlugForMessage,
   describeError,
   ERROR_CATALOG,
   extractNodeErrno,
@@ -75,6 +76,24 @@ const CASES: Case[] = [
     build: () => makeError("Internal error", { code: -32603 }),
     expectSlug: "jsonrpc/internal_error",
     expectRawCode: -32603,
+  },
+  {
+    name: "-32603 invalid response format",
+    build: () => makeError("Invalid response format", { code: -32603 }),
+    expectSlug: "jsonrpc/invalid_response_format",
+    expectRawCode: -32603,
+  },
+  {
+    name: "-32603 invalid response format (MCP error wrapping)",
+    build: () =>
+      makeError("MCP error -32603: Invalid response format", { code: -32603 }),
+    expectSlug: "jsonrpc/invalid_response_format",
+    expectRawCode: -32603,
+  },
+  {
+    name: "invalid response format without numeric code",
+    build: () => makeError("Invalid response format"),
+    expectSlug: "jsonrpc/invalid_response_format",
   },
   {
     name: "-32000 connection closed",
@@ -408,6 +427,27 @@ describe("describeError — table-driven", () => {
       expect(out.rawMessage.length).toBeGreaterThan(0);
     });
   }
+});
+
+describe("describeError — invalid response format copy", () => {
+  it("points at the result shape, not a retry", () => {
+    const out = describeError(
+      makeError("Invalid response format", { code: -32603 }),
+    );
+    expect(out.slug).toBe("jsonrpc/invalid_response_format");
+    expect(out.likelyCauses).toHaveLength(1);
+    expect(out.nextSteps.join(" ")).toMatch(/Traffic Log/);
+    expect(out.nextSteps.join(" ").toLowerCase()).not.toMatch(/retry/);
+  });
+
+  it("does not treat a buried phrase as invalid response format", () => {
+    const out = describeError(
+      makeError("Internal error: logs mention invalid response format", {
+        code: -32603,
+      }),
+    );
+    expect(out.slug).toBe("jsonrpc/internal_error");
+  });
 });
 
 describe("describeError — fallback shapes (>= 8)", () => {
@@ -843,4 +883,23 @@ describe("MCPJam containment refusals", () => {
     expect(describeError({ code, message: "Forbidden" }).slug).toBe(slug);
     expect(describeError({ data: { code }, message: "Forbidden" }).slug).toBe(slug);
   });
+});
+
+it.each([
+  ["Daily MCPJam model limit reached.", "provider/mcpjam_limit_daily"],
+  ["Monthly MCPJam model limit reached.", "provider/mcpjam_limit_monthly"],
+  [
+    "MCPJam model limit reached for the moment: 2 in-flight requests hold the remaining credits.",
+    "provider/mcpjam_limit",
+  ],
+  ["Provider rate limit", undefined],
+])("classifies MCPJam limit markers: %s", (message, slug) => {
+  expect(mcpjamLimitSlugForMessage(message)).toBe(slug);
+  if (slug) expect(describeError(new Error(message)).slug).toBe(slug);
+});
+
+it("describes the credit exhaustion heading with plan-appropriate recovery guidance", () => {
+  const result = describeError("Out of MCPJam credits.");
+  expect(result.slug).toBe("provider/mcpjam_limit");
+  expect(result.title).toBe("Out of MCPJam credits");
 });

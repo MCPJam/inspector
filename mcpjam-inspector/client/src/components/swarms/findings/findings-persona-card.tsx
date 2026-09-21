@@ -13,6 +13,7 @@ import { FindingsGoalInspect } from "./findings-goal-inspect";
 import type { FindingsSessionScope } from "./findings-goal-sessions";
 import type { JourneyStageId } from "./journey-stages";
 import type { PersonaFindingsModel } from "./findings-derivation";
+import { FindingText } from "@/components/shared/actionable-insights/finding-text";
 
 export function FindingsPersonaCard({
   persona,
@@ -69,8 +70,29 @@ export function FindingsPersonaCard({
           className="mt-[18px] border-t border-border pt-4 text-[15px] leading-snug text-foreground"
           data-testid="findings-persona-issue"
         >
-          {persona.issue}
+          <FindingText text={persona.issue} />
         </p>
+        {persona.cited ? (
+          <details className="mt-2" data-testid="findings-persona-detail">
+            <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
+              {persona.account ? "What was recorded" : "Recorded detail"}
+            </summary>
+            {/* The account above speaks for ONE representative session, so its
+                cited engineering detail is shown as that session's, never as
+                the group's — and only when someone asks for it. */}
+            <p className="mt-1.5 text-xs leading-snug text-muted-foreground">
+              <FindingText text={persona.cited.actual} />
+            </p>
+            {persona.accountSessionId ? (
+              <p
+                className="mt-1 text-[11px] text-muted-foreground"
+                data-testid="findings-persona-account-session"
+              >
+                From session {persona.accountSessionId}
+              </p>
+            ) : null}
+          </details>
+        ) : null}
       </aside>
 
       <div className="px-5 pb-5 pt-4">
@@ -102,7 +124,7 @@ export function FindingsPersonaCard({
                   <ChevronDown
                     className={cn(
                       "size-4 text-muted-foreground transition-transform",
-                      expanded && "rotate-180"
+                      expanded && "rotate-180",
                     )}
                   />
                 </span>

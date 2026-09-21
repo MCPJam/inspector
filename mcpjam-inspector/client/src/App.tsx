@@ -1797,7 +1797,7 @@ function SwarmsRouteContent() {
   // longer a per-host scenario tab. Keeps the same billing gate as the scenario
   // product surface, and re-mounts per project so selection state can't leak
   // across a project switch.
-  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated, activeProject } = useAppRouteContext();
   // WorkOS identity is the membership match key for the *invitee guest*
   // notice. Convex `isAuthenticated` is also true for anonymous sessions,
   // which never get a WorkOS `user.email` — but those actors still own a
@@ -1921,6 +1921,7 @@ function SwarmsRouteContent() {
     <SwarmsTab
       key={convexProjectId ?? "no-project"}
       projectId={convexProjectId}
+      organizationId={activeProject?.organizationId}
       isAuthenticated={isAuthenticated}
       swarmId={swarmId}
       createFlow={createFlow}
@@ -3414,11 +3415,19 @@ export default function App() {
     !isHostedChatRoute &&
     isHostedDefaultRoute &&
     hostedShellGateState === "auth-loading";
+  // Auth is done and nobody is signed in: the guest was refused, its
+  // bootstrap ran out of retries, or its token was rejected. None of these
+  // resolve on their own, and the first-run redirect needs `isAuthenticated`,
+  // so there is nothing to wait for — holding here only hides the sign-in
+  // banner behind a spinner that never ends.
+  const isSettledSignedOut =
+    !isWorkOsLoading && !workOsUser && !isAuthLoading && !isAuthenticated;
   const shouldHoldHostedHomeRouteForAppReady =
     HOSTED_MODE &&
     !isHostedChatRoute &&
     activeTab === "home" &&
     effectiveHostedShellGateState === "ready" &&
+    !isSettledSignedOut &&
     (isAuthLoading ||
       !isAuthenticated ||
       isLoadingRemoteProjects ||

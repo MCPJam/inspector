@@ -140,15 +140,17 @@ export function TrialScorecardRow({
   const active = row.stepId !== undefined && syncedStepId === row.stepId;
 
   if (layout === "report") {
-    const observed = evidence.length
-      ? evidence.join("\n")
-      : value || "No observation recorded.";
-    const whyLabel =
-      row.result.state === "passed"
-        ? "Why it passed"
-        : row.result.state === "failed"
-          ? "Why it failed"
-          : "Reason";
+    // ACTUAL is one cell: the model's narrative when it is current, else the
+    // recorded reason with the measured evidence under it, else the bare
+    // value. A separate "why" line restated the reason a second time.
+    const narrative =
+      row.narrative && !row.narrative.stale ? row.narrative.text : null;
+    const recorded = [...(reason ? [reason] : []), ...evidence];
+    const actual =
+      narrative ??
+      (recorded.length
+        ? recorded.join("\n")
+        : value || "No observation recorded.");
     return (
       <li
         className={cn(
@@ -167,7 +169,7 @@ export function TrialScorecardRow({
         onMouseLeave={() => row.stepId && onSyncStep?.(null)}
       >
         <div className="flex items-start justify-between gap-3">
-          <h4 className="text-sm font-semibold">{row.label}</h4>
+          <h4 className="text-base font-semibold">{row.label}</h4>
           <span
             className={cn(
               "shrink-0 rounded px-2 py-1 text-[10px] font-semibold uppercase",
@@ -192,13 +194,13 @@ export function TrialScorecardRow({
         </div>
         {withheld ? (
           <p
-            className="text-xs text-muted-foreground"
+            className="text-sm text-muted-foreground"
             data-testid="judge-result-withheld"
           >
             hidden until you label this iteration
           </p>
         ) : (
-          <dl className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs leading-relaxed sm:grid-cols-[7rem_minmax(0,1fr)]">
+          <dl className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm leading-relaxed sm:grid-cols-[7rem_minmax(0,1fr)]">
             <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Expected
             </dt>
@@ -208,38 +210,18 @@ export function TrialScorecardRow({
             <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Actual
             </dt>
-            <dd className="min-w-0 whitespace-pre-wrap break-words">
-              <span
-                data-narrative-source={
-                  row.narrative && !row.narrative.stale ? "ai" : "recorded"
-                }
-              >
-                {row.narrative && !row.narrative.stale
-                  ? row.narrative.text
-                  : evidence.length || value
-                  ? observed
-                  : reason || observed}
+            <dd
+              className="min-w-0 whitespace-pre-wrap break-words"
+              data-testid="trial-scorecard-reason"
+            >
+              <span data-narrative-source={narrative ? "ai" : "recorded"}>
+                {actual}
               </span>
               {row.narrative?.stale && (
                 <p className="mt-1 text-muted-foreground">
                   Narrative predates the latest grade.
                 </p>
               )}
-              {row.narrative && !row.narrative.stale && (
-                <details className="mt-1 text-muted-foreground">
-                  <summary>AI explanation · cited trace evidence</summary>
-                  <p>{row.narrative.citations.join(" · ")}</p>
-                </details>
-              )}
-            </dd>
-            <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {whyLabel}
-            </dt>
-            <dd
-              className="min-w-0 whitespace-pre-wrap break-words"
-              data-testid="trial-scorecard-reason"
-            >
-              {reason || "No reason recorded."}
             </dd>
           </dl>
         )}

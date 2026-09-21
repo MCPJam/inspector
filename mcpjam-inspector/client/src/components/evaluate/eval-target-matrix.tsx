@@ -182,6 +182,7 @@ export function EvalTargetMatrix({
                   <div className="min-w-0 flex-1">
                     <ClientPicker
                       inModal={inModal}
+                      projectId={projectId}
                       hosts={hosts.filter(
                         (host) =>
                           host.hostId === row.hostId ||
@@ -256,6 +257,7 @@ export function EvalTargetMatrix({
               <td colSpan={2} className="py-2">
                 <ClientPicker
                   inModal={inModal}
+                  projectId={projectId}
                   hosts={hosts.filter((host) => !hostIds.includes(host.hostId))}
                   label="Add client"
                   add
@@ -278,6 +280,7 @@ export function EvalTargetMatrix({
 
 function ClientPicker({
   inModal,
+  projectId,
   hosts,
   label,
   currentHostId = null,
@@ -291,6 +294,7 @@ function ClientPicker({
   add?: boolean;
   disabled: boolean;
   inModal?: boolean;
+  projectId: string;
   onSelect: (hostId: string) => void;
 }) {
   const host = hosts.find((host) => host.hostId === currentHostId);
@@ -298,7 +302,7 @@ function ClientPicker({
     <ClientSelector
       inModal={inModal}
       hosts={[...hosts]}
-      projectId={null}
+      projectId={projectId || null}
       cloudProjectId={null}
       currentHostId={currentHostId}
       selectedHostIds={currentHostId ? [currentHostId] : []}
