@@ -2412,7 +2412,7 @@ AI-generate test cases from the suite's tools. Included with MCPJam; no customer
 
 #### `cloud eval cases import`
 
-Turn a document — a test plan, a QA checklist, a spreadsheet of scenarios — into runnable test cases with MCPJam's AI and add them to the suite. Markdown, JSON and CSV are accepted, up to 100 KiB. **Costs money:** each import consumes customer credits.
+Turn a document — a test plan, a QA checklist, a spreadsheet of scenarios — into runnable test cases with MCPJam's AI and add them to the suite. Any text document works (markdown, JSON, CSV, plain notes), up to 100 KiB; the model reads the shape itself. **Costs money:** each import consumes customer credits.
 
 Cases the model could not finish are not created. They come back under `skipped`, with a `reviewUrl` that opens the app on exactly those drafts so a person can complete them. To fix one, import only that case's corrected text — re-sending the whole document authors and bills every case in it again.
 
@@ -2422,7 +2422,6 @@ Cases the model could not finish are not created. They come back under `skipped`
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 | `--file <path>` | One of | Document to import (`-` reads stdin) |
 | `--content <text>` | One of | Document text, instead of `--file` |
-| `--format <markdown\|json\|csv>` | No | Document format (inferred from `--file`'s extension when omitted) |
 | `--file-name <name>` | No | Name recorded on each case's source (default: `--file`'s basename) |
 | `--server <id-or-name...>` | No | Servers to discover tools from (default: suite's) |
 | `--environment <id-or-name>` | No | Discover tools from this attached environment's server set |

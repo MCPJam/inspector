@@ -2511,7 +2511,6 @@ describe("v1 eval-edit routes", () => {
           ...(init.headers ?? {}),
         },
         body: JSON.stringify({
-          format: "markdown",
           content: "# Case 1\nSearch for coffee.",
           ...(init.body ?? {}),
         }),
@@ -2534,7 +2533,7 @@ describe("v1 eval-edit routes", () => {
     }
   });
 
-  it("forwards the document, its format and a defaulted file name", async () => {
+  it("forwards the document and a defaulted file name", async () => {
     const oldFlag = process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
     const oldUrl = process.env.CONVEX_HTTP_URL;
     process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = "true";
@@ -2552,7 +2551,7 @@ describe("v1 eval-edit routes", () => {
       );
     try {
       const response = await importWith({
-        body: { format: "csv", content: "title,prompt\nA,B" },
+        body: { content: "title,prompt\nA,B" },
         query: (name) =>
           name === "evalAuthoringState:status"
             ? Promise.resolve({ jobId: "job", status: "pending" })
@@ -2564,10 +2563,10 @@ describe("v1 eval-edit routes", () => {
       );
       expect(sent).toMatchObject({
         source: "import",
-        format: "csv",
         content: "title,prompt\nA,B",
-        // Named by format, because a pasted document has no file behind it.
-        fileName: "import.csv",
+        // A pasted document has no file behind it, and nothing is gated on
+        // the name — it is only the label a reviewer sees.
+        fileName: "import.txt",
       });
     } finally {
       capture.mockRestore();

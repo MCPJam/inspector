@@ -27,7 +27,9 @@ const inputSchema = z
   .object({
     projectId: z.string().min(1),
     suiteId: z.string().min(1),
-    fileName: z.string().min(1).max(255).regex(/\.md$/i),
+    // No extension rule: the authoring model reads the document's shape, so
+    // the name is a label on the case rather than a gate on the upload.
+    fileName: z.string().min(1).max(255),
     markdown: z
       .string()
       .min(1)

@@ -1810,8 +1810,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     proposal: {
       describe: (input) =>
         `Import eval cases from ${
-          named(input, "fileName") ??
-          `a ${named(input, "format") ?? ""} document`
+          named(input, "fileName") ?? "a document"
         } into ${named(input, "suite") ?? "(unnamed)"}`,
       buttonLabel: "Import them",
       kind: "generate",

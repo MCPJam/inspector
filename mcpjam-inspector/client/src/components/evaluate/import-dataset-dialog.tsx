@@ -71,14 +71,14 @@ export function ImportDatasetDialog({
     setError(null);
     if (!files?.length) return;
     if (files.length !== 1) {
-      setError("Choose one Markdown file.");
+      setError("Choose one file.");
       return;
     }
     const candidate = files[0];
-    if (!/\.md$/i.test(candidate.name)) {
-      setError("Only Markdown (.md) files are supported.");
-      return;
-    }
+    // No extension rule: the model reads the document's shape itself, so a
+    // `.csv` or a `.json` is as importable as a `.md`. What a file has to be
+    // is TEXT, and only decoding it can decide that — the UTF-8 decode below
+    // is the real gate, and a name proves nothing either way.
     if (!candidate.size) {
       setError("The file is empty.");
       return;
@@ -98,9 +98,17 @@ export function ImportDatasetDialog({
     const abort = new AbortController();
     controller.current = abort;
     try {
-      const markdown = new TextDecoder("utf-8", { fatal: true }).decode(
-        await file.arrayBuffer(),
-      );
+      let markdown: string;
+      try {
+        markdown = new TextDecoder("utf-8", { fatal: true }).decode(
+          await file.arrayBuffer(),
+        );
+      } catch {
+        // A PDF, an image, a zip: readable as bytes, meaningless as a
+        // document. Say so plainly rather than letting the decoder's own
+        // message reach the reader.
+        throw new Error("This file is not text. Choose a text document.");
+      }
       if (!markdown.trim()) throw new Error("The file is empty.");
       if (current !== generation.current) return;
       if (sharedAuthoring) {
@@ -189,17 +197,16 @@ export function ImportDatasetDialog({
             Import test cases
           </DialogTitle>
           <DialogDescription>
-            AI turns your Markdown into draft test cases. Review them before
-            saving.
+            AI turns your document — markdown, JSON, CSV, notes — into draft
+            test cases. Review them before saving.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <input
             ref={input}
             tabIndex={-1}
-            aria-label="Markdown file"
+            aria-label="Document file"
             type="file"
-            accept=".md,text/markdown"
             className="sr-only"
             disabled={phase !== "idle"}
             onChange={(event) => {
@@ -219,7 +226,7 @@ export function ImportDatasetDialog({
               if (phase === "idle") selectFile(event.dataTransfer.files);
             }}
           >
-            Drop one Markdown file here or click to select. Up to 100 KB.
+            Drop one document here or click to select. Up to 100 KB.
           </button>
           {file && (
             <div className="flex items-center justify-between gap-2 text-sm">

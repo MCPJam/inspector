@@ -3546,17 +3546,11 @@ const commitAuthoringJobSchema = z
   })
   .strict();
 
-/** File suffix for a document the caller did not name. */
-function extensionForFormat(format: "markdown" | "json" | "csv"): string {
-  return format === "markdown" ? "md" : format;
-}
-
 /** The API's document ceiling. Matches the app's Markdown upload and the backend. */
 const MAX_IMPORT_DOCUMENT_BYTES = 100 * 1024;
 
 const importCasesSchema = z
   .object({
-    format: z.enum(["markdown", "json", "csv"]),
     content: z
       .string()
       .min(1)
@@ -9710,9 +9704,10 @@ evals.post(
       startFailureMessage: "Could not start the import.",
       job: {
         source: "import",
-        format: body.format,
         content: body.content,
-        fileName: body.fileName ?? `import.${extensionForFormat(body.format)}`,
+        // A pasted document has no file behind it; the name is only the label
+        // a reviewer sees on the case.
+        fileName: body.fileName ?? "import.txt",
         options: { caseModels },
       },
       requestKey: idempotencyKey ?? randomUUID(),

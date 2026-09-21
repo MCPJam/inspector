@@ -6681,11 +6681,6 @@ const importEvalCasesInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
-  format: z
-    .enum(["markdown", "json", "csv"])
-    .describe(
-      "How the document is written. All three are read by the same model; the format only says how the text is laid out."
-    ),
   content: z
     .string()
     .min(1)
@@ -6699,7 +6694,7 @@ const importEvalCasesInput = z.object({
     .max(255)
     .optional()
     .describe(
-      "The document's name, recorded on each case so a reviewer can trace it back. Defaults to `import.<format>`."
+      "The document's name, recorded on each case so a reviewer can trace it back. Nothing is gated on it — a pasted document needs no name."
     ),
   servers: z
     .array(z.string().trim().min(1))
@@ -6755,7 +6750,7 @@ export const importEvalCasesOperation: PlatformOperation<
   risk: "spend",
   title: "Import MCPJam eval cases from a document",
   description:
-    "Turn a document a person wrote — a test plan, a QA checklist, a spreadsheet of scenarios — into runnable test cases and persist them into the suite. MCPJam's model reads the document and authors complete cases (prompt, tool calls, assertions, expected outcome) grounded in the suite's server tools, so the caller does not have to structure anything itself. Markdown, JSON and CSV are accepted, up to 100 KiB. COSTS MONEY: consumes customer credits per import. Cases the model could not finish are NOT created — they come back in `skipped`, and `reviewUrl` opens the app page holding exactly those drafts for a person to complete. To fix one, re-import ONLY that case's corrected text; re-sending the whole document re-authors and re-bills every case in it. IDEMPOTENT on idempotencyKey.",
+    "Turn a document a person wrote — a test plan, a QA checklist, a spreadsheet of scenarios — into runnable test cases and persist them into the suite. MCPJam's model reads the document and authors complete cases (prompt, tool calls, assertions, expected outcome) grounded in the suite's server tools, so the caller does not have to structure anything itself. Any text document is accepted — markdown, JSON, CSV, notes — up to 100 KiB; the model reads the shape itself. COSTS MONEY: consumes customer credits per import. Cases the model could not finish are NOT created — they come back in `skipped`, and `reviewUrl` opens the app page holding exactly those drafts for a person to complete. To fix one, re-import ONLY that case's corrected text; re-sending the whole document re-authors and re-bills every case in it. IDEMPOTENT on idempotencyKey.",
   readOnly: false,
   permalink: derivePermalinks((result) =>
     result.created.flatMap((testCase) =>
@@ -6819,7 +6814,6 @@ export const importEvalCasesOperation: PlatformOperation<
         projectId: project.id,
         suiteId: suite.id,
         body: {
-          format: input.format,
           content: input.content,
           ...(input.fileName ? { fileName: input.fileName } : {}),
           ...(overrideServers

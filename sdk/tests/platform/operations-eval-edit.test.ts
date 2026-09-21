@@ -421,29 +421,18 @@ describe("eval-edit operation execution", () => {
     );
   });
 
-  it("import_eval_cases accepts each document format", () => {
-    for (const format of ["markdown", "json", "csv"] as const)
-      expect(
-        importEvalCasesOperation.inputSchema.safeParse({
-          suite: "s1",
-          format,
-          content: "# Case",
-        }).success
-      ).toBe(true);
-  });
-
-  it("import_eval_cases rejects an unknown format and an empty document", () => {
+  it("import_eval_cases takes a document with nothing said about its shape", () => {
+    // No `format`: the model reads a CSV as a CSV without being told, and the
+    // flag only asked the caller to restate what the text already showed.
     expect(
       importEvalCasesOperation.inputSchema.safeParse({
         suite: "s1",
-        format: "yaml",
-        content: "x",
+        content: "title,prompt\nSearch,Find my projects",
       }).success
-    ).toBe(false);
+    ).toBe(true);
     expect(
       importEvalCasesOperation.inputSchema.safeParse({
         suite: "s1",
-        format: "markdown",
         content: "",
       }).success
     ).toBe(false);
@@ -457,7 +446,6 @@ describe("eval-edit operation execution", () => {
       importEvalCasesOperation.execute(
         {
           suite: "s1",
-          format: "markdown",
           content: "x".repeat(100 * 1024 + 1),
         },
         { client }
@@ -472,7 +460,6 @@ describe("eval-edit operation execution", () => {
       importEvalCasesOperation.execute(
         {
           suite: "s1",
-          format: "markdown",
           content: "# Case",
           duplicatePolicy: "create_anyway",
         },
@@ -487,7 +474,6 @@ describe("eval-edit operation execution", () => {
     await importEvalCasesOperation.execute(
       {
         suite: "s1",
-        format: "csv",
         content: "title,prompt\nSearch,Find my projects",
         fileName: "cases.csv",
         duplicatePolicy: "warn",
@@ -497,7 +483,6 @@ describe("eval-edit operation execution", () => {
     );
     const call = calls.find((c) => /\/cases\/import$/.test(c.path));
     expect(call?.body).toEqual({
-      format: "csv",
       content: "title,prompt\nSearch,Find my projects",
       fileName: "cases.csv",
       duplicatePolicy: "warn",

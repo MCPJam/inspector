@@ -106,7 +106,7 @@ const EMPTY_CASE_ACTIONS = [
   {
     id: "import",
     title: "Import",
-    description: "Markdown → draft cases",
+    description: "Document → draft cases",
     Icon: FileUp,
   },
 ] as const;

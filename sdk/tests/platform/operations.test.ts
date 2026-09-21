@@ -2412,7 +2412,7 @@ describe("operation catalog consistency", () => {
     update_eval_case: { suite: "s", case: "c", title: "renamed" },
     delete_eval_case: { suite: "s", case: "c" },
     generate_eval_cases: { suite: "s", prompt: "q" },
-    import_eval_cases: { suite: "s", format: "markdown", content: "# Case" },
+    import_eval_cases: { suite: "s", content: "# Case" },
     get_eval_run: { project: "p", runId: "r" },
     get_eval_run_stage_analytics: { project: "p", runId: "r" },
     get_eval_run_gate: { project: "p", runId: "r" },

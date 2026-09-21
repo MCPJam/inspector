@@ -5,7 +5,7 @@ import {
   evalSuiteKey,
 } from "@/lib/mcpjam-agent/eval-workspace";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, waitFor, act } from "@testing-library/react";
+import { fireEvent, waitFor, act, cleanup } from "@testing-library/react";
 import { renderWithProviders, screen } from "@/test";
 import { ImportDatasetDialog } from "../import-dataset-dialog";
 import {
@@ -45,7 +45,7 @@ function upload(name = "cases.md", content = "Find projects") {
   Object.defineProperty(file, "arrayBuffer", {
     value: async () => new TextEncoder().encode(content).buffer,
   });
-  fireEvent.change(screen.getByLabelText("Markdown file"), {
+  fireEvent.change(screen.getByLabelText("Document file"), {
     target: { files: [file] },
   });
 }
@@ -131,11 +131,24 @@ describe("Markdown case import", () => {
       ).toBeNull(),
     );
   });
-  it("clears the previous file when a replacement is invalid", () => {
+  it("takes a CSV or a JSON, not only Markdown", () => {
+    // The model reads the document's shape itself, so the picker has no
+    // business turning a spreadsheet of scenarios away at the door.
+    for (const name of ["cases.csv", "cases.json", "pasted"]) {
+      renderWithProviders(<Harness />);
+      upload(name);
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Extract cases" }),
+      ).toBeEnabled();
+      cleanup();
+    }
+  });
+  it("clears the previous file when a replacement is too large", () => {
     renderWithProviders(<Harness />);
     upload();
-    upload("cases.csv");
-    expect(screen.getByRole("alert")).toHaveTextContent("Only Markdown");
+    upload("cases.csv", "x".repeat(100 * 1024 + 1));
+    expect(screen.getByRole("alert")).toHaveTextContent("at most 100 KB");
     expect(
       screen.getByRole("button", { name: "Extract cases" }),
     ).toBeDisabled();

@@ -831,18 +831,6 @@ function writeJudgeSummary(format: string, judges: unknown): void {
  * `@file` convention in json-input.ts, `--file` points at a real path — the
  * common affordance for a JSON document on disk.
  */
-/** The format a document's own file name implies, when it has one. */
-function inferImportFormat(
-  file: string | undefined
-): "markdown" | "json" | "csv" | undefined {
-  if (!file || file === "-") return undefined;
-  const suffix = file.slice(file.lastIndexOf(".")).toLowerCase();
-  if (suffix === ".md" || suffix === ".markdown") return "markdown";
-  if (suffix === ".json") return "json";
-  if (suffix === ".csv") return "csv";
-  return undefined;
-}
-
 function readFileOrStdin(value: string, label: string): string {
   try {
     return value === "-"
@@ -6258,16 +6246,12 @@ export function registerEvalCommands(program: Command): void {
   cases
     .command("import")
     .description(
-      "Turn a document (markdown, JSON or CSV) into test cases with MCPJam's AI and add them to the suite (COSTS MONEY: consumes customer credits)"
+      "Turn any text document — markdown, JSON, CSV, notes — into test cases with MCPJam's AI and add them to the suite (COSTS MONEY: consumes customer credits)"
     )
     .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
     .option("--project <id-or-name>", PROJECT_OPT)
     .option("--file <path>", 'Document to import ("-" reads stdin)')
     .option("--content <text>", "Document text, instead of --file")
-    .option(
-      "--format <markdown|json|csv>",
-      "Document format (inferred from --file's extension when omitted)"
-    )
     .option(
       "--file-name <name>",
       "Name recorded on each case's source (default: --file's basename)"
@@ -6300,7 +6284,6 @@ export function registerEvalCommands(program: Command): void {
           suite: string;
           file?: string;
           content?: string;
-          format?: string;
           fileName?: string;
           server?: string[];
           environment?: string;
@@ -6321,14 +6304,6 @@ export function registerEvalCommands(program: Command): void {
         const content = options.file
           ? readFileOrStdin(options.file, "document")
           : options.content!;
-        // A suffix is a reliable format signal when the caller read a real
-        // file; stdin and --content have none, so those must say outright.
-        const format =
-          options.format ?? inferImportFormat(options.file) ?? undefined;
-        if (!format)
-          throw usageError(
-            "--format is required unless --file names a .md, .markdown, .json or .csv file."
-          );
         const fileName =
           options.fileName ??
           (options.file && options.file !== "-"
@@ -6337,7 +6312,6 @@ export function registerEvalCommands(program: Command): void {
         const input = validateOpInput(importEvalCasesOperation, {
           project: options.project,
           suite: options.suite,
-          format,
           content,
           ...(fileName ? { fileName } : {}),
           ...(options.server ? { servers: options.server } : {}),
