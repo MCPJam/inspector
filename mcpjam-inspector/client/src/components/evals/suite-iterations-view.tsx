@@ -1625,10 +1625,15 @@ export function SuiteIterationsView({
     />
   );
 
+  // The folded layout drops the SuiteHeader action row, so the run body is the
+  // only place a stop control can live there. Every other surface already has
+  // one — RunDetailPlaygroundActions in the header, or EvaluateRunPage.
   const runDetailView = selectedRunDetails ? (
     <RunDetailView
       selectedRunDetails={selectedRunDetails}
       caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+      onCancelRun={foldRunDetail ? onCancelRun : undefined}
+      cancellingRunId={cancellingRunId}
       onExportTraces={projectId ? () => setTracesExportOpen(true) : undefined}
       onShare={
         unifiedShareEvals &&
