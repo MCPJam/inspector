@@ -597,6 +597,20 @@ export function SuiteDetailOverview({
           </h2>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {importedDrafts.length && !reviewingImport ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8"
+              data-testid="suite-resume-import-review"
+              onClick={() => setImportReviewClosed(false)}
+            >
+              {importedDrafts.length === 1
+                ? "Review 1 draft case"
+                : `Review ${importedDrafts.length} draft cases`}
+            </Button>
+          ) : null}
           {onSetupSdk && (
             <Button
               type="button"
@@ -745,21 +759,6 @@ export function SuiteDetailOverview({
             </div>
           ) : null}
         </section>
-      ) : null}
-
-      {importedDrafts.length && !reviewingImport ? (
-        <div>
-          <Button
-            variant="outline"
-            size="sm"
-            data-testid="suite-resume-import-review"
-            onClick={() => setImportReviewClosed(false)}
-          >
-            {importedDrafts.length === 1
-              ? "Review 1 draft case"
-              : `Review ${importedDrafts.length} draft cases`}
-          </Button>
-        </div>
       ) : null}
 
       {showEmptyCasesHero ? (
