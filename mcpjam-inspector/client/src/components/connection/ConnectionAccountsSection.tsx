@@ -1,9 +1,8 @@
-import { useState } from "react";
-import { MoreHorizontal } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { MoreHorizontal, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
-import { Badge } from "@mcpjam/design-system/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,13 +20,40 @@ import {
   AlertDialogTitle,
 } from "@mcpjam/design-system/alert-dialog";
 import { useHostedOAuthConnections } from "@/hooks/use-hosted-oauth-connections";
-import { useMultiAccountConnectionsEnabled } from "@/hooks/useMultiAccountConnectionsEnabled";
 import { updateOAuthConnection } from "@/lib/apis/web/oauth-connections";
+import { useMultiAccountConnectionsEnabled } from "@/hooks/useMultiAccountConnectionsEnabled";
 import {
-  connectionLabel,
   type ConnectionIntent,
   type OAuthConnection,
 } from "@/shared/oauth-connections";
+
+/**
+ * The account a credential reaches, named the way the server named it, with
+ * anything the user renamed it to underneath — two lines carrying two
+ * different facts. They used to carry the same one: the row's editable field
+ * fell back to the profile email and the line under it WAS the profile email,
+ * so an unlabelled account printed its address twice.
+ */
+function identityOf(connection: OAuthConnection, index: number): string {
+  const profile = connection.profile;
+  return (
+    profile?.email ||
+    profile?.name ||
+    profile?.nickname ||
+    `Account ${index + 1}`
+  );
+}
+
+/** The user's own words for this account, and whether chat uses it. */
+function captionOf(connection: OAuthConnection): string | undefined {
+  if (connection.needsReauth) return undefined;
+  return (
+    [connection.label, connection.isDefault ? "Default" : null]
+      .filter(Boolean)
+      .join(" · ") || undefined
+  );
+}
+
 export function ConnectionAccountsSection({
   projectId,
   serverId,
@@ -48,10 +74,29 @@ export function ConnectionAccountsSection({
   );
   const canAddAccount = useMultiAccountConnectionsEnabled();
   const [busy, setBusy] = useState(false);
+  const [renaming, setRenaming] = useState<string>();
+  const renameRef = useRef<HTMLInputElement>(null);
+  // Closing the menu hands focus back to the trigger, and that blur lands on
+  // the rename field before it has ever held focus — which would close the
+  // edit the instant it opened. The field takes focus a frame later, and a
+  // blur that arrives before it was focused commits nothing.
+  const renameHeldFocus = useRef(false);
+
+  useEffect(() => {
+    if (!renaming) return;
+    renameHeldFocus.current = false;
+    const frame = requestAnimationFrame(() => {
+      renameRef.current?.focus();
+      renameRef.current?.select();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [renaming]);
   const [removing, setRemoving] = useState<OAuthConnection>();
+
   if (!enabled || !projectId || !serverId) return null;
+
   const update = async (
-    c: OAuthConnection,
+    connection: OAuthConnection,
     operation: "label" | "default" | "delete",
     label?: string,
   ) => {
@@ -60,7 +105,7 @@ export function ConnectionAccountsSection({
       await updateOAuthConnection(
         projectId,
         serverId,
-        c.connectionId,
+        connection.connectionId,
         operation,
         label,
       );
@@ -71,90 +116,151 @@ export function ConnectionAccountsSection({
       setBusy(false);
     }
   };
+
   return (
-    <details className="mt-3 text-xs" onClick={(e) => e.stopPropagation()}>
-      <summary className="cursor-pointer py-1 font-medium">
-        {connections.length} {connections.length === 1 ? "account" : "accounts"}
-      </summary>
-      <div className="space-y-3 pt-2">
-        {error && (
-          <p role="alert" className="text-destructive">
-            {error}
-          </p>
-        )}
-        {connections.map((c, i) => (
-          <div key={c.connectionId} className="flex items-center gap-2">
-            <div className="min-w-0 flex-1">
-              <Input
-                key={`${c.connectionId}:${c.label ?? ""}`}
-                aria-label={`Label for ${connectionLabel(c, i)}`}
-                defaultValue={c.label ?? ""}
-                placeholder={connectionLabel(c, i)}
-                maxLength={64}
-                disabled={busy}
-                onBlur={(e) => {
-                  if (e.target.value !== (c.label ?? ""))
-                    void update(c, "label", e.target.value);
-                }}
-              />
-              {(c.profile?.email || c.profile?.name) && (
-                <p className="mt-1 truncate text-muted-foreground">
-                  {c.profile.email ?? c.profile.name}
-                </p>
-              )}
-              {c.needsReauth && (
-                <p className="mt-1 text-destructive">Needs reconnect</p>
-              )}
-            </div>
-            {c.isDefault && <Badge variant="outline">Default</Badge>}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  disabled={busy}
-                  aria-label={`Manage ${connectionLabel(c, i)}`}
-                >
-                  <MoreHorizontal className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  onSelect={() =>
-                    void onAuthenticate({
-                      kind: "replace",
-                      credentialId: c.connectionId,
-                    })
-                  }
-                >
-                  Reconnect
-                </DropdownMenuItem>
-                {!c.isDefault && (
-                  <DropdownMenuItem
-                    disabled={c.needsReauth}
-                    onSelect={() => void update(c, "default")}
-                  >
-                    Use in chat / Set default
-                  </DropdownMenuItem>
+    <div className="space-y-2 pt-2">
+      <p className="text-xs font-medium text-muted-foreground">
+        Connected accounts
+      </p>
+
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
+
+      <div className="space-y-1">
+        {connections.map((connection, index) => {
+          const identity = identityOf(connection, index);
+          const caption = captionOf(connection);
+          return (
+            <div
+              key={connection.connectionId}
+              className="flex items-center gap-3 rounded-lg px-1 py-1.5"
+            >
+              <span
+                aria-hidden
+                className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-medium text-secondary-foreground uppercase"
+              >
+                {identity.slice(0, 1)}
+              </span>
+
+              <div className="min-w-0 flex-1">
+                {renaming === connection.connectionId ? (
+                  <Input
+                    ref={renameRef}
+                    onFocus={() => {
+                      renameHeldFocus.current = true;
+                    }}
+                    aria-label={`Name for ${identity}${
+                      caption ? ` — ${caption}` : ""
+                    }`}
+                    defaultValue={connection.label ?? ""}
+                    placeholder="Add a name"
+                    maxLength={64}
+                    disabled={busy}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") event.currentTarget.blur();
+                      if (event.key === "Escape") setRenaming(undefined);
+                    }}
+                    onBlur={(event) => {
+                      if (!renameHeldFocus.current) return;
+                      setRenaming(undefined);
+                      if (event.target.value !== (connection.label ?? ""))
+                        void update(connection, "label", event.target.value);
+                    }}
+                  />
+                ) : (
+                  <>
+                    <p className="truncate text-sm text-foreground">
+                      {identity}
+                    </p>
+                    {connection.needsReauth ? (
+                      <p className="truncate text-xs text-destructive">
+                        Needs reconnect
+                      </p>
+                    ) : (
+                      caption && (
+                        <p className="truncate text-xs text-muted-foreground">
+                          {caption}
+                        </p>
+                      )
+                    )}
+                  </>
                 )}
-                <DropdownMenuItem onSelect={() => setRemoving(c)}>
-                  Remove
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        ))}
-        {!shared && canAddAccount && (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy || connections.length >= 8}
-            onClick={() => void onAuthenticate({ kind: "add" })}
-          >
-            Connect another account
-          </Button>
-        )}
+              </div>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    disabled={busy}
+                    // Two accounts can share an address, so the caption has
+                    // to disambiguate or both buttons read the same.
+                    aria-label={`Manage ${identity}${
+                      caption ? ` — ${caption}` : ""
+                    }`}
+                  >
+                    <MoreHorizontal className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onSelect={() => setRenaming(connection.connectionId)}
+                  >
+                    Rename
+                  </DropdownMenuItem>
+                  {!connection.isDefault && (
+                    <DropdownMenuItem
+                      disabled={connection.needsReauth}
+                      onSelect={() => void update(connection, "default")}
+                    >
+                      Use in chat
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      void onAuthenticate({
+                        kind: "replace",
+                        credentialId: connection.connectionId,
+                      })
+                    }
+                  >
+                    Reconnect
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onSelect={() => setRemoving(connection)}
+                  >
+                    Remove
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        })}
       </div>
+
+      {!shared && canAddAccount && (
+        <button
+          type="button"
+          disabled={busy || connections.length >= 8}
+          onClick={() => void onAuthenticate({ kind: "add" })}
+          className="flex w-full items-center gap-3 rounded-lg px-1 py-1.5 text-left hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+        >
+          <span
+            aria-hidden
+            className="flex size-8 shrink-0 items-center justify-center rounded-full border border-dashed border-border text-muted-foreground"
+          >
+            <Plus className="size-4" />
+          </span>
+          <span className="text-sm text-foreground">
+            Connect another account
+          </span>
+        </button>
+      )}
+
       <AlertDialog
         open={!!removing}
         onOpenChange={(open) => {
@@ -181,6 +287,6 @@ export function ConnectionAccountsSection({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </details>
+    </div>
   );
 }

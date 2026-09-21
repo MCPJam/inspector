@@ -732,23 +732,25 @@ export function ServerDetailModal({
                 className="mt-0 flex-none max-h-[60vh] overflow-y-auto data-[state=inactive]:invisible"
               >
                 <div className="pl-1 pr-6">
-                  <ConnectionAccountsSection
-                    projectId={projectId}
-                    serverId={hostedServerId}
-                    enabled={isUserReady && server.useOAuth === true}
-                    onAuthenticate={(connectionIntent) =>
-                      onReconnect(server.name, {
-                        forceOAuthFlow: true,
-                        connectionIntent,
-                      })
-                    }
-                    onSwitch={() =>
-                      onReconnect(server.name, {
-                        allowInteractiveOAuthFlow: false,
-                      })
-                    }
-                  />
                   <EditServerFormContent
+                    accountsSlot={
+                      <ConnectionAccountsSection
+                        projectId={projectId}
+                        serverId={hostedServerId}
+                        enabled={isUserReady && server.useOAuth === true}
+                        onAuthenticate={(connectionIntent) =>
+                          onReconnect(server.name, {
+                            forceOAuthFlow: true,
+                            connectionIntent,
+                          })
+                        }
+                        onSwitch={() =>
+                          onReconnect(server.name, {
+                            allowInteractiveOAuthFlow: false,
+                          })
+                        }
+                      />
+                    }
                     formState={formState}
                     isDuplicateServerName={isDuplicateServerName}
                     projectId={projectId}
