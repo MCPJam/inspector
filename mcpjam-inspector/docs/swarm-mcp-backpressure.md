@@ -1,15 +1,17 @@
-# Swarm MCP backpressure: first implementation increment
+# Swarm MCP backpressure: hosted pilot
 
 Design: https://github.com/MCPJam/mcpjam-backend/pull/1538
 
-Preserve upstream throttle metadata before adding admission or tool retries. Keep
-existing tool-call execution, authentication and protocol negotiation behavior.
-Teach the existing wait parser to read the SDK error and fix `withRetry` so it
-honors upstream waits above its computed-backoff cap, or declines retries whose
-wait cannot fit the total budget. No production caller of `withRetry` was found
-in this checkout; this increment does not wire it around MCP tool execution.
-Shared admission placement is provisional: verify direct-manager and hosted-proxy
-egress before choosing a coordinator or adding Convex calls per MCP request.
+The hosted pilot now installs a per-server admission fetch wrapper before manager
+construction. It reuses the existing pinned fetch, cancellation/deadline helpers,
+Retry-After parser and Convex rate-limiter component. It is off by default; enroll
+connection ids with `MCPJAM_MCP_BACKPRESSURE_SERVER_IDS` only after backend rollout.
+
+The backend design above is the policy reference. Two starts/second (burst two),
+shared monotonic cooldowns, a 60-second admission budget per POST and 64 pending
+requests per connection/process bound the pilot. Static/shared OAuth connections
+share across users; private OAuth/XAA use separate user buckets. It does not add
+automatic tool replay or a distributed in-flight cap.
 
 ## TDD checklist
 
@@ -42,14 +44,17 @@ count the same request at the proxy and manager.
 The metadata change here is narrower: it preserves `data.retryAfter` only where
 `http-error-fetch.ts` already wraps Streamable HTTP tool-call errors. It does not
 change initialize/list responses, legacy SSE, auth retries, HTTP 400 protocol
-errors, or propagate metadata through the harness-facing RPC envelope. Future
-admission must observe these responses at `baseFetch` rather than assume this
-tool-error wrapper covers them. STDIO has no HTTP Retry-After. Separate proxy
+errors, or propagate metadata through the harness-facing RPC envelope. The new admission wrapper observes these responses at `baseFetch`; it does not
+rely on the narrower tool-error metadata wrapper. STDIO has no HTTP Retry-After. Separate proxy
 deployments, redirects and provider-internal subrequests still require inspection.
 
-Recommendation: enforce in a per-server fetch wrapper installed by authorized
-manager construction, with one shared coordinator across worker replicas. Convex
-remains one candidate coordinator; measure latency/cost before choosing it.
+Admission is installed for hosted project-member HTTP managers, covering both
+listed hosted paths by construction, including initialization/discovery. Local,
+shared-chat and STDIO paths are excluded. GET listening, DELETE and cancellation
+notifications bypass pacing. Coordinator failures stop dispatch. Feedback failure
+replaces the upstream response with an admission error and stops that wrapper.
+No new waiting UI or outcome taxonomy is added. Deployed path verification and
+latency/cost measurement remain rollout gates.
 
 ## TDD evidence
 
@@ -62,7 +67,17 @@ remains one candidate coordinator; measure latency/cost before choosing it.
    removing the upper clamp on upstream waits. Computed exponential backoff
    retains its existing cap; cancellation and total-budget guards remain active.
 
-No shared pacing, cooldown enforcement or automatic tool-call replay is enabled
-by this increment. Screenshots and recording remain pending; a metadata-only
-change has no new user-visible flow, so an explicit exception is required before
-requesting review of this increment without visual evidence.
+4. The new admission suite failed against an unimplemented wrapper, then passed
+   after adding shared decisions, feedback, cancellation, queue guards and budgets.
+   A cancellation test also caught a busy loop in abort-resolving sleep; the loop
+   now checks the signal before each sleep.
+
+Validation for this increment: 143 admission/auth/supervisor tests and 110 swarm
+runner/sandbox tests pass. Backend 44 focused tests and real local curl checks
+cover shared pacing, monotonic cooldowns, auth and resumption. Earlier SDK metadata
+increment had 94 passing transport/retry/manager tests. Full repository check
+limitations are recorded in the draft PRs.
+
+No production rollout. Screenshots and a recording remain pending. There is no
+new UI, so an explicit nonvisual exception is needed before requesting review
+without that media; keep the PR in draft while iterating.

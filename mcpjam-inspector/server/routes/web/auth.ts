@@ -19,6 +19,7 @@ import type {
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { observeConnectionFetch } from "../../services/connection-failure-context.js";
+import { hostedMcpBackpressureFetch } from "../../utils/mcp-backpressure.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 import { HOSTED_TASK_BATCH_MAX as HOSTED_TASK_BATCH_MAX_SHARED } from "../../../shared/hosted-tasks.js";
 import {
@@ -1324,8 +1325,15 @@ export async function createAuthorizedManager(
   }
 
   const oauthServerUrls: Record<string, string> = {};
+  let authorizedUserId: string | null = null;
   const batch = await authorizeBatch(
-    caller,
+    {
+      ...caller,
+      setLogContext(partial) {
+        if (partial.userId) authorizedUserId = partial.userId;
+        caller.setLogContext?.(partial);
+      },
+    },
     bearerToken,
     projectId,
     uniqueServerIds,
@@ -2012,15 +2020,22 @@ export async function createAuthorizedManager(
   // Each server owns its capture even when two configs use the same URL.
   // Install before construction: the manager starts connecting eagerly.
   const observedConfigs = Object.fromEntries(
-    configEntries.map(([id, config]) => [
-      id,
-      {
-        ...config,
-        baseFetch: observeConnectionFetch(
-          config.baseFetch ?? hostedMcpBaseFetch(),
-        ),
-      },
-    ]),
+    configEntries.map(([id, config]) => {
+      const authorization = batch.results[id];
+      let baseFetch = config.baseFetch ?? hostedMcpBaseFetch();
+      try {
+        if (authorization?.ok && authorization.accessLevel === "project_member" &&
+            authorization.serverConfig.transportType === "http") {
+          baseFetch = hostedMcpBackpressureFetch({
+            fetch: baseFetch, projectId, serverId: id, userId: authorizedUserId,
+          });
+        }
+      } catch (error) {
+        releasePluginLeases();
+        throw error;
+      }
+      return [id, { ...config, baseFetch: observeConnectionFetch(baseFetch) }];
+    }),
   );
   const manager = new MCPClientManager(observedConfigs, {
     defaultTimeout: timeoutMs,

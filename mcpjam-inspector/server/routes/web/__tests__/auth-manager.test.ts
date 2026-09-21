@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mcpClientManagerMock, disconnectAllServersMock, localRefreshMock } =
+const { mcpClientManagerMock, disconnectAllServersMock, localRefreshMock, admissionMock } =
   vi.hoisted(() => ({
     mcpClientManagerMock: vi.fn(),
     disconnectAllServersMock: vi.fn(),
     localRefreshMock: vi.fn(),
+    admissionMock: vi.fn(({ fetch }) => fetch),
   }));
+
+vi.mock("../../../utils/mcp-backpressure.js", () => ({ hostedMcpBackpressureFetch: admissionMock }));
 
 // The authorization-server round trip belongs to local-oauth-refresh's own
 // tests; here it is mocked so these are about the connect path.
@@ -63,6 +66,51 @@ describe("web auth manager batching", () => {
     } else {
       process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
     }
+  });
+
+  it("wraps project HTTP connections before construction using backend-authenticated identity", async () => {
+    const result = (accessLevel: string) => ({
+      ok: true,
+      role: "member",
+      accessLevel,
+      permissions: { chatOnly: false },
+      serverConfig: {
+        transportType: "http",
+        url: "https://fixture.example/mcp",
+      },
+      internalLogContext: {
+        userId: "authenticated-user",
+        projectId: "project-1",
+        authMethod: "jwt",
+      },
+    });
+    global.fetch = vi.fn(async () =>
+      Response.json({
+        results: {
+          enrolled: result("project_member"),
+          shared: result("shared_chat"),
+        },
+      }),
+    ) as typeof fetch;
+    await createAuthorizedManager(
+      { authMethod: "jwt" } as Parameters<typeof createAuthorizedManager>[0],
+      "bearer",
+      "project-1",
+      ["enrolled", "shared"],
+      10_000,
+    );
+    expect(admissionMock).toHaveBeenCalledTimes(1);
+    expect(admissionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "project-1",
+        serverId: "enrolled",
+        userId: "authenticated-user",
+        fetch: expect.any(Function),
+      }),
+    );
+    expect(mcpClientManagerMock.mock.calls[0][0].enrolled.baseFetch).toBeTypeOf(
+      "function",
+    );
   });
 
   it("surfaces the first batch failure in input order", async () => {
