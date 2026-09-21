@@ -817,7 +817,7 @@ export function UserTestingScenarioCreateFlow({
                     data-testid="user-testing-create-new-environment"
                     className="text-xs text-primary hover:underline"
                   >
-                    None of these fit — build a new environment
+                    None of these fit. Build a new environment
                   </button>
                 ) : null}
                 {/* Why Continue did not carry, said where the choice is made

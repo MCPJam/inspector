@@ -270,7 +270,7 @@ export function ShareSection<TEnvelope>({
           >
             <span className="truncate text-sm text-muted-foreground">
               {disabledReason
-                ? (copy.withheldLabel ?? "Withheld — this can't be shared.")
+                ? (copy.withheldLabel ?? "Withheld: this can't be shared.")
                 : (displayLink ??
                   (copy.emptyLinkLabel ?? "No share link yet."))}
             </span>
@@ -541,7 +541,7 @@ export function ShareSection<TEnvelope>({
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{member.email}</p>
                   <p className="text-xs text-muted-foreground">
-                    Invitation pending — they can access after signing in
+                    Invitation pending. They can access after signing in
                   </p>
                 </div>
                 <DropdownMenu>

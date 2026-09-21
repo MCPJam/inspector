@@ -291,13 +291,13 @@ export function deriveScenarioFindingsFootnotes(
 ): string[] {
   const notes: string[] = [];
   if (model.coverage.truncated) {
-    notes.push("Session scan hit its cap — counts cover a subset");
+    notes.push("Session scan hit its cap, so counts cover a subset");
   }
   if (model.unanalyzedCount > 0) {
     notes.push(
       `${model.unanalyzedCount} session${
         model.unanalyzedCount === 1 ? "" : "s"
-      } not analyzed yet — in no persona above`,
+      } not analyzed yet, in no persona above`,
     );
   }
   return notes;

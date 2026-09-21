@@ -153,8 +153,7 @@ export function ScenarioOutcomeCalibration({
                         cannot be announced in colour alone. */}
                     {suspicious ? (
                       <span className="sr-only">
-                        {" "}
-                        — unexpectedly negative for a completed outcome
+                        , unexpectedly negative for a completed outcome
                       </span>
                     ) : null}
                   </td>

@@ -123,7 +123,7 @@ function PreviewFrame({
     return (
       <PreviewEmptyState
         title="This flow can't finish inside the preview"
-        body="The preview navigated away from the scenario — an OAuth sign-in does this. Open it in a real browser tab to complete the flow."
+        body="The preview navigated away from the scenario, which an OAuth sign-in does. Open it in a real browser tab to complete the flow."
         link={link}
         onRetry={() => setNavigatedAway(false)}
       />
@@ -148,8 +148,8 @@ function PreviewFrame({
       />
       {/* Not a faithful guest run: the frame shares the dashboard's login. */}
       <p className="shrink-0 border-t border-border/40 px-3 py-1.5 text-[10px] text-muted-foreground">
-        Previewing as you, signed in — a tester opening this link gets the
-        guest experience, which can differ.
+        Previewing as you, signed in. A tester opening this link gets the guest
+        experience, which can differ.
       </p>
     </div>
   );
