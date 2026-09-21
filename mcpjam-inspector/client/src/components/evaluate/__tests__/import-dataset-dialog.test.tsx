@@ -105,8 +105,12 @@ async function extract() {
   fireEvent.click(screen.getByRole("button", { name: "Extract cases" }));
   await screen.findByRole("article", { name: `Draft: ${draft.case.title}` });
 }
-async function review() {
-  fireEvent.click(screen.getAllByRole("button", { name: "Review case" })[0]);
+/**
+ * An imported draft opens in the step editor already — what a reader agrees to
+ * is the case, not a paragraph about it — so "reviewing" is just being there.
+ */
+function review() {
+  expect(screen.getByRole("button", { name: "Close editor" })).toBeVisible();
 }
 /** Every authoring call the commit path makes, answered as a success. */
 function authoringSucceeds() {
@@ -156,9 +160,11 @@ describe("document case import", () => {
     expect(
       screen.getByRole("button", { name: "Review Draft Cases" }),
     ).toHaveAttribute("aria-expanded", "true");
-    expect(screen.queryByLabelText("Generated case title")).toBeNull();
+    // The draft lands open in the step editor: the case is what gets agreed
+    // to, so it is what the reader is shown.
+    expect(screen.getByLabelText("Generated case title")).toBeVisible();
     expect(committedCalls()).toHaveLength(0);
-    await review();
+    review();
     fireEvent.change(screen.getByLabelText("Generated case title"), {
       target: { value: "My projects" },
     });
@@ -229,7 +235,7 @@ describe("document case import", () => {
     );
     renderWithProviders(<Harness />);
     await extract();
-    await review();
+    review();
     expect(
       screen.getByRole("button", { name: `Add ${draft.case.title} to suite` }),
     ).toBeDisabled();
@@ -264,7 +270,7 @@ describe("document case import", () => {
     );
     renderWithProviders(<Harness />);
     await extract();
-    await review();
+    review();
     fireEvent.click(
       screen.getByRole("button", { name: `Add ${draft.case.title} to suite` }),
     );
@@ -317,7 +323,7 @@ describe("document case import", () => {
     );
     renderWithProviders(<Harness />);
     await extract();
-    await review();
+    review();
     // Non-blocking issues are model diagnostics, not gates: a complete case
     // stays addable.
     expect(

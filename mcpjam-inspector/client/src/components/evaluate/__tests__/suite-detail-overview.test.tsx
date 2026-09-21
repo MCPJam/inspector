@@ -38,6 +38,10 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 }));
 
 // Only the network poll is doubled; the store it writes into is real.
+// An imported draft opens in the step editor, which renders the model picker.
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({ availableModels: [] }),
+}));
 vi.mock("@/lib/mcpjam-agent/eval-workspace", async (original) => ({
   ...(await original<object>()),
   followAuthoringJob: vi.fn(async () => undefined),

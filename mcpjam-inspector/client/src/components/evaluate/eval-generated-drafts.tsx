@@ -227,7 +227,14 @@ export function EvalGeneratedDrafts({
             </p>
           )}
           {visibleDrafts.map((draft) => {
-            const expanded = reviewing === draft.id;
+            // An imported draft opens in the step editor. The collapsed card
+            // shows a prompt and a paragraph about the case; what a reader has
+            // to agree to is the CASE — its tool calls, its assertions — and
+            // making them click into each one hid exactly that. Generated
+            // drafts keep the summary list: there are twenty of them.
+            const expanded =
+              reviewing === draft.id ||
+              (reviewing === null && Boolean(draft.authoring?.source));
             const blockedReason = importedDraftBlockedReason(draft);
             const blockedBadge = importedDraftBlockedBadge(draft);
             const locked = draft.saving || Boolean(draft.authoringPrepared);
@@ -522,7 +529,11 @@ function AuthoringDraftSettings({
         availableModels={availableModels}
         value={{
           includeClientDefaults: false,
-          explicitModelIds: draft.input.models.map((model) => model.model),
+          // A draft persisted by an older build, or staged from a case that
+          // inherits the suite's models, carries no list of its own.
+          explicitModelIds: (draft.input.models ?? []).map(
+            (model) => model.model,
+          ),
         }}
         onChange={(value) =>
           editGeneratedDraft(scope, draft.id, draft.revision, {
@@ -532,7 +543,9 @@ function AuthoringDraftSettings({
               );
               return model
                 ? [{ model: id, provider: String(model.provider) }]
-                : draft.input.models.filter((model) => model.model === id);
+                : (draft.input.models ?? []).filter(
+                    (model) => model.model === id,
+                  );
             }),
           })
         }
