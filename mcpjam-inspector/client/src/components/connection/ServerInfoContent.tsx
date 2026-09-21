@@ -26,14 +26,12 @@ import { ErrorCard } from "@/components/ui/error-card";
 
 interface ServerInfoContentProps {
   server: ServerWithName;
-  needsReconnect?: boolean;
   projectId?: string | null;
   hostedServerId?: string | null;
 }
 
 export function ServerInfoContent({
   server,
-  needsReconnect = false,
   projectId = null,
   hostedServerId = null,
 }: ServerInfoContentProps) {
@@ -477,12 +475,6 @@ export function ServerInfoContent({
             error={server.lastNormalizedError ?? server.lastError}
             defaultOpen
           />
-        </div>
-      ) : null}
-      {needsReconnect ? (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-muted-foreground">
-          Connection settings differ from this server's last initialize payload.
-          Turn the connection off and on to apply the new connection settings.
         </div>
       ) : null}
       {serverName && (

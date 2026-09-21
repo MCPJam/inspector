@@ -18,7 +18,7 @@ These come from the MCP transport itself. Numeric codes are defined by the [JSON
 | `-32600` | [Invalid request](#invalid-request) |
 | `-32601` | [Method not found](#method-not-found) |
 | `-32602` | [Invalid params](#invalid-params) |
-| `-32603` | [Internal error](#internal-error) |
+| `-32603` | [Internal error](#internal-error) / [Invalid response format](#invalid-response-format) |
 | `-32000` | [Connection closed](#connection-closed) |
 | `-32001` | [Request timed out](#request-timeout) / [Header mismatch](#header-mismatch) |
 | `-32004` | [Unsupported protocol version](#unsupported-protocol-version) |
@@ -97,6 +97,21 @@ The server hit an unexpected error while handling the request.
 **Next steps**
 - Check the server's logs around the time of the error.
 - Retry the request once the server is healthy.
+
+### Invalid response format
+
+`-32603 — jsonrpc/invalid_response_format`
+
+The server replied, but the result was not a valid MCP tool, resource, or prompt payload.
+
+**Why this happened**
+- The handler returned a string or custom object instead of the MCP result shape (usually `{ content: [...] }`).
+
+**Next steps**
+- Inspect the result in the Traffic Log and compare it to the MCP result shape.
+- Return `{ content: [{ type: "text", text: "..." }] }` from the handler, or the matching resource/prompt result.
+
+> The `-32603` code is overloaded between a generic internal error and `invalid_response_format`. The inspector disambiguates by message; check the raw message in the ErrorCard's details panel.
 
 ### Connection closed
 

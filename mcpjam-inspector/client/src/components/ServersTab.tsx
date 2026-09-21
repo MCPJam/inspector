@@ -132,7 +132,6 @@ import {
   shouldQueryProjectId,
   type RemoteServer,
 } from "@/hooks/useProjects";
-import { projectClientCapabilitiesNeedReconnect } from "@/lib/client-config";
 import {
   DndContext,
   closestCenter,
@@ -459,7 +458,6 @@ function SortableServerCard({
   id,
   dndDisabled,
   server,
-  needsReconnect,
   onDisconnect,
   onReconnect,
   onRemove,
@@ -474,7 +472,6 @@ function SortableServerCard({
   id: string;
   dndDisabled: boolean;
   server: ServerWithName;
-  needsReconnect?: boolean;
   onDisconnect: (name: string) => void;
   onReconnect: (
     name: string,
@@ -521,7 +518,6 @@ function SortableServerCard({
   const cardContent = (
     <ServerConnectionCard
       server={server}
-      needsReconnect={needsReconnect}
       onDisconnect={onDisconnect}
       onReconnect={onReconnect}
       onRemove={onRemove}
@@ -915,36 +911,6 @@ export function ServersTab({
   };
 
   const activeServer = activeId ? projectServers[activeId] : null;
-  const reconnectWarningByServerName = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(projectServers).map(([serverName, server]) => {
-          // Only fires when the user edited the per-server clientCapabilities
-          // override after connecting. Host-driven caps changes are handled by
-          // the auto-reconciler, which disconnect/reconnects affected servers
-          // on host switch — comparing against host-blended caps here just
-          // produced false positives (server fresh-reconnects under the new
-          // host, but the SDK strips runtime-gated caps like `elicitation`
-          // when no handler is wired, so the comparator never matched).
-          const override = server.config.clientCapabilities;
-          const hasOverride =
-            override != null &&
-            typeof override === "object" &&
-            !Array.isArray(override);
-          const stale =
-            hasOverride &&
-            server.connectionStatus === "connected" &&
-            server.initializationInfo?.clientCapabilities != null &&
-            projectClientCapabilitiesNeedReconnect({
-              desiredCapabilities: override as Record<string, unknown>,
-              initializedCapabilities: server.initializationInfo
-                .clientCapabilities as Record<string, unknown>,
-            });
-          return [serverName, stale];
-        })
-      ),
-    [projectServers]
-  );
 
   const detailModalLiveServer = detailModalState.serverName
     ? projectServers[detailModalState.serverName] ?? null
@@ -2037,7 +2003,6 @@ export function ServersTab({
                       id={name}
                       dndDisabled={false}
                       server={displayServer}
-                      needsReconnect={reconnectWarningByServerName[name]}
                       onDisconnect={(serverName) => {
                         clearPendingQuickConnectIfMatches(serverName);
                         onDisconnect(serverName);
@@ -2068,9 +2033,6 @@ export function ServersTab({
                 <div style={{ opacity: 0.85 }}>
                   <ServerConnectionCard
                     server={getDisplayServer(activeServer)}
-                    needsReconnect={
-                      reconnectWarningByServerName[activeServer.name]
-                    }
                     onDisconnect={(serverName) => {
                       clearPendingQuickConnectIfMatches(serverName);
                       onDisconnect(serverName);
@@ -2313,9 +2275,6 @@ export function ServersTab({
             isOpen={detailModalState.isOpen}
             onClose={handleCloseDetailModal}
             server={detailModalServer}
-            needsReconnect={
-              reconnectWarningByServerName[detailModalServer.name]
-            }
             defaultTab={detailModalState.defaultTab}
             onSubmit={handleSubmitDetailModal}
             onDisconnect={onDisconnect}

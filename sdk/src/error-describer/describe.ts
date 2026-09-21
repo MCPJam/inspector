@@ -232,6 +232,25 @@ function resolveDashThirtyTwoThousandOne(message: string): string {
   return "jsonrpc/request_timeout";
 }
 
+/**
+ * `-32603` is overloaded: JSON-RPC Internal Error, plus the MCP SDK's
+ * "Invalid response format" when a handler return value fails the result
+ * schema. Disambiguate by message, same as the `-32001` overload above.
+ */
+const INVALID_RESPONSE_FORMAT =
+  /^(?:MCP error -32603:\s*)?invalid response format$/i;
+
+function isInvalidResponseFormat(message: string): boolean {
+  return INVALID_RESPONSE_FORMAT.test(message.trim());
+}
+
+function resolveInternalError(message: string): string {
+  if (isInvalidResponseFormat(message)) {
+    return "jsonrpc/invalid_response_format";
+  }
+  return "jsonrpc/internal_error";
+}
+
 function nodeErrnoToSlug(errno: string): string | undefined {
   const upper = errno.toUpperCase();
   switch (upper) {
@@ -296,6 +315,9 @@ function messageSlug(message: string): string | undefined {
   }
   if (/Invalid tool name/i.test(message)) {
     return "provider/invalid_tool_name";
+  }
+  if (isInvalidResponseFormat(message)) {
+    return "jsonrpc/invalid_response_format";
   }
   return undefined;
 }
@@ -483,6 +505,9 @@ function resolveSlug(error: unknown): {
   if (numericCode !== undefined) {
     if (numericCode === -32001) {
       return { slug: resolveDashThirtyTwoThousandOne(message), rawCode: numericCode };
+    }
+    if (numericCode === MCP_ERROR_CODES.InternalError) {
+      return { slug: resolveInternalError(message), rawCode: numericCode };
     }
     const slug = JSONRPC_SLUG_BY_CODE[numericCode];
     if (slug) return { slug, rawCode: numericCode };
