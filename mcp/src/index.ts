@@ -1,5 +1,4 @@
 import type { AuthInfo } from "@modelcontextprotocol/server";
-import type { JWTPayload } from "jose";
 import { handleMcpRequest } from "./server.js";
 import {
   GUEST_ISSUER,
@@ -7,6 +6,7 @@ import {
   normalizeIssuer,
   resourceIdentifier,
   verifyBearerToken,
+  type VerifiedToken,
   type VerifyConfig,
 } from "./auth.js";
 
@@ -88,11 +88,17 @@ function withMcpCors(response: Response): Response {
  * (seconds since epoch, the same unit `AuthInfo` uses) — `verifyBearerToken`
  * has already enforced it, so this just keeps the pass-through faithful for
  * any consumer that checks.
+ *
+ * An API key has no claims and no expiry that this worker can read, so it
+ * carries NEITHER field. That absence is the honest answer and not a default:
+ * a `0` or a synthesized payload would tell a future consumer that we checked
+ * something we never saw. `token` is what the tools forward, and for a key
+ * that is all there is.
  */
-function toAuthInfo(
-  verified: { token: string; payload: JWTPayload },
-  clientId: string,
-): AuthInfo {
+function toAuthInfo(verified: VerifiedToken, clientId: string): AuthInfo {
+  if (verified.kind === "api_key") {
+    return { token: verified.token, clientId, scopes: [] };
+  }
   return {
     token: verified.token,
     clientId,
@@ -184,9 +190,13 @@ export default {
         });
       }
 
-      // Killswitch: when locked down, the server is AuthKit-only — guest
-      // tokens are not accepted and anonymous (tokenless) connections are
-      // refused with the normal 401 → OAuth challenge.
+      // Killswitch: when locked down, the server accepts only a credential
+      // that names an account — guest tokens are not accepted and anonymous
+      // (tokenless) connections are refused with the normal 401 → OAuth
+      // challenge. An MCPJam API key still is one, so lockdown admits it: the
+      // flag exists to keep strangers out, not to bar the operator's own key,
+      // and the sandboxed GitHub check depends on it answering that challenge
+      // while its own CI credential keeps working.
       const lockedDown = env.MCPJAM_NONPROD_LOCKDOWN === "true";
 
       // Guest verification is enabled only when a guest JWKS URL is configured

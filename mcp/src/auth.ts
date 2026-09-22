@@ -6,10 +6,40 @@ import {
   type JWTVerifyGetKey,
 } from "jose";
 
-export interface VerifiedToken {
-  token: string;
-  payload: JWTPayload;
-}
+/**
+ * An accepted bearer, and HOW it was accepted.
+ *
+ * `jwt` was cryptographically verified here: signature, issuer pin, audience
+ * pin, algorithm and expiry (see `verifyBearerToken`).
+ *
+ * `api_key` was NOT verified here, and deliberately cannot be — an MCPJam
+ * `sk_` key is an opaque WorkOS API key with no signature, no issuer and no
+ * audience for this worker to check. It is admitted on its shape alone and
+ * validated where the authority actually lives: the Platform API resolves it
+ * through WorkOS, binds it to an organization, and refuses an unbound key
+ * (`server/middleware/bearer-auth.ts`). The worker holds no credentials of
+ * its own and grants nothing on the strength of a bearer — it forwards the
+ * caller's token to `PLATFORM_API_URL` and returns what it is told — so an
+ * unusable key costs an authenticated round trip and nothing else.
+ *
+ * The two are kept apart in the type rather than merged behind an optional
+ * `payload` so that any future per-principal behavior has to say out loud
+ * which kind of credential it trusts.
+ */
+export type VerifiedToken =
+  | { kind: "jwt"; token: string; payload: JWTPayload }
+  | { kind: "api_key"; token: string };
+
+/**
+ * An MCPJam API key, as minted in Settings → API keys.
+ *
+ * Anchored at both ends and with no `.` in the character class, so nothing
+ * that could be a JWT can match: a key is the whole header value or it is not
+ * a key. Narrow on purpose — a bearer that merely STARTS with `sk_` is still
+ * rejected, because the point of this branch is to admit one exact credential
+ * shape, not to stop verifying.
+ */
+export const API_KEY_TOKEN_PATTERN = /^sk_[A-Za-z0-9_-]+$/;
 
 /**
  * Guest token issuer. Mirrors the inspector's
@@ -175,6 +205,21 @@ export async function verifyBearerToken(
     return { ok: false, response: missingTokenResponse(origin) };
   }
 
+  // An MCPJam API key is accepted on its shape and validated downstream by the
+  // Platform API — see `VerifiedToken`. This runs BEFORE `decodeJwt`, which
+  // throws on an opaque token and would otherwise 401 every `sk_` key.
+  //
+  // It is also the one credential a non-interactive caller can hold for longer
+  // than five minutes: AuthKit access tokens expire in 300s, and the refresh
+  // grant rotates, so a CI job or a headless agent has nothing else to present.
+  //
+  // This does NOT weaken the rule above it. A bearer that is not a key still
+  // has to verify, and a malformed or expired JWT still 401s rather than being
+  // downgraded to anything.
+  if (API_KEY_TOKEN_PATTERN.test(token)) {
+    return { ok: true, verified: { kind: "api_key", token } };
+  }
+
   // Read the (unverified) issuer ONLY to select the matching JWKS. The trust
   // decision is `jwtVerify` below — signature + issuer pin + audience +
   // exp/nbf — so a spoofed `iss` cannot grant access: it must be in the
@@ -234,7 +279,7 @@ export async function verifyBearerToken(
       algorithms: ["RS256"],
       clockTolerance: 5,
     });
-    return { ok: true, verified: { token, payload } };
+    return { ok: true, verified: { kind: "jwt", token, payload } };
   } catch {
     return { ok: false, response: invalidTokenResponse(origin) };
   }
@@ -275,7 +320,7 @@ async function verifyGuestToken(
     if (typeof payload.sub !== "string" || payload.sub.length === 0) {
       return { ok: false, response: invalidTokenResponse(origin) };
     }
-    return { ok: true, verified: { token, payload } };
+    return { ok: true, verified: { kind: "jwt", token, payload } };
   } catch {
     return { ok: false, response: invalidTokenResponse(origin) };
   }

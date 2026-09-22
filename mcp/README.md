@@ -316,6 +316,31 @@ tenant's JWKS and exposes discovery metadata:
 Unauthenticated requests to `/mcp` get a `401` with a `WWW-Authenticate` header
 pointing at the PRM URL, which MCP clients use to kick off the OAuth flow.
 
+### An MCPJam API key is also accepted
+
+A bearer shaped exactly like an MCPJam API key (`sk_…`, from Settings → API
+keys) is admitted without being verified here, because there is nothing here to
+verify it against: a key carries no signature, no issuer and no audience. It is
+validated by the Platform API, which resolves it through WorkOS and binds it to
+an organization, so an unusable key costs one authenticated round trip and
+nothing more.
+
+This exists because an AuthKit access token lives 300 seconds and its refresh
+grant rotates on use, which leaves a CI job or a headless agent with nothing it
+can hold. A key is the one credential they can.
+
+Two consequences worth knowing:
+
+- **A rejected key does not produce an OAuth challenge.** It fails later, as a
+  tool error carrying the API's own refusal, not as a `401` with
+  `WWW-Authenticate`. An interactive MCP client that expects a challenge should
+  use OAuth; the key is for callers that were never going to open a browser.
+- **Lockdown still admits it** (`MCPJAM_NONPROD_LOCKDOWN`). The flag refuses
+  guests and anonymous callers, and a key is neither.
+
+A bearer that is not exactly a key is unaffected: it must still verify, and a
+malformed or expired JWT is still a `401` rather than being downgraded.
+
 The verified bearer token is forwarded to the Platform API
 (`PLATFORM_API_URL`, the Inspector `/api/v1` surface) on every tool call, so
 the API sees the same WorkOS identity the main app does and applies its own

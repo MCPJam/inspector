@@ -76,7 +76,8 @@ describe("verifyBearerToken", () => {
     const result = await verifyBearerToken(request(token), config, ORIGIN);
 
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.verified.payload.sub).toBe("user_123");
+    if (result.ok && result.verified.kind === "jwt")
+      expect(result.verified.payload.sub).toBe("user_123");
   });
 
   it("accepts a token from the custom AuthKit domain issuer", async () => {
@@ -161,7 +162,8 @@ describe("verifyBearerToken", () => {
     const result = await verifyBearerToken(request(token), config, ORIGIN);
 
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.verified.payload.sub).toBe("user_123");
+    if (result.ok && result.verified.kind === "jwt")
+      expect(result.verified.payload.sub).toBe("user_123");
   });
 
   it("rejects a token audienced to a different MCP resource", async () => {
@@ -249,6 +251,88 @@ describe("verifyBearerToken", () => {
 
     expect(result.ok).toBe(true);
   });
+
+  // An MCPJam `sk_` key is accepted on its shape and validated by the Platform
+  // API, which is the only party that can resolve it — see `VerifiedToken`.
+  // These cases pin the SHAPE rule, because that rule is the whole security
+  // boundary at the edge: widen it and an arbitrary opaque string stops being
+  // challenged.
+  it("accepts an MCPJam API key without any key material", async () => {
+    // No `resolveKey`: reaching a JWKS at all would mean the key took the JWT
+    // path. A fetch here would fail the test rather than hang it.
+    const config: VerifyConfig = {
+      clientId: CLIENT_ID,
+      authkitDomain: AUTHKIT_DOMAIN,
+      resolveKey: () => {
+        throw new Error("an API key must never resolve a signing key");
+      },
+    };
+
+    const result = await verifyBearerToken(
+      request("sk_live_abc123DEF-456_x"),
+      config,
+      ORIGIN,
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.verified.kind).toBe("api_key");
+      expect(result.verified.token).toBe("sk_live_abc123DEF-456_x");
+    }
+  });
+
+  it("accepts an API key while locked down, where a guest would be refused", async () => {
+    // Lockdown reaches this function as an ABSENT `guest` config (see the
+    // `/mcp` route), which is exactly what a locked-down request looks like
+    // here. The key is still admitted: the flag bars strangers, not accounts.
+    const config: VerifyConfig = {
+      clientId: CLIENT_ID,
+      authkitDomain: AUTHKIT_DOMAIN,
+    };
+
+    const result = await verifyBearerToken(
+      request("sk_test_lockdown"),
+      config,
+      ORIGIN,
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.verified.kind).toBe("api_key");
+  });
+
+  it("rejects a bearer that only looks like an API key", async () => {
+    const config: VerifyConfig = {
+      clientId: CLIENT_ID,
+      authkitDomain: AUTHKIT_DOMAIN,
+      resolveKey: () => null,
+    };
+
+    // `sk-` is a different prefix; a key with a dot could be a JWT smuggling
+    // its way past the prefix; a second word is not one token at all.
+    for (const bearer of ["sk-live_abc", "sk_live.abc.def", "sk_live_abc extra"]) {
+      const result = await verifyBearerToken(request(bearer), config, ORIGIN);
+      expect(result.ok, bearer).toBe(false);
+      if (!result.ok) expect(result.response.status, bearer).toBe(401);
+    }
+  });
+
+  it("rejects a JWT that merely starts with the key prefix", async () => {
+    const { privateKey } = await generateKeyPair("RS256");
+    const config: VerifyConfig = {
+      clientId: CLIENT_ID,
+      authkitDomain: AUTHKIT_DOMAIN,
+      resolveKey: () => null,
+    };
+    const jwt = await makeToken(privateKey, { iss: WORKOS_ISSUER });
+
+    const result = await verifyBearerToken(
+      request(`sk_${jwt}`),
+      config,
+      ORIGIN,
+    );
+
+    expect(result.ok).toBe(false);
+  });
 });
 
 // Guest tokens are RS256, carry { iss, sub, iat, exp } with NO `aud`, and must
@@ -295,7 +379,8 @@ describe("verifyBearerToken — guest tokens", () => {
     );
 
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.verified.payload.sub).toBe("guest_xyz");
+    if (result.ok && result.verified.kind === "jwt")
+      expect(result.verified.payload.sub).toBe("guest_xyz");
   });
 
   it("rejects a guest token carrying a purpose claim (promotion-proof reuse)", async () => {
