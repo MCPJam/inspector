@@ -191,6 +191,7 @@ import {
 import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import { MCPJAM_APP_HTML } from "../generated/McpAppsHtml.bundled.js";
 import {
+  PLATFORM_WIDGETS_ENABLED,
   PLATFORM_WIDGET_RESOURCE_URIS,
   tagPlatformWidgetPayload,
   type PlatformWidgetView,
@@ -745,7 +746,11 @@ export function registerPlatformCatalogTools(
   context: PlatformToolContext
 ): void {
   for (const operation of PLATFORM_CATALOG_OPERATIONS) {
-    const view = PLATFORM_TOOL_WIDGET_VIEWS[operation.name];
+    // `PLATFORM_WIDGETS_ENABLED` off ⇒ no view, so every tool takes the plain
+    // branch below and registers with no UI resource and no tagged payload.
+    const view = PLATFORM_WIDGETS_ENABLED
+      ? PLATFORM_TOOL_WIDGET_VIEWS[operation.name]
+      : undefined;
     registrar.registerTool(
       operation.name,
       {
