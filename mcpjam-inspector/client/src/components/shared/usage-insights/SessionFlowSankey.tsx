@@ -1,5 +1,11 @@
 import { useMemo, type ReactNode } from "react";
-import { AlertTriangle, Info, RefreshCw, Target } from "lucide-react";
+import { AlertTriangle, Info, Plus, RefreshCw, Target, X } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
@@ -16,13 +22,16 @@ import {
   STAGE_TITLES,
   selectionForLink,
   selectionForNode,
+  stageValueLabel,
 } from "@/components/shared/usage-insights/insights-sankey";
+import { useSankeyStageOrder } from "@/components/shared/usage-insights/sankey-stage-order";
 import { cn } from "@/lib/utils";
 
 export interface SessionFlowSankeyProps {
   questionHeaders?: Partial<Record<SankeyStage, ReactNode>>;
-  questionCreate?: ReactNode;
   questionEditing?: boolean;
+  /** Opens the new-question dialog from the shared add-column menu. */
+  onAddQuestion?: () => void;
   breakdown: UsageBreakdown | null | undefined;
   /** Currently open selection, so its endpoints can read as selected. */
   selection: InsightsSelection | null;
@@ -64,19 +73,29 @@ export interface SessionFlowSankeyProps {
    */
   fillHeight?: boolean;
   /**
-   * Opt into the page-scroll chrome: the diagram bleeds to its already-padded
-   * owning container (no card padding, no `border-b`) and its header sticks as
-   * the tall diagram scrolls past. This is the swarm Insights scroll opt-in and
-   * is NOT implied by `!fillHeight` — the plain embedded callers (BenchReport,
-   * the explanatory opt-in) keep the card chrome.
+   * Opt into the leftover-pane chrome: the diagram bleeds to its already-
+   * padded owning container (no card padding, no `border-b`) and fills that
+   * parent, scrolling columns under sticky titles. This is the swarm
+   * Insights opt-in and is NOT implied by `!fillHeight` — the plain
+   * embedded callers (BenchReport, the explanatory opt-in) keep the card
+   * chrome.
    */
   scrollLayout?: boolean;
+  /**
+   * localStorage slot for a dragged column permutation. Omit for an
+   * ephemeral order that resets on remount (embedded / opt-in callers).
+   */
+  stageOrderKey?: string;
 }
 
 /**
  * Per-axis colour. The four columns are independent clusterings, and giving
  * each its own hue is what lets a ribbon read as "this theme flows into that
  * one" rather than as one undifferentiated mass.
+ *
+ * Question columns used to share `var(--foreground)`, so every Jev yes/no bar
+ * — and the ribbon between two of them — painted as one black slab. They sit
+ * in the same diagram-local palette as the four axes (not status tokens).
  */
 const STAGE_COLOR: Record<SankeyStage, { node: string; head: string }> = {
   goal: { node: "#7fb3a0", head: "#2f8b76" },
@@ -84,6 +103,121 @@ const STAGE_COLOR: Record<SankeyStage, { node: string; head: string }> = {
   outcome: { node: "#e08356", head: "#c2552c" },
   sentiment: { node: "#bda2d8", head: "#7a5da3" },
 };
+
+const QUESTION_COLORS: Array<{ node: string; head: string }> = [
+  { node: "#d89bb0", head: "#b05a78" },
+  { node: "#d4bc7a", head: "#9a7d32" },
+  { node: "#7eb8c0", head: "#3d7a84" },
+];
+
+function colorsForStages(
+  stages: readonly SankeyStage[],
+): Record<SankeyStage, { node: string; head: string }> {
+  let questionIndex = 0;
+  return {
+    ...STAGE_COLOR,
+    ...Object.fromEntries(
+      stages
+        .filter((stage) => stage.startsWith("question:"))
+        .map((stage) => [
+          stage,
+          QUESTION_COLORS[questionIndex++ % QUESTION_COLORS.length],
+        ]),
+    ),
+  };
+}
+
+function HideColumnButton({
+  label,
+  onHide,
+}: {
+  label: string;
+  onHide: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-no-dnd
+      aria-label={`Remove ${label} column`}
+      className="shrink-0 text-muted-foreground opacity-0 hover:text-foreground focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+      onClick={onHide}
+    >
+      <X className="size-3" />
+    </button>
+  );
+}
+
+function CatalogColumnHeader({
+  title,
+  canHide,
+  onHide,
+}: {
+  title: string;
+  canHide: boolean;
+  onHide: () => void;
+}) {
+  return (
+    <div className="group flex items-center gap-1">
+      <span className="text-[10.5px] font-semibold uppercase tracking-[0.13em]">
+        {title}
+      </span>
+      {canHide ? <HideColumnButton label={title} onHide={onHide} /> : null}
+    </div>
+  );
+}
+
+function AddColumnTrailing({
+  hidden,
+  titles,
+  onRestore,
+  onAddQuestion,
+}: {
+  hidden: SankeyStage[];
+  titles: Record<SankeyStage, string>;
+  onRestore: (stage: SankeyStage) => void;
+  onAddQuestion?: () => void;
+}) {
+  if (hidden.length === 0 && !onAddQuestion) return null;
+  if (hidden.length === 0 && onAddQuestion) {
+    return (
+      <button
+        type="button"
+        data-no-dnd
+        aria-label="Add question column"
+        onClick={onAddQuestion}
+        className="flex shrink-0 text-muted-foreground hover:text-foreground"
+      >
+        <Plus className="size-4" />
+      </button>
+    );
+  }
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          data-no-dnd
+          aria-label="Add column"
+          className="flex shrink-0 text-muted-foreground hover:text-foreground"
+        >
+          <Plus className="size-4" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-40">
+        {hidden.map((stage) => (
+          <DropdownMenuItem key={stage} onSelect={() => onRestore(stage)}>
+            {titles[stage]}
+          </DropdownMenuItem>
+        ))}
+        {onAddQuestion ? (
+          <DropdownMenuItem onSelect={() => onAddQuestion()}>
+            Add question
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 function RebuildButton({
   onRebuild,
@@ -118,8 +252,8 @@ function RebuildButton({
 export function SessionFlowSankey({
   breakdown,
   questionHeaders,
-  questionCreate,
   questionEditing,
+  onAddQuestion,
   selection,
   onSelectNode,
   onSelectLink,
@@ -129,9 +263,18 @@ export function SessionFlowSankey({
   headerActions,
   fillHeight = false,
   scrollLayout = false,
+  stageOrderKey,
 }: SessionFlowSankeyProps) {
   const sankey = breakdown?.sankey;
   const scan = breakdown?.scan;
+  // Canonical (catalog) order — colors stay pinned to a question's id, not
+  // whichever slot it was dragged into.
+  const rawStages = sankey?.stages?.map((stage) => stage.id) ?? STAGE_ORDER;
+  const { stages, hidden, onReorder, onHide, onRestore } = useSankeyStageOrder(
+    rawStages,
+    stageOrderKey,
+  );
+  const colors = colorsForStages(rawStages);
 
   /**
    * Hoisted above the early returns: the empty-flow branch below needs it too.
@@ -157,6 +300,33 @@ export function SessionFlowSankey({
       ...stageTitles,
     }),
     [stageTitles, sankey?.stages],
+  );
+
+  const headerContent = useMemo(() => {
+    const headers: Partial<Record<SankeyStage, ReactNode>> = {
+      ...questionHeaders,
+    };
+    const canHide = stages.length > 1;
+    for (const stage of stages) {
+      if (headers[stage] || stage.startsWith("question:")) continue;
+      headers[stage] = (
+        <CatalogColumnHeader
+          title={titles[stage]}
+          canHide={canHide}
+          onHide={() => onHide(stage)}
+        />
+      );
+    }
+    return headers;
+  }, [onHide, questionHeaders, stages, titles]);
+
+  const headerTrailing = (
+    <AddColumnTrailing
+      hidden={hidden}
+      titles={titles}
+      onRestore={onRestore}
+      onAddQuestion={onAddQuestion}
+    />
   );
 
   /**
@@ -230,30 +400,13 @@ export function SessionFlowSankey({
       (q) => `question:${q.questionId}:${q.value ? "yes" : "no"}`,
     ),
   ]);
-  const stages = sankey?.stages?.map((stage) => stage.id) ?? STAGE_ORDER;
-  const colors = {
-    ...STAGE_COLOR,
-    ...Object.fromEntries(
-      stages
-        .filter((stage) => stage.startsWith("question:"))
-        .map((stage) => [
-          stage,
-          { node: "var(--foreground)", head: "var(--muted-foreground)" },
-        ]),
-    ),
-  };
 
   return (
     <div
       className={cn(
         "flex flex-col gap-2",
-        fillHeight
-          ? "h-full min-h-0 overflow-hidden px-0 py-1"
-          : scrollLayout
-          ? // Scroll layout: the diagram bleeds to its already-padded owning
-            // container (no extra px-5) and drops the card border-b, which
-            // belonged to the old locked-viewport chrome.
-            "px-0 py-1"
+        fillHeight || scrollLayout
+          ? "flex h-full min-h-0 flex-1 flex-col overflow-hidden px-0 py-1"
           : // Embedded in a document/opt-in card (BenchReport, the
             // explanatory opt-in): keep the padded, divided card chrome.
             "border-b px-5 py-4",
@@ -262,42 +415,6 @@ export function SessionFlowSankey({
       data-fill-height={fillHeight ? "true" : undefined}
       data-fill-remaining={scrollLayout ? "true" : undefined}
     >
-      <div
-        className={cn(
-          "flex shrink-0 flex-wrap items-center justify-between gap-2",
-          // Keep the freshness chip + Session-flow/Clusters toggle + tuning
-          // control reachable while the tall diagram scrolls past beneath it.
-          scrollLayout && "sticky top-0 z-10 bg-background pb-2",
-        )}
-      >
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-medium">Session flow</h3>
-          <Tooltip delayDuration={200}>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label="About the session flow"
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <Info className="h-3.5 w-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="max-w-xs">
-              Each column is clustered on its own, so a session&rsquo;s behavior
-              theme says nothing about which outcome theme it lands in &mdash;
-              that is what the ribbons show. Names are generated from the
-              sessions in each group rather than chosen from a fixed list, so
-              they change as the sessions do.
-            </TooltipContent>
-          </Tooltip>
-        </div>
-        {headerActions ? (
-          <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-            {headerActions}
-          </div>
-        ) : null}
-      </div>
-
       {scan?.truncated ? (
         <div
           role="status"
@@ -350,18 +467,42 @@ export function SessionFlowSankey({
         stages={stages}
         stageTitles={titles}
         stageColors={colors}
-        headerContent={questionHeaders}
-        headerTrailing={questionCreate}
-        headerHeight={
-          questionEditing
-            ? 160
-            : questionCreate || questionHeaders
-            ? 38
-            : undefined
+        toolbar={
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 pb-2">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-medium">Session flow</h3>
+              <Tooltip delayDuration={200}>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="About the session flow"
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <Info className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs">
+                  <p>Each column clusters on its own.</p>
+                  <p>Ribbons connect neighboring columns.</p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
+            {headerActions ? (
+              <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                {headerActions}
+              </div>
+            ) : null}
+          </div>
         }
+        headerContent={headerContent}
+        headerTrailing={headerTrailing}
+        headerHeight={38}
+        onReorderStages={onReorder}
+        reorderDisabled={questionEditing}
         unitNoun="sessions"
         discordantHighlight
         selectedKeys={selectedKeys}
+        labelForNode={(node) => stageValueLabel(node, analysisInFlight)}
         onSelectNode={(node) => {
           const next = selectionForNode(node);
           if (next?.questions)
