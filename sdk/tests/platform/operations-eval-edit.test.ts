@@ -508,12 +508,14 @@ describe("eval-edit operation execution", () => {
     expect(call?.headers["idempotency-key"]).toBe("cli-import-3");
   });
 
-  it("import_eval_cases IS labelled as spending, unlike generation", () => {
+  it("import_eval_cases is NOT labelled as spending, same as generation", () => {
     // `operationDescription` appends the "COSTS MONEY" warning off this facet.
-    // Import runs the authoring model on the CUSTOMER's credits, so the
-    // warning is true here even though it would be a lie for generation.
-    expect(importEvalCasesOperation.risk).toBe("spend");
-    expect(importEvalCasesOperation.description).toContain("COSTS MONEY");
+    // Import is platform-paid: the backend bills it as `markdown_case_import`,
+    // which sits in PLATFORM_PAID_INTERNAL_LLM beside `eval_generation`, so
+    // nothing is debited from the customer and the warning would be a lie.
+    expect(importEvalCasesOperation.risk).toBe("none");
+    expect(importEvalCasesOperation.risk).toBe(generateEvalCasesOperation.risk);
+    expect(importEvalCasesOperation.description).not.toContain("COSTS MONEY");
     // The way out of a partial import, stated where a model will read it.
     expect(importEvalCasesOperation.description).toContain("reviewUrl");
     expect(importEvalCasesOperation.description).toMatch(
