@@ -68,7 +68,10 @@ vi.mock("@mcpjam/sdk/browser", () => ({
 // the component's own updateState (the synced-ref write path under test).
 const machineCtl = vi.hoisted(() => ({
   onAdvance: null as
-    | ((update: (u: Partial<OAuthFlowState>) => void) => void)
+    | ((
+        update: (u: Partial<OAuthFlowState>) => void,
+        getState: () => OAuthFlowState,
+      ) => void)
     | null,
   updateState: null as ((u: Partial<OAuthFlowState>) => void) | null,
 }));
@@ -76,11 +79,12 @@ const machineCtl = vi.hoisted(() => ({
 vi.mock("@/lib/oauth/debug-state-machine-adapter", () => ({
   createInspectorOAuthStateMachine: (opts: {
     updateState: (u: Partial<OAuthFlowState>) => void;
+    getState: () => OAuthFlowState;
   }) => {
     machineCtl.updateState = opts.updateState;
     return {
       proceedToNextStep: async () => {
-        machineCtl.onAdvance?.(opts.updateState);
+        machineCtl.onAdvance?.(opts.updateState, opts.getState);
       },
     };
   },
@@ -304,38 +308,60 @@ const REJECTED_EXCHANGE: Partial<OAuthFlowState> = {
   error: "Token request failed: 400 Bad Request: invalid_grant: Grant code expired",
 };
 
+const FRESH_AUTHORIZATION_URL = "https://auth.example.com/authorize?x=2";
+
 describe("OAuthFlowTab, after the AS rejects the authorization code", () => {
-  async function renderAtRejectedExchange() {
+  // Scripts the machine's two regeneration steps and records the step each
+  // advance started from, so tests can pin that recovery restarts BEFORE PKCE
+  // generation rather than reusing the spent verifier, state and URL.
+  async function renderAtRejectedExchange(
+    regeneration: Partial<OAuthFlowState>[] = [
+      { currentStep: "generate_pkce_parameters", state: "fresh-state" },
+      {
+        currentStep: "authorization_request",
+        authorizationUrl: FRESH_AUTHORIZATION_URL,
+      },
+    ],
+  ) {
     renderTab();
     machineCtl.onAdvance = (update) => update(REJECTED_EXCHANGE);
     await dispatch({ type: "advanceOauthFlow", payload: {} });
-    let advances = 0;
-    machineCtl.onAdvance = () => {
-      advances += 1;
+    const startedFrom: Array<{ step: string; url?: string }> = [];
+    machineCtl.onAdvance = (update, getState) => {
+      startedFrom.push({
+        step: getState().currentStep,
+        url: getState().authorizationUrl,
+      });
+      const next = regeneration[startedFrom.length - 1];
+      if (next) update(next);
     };
-    return { advances: () => advances };
+    return { startedFrom };
   }
 
-  it("Continue reads Authorize and reopens the auth popup instead of re-running the exchange", async () => {
-    const { advances } = await renderAtRejectedExchange();
+  it("Continue reads Authorize and reopens the popup with a freshly generated URL", async () => {
+    const { startedFrom } = await renderAtRejectedExchange();
     expect(latestLoggerActions().continueLabel).toBe("Authorize");
 
     await act(async () => {
       await latestLoggerActions().onContinue?.();
     });
 
-    expect(advances()).toBe(0);
+    expect(startedFrom).toEqual([
+      { step: "received_client_credentials", url: undefined },
+      { step: "generate_pkce_parameters", url: undefined },
+    ]);
     await waitFor(() => {
       expect(captureAuthModalProps).toHaveBeenLastCalledWith(
-        expect.objectContaining({ open: true }),
+        expect.objectContaining({
+          open: true,
+          authorizationUrl: FRESH_AUTHORIZATION_URL,
+        }),
       );
     });
-    const snapshot = JSON.stringify(await readSurfaceSnapshot("oauth-flow"));
-    expect(snapshot).toContain('"currentStep":"authorization_request"');
   });
 
-  it("the agent advance rewinds too and hands off to the human popup", async () => {
-    const { advances } = await renderAtRejectedExchange();
+  it("the agent advance regenerates too and hands off to the human popup", async () => {
+    const { startedFrom } = await renderAtRejectedExchange();
     const response = await dispatch({ type: "advanceOauthFlow", payload: {} });
     expect(response).toMatchObject({
       status: "success",
@@ -344,7 +370,25 @@ describe("OAuthFlowTab, after the AS rejects the authorization code", () => {
         currentStep: "authorization_request",
       },
     });
-    expect(advances()).toBe(0);
+    expect(startedFrom.map((entry) => entry.step)).toEqual([
+      "received_client_credentials",
+      "generate_pkce_parameters",
+    ]);
+  });
+
+  it("keeps the popup closed when regenerating the request fails", async () => {
+    const { startedFrom } = await renderAtRejectedExchange([
+      { error: "Missing authorization endpoint or client ID" },
+    ]);
+
+    await act(async () => {
+      await latestLoggerActions().onContinue?.();
+    });
+
+    expect(startedFrom).toHaveLength(1);
+    expect(captureAuthModalProps).not.toHaveBeenCalledWith(
+      expect.objectContaining({ open: true }),
+    );
   });
 
   it("a token_request that still holds a code advances normally", async () => {

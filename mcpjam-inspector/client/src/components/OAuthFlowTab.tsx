@@ -117,11 +117,15 @@ const isHttpServer = (server?: ServerWithName) =>
 const needsReauthorization = (state: OAuthFlowState) =>
   state.currentStep === "token_request" && !state.authorizationCode?.trim();
 
-// Rewind to the authorization step so the next Authorize reopens the popup for
-// a fresh code. The rejection was already toasted; clearing it lets the same
-// error toast again if the retry fails the same way.
+// Rewind to just before PKCE generation, so the retry runs the machine's own
+// steps and gets a fresh code_verifier, `state` and authorization URL instead
+// of reopening the spent transaction. The stale URL is cleared so a failed
+// regeneration can never reopen it. The rejection was already toasted;
+// clearing it lets the same error toast again if the retry fails the same way.
 const REAUTHORIZE_UPDATE: Partial<OAuthFlowState> = {
-  currentStep: "authorization_request",
+  currentStep: "received_client_credentials",
+  authorizationUrl: undefined,
+  authorizationResponseIss: undefined,
   error: undefined,
 };
 
@@ -445,6 +449,27 @@ export const OAuthFlowTab = ({
     }
   }, [oauthStateMachine]);
 
+  // Recovery after the AS rejected the code: rewind, then run the machine's
+  // PKCE and authorization-URL steps. Resolves true only when a fresh URL is
+  // ready and neither step failed; on false the flow state carries the error.
+  const regenerateAuthorizationRequest = useCallback(async () => {
+    updateOAuthFlowState(REAUTHORIZE_UPDATE);
+    await proceedToNextStep();
+    if (
+      oauthFlowStateRef.current.currentStep !== "generate_pkce_parameters" ||
+      oauthFlowStateRef.current.error
+    ) {
+      return false;
+    }
+    await proceedToNextStep();
+    const after = oauthFlowStateRef.current;
+    return (
+      after.currentStep === "authorization_request" &&
+      Boolean(after.authorizationUrl) &&
+      !after.error
+    );
+  }, [proceedToNextStep, updateOAuthFlowState]);
+
   const handleAdvance = useCallback(async () => {
     setIsAdvancing(true);
     track("oauth_flow_tab_next_step_button_clicked", {
@@ -458,8 +483,9 @@ export const OAuthFlowTab = ({
 
     try {
       if (needsReauthorization(oauthFlowStateRef.current)) {
-        updateOAuthFlowState(REAUTHORIZE_UPDATE);
-        setIsAuthModalOpen(true);
+        if (await regenerateAuthorizationRequest()) {
+          setIsAuthModalOpen(true);
+        }
       } else if (
         oauthFlowState.currentStep === "authorization_request" ||
         oauthFlowState.currentStep === "generate_pkce_parameters"
@@ -492,8 +518,8 @@ export const OAuthFlowTab = ({
     proceedToNextStep,
     profile.serverUrl,
     protocolVersion,
+    regenerateAuthorizationRequest,
     registrationStrategy,
-    updateOAuthFlowState,
   ]);
 
   const continueLabel = !hasProfile
@@ -601,17 +627,15 @@ export const OAuthFlowTab = ({
             "The flow is already complete — use ui_reset_oauth_flow to run it again.",
           );
         }
-        const rewound = needsReauthorization(before);
-        if (rewound) {
-          updateOAuthFlowState(REAUTHORIZE_UPDATE);
-        }
-        const previousStep = rewound
-          ? "authorization_request"
-          : before.currentStep;
+        const previousStep = before.currentStep;
         // Mirror handleAdvance exactly, including its order at the PKCE step:
         // advance FIRST (that generates the authorizationUrl the auth modal
         // needs to render), then hand off to the human popup.
-        if (
+        if (needsReauthorization(before)) {
+          if (!(await regenerateAuthorizationRequest())) {
+            return buildAdvanceResult(previousStep, oauthFlowStateRef.current);
+          }
+        } else if (
           previousStep === "authorization_request" ||
           previousStep === "generate_pkce_parameters"
         ) {
@@ -622,17 +646,18 @@ export const OAuthFlowTab = ({
           if (!after.authorizationUrl || after.error) {
             return buildAdvanceResult(previousStep, after);
           }
-          setIsAuthModalOpen(true);
-          return {
-            status: "authorization_modal_opened",
-            currentStep: after.currentStep,
-            note: "A human must complete sign-in in the authorization popup — the agent cannot and must not do this. If no popup appeared, ask the user to check their popup blocker. The flow advances automatically after the callback; observe with ui_snapshot_app instead of calling this again.",
-          };
+        } else {
+          // Known race, accepted: the 500ms post-callback exchange timer can
+          // auto-advance concurrently — identical exposure to the human button.
+          await proceedToNextStep();
+          return buildAdvanceResult(previousStep, oauthFlowStateRef.current);
         }
-        // Known race, accepted: the 500ms post-callback exchange timer can
-        // auto-advance concurrently — identical exposure to the human button.
-        await proceedToNextStep();
-        return buildAdvanceResult(previousStep, oauthFlowStateRef.current);
+        setIsAuthModalOpen(true);
+        return {
+          status: "authorization_modal_opened",
+          currentStep: oauthFlowStateRef.current.currentStep,
+          note: "A human must complete sign-in in the authorization popup — the agent cannot and must not do this. If no popup appeared, ask the user to check their popup blocker. The flow advances automatically after the callback; observe with ui_snapshot_app instead of calling this again.",
+        };
       },
       resetOauthFlow: () => {
         if (!hasProfile) {
