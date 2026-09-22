@@ -386,6 +386,7 @@ import {
   isAppSurfaceId,
 } from "@/shared/app-surfaces";
 import { sanitizeTraceErrorMessage } from "./lib/oauth/trace-redaction";
+import { redactStackLikeText } from "./lib/error-technical-details";
 import { waitForUiToolNames } from "./lib/webmcp/ui-tools-readiness";
 import { listSurfaceGroupToolNames } from "./lib/webmcp/groups";
 import {
@@ -439,28 +440,6 @@ function clearHostedCallbackRetryState() {
   }
 }
 
-/**
- * Redact the OAuth debugger's error-boundary output.
- *
- * Uses the SDK's single trace redactor rather than a local pattern list — this
- * used to be a fourth private copy, and a private copy is how the sensitive-
- * field set drifts.
- *
- * The stack is redacted in ONE pass with a raised cap, not line by line. A
- * multi-line payload can put a JSON credential's key and its value on separate
- * lines, and splitting first hands the redactor two fragments that match
- * neither — so the value survives into copied and reported output. The cap
- * exists for a single error message; a stack legitimately needs more room.
- */
-const MAX_REDACTED_STACK = 8_000;
-
-function redactStackLikeText(value: string | null | undefined): string {
-  if (!value) return "";
-  return sanitizeTraceErrorMessage(value, {
-    maxLength: MAX_REDACTED_STACK,
-    maxScanned: MAX_REDACTED_STACK * 2,
-  });
-}
 
 function redactOAuthDebuggerError(error: Error | null) {
   return {
