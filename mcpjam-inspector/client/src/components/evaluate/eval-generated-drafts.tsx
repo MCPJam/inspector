@@ -237,7 +237,9 @@ export function EvalGeneratedDrafts({
   const statusLine = running
     ? written
       ? `${written} written so far`
-      : "Reading your document"
+      : importing
+        ? "Reading your document"
+        : "Generating cases"
     : written === ready
       ? `${written} ${written === 1 ? "case" : "cases"} written`
       : `${written} cases written · ${ready} ready to add`;

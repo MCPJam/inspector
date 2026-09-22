@@ -98,7 +98,10 @@ it("replaces skeletons one by one when all cases arrive together", () => {
   act(() => vi.advanceTimersByTime(180));
   expect(screen.getByText("Third case")).toBeVisible();
   expect(screen.queryByTestId("generating-case-skeleton")).toBeNull();
-  expect(screen.getByText("Generation complete")).toBeVisible();
+  // The corner status line is gone: the drafts panel below carries the state,
+  // and saying "Generating cases…" in both places said it twice.
+  expect(screen.queryByText("Generation complete")).toBeNull();
+  expect(screen.getByText(/3 cases written/)).toBeVisible();
   expect(
     screen.getByRole("button", { name: "Add all to suite" }),
   ).toBeEnabled();
