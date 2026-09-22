@@ -3,161 +3,23 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "`EvalSuite.runWithClient` accepts a list of saved clients. It runs the suite against each in parallel and uploads one run per client, grouped in MCPJam under one run number. Adds `runGroupId` to the reporting config. The evals GitHub Action now shows grouped runs as one table with a row per client and model.",
-      "id": "multi-client-run-with-client"
-    },
-    {
-      "releases": [
-        {
           "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Desktop: fix an Update button that stopped working ten minutes after the update finished downloading. The app kept checking for updates even with a build already staged, and that extra check made Electron forget the staged build — after which clicking Update did nothing at all and quitting the app was refused, leaving the only way out a reinstall. The app now stops checking once a build is staged, always lets you quit, and if the staged build has gone missing a single click restarts the app, downloads it again and installs it.",
-      "id": "quiet-pandas-repeat"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.\n\nThis changeset carries no code changes. It ships the inspector and SDK work that has been waiting on main since the last release, and bumps @mcpjam/cli in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.",
-      "id": "release-inspector-cli-sdk-2026-09-21"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Rename the server connection modal's \"Save Changes\" button to \"Save & Connect\".\n\nThe button already saved the configuration and connected to the server in one\nclick, but the label only described the save half. The new label makes it\nclear the click both saves and connects.",
-      "id": "save-and-connect-label"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Restyle the iteration scorecard as one column of stage sections. Each stage leads with its name, state word and question, then lists every evaluator that grades it as an EXPECTED / ACTUAL pair, with no separate \"added assertions\" section and no stage picker. Authored checks are titled by their purpose, and a judge row with no goal sentence names what the judge graded against.",
-      "id": "scorecard-expected-actual"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Swarm findings: add an `analysisUnavailable` coverage note, so a wave whose cause analysis never ran is distinguishable from one where the analysis ran and found nothing.",
-      "id": "swarm-findings-analysis-unavailable"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Swarm findings: the Findings card now names the cause and its fix separately, keeps full goal titles, states a recorded signal when no cause was confirmed, and gives the persona card a real supporting session's words.",
-      "id": "swarm-findings-headline"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Swarm findings: the Findings card reads the same whichever order a mechanism's rows arrive in, claims a stage only when its rows agree on one, and no longer nests a paragraph inside a paragraph in the suggested-fix line.",
-      "id": "swarm-findings-order-independence"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Swarm findings: carry recorded session signals, a plain-language persona account and proposal verification counts on the wire. All three additions are optional, so existing payloads keep parsing unchanged.",
-      "id": "swarm-recorded-signals"
+      "summary": "Let the Session flow columns be reordered. Every column in the Sankey can now be dragged into a new position, hidden, and restored from the header, and the order is remembered per surface. The headers moved out of the chart into a sticky row, so the diagram scrolls under them instead of the page scrolling through it, and the canvas widens with the column count rather than squeezing the columns it has. Adding a yes/no question opens a modal instead of an inline form, and each question column gets its own hue. An unanswered question now takes its label from the stages the server sent.\n\nOne limit to know about: the server stores counts for neighbouring stages only, so putting two columns next to each other that were never neighbours draws a link reconstructed from session paths rather than one the server measured.",
+      "id": "session-flow-column-reordering"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "8.11.1",
-      "changesets": [
-        "multi-client-run-with-client",
-        "release-inspector-cli-sdk-2026-09-21",
-        "swarm-findings-analysis-unavailable",
-        "swarm-recorded-signals"
-      ],
-      "newVersion": "8.12.0"
-    },
-    {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "3.8.1",
-      "changesets": [
-        "quiet-pandas-repeat",
-        "release-inspector-cli-sdk-2026-09-21",
-        "save-and-connect-label",
-        "scorecard-expected-actual",
-        "swarm-findings-analysis-unavailable",
-        "swarm-findings-headline",
-        "swarm-findings-order-independence",
-        "swarm-recorded-signals"
-      ],
-      "newVersion": "3.9.0"
-    },
-    {
-      "name": "@mcpjam/cli",
       "type": "patch",
-      "oldVersion": "5.10.2",
+      "oldVersion": "3.9.1",
       "changesets": [
-        "release-inspector-cli-sdk-2026-09-21"
+        "session-flow-column-reordering"
       ],
-      "newVersion": "5.10.3"
-    },
-    {
-      "name": "@mcpjam/mcp",
-      "type": "none",
-      "oldVersion": "0.0.1",
-      "changesets": [],
-      "newVersion": "0.0.1"
-    },
-    {
-      "name": "@mcpjam/slack-app",
-      "type": "none",
-      "oldVersion": "0.1.0",
-      "changesets": [],
-      "newVersion": "0.1.0"
+      "newVersion": "3.9.2"
     }
   ]
 }

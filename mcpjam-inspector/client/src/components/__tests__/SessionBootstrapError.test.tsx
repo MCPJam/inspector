@@ -31,7 +31,8 @@ describe("resolveBootstrapErrorScreen", () => {
 
     expect(report).toBe(true);
     render(element);
-    expect(screen.getByText("Authentication Error")).toBeInTheDocument();
+    expect(screen.getByText("MCPJam couldn't start")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reload MCPJam" })).toBeEnabled();
   });
 
   it("non-SessionTokenError failure: renders the generic screen and reports", () => {
@@ -41,6 +42,7 @@ describe("resolveBootstrapErrorScreen", () => {
 
     expect(report).toBe(true);
     render(element);
-    expect(screen.getByText("Authentication Error")).toBeInTheDocument();
+    expect(screen.getByText("MCPJam couldn't start")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reload MCPJam" })).toBeEnabled();
   });
 });

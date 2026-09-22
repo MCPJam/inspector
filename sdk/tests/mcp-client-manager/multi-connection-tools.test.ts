@@ -61,7 +61,7 @@ const opts = { toolCallId: "call", messages: [] };
 describe("multi-connection tools", () => {
   it("uses B for execution and output conversion of the same resource URI", async () => {
     const { merged, at, bt, onRoute } = fixture();
-    const input = { query: "hello", account: b.connectionId };
+    const input = { query: "hello", link_id: b.connectionId };
     const output = await merged.search.execute!(input, opts);
     expect(bt.execute).toHaveBeenCalledWith({ query: "hello" }, opts);
     expect(at.execute).not.toHaveBeenCalled();
@@ -73,7 +73,7 @@ describe("multi-connection tools", () => {
   });
   it("rejects missing or foreign selectors before any invocation", async () => {
     const { merged, at, bt } = fixture();
-    for (const input of [{}, { account: "foreign" }])
+    for (const input of [{}, { link_id: "foreign" }])
       expect(await merged.search.execute!(input, opts)).toMatchObject({
         isError: true,
       });
@@ -81,15 +81,15 @@ describe("multi-connection tools", () => {
     expect(bt.execute).not.toHaveBeenCalled();
   });
   it.each([
-    { type: "object", properties: { account: { type: "string" } } },
+    { type: "object", properties: { link_id: { type: "string" } } },
     { type: "object", properties: { other: { type: "boolean" } } },
   ])("creates variants for collisions or differing schemas", async (schema) => {
     const { merged, bt } = fixture(schema);
     expect(merged.search).toBeUndefined();
     expect(Object.keys(merged)).toHaveLength(2);
     const variant = Object.keys(merged).find((k) => k.endsWith("__side"))!;
-    await merged[variant].execute!({ account: "upstream" }, opts);
-    expect(bt.execute).toHaveBeenCalledWith({ account: "upstream" }, opts);
+    await merged[variant].execute!({ link_id: "upstream" }, opts);
+    expect(bt.execute).toHaveBeenCalledWith({ link_id: "upstream" }, opts);
   });
   it("keeps long tool names distinguishable and inside the name limit", () => {
     // Both names share their first 20 characters. Truncating the TOOL name to
@@ -146,7 +146,7 @@ describe("multi-connection tools", () => {
       { snapshot }
     );
     expect(
-      (asSchema(tools.search.inputSchema).jsonSchema as any).properties.account
+      (asSchema(tools.search.inputSchema).jsonSchema as any).properties.link_id
         .enum
     ).toEqual([b.connectionId]);
   });

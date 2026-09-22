@@ -118,7 +118,7 @@ describe("useCreditTopup startCheckout", () => {
       await act(async () => {
         await expect(
           result.current.startCheckout(startCheckoutArgs()),
-        ).rejects.toThrow(/non-Stripe checkout URL/);
+        ).rejects.toThrow(/The payment link couldn’t be verified/);
       });
       expect(openSpy).not.toHaveBeenCalled();
     } finally {

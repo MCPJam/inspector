@@ -4419,7 +4419,7 @@ export function useServerState({
       if (!HOSTED_MODE || !authorizationServerUrl) return;
       if (!isPrivateNetworkUrl(authorizationServerUrl)) return;
       toast.warning(
-        "This server's authorization server runs on your machine, so tokens can't auto-refresh in hosted mode. Re-run the OAuth flow when they expire, or use local mode for fully-local servers."
+        "This server’s sign-in service is on a private network. MCPJam’s hosted web app can’t renew this connection automatically. Sign in again when the connection expires, or run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app."
       );
     },
     []
