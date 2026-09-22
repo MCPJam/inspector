@@ -34,6 +34,59 @@ function contentSankeyHeight(nodeCountWidestColumn: number): number {
  * would observe nothing and never re-attach, leaving the diagram at its
  * content floor inside a full-height pane.
  */
+/**
+ * Leftover viewport below this element — not the element's own height.
+ *
+ * Measuring the box itself fights a growing SVG: a taller viewBox makes the
+ * box taller, which asks for a taller viewBox. Window leftover is independent
+ * of that, so a short cohort stretches into the pane and a tall one still
+ * grows the page.
+ */
+function useRemainingViewport(enabled: boolean) {
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const detachRef = useRef<(() => void) | null>(null);
+
+  const ref = useCallback(
+    (element: HTMLDivElement | null) => {
+      detachRef.current?.();
+      detachRef.current = null;
+      if (!enabled || !element) return;
+
+      const update = () => {
+        const width = Math.round(element.clientWidth);
+        const top = element.getBoundingClientRect().top;
+        const height = Math.max(0, Math.round(window.innerHeight - top - 16));
+        setSize((current) =>
+          current.width === width && current.height === height
+            ? current
+            : { width, height },
+        );
+      };
+
+      update();
+      window.addEventListener("resize", update);
+      window.addEventListener("scroll", update, true);
+      if (typeof ResizeObserver === "undefined") {
+        detachRef.current = () => {
+          window.removeEventListener("resize", update);
+          window.removeEventListener("scroll", update, true);
+        };
+        return;
+      }
+      const observer = new ResizeObserver(update);
+      observer.observe(element);
+      detachRef.current = () => {
+        window.removeEventListener("resize", update);
+        window.removeEventListener("scroll", update, true);
+        observer.disconnect();
+      };
+    },
+    [enabled],
+  );
+
+  return { ref, size };
+}
+
 function usePaneSize(enabled: boolean) {
   const [size, setSize] = useState({ width: 0, height: 0 });
   const detachRef = useRef<(() => void) | null>(null);
@@ -82,6 +135,7 @@ export function FlowSankeyDiagram<S extends string>({
   onSelectLink,
   ariaLabel,
   fillHeight = false,
+  fillRemainingViewport = false,
   labelForNode,
   isSelectable,
   isLinkSelectable,
@@ -104,6 +158,11 @@ export function FlowSankeyDiagram<S extends string>({
    * available pane. Default keeps content-sized height.
    */
   fillHeight?: boolean;
+  /**
+   * Stretch into leftover viewport below the chart, then grow the page if
+   * the themes need more. For scroll layouts that must not inner-scroll.
+   */
+  fillRemainingViewport?: boolean;
   /** Defaults to {@link stageValueLabel} ("Not analyzed" for unlabeled). */
   labelForNode?: (node: InsightsSankeyNode<S>) => string;
   /**
@@ -121,7 +180,10 @@ export function FlowSankeyDiagram<S extends string>({
 }) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [readout, setReadout] = useState<string | null>(null);
-  const { ref: chartPaneRef, size: chartPaneSize } = usePaneSize(fillHeight);
+  const pane = usePaneSize(fillHeight && !fillRemainingViewport);
+  const leftover = useRemainingViewport(fillRemainingViewport);
+  const chartPaneRef = fillRemainingViewport ? leftover.ref : pane.ref;
+  const chartPaneSize = fillRemainingViewport ? leftover.size : pane.size;
   // Gradient ids are per diagram instance and per link INDEX. Two diagrams
   // on one page must not share `<defs>` ids, and two links whose node ids
   // differ only in a character the sanitizer folds must not share one
@@ -154,14 +216,21 @@ export function FlowSankeyDiagram<S extends string>({
   }, [sankey, stages]);
 
   const height = useMemo(() => {
-    if (!fillHeight || chartPaneSize.width <= 0 || chartPaneSize.height <= 0) {
+    const stretch = fillHeight || fillRemainingViewport;
+    if (!stretch || chartPaneSize.width <= 0 || chartPaneSize.height <= 0) {
       return contentHeight;
     }
     const available = Math.round(
       (chartPaneSize.height / chartPaneSize.width) * VIEW_WIDTH - HEADER_HEIGHT,
     );
     return Math.max(contentHeight, available);
-  }, [fillHeight, chartPaneSize.height, chartPaneSize.width, contentHeight]);
+  }, [
+    fillHeight,
+    fillRemainingViewport,
+    chartPaneSize.height,
+    chartPaneSize.width,
+    contentHeight,
+  ]);
 
   const layout = useMemo(() => {
     if (sankey.nodes.length === 0) return null;
@@ -175,6 +244,7 @@ export function FlowSankeyDiagram<S extends string>({
 
   const chartNeedsScroll =
     fillHeight &&
+    !fillRemainingViewport &&
     chartPaneSize.height > 0 &&
     height + HEADER_HEIGHT >
       (chartPaneSize.width > 0
@@ -190,7 +260,7 @@ export function FlowSankeyDiagram<S extends string>({
         ref={chartPaneRef}
         className={cn(
           "w-full min-w-0",
-          fillHeight && "min-h-0 flex-1",
+          fillHeight && !fillRemainingViewport && "min-h-0 flex-1",
           chartNeedsScroll ? "overflow-auto" : "overflow-hidden",
         )}
       >
@@ -201,7 +271,9 @@ export function FlowSankeyDiagram<S extends string>({
           preserveAspectRatio="xMidYMin meet"
           className={cn(
             "block w-full",
-            fillHeight && !chartNeedsScroll ? "h-full" : "mt-1 h-auto",
+            fillHeight && !fillRemainingViewport && !chartNeedsScroll
+              ? "h-full"
+              : "mt-1 h-auto",
           )}
         >
           <g>

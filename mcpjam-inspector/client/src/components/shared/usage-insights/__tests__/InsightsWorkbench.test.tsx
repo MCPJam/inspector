@@ -44,6 +44,10 @@ vi.mock("convex/react", async (importOriginal) => {
   };
 });
 
+vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
+  ShareUsageThreadDetail: () => null,
+}));
+
 vi.mock("@/hooks/useUsageInsights", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
@@ -67,18 +71,21 @@ vi.mock("@/components/shared/usage-insights/SessionFlowSankey", () => ({
     stageTitles,
     headerActions,
     fillHeight,
+    scrollLayout,
   }: {
     onSelectNode: (selection: InsightsSelection) => void;
     selection?: InsightsSelection | null;
     stageTitles?: Partial<Record<string, string>>;
     headerActions?: React.ReactNode;
     fillHeight?: boolean;
+    scrollLayout?: boolean;
   }) => (
-    // Mirror the real component's `data-fill-height` marker so the workbench's
-    // bodyLayout -> fillHeight wiring is assertable here.
+    // Mirror the real component's height markers so the workbench's
+    // bodyLayout wiring is assertable here.
     <div
       data-testid="mock-sankey"
       data-fill-height={fillHeight ? "true" : undefined}
+      data-fill-remaining={scrollLayout ? "true" : undefined}
     >
       <span data-testid="goal-header">{stageTitles?.goal ?? "Goal"}</span>
       <span data-testid="selected-themes">
@@ -198,10 +205,14 @@ describe("InsightsWorkbench", () => {
     );
   });
 
-  it("lets the Sankey grow to content height when bodyLayout is scroll", () => {
+  it("fills leftover viewport when bodyLayout is scroll", () => {
     renderSwarmWorkbench({ projectId: "proj-1", bodyLayout: "scroll" });
     expect(screen.getByTestId("mock-sankey")).not.toHaveAttribute(
       "data-fill-height",
+    );
+    expect(screen.getByTestId("mock-sankey")).toHaveAttribute(
+      "data-fill-remaining",
+      "true",
     );
   });
 
@@ -263,7 +274,7 @@ describe("InsightsWorkbench", () => {
     expect(breakdownChips).toEqual([]);
   });
 
-  it("restores a URL selection and keeps it beside the Sankey", async () => {
+  it("restores a URL selection and opens the session sheet", async () => {
     renderSwarmWorkbench({
       projectId: "proj-1",
       urlSelection: [{ dimension: "goal", clusterId: "journey-1" }],
@@ -302,7 +313,7 @@ describe("InsightsWorkbench", () => {
     );
   });
 
-  it("fillViewport keeps the diagram visible beside the drill-down", async () => {
+  it("keeps the diagram visible when the session sheet opens", async () => {
     const user = userEvent.setup();
     renderSwarmWorkbench({ projectId: "proj-1", journeyRunIds: ["run-a"] });
     const panel = screen.getByTestId("swarm-insights-panel");
@@ -369,6 +380,7 @@ describe("InsightsWorkbench", () => {
     await user.click(
       screen.getByRole("button", { name: "pick journey theme" }),
     );
+    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Clusters" }));
 
     expect(screen.getByTestId("topic-map-panel")).toHaveAttribute(

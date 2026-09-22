@@ -443,4 +443,75 @@ describe("SessionFlowSankey", () => {
       globalThis.ResizeObserver = originalResizeObserver;
     }
   });
+
+  it("stretches into leftover viewport on the scroll layout", () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 900,
+    });
+    globalThis.ResizeObserver = class ResizeObserverMock {
+      constructor(private cb: ResizeObserverCallback) {}
+      observe(target: Element) {
+        Object.defineProperty(target, "clientWidth", {
+          configurable: true,
+          get: () => 800,
+        });
+        vi.spyOn(target, "getBoundingClientRect").mockReturnValue({
+          width: 800,
+          height: 200,
+          top: 140,
+          left: 0,
+          bottom: 340,
+          right: 800,
+          x: 0,
+          y: 140,
+          toJSON: () => ({}),
+        });
+        this.cb(
+          [
+            {
+              target,
+              contentRect: {
+                width: 800,
+                height: 200,
+                top: 140,
+                left: 0,
+                bottom: 340,
+                right: 800,
+                x: 0,
+                y: 140,
+                toJSON: () => ({}),
+              },
+              borderBoxSize: [],
+              contentBoxSize: [],
+              devicePixelContentBoxSize: [],
+            } as ResizeObserverEntry,
+          ],
+          this as unknown as ResizeObserver,
+        );
+      }
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+
+    try {
+      renderSankey({ scrollLayout: true });
+      const root = screen.getByTestId("scenario-insights-sankey");
+      expect(root).toHaveAttribute("data-fill-remaining", "true");
+      const svg = screen.getByRole("group", {
+        name: /Session flow from goal/,
+      });
+      const viewBox = svg.getAttribute("viewBox") ?? "";
+      const viewHeight = Number(viewBox.split(/\s+/)[3]);
+      expect(viewHeight).toBeGreaterThan(320);
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver;
+      Object.defineProperty(window, "innerHeight", {
+        configurable: true,
+        value: originalInnerHeight,
+      });
+    }
+  });
 });
