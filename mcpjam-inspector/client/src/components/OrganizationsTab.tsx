@@ -989,7 +989,7 @@ function OrganizationPage({
     try {
       const result = await finishSeatPayment(seatPaymentIntentId);
       if (result.status === "paid") {
-        trackBillingEvent("billing_flow_succeeded", {
+        trackBillingEvent("billing_action_succeeded", {
           location: seatPaymentLocation(surface),
           flow: "seat_payment",
           source: surface,
@@ -1045,7 +1045,7 @@ function OrganizationPage({
     try {
       const result = await retrySeatPayment();
       if (result?.status === "paid") {
-        trackBillingEvent("billing_flow_succeeded", {
+        trackBillingEvent("billing_action_succeeded", {
           location: seatPaymentLocation(surface),
           flow: "seat_payment_retry",
           source: surface,
@@ -1121,7 +1121,7 @@ function OrganizationPage({
           organizationId: organization._id,
           email: activeSeatPaymentIntent.email,
         });
-        trackBillingEvent("billing_flow_succeeded", {
+        trackBillingEvent("billing_action_succeeded", {
           location: seatPaymentLocation(surface),
           flow: "seat_invite_remove",
           source: surface,
@@ -1133,7 +1133,7 @@ function OrganizationPage({
       }
       const result = await cancelSeatPayment();
       if (result.outcome === "canceled") {
-        trackBillingEvent("billing_flow_succeeded", {
+        trackBillingEvent("billing_action_succeeded", {
           location: seatPaymentLocation(surface),
           flow: "seat_payment_cancel",
           source: surface,
@@ -1369,7 +1369,7 @@ function OrganizationPage({
       if (!openBillingUrl(billingUrl, "new-tab", reservedTab)) {
         throw new BillingPopupBlockedError("Billing portal popup was blocked");
       }
-      trackBillingEvent("billing_flow_succeeded", {
+      trackBillingEvent("billing_handoff_succeeded", {
         location: "organization_billing",
         flow: "manage_billing",
         source: sharedBillingSource,
@@ -1412,7 +1412,7 @@ function OrganizationPage({
       if (!openBillingUrl(billingUrl, "new-tab", reservedTab)) {
         throw new BillingPopupBlockedError("Billing portal popup was blocked");
       }
-      trackBillingEvent("billing_flow_succeeded", {
+      trackBillingEvent("billing_handoff_succeeded", {
         location: "organization_billing",
         flow: "change_interval",
         source: sharedBillingSource,
@@ -1494,7 +1494,7 @@ function OrganizationPage({
     });
     try {
       await cancelScheduledBillingChange();
-      trackBillingEvent("billing_flow_succeeded", {
+      trackBillingEvent("billing_action_succeeded", {
         location: "organization_billing",
         flow: "cancel_scheduled_change",
         source: sharedBillingSource,
@@ -1545,7 +1545,7 @@ function OrganizationPage({
       if (!openBillingUrl(billingUrl, "new-tab", reservedTab)) {
         throw new BillingPopupBlockedError("Billing portal popup was blocked");
       }
-      trackBillingEvent("billing_flow_succeeded", {
+      trackBillingEvent("billing_handoff_succeeded", {
         location: "organization_billing",
         flow: "cancel_subscription",
         source: sharedBillingSource,
@@ -1596,7 +1596,7 @@ function OrganizationPage({
 
       if (result.kind === "updated") {
         reservedTab?.close();
-        trackBillingEvent("billing_flow_succeeded", {
+        trackBillingEvent("billing_action_succeeded", {
           location: "organization_billing",
           flow: "plan_change",
           source,
@@ -1615,7 +1615,7 @@ function OrganizationPage({
 
       if (result.kind === "scheduled") {
         reservedTab?.close();
-        trackBillingEvent("billing_flow_succeeded", {
+        trackBillingEvent("billing_action_succeeded", {
           location: "organization_billing",
           flow: "plan_change",
           source,
@@ -1634,7 +1634,7 @@ function OrganizationPage({
       if (!openBillingUrl(billingUrl, navigation, reservedTab)) {
         throw new BillingPopupBlockedError("Billing popup was blocked");
       }
-      trackBillingEvent("billing_flow_succeeded", {
+      trackBillingEvent("billing_handoff_succeeded", {
         location: "organization_billing",
         flow: "plan_change",
         source,
@@ -1704,7 +1704,7 @@ function OrganizationPage({
         );
 
         if (result.kind === "updated") {
-          trackBillingEvent("billing_flow_succeeded", {
+          trackBillingEvent("billing_action_succeeded", {
             location: "organization_billing",
             flow: "plan_change",
             source: "pricing_deep_link",
@@ -1722,7 +1722,7 @@ function OrganizationPage({
         }
 
         if (result.kind === "scheduled") {
-          trackBillingEvent("billing_flow_succeeded", {
+          trackBillingEvent("billing_action_succeeded", {
             location: "organization_billing",
             flow: "plan_change",
             source: "pricing_deep_link",
@@ -1739,7 +1739,7 @@ function OrganizationPage({
           result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
         onCheckoutIntentNavigationStarted?.();
         openBillingUrl(billingUrl, "same-tab");
-        trackBillingEvent("billing_flow_succeeded", {
+        trackBillingEvent("billing_handoff_succeeded", {
           location: "organization_billing",
           flow: "plan_change",
           source: "pricing_deep_link",

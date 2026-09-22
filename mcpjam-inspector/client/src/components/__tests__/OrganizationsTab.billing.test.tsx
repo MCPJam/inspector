@@ -934,7 +934,7 @@ describe("OrganizationsTab billing", () => {
 
     await waitFor(() => expect(finishSeatPayment).toHaveBeenCalled());
     expect(trackMock).not.toHaveBeenCalledWith(
-      "billing_flow_succeeded",
+      "billing_action_succeeded",
       expect.objectContaining({ flow: "seat_payment" }),
     );
     expect(trackMock).toHaveBeenCalledWith(
@@ -1016,7 +1016,7 @@ describe("OrganizationsTab billing", () => {
       }),
     );
     expect(trackMock).not.toHaveBeenCalledWith(
-      "billing_flow_succeeded",
+      "billing_action_succeeded",
       expect.objectContaining({ flow: "seat_payment_cancel" }),
     );
   });
@@ -1054,7 +1054,7 @@ describe("OrganizationsTab billing", () => {
       }),
     );
     expect(trackMock).not.toHaveBeenCalledWith(
-      "billing_flow_succeeded",
+      "billing_action_succeeded",
       expect.objectContaining({ flow: "seat_payment_cancel" }),
     );
     expect(toast.info).toHaveBeenCalledWith(
@@ -1263,7 +1263,7 @@ describe("OrganizationsTab billing", () => {
         }),
       );
       expect(trackMock).toHaveBeenCalledWith(
-        "billing_flow_succeeded",
+        "billing_action_succeeded",
         expect.objectContaining({
           flow: "seat_payment_retry",
           source,
@@ -1307,7 +1307,7 @@ describe("OrganizationsTab billing", () => {
       { duration: 8000 },
     );
     expect(trackMock).not.toHaveBeenCalledWith(
-      "billing_flow_succeeded",
+      "billing_action_succeeded",
       expect.objectContaining({ flow: "seat_payment_retry" }),
     );
     expect(trackMock).toHaveBeenCalledWith(
@@ -2255,7 +2255,7 @@ describe("OrganizationsTab billing", () => {
       }),
     );
     expect(trackMock).not.toHaveBeenCalledWith(
-      "billing_flow_succeeded",
+      "billing_handoff_succeeded",
       expect.objectContaining({
         flow: "plan_change",
         outcome: "checkout_handoff",
@@ -2593,7 +2593,7 @@ describe("OrganizationsTab billing", () => {
     expect(
       trackMock.mock.calls.filter(
         ([event, props]) =>
-          event === "billing_flow_succeeded" &&
+          event === "billing_handoff_succeeded" &&
           props.flow === "plan_change" &&
           props.source === "pricing_deep_link",
       ),
@@ -2922,7 +2922,7 @@ describe("OrganizationsTab billing", () => {
       }),
     );
     expect(trackMock).not.toHaveBeenCalledWith(
-      "billing_flow_succeeded",
+      "billing_handoff_succeeded",
       expect.objectContaining({
         flow: "plan_change",
         source: "pricing_deep_link",

@@ -131,7 +131,12 @@ export const ANALYTICS_EVENTS = {
   // `organization` group.
   billing_plans_viewed: { source: "client" },
   billing_flow_started: { source: "client" },
-  billing_flow_succeeded: { source: "client" },
+  // A handoff means Checkout or the Stripe portal opened; it does not mean
+  // Stripe collected payment. Trusted payment outcomes come from the backend.
+  billing_handoff_succeeded: { source: "client" },
+  // An action means the app received a terminal result itself (for example a
+  // paid seat, scheduled plan change, or confirmed cancellation).
+  billing_action_succeeded: { source: "client" },
   billing_flow_failed: { source: "client" },
   credit_topup_checkout_started: { source: "client" },
   credit_topup_checkout_failed: { source: "client" },
