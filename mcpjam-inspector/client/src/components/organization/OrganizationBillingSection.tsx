@@ -746,9 +746,9 @@ function FreePlanTeamUpsell({
               className="w-full shrink-0 rounded-lg"
               size="sm"
               variant={cta.variant}
-              aria-disabled={true}
+              aria-disabled={cta.disabled}
               tabIndex={0}
-              onClick={undefined}
+              onClick={cta.disabled ? undefined : cta.onClick}
             >
               <PlanCtaContent showSpinner={showCtaSpinner} label={cta.label} />
             </Button>
@@ -1389,9 +1389,13 @@ export function OrganizationBillingSection({
                                           className="w-full shrink-0 rounded-lg"
                                           size="sm"
                                           variant={cta.variant}
-                                          aria-disabled={true}
+                                          aria-disabled={cta.disabled}
                                           tabIndex={0}
-                                          onClick={undefined}
+                                          onClick={
+                                            cta.disabled
+                                              ? undefined
+                                              : cta.onClick
+                                          }
                                         >
                                           <PlanCtaContent
                                             showSpinner={showCtaSpinner}

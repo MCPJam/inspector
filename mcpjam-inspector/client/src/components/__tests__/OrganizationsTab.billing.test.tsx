@@ -523,16 +523,19 @@ describe("OrganizationsTab billing", () => {
 
     // Both columns change the Stripe quantity (N seats -> 1), which the
     // update-confirm flow refuses with billing_plan_change_requires_support.
+    // The CTA carries an explanatory tooltip; that must not render it inert.
     const teamColumn = within(getPlanColumn("Team"));
-    expect(
-      teamColumn.getByRole("button", { name: "Contact us" }),
-    ).toBeEnabled();
+    const teamContact = teamColumn.getByRole("button", { name: "Contact us" });
+    expect(teamContact).toBeEnabled();
+    expect(teamContact).not.toHaveAttribute("aria-disabled", "true");
     expect(
       teamColumn.queryByRole("button", { name: "Change plan" }),
     ).not.toBeInTheDocument();
 
     const proColumn = within(getPlanColumn("Pro"));
-    expect(proColumn.getByRole("button", { name: "Contact us" })).toBeEnabled();
+    const proContact = proColumn.getByRole("button", { name: "Contact us" });
+    expect(proContact).toBeEnabled();
+    expect(proContact).not.toHaveAttribute("aria-disabled", "true");
     expect(
       proColumn.queryByRole("button", { name: "Downgrade" }),
     ).not.toBeInTheDocument();
