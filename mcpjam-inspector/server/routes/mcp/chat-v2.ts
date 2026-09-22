@@ -1437,6 +1437,41 @@ chatV2.post("/", async (c) => {
       browserRollout.actor?.guest
         ? browserRollout.actor.id
         : undefined;
+    /**
+     * A guest has no project membership, so a `projectId` it supplies is not
+     * its own, and nothing downstream may treat it as authorization (MJ-013).
+     *
+     * The MCP routes already answer `403 Not a member of this project` for the
+     * same token and the same id. Chat took any string, never checked it, and
+     * still ran the hosted model call — so an anonymous session could bill
+     * credits against a stranger's project and address project-scoped features
+     * with it. Two authorization paths over one resource disagreed, and the
+     * weaker one is the one that gets used.
+     *
+     * Dropped rather than refused. Guest chat carrying a `projectId` is an
+     * established shape here — the turn is meant to run and simply not reach
+     * project-scoped state (see `chat-v2.guest-skills.test.ts`) — so refusing
+     * it outright would be a product change, not a security fix. Clearing the
+     * field once, here, is what makes every consumer below safe: the
+     * alternative is a `!requestIsGuest` clause on each of them, and the one
+     * that gets forgotten is the next MJ-013.
+     *
+     * The local-browser guest keeps its id because it is not addressing the
+     * real project: `guestBrowserProject` hashes it into a guest-scoped
+     * namespace, and the rollout refuses the local engine outside localhost.
+     */
+    if (
+      requestIsGuest &&
+      !localBrowserGuestId &&
+      typeof body.projectId === "string" &&
+      body.projectId
+    ) {
+      logger.warn(
+        "[mcp/chat-v2] guest supplied a projectId; ignoring it for this turn",
+        { hasChatSession: Boolean(body.chatSessionId) },
+      );
+      body.projectId = undefined;
+    }
     const browserConsentToken = c.req.header(BROWSER_CONSENT_HEADER);
     const browserConsentValid =
       browserRollout.enabled &&
