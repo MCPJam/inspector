@@ -293,5 +293,8 @@ describe("POST /api/mcp/chat-v2 — a guest's projectId is not authorization", (
       authHeader: `Bearer ${MEMBER_BEARER}`,
       projectId: "project-1",
     });
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "project-1" }),
+    );
   });
 });
