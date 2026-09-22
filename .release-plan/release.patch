@@ -1,146 +1,39 @@
-diff --git a/.changeset/eval-suite-iteration-model.md b/.changeset/eval-suite-iteration-model.md
+diff --git a/.changeset/session-flow-column-reordering.md b/.changeset/session-flow-column-reordering.md
 deleted file mode 100644
-index f5ff1a894..000000000
---- a/.changeset/eval-suite-iteration-model.md
+index 69ca3654c..000000000
+--- a/.changeset/session-flow-column-reordering.md
 +++ /dev/null
 @@ -1,7 +0,0 @@
 ----
--"@mcpjam/sdk": patch
-----
--
--Report the model on every iteration an `EvalSuite` or `EvalTest` run uploads. A run started with `runWithClient` showed an empty MODEL column, because only the `promptsToEvalResult` path stamped the provider and model that the run had already recorded. When a case fails in setup and never reaches the model, the run now names the model it was configured with — the saved client's, for a `runWithClient` run.
--
--Report per-step verdicts too (`metadata.stepResults`), the same rows the hosted runner writes. An SDK case whose tool call matched still read "0 of 1 assertion passed" on the Steps tab, with a grey unknown icon, because no step ever carried a verdict.
-diff --git a/.changeset/release-inspector-cli-sdk.md b/.changeset/release-inspector-cli-sdk.md
-deleted file mode 100644
-index 8a8502011..000000000
---- a/.changeset/release-inspector-cli-sdk.md
-+++ /dev/null
-@@ -1,8 +0,0 @@
-----
 -"@mcpjam/inspector": patch
--"@mcpjam/cli": patch
--"@mcpjam/sdk": patch
 ----
 -
--Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the
--work already merged into main reaches npm. Version bump only — no code changes.
-diff --git a/cli/package.json b/cli/package.json
-index 19f14eee0..38ebf293b 100644
---- a/cli/package.json
-+++ b/cli/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/cli",
--  "version": "5.10.1",
-+  "version": "5.10.2",
-   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
-   "type": "module",
-   "main": "dist/index.js",
-@@ -20,7 +20,7 @@
-     "prepublishOnly": "npm run build"
-   },
-   "dependencies": {
--    "@mcpjam/sdk": "^8.10.1",
-+    "@mcpjam/sdk": "^8.11.1",
-     "@modelcontextprotocol/server": "2.0.0",
-     "commander": "^14.0.3",
-     "posthog-node": "^5.24.10",
+-Let the Session flow columns be reordered. Every column in the Sankey can now be dragged into a new position, hidden, and restored from the header, and the order is remembered per surface. The headers moved out of the chart into a sticky row, so the diagram scrolls under them instead of the page scrolling through it, and the canvas widens with the column count rather than squeezing the columns it has. Adding a yes/no question opens a modal instead of an inline form, and each question column gets its own hue. An unanswered question now takes its label from the stages the server sent.
+-
+-One limit to know about: the server stores counts for neighbouring stages only, so putting two columns next to each other that were never neighbours draws a link reconstructed from session paths rather than one the server measured.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 03558faf5..c7b754fad 100644
+index 0b5bc648e..187ac6464 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "3.8.0",
-+  "version": "3.8.1",
+-  "version": "3.9.1",
++  "version": "3.9.2",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -147,7 +147,7 @@
-     "@hookform/resolvers": "^3.10.0",
-     "@lezer/highlight": "^1.2.3",
-     "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^8.11.0",
-+    "@mcpjam/sdk": "^8.11.1",
-     "@modelcontextprotocol/client": "2.0.0",
-     "@modelcontextprotocol/ext-apps": "^1.7.4",
-     "@novnc/novnc": "^1.7.0",
 diff --git a/package-lock.json b/package-lock.json
-index 00ae09596..8bf110326 100644
+index ce9bfb857..75ab657b5 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -64,9 +64,9 @@
-     },
-     "cli": {
-       "name": "@mcpjam/cli",
--      "version": "5.10.1",
-+      "version": "5.10.2",
-       "dependencies": {
--        "@mcpjam/sdk": "^8.10.1",
-+        "@mcpjam/sdk": "^8.11.1",
-         "@modelcontextprotocol/server": "2.0.0",
-         "commander": "^14.0.3",
-         "posthog-node": "^5.24.10",
 @@ -426,7 +426,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "3.8.0",
-+      "version": "3.8.1",
+-      "version": "3.9.1",
++      "version": "3.9.2",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
-@@ -461,7 +461,7 @@
-         "@hookform/resolvers": "^3.10.0",
-         "@lezer/highlight": "^1.2.3",
-         "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^8.11.0",
-+        "@mcpjam/sdk": "^8.11.1",
-         "@modelcontextprotocol/client": "2.0.0",
-         "@modelcontextprotocol/ext-apps": "^1.7.4",
-         "@novnc/novnc": "^1.7.0",
-@@ -39230,7 +39230,7 @@
-     },
-     "sdk": {
-       "name": "@mcpjam/sdk",
--      "version": "8.11.0",
-+      "version": "8.11.1",
-       "license": "MIT",
-       "dependencies": {
-         "@ai-sdk/amazon-bedrock": "^3.0.101",
-diff --git a/sdk/CHANGELOG.md b/sdk/CHANGELOG.md
-index 5a57500a2..5c655f327 100644
---- a/sdk/CHANGELOG.md
-+++ b/sdk/CHANGELOG.md
-@@ -1,5 +1,16 @@
- # `@mcpjam/sdk` changelog
- 
-+## 8.11.1
-+
-+### Patch Changes
-+
-+- [#5300](https://github.com/MCPJam/inspector/pull/5300) [`42c058f`](https://github.com/MCPJam/inspector/commit/42c058f0cd41078ee28533f0589bd0af3c7cbf7e) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Report the model on every iteration an `EvalSuite` or `EvalTest` run uploads. A run started with `runWithClient` showed an empty MODEL column, because only the `promptsToEvalResult` path stamped the provider and model that the run had already recorded. When a case fails in setup and never reaches the model, the run now names the model it was configured with — the saved client's, for a `runWithClient` run.
-+
-+  Report per-step verdicts too (`metadata.stepResults`), the same rows the hosted runner writes. An SDK case whose tool call matched still read "0 of 1 assertion passed" on the Steps tab, with a grey unknown icon, because no step ever carried a verdict.
-+
-+- [#5330](https://github.com/MCPJam/inspector/pull/5330) [`1ad2342`](https://github.com/MCPJam/inspector/commit/1ad2342d2c7bd7ec9ff4051ad1536dba1a37466f) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the
-+  work already merged into main reaches npm. Version bump only — no code changes.
-+
- ## 8.11.0
- 
- ### Minor Changes
-diff --git a/sdk/package.json b/sdk/package.json
-index f99083fc9..5e2bc9398 100644
---- a/sdk/package.json
-+++ b/sdk/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/sdk",
--  "version": "8.11.0",
-+  "version": "8.11.1",
-   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
-   "type": "module",
-   "main": "dist/index.js",

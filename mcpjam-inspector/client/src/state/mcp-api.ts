@@ -419,7 +419,7 @@ export async function setServerLoggingLevel(
     void level;
     return {
       success: false,
-      error: "Server logging level is not supported in hosted mode",
+      error: "Changing the server logging level isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.",
     };
   }
 

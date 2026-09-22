@@ -116,12 +116,20 @@ interface OrganizationsTabProps {
   onOrganizationDeleted?: (organizationId: string) => void;
 }
 
-interface PendingDowngradeConfirmation {
-  targetPlan: "free";
-  targetBillingInterval: BillingInterval | null;
+interface PendingDowngradeBase {
   currentPlan: OrganizationPlan;
   currentBillingInterval: BillingInterval | null;
 }
+
+/**
+ * Leaving paid has no target cadence; moving between paid bundles always has
+ * one, and the union keeps the confirm handler from needing a fallback.
+ */
+type PendingDowngradeConfirmation = PendingDowngradeBase &
+  (
+    | { targetPlan: "free"; targetBillingInterval: null }
+    | { targetPlan: "pro" | "team"; targetBillingInterval: BillingInterval }
+  );
 
 interface ScheduledBillingChangeCancellationState {
   ctaLabel: string;
@@ -1172,7 +1180,7 @@ function OrganizationPage({
 
   const handleDowngradePlan = async (
     targetPlan: OrganizationPlan,
-    _targetBillingInterval: BillingInterval,
+    targetBillingInterval: BillingInterval,
   ) => {
     const currentPlan = billingStatus?.plan;
 
@@ -1191,7 +1199,18 @@ function OrganizationPage({
     }
 
     if (targetPlan === "pro" || targetPlan === "team") {
-      await handlePlanChange(targetPlan, _targetBillingInterval);
+      // A paid downgrade forfeits the rest of the current allowance at
+      // renewal, so it gets the same confirmation the cancellation path does.
+      if (billingStatus && currentPlan) {
+        setPendingDowngradeConfirmation({
+          targetPlan,
+          targetBillingInterval,
+          currentPlan,
+          currentBillingInterval: billingStatus.billingInterval,
+        });
+        return;
+      }
+      await handlePlanChange(targetPlan, targetBillingInterval);
       return;
     }
     await handleManageBilling();
@@ -1223,11 +1242,16 @@ function OrganizationPage({
   const handleConfirmDowngrade = async () => {
     if (!pendingDowngradeConfirmation) return;
 
+    const { targetPlan, targetBillingInterval } = pendingDowngradeConfirmation;
+
     try {
-      // Only path is targetPlan === "free": send the user to the Stripe
-      // cancellation portal. Paid-tier downgrades no longer exist.
-      const billingUrl = await openCancellationPortal(getBillingReturnUrl());
-      openBillingUrl(billingUrl);
+      if (targetPlan === "free") {
+        // Leaving paid entirely is a Stripe cancellation, not a plan change.
+        const billingUrl = await openCancellationPortal(getBillingReturnUrl());
+        openBillingUrl(billingUrl);
+      } else {
+        await handlePlanChange(targetPlan, targetBillingInterval);
+      }
       setPendingDowngradeConfirmation(null);
     } catch (error) {
       toast.error(
@@ -1496,7 +1520,7 @@ function OrganizationPage({
                         </div>
                       ) : billingStatus && !billingStatus.billingConfigured ? (
                         <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                          Billing is not configured in this environment.
+                          Purchases are unavailable here. You can still view the plans.
                         </div>
                       ) : billingStatus ? (
                         <>
@@ -2009,7 +2033,9 @@ function OrganizationPage({
             <AlertDialogTitle>
               {pendingDowngradeConfirmation?.targetPlan === "free"
                 ? "Return to Free at renewal?"
-                : "Downgrade to Team?"}
+                : `Downgrade to ${formatPlanName(
+                    pendingDowngradeConfirmation?.targetPlan ?? "pro",
+                  )}?`}
             </AlertDialogTitle>
             <AlertDialogDescription className="space-y-2">
               {pendingDowngradeConfirmation?.targetPlan === "free" ? (
@@ -2028,14 +2054,22 @@ function OrganizationPage({
                   </span>
                 </>
               ) : (
-                <span className="block">
-                  This downgrade takes effect at renewal, not now.{" "}
-                  {pendingDowngradeTargetLabel ?? "Team"} begins{" "}
-                  {pendingDowngradeEffectiveDate ??
-                    "at the end of the current billing period"}
-                  , and {pendingDowngradeCurrentLabel ?? "your current plan"}{" "}
-                  remains active until then.
-                </span>
+                <>
+                  <span className="block">
+                    This downgrade takes effect at renewal, not now.{" "}
+                    {pendingDowngradeTargetLabel ?? "The lower plan"} begins{" "}
+                    {pendingDowngradeEffectiveDate ??
+                      "at the end of the current billing period"}
+                    , and {pendingDowngradeCurrentLabel ?? "your current plan"}{" "}
+                    remains active until then.
+                  </span>
+                  <span className="block">
+                    Unused credits don't roll over into a different plan, so
+                    whatever is left when{" "}
+                    {pendingDowngradeCurrentLabel ?? "your current plan"} ends
+                    is lost.
+                  </span>
+                </>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>

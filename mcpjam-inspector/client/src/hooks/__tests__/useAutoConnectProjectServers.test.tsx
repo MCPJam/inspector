@@ -42,7 +42,7 @@ function makeAppState(serverNames: string[]) {
       serverNames.map((name) => [
         name,
         { name, connectionStatus: "disconnected" },
-      ])
+      ]),
     ),
   } as any;
 }
@@ -120,7 +120,7 @@ describe("useAutoConnectProjectServers", () => {
       {
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
-      }
+      },
     );
 
     await flushMicrotasks();
@@ -147,7 +147,7 @@ describe("useAutoConnectProjectServers", () => {
       {
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
-      }
+      },
     );
 
     await flushMicrotasks();
@@ -169,7 +169,7 @@ describe("useAutoConnectProjectServers", () => {
       {
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
-      }
+      },
     );
 
     await flushMicrotasks();
@@ -203,7 +203,7 @@ describe("useAutoConnectProjectServers", () => {
       {
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
-      }
+      },
     );
 
     await flushMicrotasks();
@@ -225,7 +225,7 @@ describe("useAutoConnectProjectServers", () => {
       {
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
-      }
+      },
     );
 
     await flushMicrotasks();
@@ -257,7 +257,7 @@ describe("useAutoConnectProjectServers", () => {
         initialProps: { serverNames: ["alpha"] },
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
-      }
+      },
     );
 
     await flushMicrotasks();
@@ -295,19 +295,24 @@ describe("useAutoConnectProjectServers", () => {
       },
     } as any;
 
-    renderHook(
-      () =>
+    const { rerender } = renderHook(
+      ({ hostScopeKey }: { hostScopeKey: string }) =>
         useAutoConnectProjectServers({
           projectId: "proj-reconcile",
-          hostScopeKey: "host-mcpjam-no-required",
+          hostScopeKey,
           serverNames: ["alpha"],
         }),
       {
+        initialProps: { hostScopeKey: "host-a" },
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState, reconnectServer }),
-      }
+      },
     );
 
+    await flushMicrotasks();
+    expect(reconnectServer).not.toHaveBeenCalled();
+
+    rerender({ hostScopeKey: "host-mcpjam-no-required" });
     await flushMicrotasks();
     expect(reconnectServer).toHaveBeenCalledTimes(3);
     const reconnected = reconnectServer.mock.calls.map((c) => c[0]).sort();
@@ -335,19 +340,24 @@ describe("useAutoConnectProjectServers", () => {
       },
     } as any;
 
-    renderHook(
-      () =>
+    const { rerender } = renderHook(
+      ({ hostScopeKey }: { hostScopeKey: string }) =>
         useAutoConnectProjectServers({
           projectId: "proj-reconnect-failure",
-          hostScopeKey: "host-a",
+          hostScopeKey,
           serverNames: [],
         }),
       {
+        initialProps: { hostScopeKey: "host-a" },
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState, reconnectServer }),
-      }
+      },
     );
 
+    await flushMicrotasks();
+    expect(reconnectServer).not.toHaveBeenCalled();
+
+    rerender({ hostScopeKey: "host-b" });
     await flushMicrotasks();
     await flushMicrotasks();
 
@@ -357,11 +367,11 @@ describe("useAutoConnectProjectServers", () => {
     expect(mocks.toastLoading).toHaveBeenCalledWith("Reconnecting 2 servers…");
     expect(mocks.logger.error).toHaveBeenCalledWith(
       "Failed to reconnect server after client switch",
-      { serverName: "beta", error: "beta exploded" }
+      { serverName: "beta", error: "beta exploded" },
     );
     expect(mocks.toastError).toHaveBeenCalledWith(
       errorToastMessage("Failed to reconnect 1 server."),
-      { duration: 8000, id: "reconnect-toast" }
+      { duration: 8000, id: "reconnect-toast" },
     );
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
   });
@@ -381,19 +391,24 @@ describe("useAutoConnectProjectServers", () => {
       },
     } as any;
 
-    renderHook(
-      () =>
+    const { rerender } = renderHook(
+      ({ hostScopeKey }: { hostScopeKey: string }) =>
         useAutoConnectProjectServers({
           projectId: "proj-reconnect-progress",
-          hostScopeKey: "host-a",
+          hostScopeKey,
           serverNames: [],
         }),
       {
+        initialProps: { hostScopeKey: "host-a" },
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState, reconnectServer }),
-      }
+      },
     );
 
+    await flushMicrotasks();
+    expect(reconnectServer).not.toHaveBeenCalled();
+
+    rerender({ hostScopeKey: "host-b" });
     await flushMicrotasks();
     await flushMicrotasks();
 
@@ -416,19 +431,24 @@ describe("useAutoConnectProjectServers", () => {
       },
     } as any;
 
-    renderHook(
-      () =>
+    const { rerender } = renderHook(
+      ({ hostScopeKey }: { hostScopeKey: string }) =>
         useAutoConnectProjectServers({
           projectId: "proj-empty-required",
-          hostScopeKey: "host-mcpjam",
+          hostScopeKey,
           serverNames: [],
         }),
       {
+        initialProps: { hostScopeKey: "host-a" },
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState, reconnectServer }),
-      }
+      },
     );
 
+    await flushMicrotasks();
+    expect(reconnectServer).not.toHaveBeenCalled();
+
+    rerender({ hostScopeKey: "host-mcpjam" });
     await flushMicrotasks();
     // Recycle is gated on a client being active (hostScopeKey non-null), not on
     // the required set. Both connected servers re-handshake.
@@ -454,23 +474,29 @@ describe("useAutoConnectProjectServers", () => {
       },
     } as any;
 
-    renderHook(
-      () =>
+    const { rerender } = renderHook(
+      ({ hostScopeKey }: { hostScopeKey: string }) =>
         useAutoConnectProjectServers({
           projectId: "proj-mixed",
-          hostScopeKey: "host-a",
+          hostScopeKey,
           serverNames: ["needed"],
         }),
       {
+        initialProps: { hostScopeKey: "host-a" },
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState, reconnectServer }),
-      }
+      },
     );
 
     await flushMicrotasks();
+    expect(reconnectServer).not.toHaveBeenCalled();
+    expect(ensureServersReady).toHaveBeenCalledTimes(1);
+
+    rerender({ hostScopeKey: "host-b" });
+    await flushMicrotasks();
     expect(reconnectServer).toHaveBeenCalledTimes(1);
     expect(reconnectServer).toHaveBeenCalledWith("up");
-    expect(ensureServersReady).toHaveBeenCalledTimes(1);
+    expect(ensureServersReady).toHaveBeenCalledTimes(2);
     expect(ensureServersReady).toHaveBeenCalledWith(["needed"]);
   });
 
@@ -492,25 +518,73 @@ describe("useAutoConnectProjectServers", () => {
     } as any;
 
     const { rerender } = renderHook(
-      () =>
+      ({ hostScopeKey }: { hostScopeKey: string }) =>
         useAutoConnectProjectServers({
           projectId: "proj-same-scope",
-          hostScopeKey: "host-lead",
+          hostScopeKey,
           serverNames: ["alpha"],
         }),
       {
+        initialProps: { hostScopeKey: "host-a" },
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState, reconnectServer }),
-      }
+      },
     );
 
     await flushMicrotasks();
+    expect(reconnectServer).not.toHaveBeenCalled();
+
+    rerender({ hostScopeKey: "host-lead" });
+    await flushMicrotasks();
     expect(reconnectServer).toHaveBeenCalledTimes(2);
 
-    rerender();
+    rerender({ hostScopeKey: "host-lead" });
     await flushMicrotasks();
     // Same scope → no second recycle.
     expect(reconnectServer).toHaveBeenCalledTimes(2);
+  });
+
+  it("discards host transitions while reconnect is suspended", async () => {
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: ["gamma"],
+      failedServerNames: [],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+    const reconnectServer = vi.fn().mockResolvedValue(undefined);
+    const appState = {
+      servers: {
+        alpha: { name: "alpha", connectionStatus: "connected" },
+        beta: { name: "beta", connectionStatus: "connected" },
+      },
+    } as any;
+
+    const { rerender } = renderHook(
+      ({ hostScopeKey, suspendAutoConnect }) =>
+        useAutoConnectProjectServers({
+          projectId: "proj-suspended",
+          hostScopeKey,
+          serverNames: ["gamma"],
+          suspendAutoConnect,
+        }),
+      {
+        initialProps: { hostScopeKey: "host-a", suspendAutoConnect: true },
+        wrapper: ({ children }) =>
+          wrapper({ children, ensureServersReady, appState, reconnectServer }),
+      },
+    );
+
+    await flushMicrotasks();
+    rerender({ hostScopeKey: "host-b", suspendAutoConnect: true });
+    await flushMicrotasks();
+    expect(ensureServersReady).not.toHaveBeenCalled();
+
+    rerender({ hostScopeKey: "host-b", suspendAutoConnect: false });
+    await flushMicrotasks();
+
+    expect(reconnectServer).not.toHaveBeenCalled();
+    expect(mocks.toastLoading).not.toHaveBeenCalled();
+    expect(ensureServersReady).toHaveBeenCalledWith(["gamma"]);
   });
 
   it("re-attempts on every host transition, including returning to a previously-visited host", async () => {
@@ -533,7 +607,7 @@ describe("useAutoConnectProjectServers", () => {
         initialProps: { hostScopeKey: "host-a" },
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
-      }
+      },
     );
 
     await flushMicrotasks();
@@ -577,13 +651,14 @@ describe("useAutoConnectProjectServers", () => {
     };
 
     const { rerender } = renderHook(
-      () =>
+      ({ hostScopeKey }: { hostScopeKey: string }) =>
         useAutoConnectProjectServers({
           projectId: "proj-manual-add",
-          hostScopeKey: "host-learn-only",
+          hostScopeKey,
           serverNames: ["learn"],
         }),
       {
+        initialProps: { hostScopeKey: "host-a" },
         wrapper: ({ children }) =>
           wrapper({
             children,
@@ -591,11 +666,15 @@ describe("useAutoConnectProjectServers", () => {
             appState: appStateHolder.current,
             reconnectServer,
           }),
-      }
+      },
     );
 
     await flushMicrotasks();
-    // First pass: the connected server re-handshakes under the new client.
+    expect(reconnectServer).not.toHaveBeenCalled();
+
+    rerender({ hostScopeKey: "host-learn-only" });
+    await flushMicrotasks();
+    // A real client switch re-handshakes the connected server.
     expect(reconnectServer).toHaveBeenCalledTimes(1);
     expect(reconnectServer).toHaveBeenCalledWith("learn");
 
@@ -608,7 +687,7 @@ describe("useAutoConnectProjectServers", () => {
       },
     };
 
-    rerender();
+    rerender({ hostScopeKey: "host-learn-only" });
     await flushMicrotasks();
 
     // Recycle must NOT re-fire — bench is left alone, learn isn't reconnected
@@ -651,7 +730,7 @@ describe("useAutoConnectProjectServers", () => {
             ensureServersReady,
             appState: appStateHolder.current,
           }),
-      }
+      },
     );
 
     await flushMicrotasks();
@@ -717,7 +796,7 @@ describe("useAutoConnectProjectServers", () => {
             ensureServersReady,
             appState: appStateHolder.current,
           }),
-      }
+      },
     );
 
     await flushMicrotasks();
@@ -761,7 +840,7 @@ describe("useAutoConnectProjectServers", () => {
       {
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
-      }
+      },
     );
 
     await flushMicrotasks();

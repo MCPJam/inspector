@@ -1,5 +1,33 @@
 # `@mcpjam/sdk` changelog
 
+## 8.13.0
+
+### Minor Changes
+
+- [#5407](https://github.com/MCPJam/inspector/pull/5407) [`b0a1452`](https://github.com/MCPJam/inspector/commit/b0a1452e312b2f437012bddb728740e71db2a24c) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Report a rotated OAuth refresh token to the caller, via a new `onTokensRotated` option on an HTTP server config.
+
+  Most authorization servers issue single-use refresh tokens, so the value passed as `refreshToken` is spent once it has been exchanged. The SDK kept the replacement in memory, which is invisible for the life of a connection and fatal beyond it: a CI job or any other long-lived caller configured from a secret authorized once and then failed, with nothing to say a credential had been silently replaced.
+
+  `onTokensRotated` receives the replacement so it can be persisted back to wherever the original came from. It fires only when the token actually changed, and it is awaited before the connection completes, so a job that exits as soon as it is done still gets the write. A handler that throws or rejects never fails a connection that has already authorized.
+
+  The documented behaviour in `docs/sdk/concepts/connecting-servers.mdx` was also corrected: it claimed the SDK "stores rotated refresh tokens" without saying that the store dies with the process.
+
+## 8.12.0
+
+### Minor Changes
+
+- [#5338](https://github.com/MCPJam/inspector/pull/5338) [`331907a`](https://github.com/MCPJam/inspector/commit/331907a16a25617016f5e3743d48cee1bf6ddb63) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - `EvalSuite.runWithClient` accepts a list of saved clients. It runs the suite against each in parallel and uploads one run per client, grouped in MCPJam under one run number. Adds `runGroupId` to the reporting config. The evals GitHub Action now shows grouped runs as one table with a row per client and model.
+
+- [#5359](https://github.com/MCPJam/inspector/pull/5359) [`2d59e6f`](https://github.com/MCPJam/inspector/commit/2d59e6ff815872a81070bcb8968e22ec146a29f8) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Swarm findings: add an `analysisUnavailable` coverage note, so a wave whose cause analysis never ran is distinguishable from one where the analysis ran and found nothing.
+
+- [#5340](https://github.com/MCPJam/inspector/pull/5340) [`cc8f06a`](https://github.com/MCPJam/inspector/commit/cc8f06a844ee7243a6dbb2ac29bbc0a2b11bbf16) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Swarm findings: carry recorded session signals, a plain-language persona account and proposal verification counts on the wire. All three additions are optional, so existing payloads keep parsing unchanged.
+
+### Patch Changes
+
+- [#5390](https://github.com/MCPJam/inspector/pull/5390) [`99bc573`](https://github.com/MCPJam/inspector/commit/99bc573e213994c6aa46beb4dbf3ac88b56dfcf8) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+
+  This changeset carries no code changes. It ships the inspector and SDK work that has been waiting on main since the last release, and bumps @mcpjam/cli in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+
 ## 8.11.1
 
 ### Patch Changes

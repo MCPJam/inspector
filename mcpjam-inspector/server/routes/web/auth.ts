@@ -1003,7 +1003,7 @@ export function toHttpConfig(
     throw new WebRouteError(
       400,
       ErrorCode.FEATURE_NOT_SUPPORTED,
-      "This server runs over stdio and requires the local runtime (desktop app); hosted mode cannot spawn local processes.",
+      "To connect to a STDIO server, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app. STDIO connections aren’t available in MCPJam’s hosted web app.",
       { readiness: "local_runtime_required", transport: "stdio" },
     );
   }

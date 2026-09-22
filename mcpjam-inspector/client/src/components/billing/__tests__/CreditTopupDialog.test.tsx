@@ -84,6 +84,7 @@ describe("CreditTopupDialog", () => {
     pricingState.isLoading = false;
     pricingState.error = null;
     startCheckoutMock.mockReset();
+    startCheckoutMock.mockResolvedValue({ handedOffToBrowser: false });
     trackMock.mockReset();
     presetsState = DEFAULT_PRESETS;
     presetsLoadingState = false;

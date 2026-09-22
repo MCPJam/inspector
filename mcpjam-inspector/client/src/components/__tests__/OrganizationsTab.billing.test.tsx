@@ -1993,6 +1993,80 @@ describe("OrganizationsTab billing", () => {
     openSpy.mockRestore();
   });
 
+  it("confirms a paid-to-paid downgrade before changing the plan", async () => {
+    const startPlanChange = vi
+      .fn()
+      .mockResolvedValue({ kind: "scheduled", subscription: { plan: "pro" } });
+    const legacy = createPlanCatalog();
+    const catalog = {
+      ...legacy,
+      plans: {
+        ...legacy.plans,
+        free: { ...legacy.plans.free, catalogPlanId: "free" },
+        pro: {
+          ...legacy.plans.team,
+          plan: "pro",
+          displayName: "Pro",
+          billingModel: "flat",
+          catalogPlanId: "pro",
+          prices: { monthly: 2900, annual: 28800 },
+          checkout: { plan: "pro", supportedIntervals: ["monthly", "annual"] },
+        },
+        team: {
+          ...legacy.plans.team,
+          catalogPlanId: "team",
+          billingModel: "flat",
+        },
+      },
+    };
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          catalogPlanId: "team",
+          priceModel: "flat",
+          billingInterval: "annual",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripeCurrentPeriodEnd: Date.parse("2027-04-01T12:00:00.000Z"),
+        }),
+        planCatalog: catalog,
+        startPlanChange,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    fireEvent.click(
+      within(getPlanColumn("Pro")).getByRole("button", { name: "Downgrade" }),
+    );
+
+    // The click alone must not move the subscription.
+    expect(startPlanChange).not.toHaveBeenCalled();
+    expect(screen.getByText("Downgrade to Pro?")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Pro annual begins Apr 1, 2027/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Unused credits don't roll over/),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Schedule downgrade" }));
+
+    await waitFor(() => {
+      expect(startPlanChange).toHaveBeenCalledWith(
+        expect.stringContaining("/organizations/org-1/billing"),
+        "pro",
+        "annual",
+        { confirmPaidPlanChange: true },
+      );
+    });
+    expect(toast.success).toHaveBeenCalledWith(
+      "Plan change scheduled for renewal.",
+    );
+  });
+
   it("shows the refusal sentence, not the Convex payload, when a plan change is refused", async () => {
     // Convex sets `.message` to the stringified payload and puts the real
     // object on `.data`, so reading `.message` toasts JSON with the code in it.
@@ -2016,6 +2090,7 @@ describe("OrganizationsTab billing", () => {
     fireEvent.click(
       within(getPlanColumn("Team")).getByRole("button", { name: "Upgrade" }),
     );
+    fireEvent.click(await screen.findByTestId("plan-confirm-cta"));
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
@@ -2265,10 +2340,10 @@ describe("OrganizationsTab billing", () => {
     });
     expect(startPlanChange).not.toHaveBeenCalled();
     expect(
-      screen.getByText(
-        "Billing is not configured in this environment. Plans are visible, but purchase actions are unavailable.",
+      screen.getAllByText(
+        "Purchases are unavailable here. You can still view the plans.",
       ),
-    ).toBeInTheDocument();
+    ).toHaveLength(2);
   });
 
   it("consumes paid deep links without auto-starting a plan change", async () => {
@@ -2476,10 +2551,10 @@ describe("OrganizationsTab billing", () => {
     render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
     expect(
-      screen.getByText(
-        "Billing is not configured in this environment. Plans are visible, but purchase actions are unavailable.",
+      screen.getAllByText(
+        "Purchases are unavailable here. You can still view the plans.",
       ),
-    ).toBeInTheDocument();
+    ).toHaveLength(2);
     for (const button of screen.getAllByRole("button", {
       name: "Upgrade",
     })) {

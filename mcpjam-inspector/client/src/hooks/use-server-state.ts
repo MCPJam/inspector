@@ -108,8 +108,6 @@ import {
   mergeProjectConnectionHeaders,
 } from "@/lib/client-config";
 import { resolveEffectiveClientCapabilities } from "@/lib/effective-client";
-import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
-import { readOnboardingState } from "@/lib/onboarding-state";
 import {
   type HostConfigDtoV2,
   type McpProtocolVersion,
@@ -127,15 +125,6 @@ import type { ConnectionDefaults } from "@/shared/connection-defaults";
 export interface HostedServerWriteTarget {
   projectId: string;
   serverId: string;
-}
-
-/** Skip noisy connect toast while first-run App Builder onboarding is in progress. */
-function shouldSuppressExcalidrawConnectToastForOnboarding(
-  serverName: string
-): boolean {
-  if (serverName !== EXCALIDRAW_SERVER_NAME) return false;
-  const status = readOnboardingState()?.status;
-  return status === "seen";
 }
 
 function extractRequestHeaders(
@@ -1047,6 +1036,8 @@ export function useServerState({
       connectionIntent?: ConnectionIntent;
       serverName: string;
       serverUrl?: string | null;
+      suppressErrorToast?: boolean;
+      suppressSuccessToast?: boolean;
     }): boolean => {
       if (
         !isAuthenticated ||
@@ -1082,6 +1073,8 @@ export function useServerState({
         serverUrl: params.serverUrl,
         accessScope: "project_member",
         returnPath,
+        suppressErrorToast: params.suppressErrorToast,
+        suppressSuccessToast: params.suppressSuccessToast,
       });
       if (returnPath) {
         localStorage.setItem("mcp-oauth-return-hash", returnPath);
@@ -2870,6 +2863,10 @@ export function useServerState({
         HOSTED_MODE &&
         isAuthenticated &&
         hostedCallbackContext?.surface === "project";
+      const suppressErrorToast =
+        hostedCallbackContext?.suppressErrorToast === true;
+      const suppressSuccessToast =
+        hostedCallbackContext?.suppressSuccessToast === true;
       const handleLiveOAuthTrace = (oauthTrace: OAuthTrace) => {
         const traceServerName =
           oauthTrace.serverName ??
@@ -3011,7 +3008,10 @@ export function useServerState({
                   serverName,
                   reason: synced.reason,
                 });
-                if (synced.reason === "workspace-name-taken") {
+                if (
+                  synced.reason === "workspace-name-taken" &&
+                  !suppressErrorToast
+                ) {
                   toast.error(
                     `Signed in, but "${serverName}" could not be saved: that name already belongs to another project in this workspace.`
                   );
@@ -3064,9 +3064,11 @@ export function useServerState({
               logger.info("OAuth connection successful", { serverName });
               markPendingChatScopeStepUpReady(serverName);
               markPendingDirectScopeStepUpReplayReady(serverName);
-              toast.success(
-                `OAuth connection successful! Connected to ${serverName}.`
-              );
+              if (!suppressSuccessToast) {
+                toast.success(
+                  `OAuth connection successful! Connected to ${serverName}.`
+                );
+              }
               storeInitInfo(serverName, connectionResult.initInfo).catch(
                 (err) =>
                   logger.warn("Failed to fetch init info", {
@@ -3095,9 +3097,11 @@ export function useServerState({
                 serverName,
                 error: connectionResult.error,
               });
-              toast.error(
-                `OAuth succeeded but connection test failed: ${connectionResult.error}`
-              );
+              if (!suppressErrorToast) {
+                toast.error(
+                  `OAuth succeeded but connection test failed: ${connectionResult.error}`
+                );
+              }
             }
           } catch (connectionError) {
             markPendingChatScopeStepUpCancelled(
@@ -3119,9 +3123,11 @@ export function useServerState({
               serverName,
               error: errorMessage,
             });
-            toast.error(
-              `OAuth succeeded but connection test failed: ${errorMessage}`
-            );
+            if (!suppressErrorToast) {
+              toast.error(
+                `OAuth succeeded but connection test failed: ${errorMessage}`
+              );
+            }
           }
         } else {
           throw {
@@ -3139,7 +3145,9 @@ export function useServerState({
               typeof (error as { message?: unknown }).message === "string"
             ? (error as { message: string }).message
             : "Unknown error";
-        toast.error(`Error completing OAuth flow: ${errorMessage}`);
+        if (!suppressErrorToast) {
+          toast.error(`Error completing OAuth flow: ${errorMessage}`);
+        }
         logger.error("OAuth callback failed", { error: errorMessage });
         const oauthTrace =
           typeof error === "object" && error !== null && "oauthTrace" in error
@@ -3306,7 +3314,9 @@ export function useServerState({
         : error;
       const savedHash = localStorage.getItem("mcp-oauth-return-hash") || "";
 
-      toast.error(`OAuth authorization failed: ${errorMessage}`);
+      if (hostedOAuthCallbackContext?.suppressErrorToast !== true) {
+        toast.error(`OAuth authorization failed: ${errorMessage}`);
+      }
       const failedServerName = failPendingOAuthConnection(errorMessage);
       markPendingChatScopeStepUpCancelled(
         failedServerName ?? undefined,
@@ -3344,7 +3354,22 @@ export function useServerState({
   ]);
 
   const handleConnect = useCallback(
-    async (formData: ServerFormData) => {
+    async (
+      formData: ServerFormData,
+      options?: {
+        suppressErrorToast?: boolean;
+        suppressSuccessToast?: boolean;
+      }
+    ) => {
+      const showConnectionError = (
+        message: string,
+        data?: Parameters<typeof toast.error>[1]
+      ) => {
+        if (!options?.suppressErrorToast) toast.error(message, data);
+      };
+      const showConnectionSuccess = (message: string) => {
+        if (!options?.suppressSuccessToast) toast.success(message);
+      };
       // Snapshot the client BEFORE the first await, not when the toast is
       // built. This connect resolves its protocol pin from whichever client is
       // previewed as it starts, then spends seconds inside
@@ -3361,7 +3386,7 @@ export function useServerState({
 
       const validationError = validateForm(formData);
       if (validationError) {
-        toast.error(validationError);
+        showConnectionError(validationError);
         return;
       }
 
@@ -3459,6 +3484,7 @@ export function useServerState({
           serverEntryForSave,
           clientSecretSyncOptions
         );
+        if (isStaleOp(formData.name, token)) return;
         if (synced.ok) {
           hostedServerId = synced.serverId;
           syncedConnectionTarget = {
@@ -3470,6 +3496,7 @@ export function useServerState({
           workspaceNameTaken = synced.reason === "workspace-name-taken";
         }
       } catch (err) {
+        if (isStaleOp(formData.name, token)) return;
         syncErr = err;
         logger.warn("Sync to Convex failed (pre-connection)", {
           serverName: formData.name,
@@ -3498,7 +3525,7 @@ export function useServerState({
           name: formData.name,
           error: errorMessage,
         });
-        toast.error(errorMessage);
+        showConnectionError(errorMessage);
         return;
       }
       if (!isAuthenticated) {
@@ -3564,7 +3591,7 @@ export function useServerState({
             });
             // An Auto server may have connected without credentials — don't
             // claim OAuth happened when it didn't.
-            toast.success(
+            showConnectionSuccess(
               formData.authMethod === "auto"
                 ? "Connected successfully!"
                 : "Connected successfully with OAuth!"
@@ -3588,7 +3615,7 @@ export function useServerState({
               normalized: (storedCredentialResult as { normalized?: unknown })
                 .normalized as any,
             });
-            toast.error(errorMessage);
+            showConnectionError(errorMessage);
             return;
           }
           // Auto escalation gate: the user picked Auto, not OAuth, so a 401
@@ -3610,7 +3637,7 @@ export function useServerState({
               autoOAuthEscalation.markFailed(escalationIdentity);
               const errorMessage = `Server "${formData.name}" still returns 401 after OAuth. Check the server's authorization configuration.`;
               failWithoutEscalation(errorMessage);
-              toast.error(errorMessage);
+              showConnectionError(errorMessage);
               return;
             }
             const proceed = await confirmAutoOAuthEscalation(formData.name);
@@ -3733,13 +3760,15 @@ export function useServerState({
               name: formData.name,
               error: errorMessage,
             });
-            toast.error(errorMessage);
+            showConnectionError(errorMessage);
             return;
           }
           prepareHostedProjectOAuthRedirect({
             serverId: hostedServerId,
             serverName: formData.name,
             serverUrl: formData.url,
+            suppressErrorToast: options?.suppressErrorToast,
+            suppressSuccessToast: options?.suppressSuccessToast,
           });
           const oauthResult = await initiateOAuth(oauthOptions);
           if (oauthResult.success) {
@@ -3765,7 +3794,7 @@ export function useServerState({
                   oauthTrace: oauthResult.oauthTrace,
                   oauthFlowProfile: serverEntryForSave.oauthFlowProfile,
                 });
-                toast.success("Connected successfully with OAuth!");
+                showConnectionSuccess("Connected successfully with OAuth!");
                 storeInitInfo(formData.name, connectionResult.initInfo).catch(
                   (err) =>
                     logger.warn("Failed to fetch init info", {
@@ -3785,7 +3814,7 @@ export function useServerState({
                     connectionResult.error || "OAuth connection test failed",
                   oauthTrace: oauthResult.oauthTrace,
                 });
-                toast.error(
+                showConnectionError(
                   `OAuth succeeded but connection failed: ${connectionResult.error}`
                 );
               }
@@ -3793,7 +3822,7 @@ export function useServerState({
               // Redirect pending — the marker stays PENDING on purpose; it's
               // what survives the page navigation so the post-callback
               // reconnect doesn't re-prompt.
-              toast.success(
+              showConnectionSuccess(
                 "OAuth flow initiated. You will be redirected to authorize access."
               );
             }
@@ -3809,7 +3838,9 @@ export function useServerState({
             error: oauthResult.error || "OAuth initialization failed",
             oauthTrace: oauthResult.oauthTrace,
           });
-          toast.error(`OAuth initialization failed: ${oauthResult.error}`);
+          showConnectionError(
+            `OAuth initialization failed: ${oauthResult.error}`
+          );
           return;
         }
 
@@ -3839,11 +3870,7 @@ export function useServerState({
           // no localStorage write needed. The resolver returns env in the
           // resolved config on subsequent connects.
           logger.info("Connection successful", { serverName: formData.name });
-          if (
-            !shouldSuppressExcalidrawConnectToastForOnboarding(formData.name)
-          ) {
-            toast.success("Connected successfully!");
-          }
+          showConnectionSuccess("Connected successfully!");
           storeInitInfo(formData.name, result.initInfo).catch((err) =>
             logger.warn("Failed to fetch init info", {
               serverName: formData.name,
@@ -3865,7 +3892,7 @@ export function useServerState({
             serverName: formData.name,
             error: result.error,
           });
-          toast.error(
+          showConnectionError(
             `Failed to connect to ${formData.name}${
               result.error ? `: ${result.error}` : ""
             }`,
@@ -3925,7 +3952,7 @@ export function useServerState({
           serverName: formData.name,
           error: errorMessage,
         });
-        toast.error(
+        showConnectionError(
           errorMessage === PROJECT_NOT_PROVISIONED_ERROR_MESSAGE
             ? errorMessage
             : `Network error: ${errorMessage}`
@@ -4392,7 +4419,7 @@ export function useServerState({
       if (!HOSTED_MODE || !authorizationServerUrl) return;
       if (!isPrivateNetworkUrl(authorizationServerUrl)) return;
       toast.warning(
-        "This server's authorization server runs on your machine, so tokens can't auto-refresh in hosted mode. Re-run the OAuth flow when they expire, or use local mode for fully-local servers."
+        "This server’s sign-in service is on a private network. MCPJam’s hosted web app can’t renew this connection automatically. Sign in again when the connection expires, or run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app."
       );
     },
     []
@@ -4726,6 +4753,10 @@ export function useServerState({
   // (or another host can require it) without re-adding the server.
   const handleRuntimeDisconnect = useCallback(
     (serverName: string) => {
+      // Invalidate any connect/reconnect that is still awaiting I/O. Without
+      // this, a late completion can overwrite this disconnect with success or
+      // failure and reopen a canceled onboarding attempt.
+      nextOpToken(serverName);
       dispatch({ type: "DISCONNECT", name: serverName });
     },
     [dispatch]
@@ -6155,5 +6186,7 @@ export function useServerState({
     handleRefreshTokensFromOAuthFlow,
     persistRuntimeServerToProjectIfNeeded,
     ensureHostedServerIdsForNames,
+    isConnectionPreflightPending:
+      isClientConfigSyncPending || Boolean(getProjectNotProvisionedError()),
   };
 }

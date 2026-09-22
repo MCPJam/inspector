@@ -130,7 +130,7 @@ export function CreditTopupDialog({
   const handleConfirm = async () => {
     if (!selectedPreset || !organizationId || !quotePreset.canPurchase) return;
     try {
-      await startCheckout({
+      const result = await startCheckout({
         organizationId,
         packageId: selectedPreset.packageId,
         priceCents: selectedQuote?.priceCents ?? null,
@@ -141,6 +141,10 @@ export function CreditTopupDialog({
           ? { returnUrl: window.location.href }
           : {}),
       });
+      if (result.handedOffToBrowser) {
+        // Nothing will navigate this window, so the dialog has to step aside.
+        onOpenChange(false);
+      }
     } catch (err) {
       toast.error(
         getBillingErrorMessage(
