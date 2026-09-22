@@ -1633,10 +1633,21 @@ chatV2.post("/", async (c) => {
           ? (hostRuntimeConfig as { computer?: unknown }).computer
           : undefined,
       },
-      builtInAuthHeader && typeof body.projectId === "string" && body.projectId
+      builtInAuthHeader && (body.projectId || guestSubmittedProjectId)
         ? {
             authHeader: builtInAuthHeader,
-            projectId: body.projectId,
+            // The ONE place a guest's submitted id is still read, and it is
+            // not authorization: it is the billing tag on `web_search`, whose
+            // route refuses guests outright (`rejects guests with 403 without
+            // calling Exa`, mcpjam-backend `exaSearch.test.ts`). Dropping it
+            // here stopped advertising built-in tools to guests altogether,
+            // which is a product regression rather than a fix — the tools are
+            // deliberately offered and then refused at execution.
+            //
+            // It does mean this line leans on that backend 403. If the Exa
+            // route ever starts honouring guests, this becomes a real billing
+            // leak and must change with it.
+            projectId: (body.projectId ?? guestSubmittedProjectId) as string,
             // A request with no user-supplied Authorization is an anonymous
             // guest (the route mints a production guest bearer for it), so the
             // resolver withholds bash on the personal-project path — matching
