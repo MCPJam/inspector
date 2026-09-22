@@ -251,3 +251,47 @@ export function disambiguateLabels<T extends { label: string }>(
     return { ...item, label: `${item.label} #${n}` };
   });
 }
+
+/**
+ * Every environment's display label, keyed by id, with same-named rows
+ * disambiguated by a stable `#n`.
+ *
+ * Numbering is computed over the LIVE NAMED rows only, and the result is keyed
+ * by id rather than returned as a list, because the suffix a row gets must not
+ * depend on which slice of the project the caller happens to hold. The swarm
+ * create flow labels the rows it can launch; {@link EnvironmentPicker} also
+ * fetches archived and ad-hoc rows so it can name an already-selected one.
+ * Numbering each caller's own list would give one environment "MCPJam #2" in
+ * the picker and a bare "MCPJam" on the next screen — reintroducing, one step
+ * later, the exact collision the suffix exists to resolve.
+ *
+ * Archived and ad-hoc rows are never offered for selection, so they keep their
+ * plain label and take no part in the numbering. They are still present in the
+ * map: a surface that must NAME an already-attached row of either kind looks it
+ * up here rather than falling back to an id.
+ */
+export function environmentLabelsById(
+  environments: readonly (EnvironmentLabelRow & { archivedAt?: number })[],
+  ctx: EnvironmentLabelContext = {},
+): Map<string, string> {
+  const labels = new Map<string, string>();
+  for (const environment of environments) {
+    labels.set(environment.environmentId, environmentLabel(environment, ctx));
+  }
+  const numbered = disambiguateLabels(
+    environments
+      .filter(
+        (environment) =>
+          environment.archivedAt === undefined &&
+          isNamedEnvironment(environment),
+      )
+      .map((environment) => ({
+        environmentId: environment.environmentId,
+        label: environmentLabel(environment, ctx),
+      })),
+  );
+  for (const entry of numbered) {
+    labels.set(entry.environmentId, entry.label);
+  }
+  return labels;
+}

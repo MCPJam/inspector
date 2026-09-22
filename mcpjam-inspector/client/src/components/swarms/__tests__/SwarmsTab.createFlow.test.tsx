@@ -2812,3 +2812,228 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
     expect(updatePersonaMock).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Where a REUSED goal will actually run, said out loud before launch.
+ *
+ * A persona carries no environment; its goals do. Adding an existing persona
+ * brings those goals, and the Describe step's pre-filled environment then wins
+ * over the one they were authored against. That override is deliberate and
+ * stays — what these tests pin is that Confirm now SAYS so, which is the part
+ * that let 15 goals written for one server run against a different one and
+ * still read as a clean wave.
+ */
+describe("SwarmsTab — Confirm discloses where reused goals run", () => {
+  function setEnvironments(rows: Array<Record<string, unknown>>) {
+    environmentsRef.current = rows as typeof environmentsRef.current;
+    environments = environmentsRef.current;
+  }
+
+  function reuseAna(journeys: Array<Record<string, unknown>>) {
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = journeys;
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    return screen.findByTestId("new-swarm-reused-personas");
+  }
+
+  it("names the target for a swarm made only of reused personas", async () => {
+    // Confirm used to show the environment line ONLY when the swarm had newly
+    // authored goals, so a reuse-only swarm approved a target it never named.
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-1"],
+      },
+    ]);
+
+    expect(screen.getByTestId("new-swarm-confirm-clients")).toHaveTextContent(
+      "Runs on Prod-like",
+    );
+    // Nothing moves — the stored fan-out already IS the seeded selection.
+    expect(
+      screen.queryByTestId("new-swarm-confirm-env-moves"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says which goals are being moved, and what they were written for", async () => {
+    // Stored on Amazon; the auto-seed picks Prod-like, so the launch re-stamps.
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+      {
+        _id: "j-2",
+        name: "Chase refunds",
+        goal: "Chase",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Ana");
+    expect(moves).toHaveTextContent("2 goals were authored against Amazon");
+    expect(moves).toHaveTextContent("will run here instead");
+  });
+
+  it("stays silent for a LEGACY goal that never had an environment", async () => {
+    // The launch still overrides this one — it has nothing else to run
+    // against — but there is no authored environment to move it off.
+    await reuseAna([{ _id: "j-1", name: "Reconcile payouts", goal: "Reconcile" }]);
+
+    expect(screen.getByTestId("new-swarm-confirm-clients")).toHaveTextContent(
+      "Runs on Prod-like",
+    );
+    expect(
+      screen.queryByTestId("new-swarm-confirm-env-moves"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("cautions when the move crosses server groups", async () => {
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-excalidraw",
+      },
+      {
+        environmentId: "env-2",
+        projectId: "proj-1",
+        name: "Amazon",
+        hostId: "host-2",
+        revision: 1,
+        serverAttachmentId: "att-terac",
+      },
+    ]);
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    expect(
+      await screen.findByTestId("new-swarm-confirm-env-moves"),
+    ).toHaveTextContent("Different server group");
+  });
+
+  it("does not caution when the move keeps the same server group", async () => {
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-shared",
+      },
+      {
+        environmentId: "env-2",
+        projectId: "proj-1",
+        name: "Amazon",
+        hostId: "host-2",
+        revision: 1,
+        serverAttachmentId: "att-shared",
+      },
+    ]);
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    // The move is still disclosed; only the caution is withheld.
+    expect(moves).toHaveTextContent("authored against Amazon");
+    expect(moves).not.toHaveTextContent("Different server group");
+  });
+
+  it("tells two same-named environments apart, and keeps the suffix on Confirm", async () => {
+    // The real project has two live environments both called MCPJam. Without a
+    // suffix the Describe picker is a coin flip AND the move notice reads
+    // "authored against MCPJam — moved to MCPJam", which explains nothing.
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "MCPJam",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-excalidraw",
+      },
+      {
+        environmentId: "env-2",
+        projectId: "proj-1",
+        name: "MCPJam",
+        hostId: "host-2",
+        revision: 1,
+        serverAttachmentId: "att-terac",
+      },
+    ]);
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    expect(screen.getByTestId("new-swarm-confirm-clients")).toHaveTextContent(
+      "Runs on MCPJam #1",
+    );
+    expect(
+      await screen.findByTestId("new-swarm-confirm-env-moves"),
+    ).toHaveTextContent("authored against MCPJam #2");
+  });
+
+  it("re-seeds the target once hosts and environments land", async () => {
+    // The latch was set BEFORE the seed was checked, so a mount where both
+    // queries were momentarily empty latched forever: the composer stayed
+    // blank for the rest of the flow and the launch had no target.
+    hostsRef.current = [];
+    setEnvironments([]);
+    const view = render(
+      <SwarmsTab projectId="proj-1" isAuthenticated createFlow />,
+    );
+    expect(
+      screen.getByTestId("new-swarm-environments-picker"),
+    ).toHaveTextContent("pick env");
+
+    hostsRef.current = [{ hostId: "host-1", name: "Claude" }];
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 1,
+      },
+    ]);
+    // Both queries land. In the app that re-renders the flow on its own; here
+    // the rerender is what delivers the same thing.
+    view.rerender(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("new-swarm-environments-picker"),
+      ).toHaveTextContent("1 env"),
+    );
+  });
+});

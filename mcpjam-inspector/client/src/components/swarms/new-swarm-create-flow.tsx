@@ -99,7 +99,14 @@ import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 import { describeCloudServerBlock } from "@/lib/cloud-server-readiness";
-import { environmentLabel } from "@/lib/environment-label";
+import {
+  environmentLabel,
+  environmentLabelsById,
+} from "@/lib/environment-label";
+import {
+  sameEnvironmentSelection,
+  type EnvironmentMoveRow,
+} from "@/components/swarms/reused-environment-move";
 import { ErrorCard } from "@/components/ui/error-card";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useDbUserBootstrapStatus } from "@/contexts/db-user-ready-context";
@@ -328,21 +335,6 @@ async function runWithConcurrency<T>(
     },
   );
   await Promise.all(runners);
-}
-
-/**
- * Set equality over environment ids — order is irrelevant to what a run
- * executes, so a reordered-but-identical selection must not trigger an
- * override that says nothing.
- */
-function sameEnvironmentSelection(
-  stored: readonly string[] | null,
-  selection: readonly string[],
-): boolean {
-  const current = stored ?? [];
-  if (current.length !== selection.length) return false;
-  const wanted = new Set(selection);
-  return current.every((id) => wanted.has(id));
 }
 
 function errorMessageOf(err: unknown, fallback: string): string {
@@ -671,8 +663,14 @@ export function NewSwarmCreateFlow({
       serverAttachments,
       environmentsEnabled,
     });
+    // Latch only once something was actually seeded. Latching first meant a
+    // mount where hosts and environments were both momentarily empty — `next`
+    // is null then — latched forever and never re-seeded when the queries
+    // landed, leaving the composer blank for the rest of the flow.
+    // `use-swarm-default-target.ts` has always done it in this order.
+    if (!next) return;
     targetSeededRef.current = true;
-    if (next) setTargetState(next);
+    setTargetState(next);
   }, [
     attachmentsLoading,
     attachmentsQueryEnabled,
@@ -1903,21 +1901,47 @@ export function NewSwarmCreateFlow({
     });
   }, [envListForPayload, environmentIds, hostNameById]);
 
+  // One label per row for the whole project, with same-named rows separated by
+  // a `#n`. `EnvironmentPicker` builds the same map from its own list, so what
+  // the user picked on Describe reads identically on Confirm — numbering each
+  // screen's own slice would not.
+  const envLabelsById = useMemo(
+    () => environmentLabelsById(envListForPayload, { hostName: hostNameById }),
+    [envListForPayload, hostNameById],
+  );
+
   const environmentLabels = useMemo(
     () =>
-      environmentIds.map((environmentId) => {
-        const env = envListForPayload.find(
-          (entry) => entry.environmentId === environmentId,
-        );
-        // `slice(0, 8)` stays for a row that isn't in the list AT ALL — a
-        // different failure from a row that merely has no name, which
-        // `environmentLabel` covers with the client name.
-        return env
-          ? environmentLabel(env, { hostName: hostNameById })
-          : environmentId.slice(0, 8);
-      }),
-    [envListForPayload, environmentIds, hostNameById],
+      environmentIds.map(
+        (environmentId) =>
+          // `slice(0, 8)` stays for a row that isn't in the list AT ALL — a
+          // different failure from a row that merely has no name, which
+          // `environmentLabel` covers with the client name.
+          envLabelsById.get(environmentId) ?? environmentId.slice(0, 8),
+      ),
+    [envLabelsById, environmentIds],
   );
+
+  /**
+   * Every environment this flow can name, for Confirm's move notice.
+   *
+   * `serverAttachmentId` rides along because it is the one field that turns
+   * "these goals moved" into "these goals moved somewhere their tools are not"
+   * — and it is already on the row, so the caution costs no resolve round trip.
+   */
+  const environmentRowsById = useMemo(() => {
+    const rows = new Map<string, EnvironmentMoveRow>();
+    for (const env of envListForPayload) {
+      rows.set(env.environmentId, {
+        environmentId: env.environmentId,
+        label:
+          envLabelsById.get(env.environmentId) ??
+          environmentLabel(env, { hostName: hostNameById }),
+        serverAttachmentId: env.serverAttachmentId ?? null,
+      });
+    }
+    return rows;
+  }, [envLabelsById, envListForPayload, hostNameById]);
 
   const groundingEnvironmentId =
     environmentIds[0] ?? targetState.environmentIds[0] ?? null;
@@ -1988,6 +2012,8 @@ export function NewSwarmCreateFlow({
             onIterationsChange={handleIterationsChange}
             environmentCount={environmentIds.length}
             environmentLabels={environmentLabels}
+            environmentIds={environmentIds}
+            environmentRowsById={environmentRowsById}
             launching={launching}
             errorMessage={errorMessage}
             // Back is the same move as the Describe breadcrumb, so it goes
