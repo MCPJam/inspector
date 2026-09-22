@@ -67,6 +67,33 @@ const input = {
 };
 beforeEach(() => useEvalGeneration.setState({ suites: {} }));
 
+it("clears a finished job's drafts when a new import starts", async () => {
+  // A second import appended its cases to the first one's, so a six-case
+  // document read back as twelve drafts — two of every case. A person's own
+  // staged drafts carry no job and stay.
+  const key = evalSuiteKey(scope);
+  useEvalGeneration.setState({
+    suites: {
+      [key]: {
+        status: "ready",
+        drafts: [
+          { id: "authoring-old:0", revision: "r", input, authoring: { draftId: "old:0" } },
+          { id: "mine", revision: "r", input },
+        ],
+      } as never,
+    },
+  });
+  vi.mocked(readJob)
+    .mockReset()
+    .mockResolvedValue(authoredJob({ jobId: "new", drafts: [] }));
+  await followAuthoringJob(
+    { projectId: scope.projectId, suiteId: scope.suiteId },
+    "new",
+  );
+  const ids = useEvalGeneration.getState().suites[key].drafts.map((d) => d.id);
+  expect(ids).toEqual(["mine"]);
+});
+
 it("lets a newer authoring job take the suite over from an older one", async () => {
   // Opening a link to an older import while a newer one is being followed
   // pointed two pollers at one store key. The loser used to keep writing, so

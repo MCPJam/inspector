@@ -646,6 +646,17 @@ export async function followAuthoringJob(
   authoringPolls.add(jobId);
   updateGeneration(key, (state) => ({
     ...state,
+    // The panel shows the job it is following, and only that one. A second
+    // import used to append its cases to the first one's, so a six-case
+    // document read back as twelve drafts — two of every case, one set
+    // uncommittable because its job was already finished with.
+    //
+    // Drafts with no authoring job are a person's own staging (Describe, a
+    // generated draft they have not saved) and are left alone.
+    drafts: state.drafts.filter(
+      (draft) =>
+        !draft.authoring || draft.authoring.draftId.startsWith(`${jobId}:`),
+    ),
     authoringJobId: jobId,
     status: "running",
   }));
