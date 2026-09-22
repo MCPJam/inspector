@@ -267,13 +267,50 @@ describe("describeReusedEnvironmentMove — what it refuses to claim", () => {
     ).toBeNull();
   });
 
-  it("does not caution when the destination carries no server group", () => {
+  it("cautions when a group's goals move to the client's own servers", () => {
+    // `null` is the client's own servers, not an unknown: those are different
+    // tools from the group the goals were written against.
     const move = describeReusedEnvironmentMove({
       goals: [{ environmentIds: ["env-terac"] }],
       selection: ["env-bare"],
       rowsById: rows(
         ["env-terac", "MCPJam #1", "host-claude", "att-terac"],
         ["env-bare", "Bare client", "host-claude", null],
+      ),
+    });
+
+    expect(move?.goalCount).toBe(1);
+    expect(move?.differentServerGroup).toBe(true);
+    expect(move?.differentClient).toBe(false);
+  });
+
+  it("cautions when a legacy goal on the client's own servers moves to a group", () => {
+    const move = describeReusedEnvironmentMove({
+      goals: [
+        {
+          environmentIds: null,
+          hostIds: ["host-claude"],
+          serverAttachmentId: null,
+        },
+      ],
+      selection: ["adhoc-claude"],
+      rowsById: ADHOC,
+      hostName,
+    });
+
+    expect(move?.goalCount).toBe(1);
+    expect(move?.fromLabels).toEqual(["Claude"]);
+    expect(move?.differentServerGroup).toBe(true);
+    expect(move?.differentClient).toBe(false);
+  });
+
+  it("does not caution when both sides run the client's own servers", () => {
+    const move = describeReusedEnvironmentMove({
+      goals: [{ environmentIds: ["env-bare"] }],
+      selection: ["env-bare-2"],
+      rowsById: rows(
+        ["env-bare", "Bare client", "host-claude", null],
+        ["env-bare-2", "Bare client #2", "host-claude", null],
       ),
     });
 

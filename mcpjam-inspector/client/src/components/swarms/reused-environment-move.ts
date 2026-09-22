@@ -203,19 +203,22 @@ export function describeReusedEnvironmentMove(args: {
 
   if (goalCount === 0) return null;
 
-  const known = (values: (string | null)[]) =>
-    new Set(values.filter((value): value is string => Boolean(value)));
+  // `null` is not "unknown" here: it is the client's own servers, a place with
+  // its own tools. Dropping it would hide a move between those and a group,
+  // which is exactly the move whose goals lose their tools.
+  const serverGroups = (places: EnvironmentMoveRow[]) =>
+    new Set(places.map((place) => place.serverAttachmentId ?? ""));
 
   return {
     goalCount,
     fromLabels: fromRows.map((row) => row.label).filter(Boolean),
     differentClient: disjoint(
-      known(fromRows.map((row) => row.hostId)),
-      known(toRows.map((row) => row.hostId)),
+      new Set(fromRows.map((row) => row.hostId)),
+      new Set(toRows.map((row) => row.hostId)),
     ),
     differentServerGroup: disjoint(
-      known(fromRows.map((row) => row.serverAttachmentId)),
-      known(toRows.map((row) => row.serverAttachmentId)),
+      serverGroups(fromRows),
+      serverGroups(toRows),
     ),
   };
 }
