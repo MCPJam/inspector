@@ -215,9 +215,9 @@ function getScenarioDisplayError(
   if (error.code === "SCENARIO_SIGN_IN_REQUIRED" || error.status === 401) {
     return {
       kind: "sign_in_required",
-      title: "Sign in to preview this scenario",
+      title: "Sign in to preview this study",
       message:
-        "Sign in or create an account to preview and test this scenario.",
+        "Sign in or create an account to preview and test this study.",
     };
   }
   const normalizedMessage = error.message.toLowerCase();
@@ -335,7 +335,7 @@ async function redeemScenarioToken(
     if (!bearer)
       throw createScenarioRouteError(
         401,
-        "Sign in to preview this scenario",
+        "Sign in to preview this study",
         "SCENARIO_SIGN_IN_REQUIRED",
       );
     init.headers = {
@@ -718,7 +718,7 @@ export function ScenarioChatPage({
           setRouteError(
             createScenarioRouteError(
               401,
-              "Sign in to preview this scenario",
+              "Sign in to preview this study",
               "SCENARIO_SIGN_IN_REQUIRED",
             ),
           );
@@ -767,7 +767,7 @@ export function ScenarioChatPage({
                 500,
                 error instanceof Error
                   ? error.message
-                  : "Unable to open this scenario.",
+                  : "Unable to open this study.",
               );
           const displayError = getScenarioDisplayError(nextError);
 
@@ -894,7 +894,7 @@ export function ScenarioChatPage({
                 0,
                 error instanceof Error
                   ? error.message
-                  : "Unable to refresh scenario access.",
+                  : "Unable to refresh study access.",
               );
           const detail = {
             status: routeError.status,
@@ -991,7 +991,7 @@ export function ScenarioChatPage({
       handleHostedAccessRevoked({
         status: 401,
         code: "SCENARIO_SIGN_IN_REQUIRED",
-        message: "Sign in to preview this scenario",
+        message: "Sign in to preview this study",
       });
     useFrontierSignInDialogStore.getState().setOverride(override);
     return () => {
@@ -1418,7 +1418,7 @@ export function ScenarioChatPage({
                                   would have no heading at all while the
                                   redeem is in flight. Name the shell for a
                                   screen reader without naming a vendor. */}
-                              <h1 className="sr-only">Loading scenario</h1>
+                              <h1 className="sr-only">Loading study</h1>
                               {/* Placeholder rather than the default host's
                                   mark: painting one brand and swapping to
                                   another once the redeem lands reads as a
