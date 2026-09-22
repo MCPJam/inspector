@@ -1,5 +1,7 @@
 import { getCachedGuestSession } from "./guest-session";
+import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
+import { getLastFailedRequest } from "./failed-request-tracker";
 
 export const VITE_PUBLIC_POSTHOG_KEY =
   "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
@@ -85,14 +87,70 @@ export function scrubSensitiveUrl(value: string): string {
   return out;
 }
 
+// What browsers say when a request never got a response. Matched exactly so
+// our own errors like "Failed to fetch tools" don't get tagged.
+const NETWORK_FAILURE_MESSAGES = new Set([
+  "Load failed", // Safari
+  "Failed to fetch", // Chrome
+  "NetworkError when attempting to fetch resource.", // Firefox
+]);
+
+// posthog-js reports error-like objects that aren't real Errors as
+// "'TypeError' captured as exception with message: 'Load failed'".
+const POSTHOG_WRAPPED_TYPE_ERROR =
+  /^'TypeError' captured as exception with message: '([\s\S]*)'$/;
+
+// fetch only ever fails with a TypeError, so other error types never count.
+function isNetworkFailure(exception: { type?: unknown; value: string }) {
+  const wrapped = POSTHOG_WRAPPED_TYPE_ERROR.exec(exception.value);
+  const message = wrapped
+    ? wrapped[1]
+    : exception.type === "TypeError"
+      ? exception.value
+      : undefined;
+  if (message === undefined) return false;
+  return (
+    NETWORK_FAILURE_MESSAGES.has(message) ||
+    // Newer Chrome adds the host: "Failed to fetch (example.com)".
+    (message.startsWith("Failed to fetch (") && message.endsWith(")"))
+  );
+}
+
+// The exception fires right after the request fails; anything older is
+// probably a different request.
+const FAILED_REQUEST_MAX_AGE_MS = 10_000;
+
+// Name the request behind a bare "Load failed" exception. See
+// lib/failed-request-tracker.ts.
+function attachFailedRequest(properties: Record<string, any>): void {
+  const exceptions = properties.$exception_list;
+  const hasNetworkFailure =
+    Array.isArray(exceptions) &&
+    exceptions.some(
+      (exception) =>
+        typeof exception?.value === "string" && isNetworkFailure(exception),
+    );
+  if (!hasNetworkFailure) return;
+
+  const failed = getLastFailedRequest();
+  if (!failed) return;
+  const ageMs = Date.now() - failed.at;
+  if (ageMs > FAILED_REQUEST_MAX_AGE_MS) return;
+
+  properties.failed_request = `${failed.method} ${scrubSensitiveUrl(failed.target)}`;
+  properties.failed_request_age_ms = ageMs;
+}
+
 function sanitizeAnalyticsProperties(
   properties: Record<string, any>,
+  eventName?: string,
 ): Record<string, any> {
   for (const key of ["$current_url", "$referrer", "$pathname"]) {
     if (typeof properties[key] === "string") {
       properties[key] = scrubSensitiveUrl(properties[key]);
     }
   }
+  if (eventName === "$exception") attachFailedRequest(properties);
   return properties;
 }
 
@@ -101,15 +159,9 @@ function sanitizeAnalyticsProperties(
 // $pageleave, which is what makes bounce rate and session duration exist in
 // PostHog's Web Analytics tab. The app proper keeps pageviews OFF — track()
 // events already cover it, and in-app route churn would be noise and event
-// cost. Mirrors the server-side landing-host defaults (CANIUSE_LANDING_HOSTS /
-// SCORE_LANDING_HOSTS in server/config.ts) — keep in sync when a vanity
-// domain is added.
-export const LANDING_ANALYTICS_HOSTS = new Set([
-  "caniuse.dev",
-  "www.caniuse.dev",
-  "score.mcpjam.com",
-  "www.score.mcpjam.com",
-]);
+// cost. The host list itself lives in lib/vanity-landing-hosts.ts, which is
+// what the guest-session skip reads too.
+export const LANDING_ANALYTICS_HOSTS = VANITY_LANDING_HOSTS;
 
 // Check if PostHog should be disabled
 export const isPostHogDisabled =

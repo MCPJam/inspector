@@ -28,7 +28,7 @@ describe("eval-route-url", () => {
     const url = buildEvalsPath(route);
     const [path, search] = url.split("?");
     expect(url).toContain("checks=1");
-    expect(parseEvalRouteFromUrl("/evals", path, `?${search}`)).toEqual(route);
+    expect(parseEvalRouteFromUrl("/evaluate", path, `?${search}`)).toEqual(route);
   });
   it("parses eval list and create routes", () => {
     expect(parseEvalRouteFromUrl("/evals", "/evals")).toEqual({
@@ -212,7 +212,7 @@ describe("eval-route-url", () => {
         openCompare: true,
         iteration: "i_42",
       }),
-    ).toBe("/evals/suite/s_abc/test/t_def/edit?compare=1&iteration=i_42");
+    ).toBe("/evaluate/suite/s_abc/test/t_def/edit?compare=1&iteration=i_42");
     expect(
       buildEvaluatePath({
         type: "test-edit",

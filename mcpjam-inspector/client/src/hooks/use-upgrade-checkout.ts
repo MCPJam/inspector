@@ -478,6 +478,13 @@ export function useUpgradeCheckout({
       teamEntry?.billingModel === "flat" ? "per month" : "per seat/month",
     isFlatPlan: teamEntry?.billingModel === "flat",
     teamName: teamEntry?.displayName ?? "Team",
+    creditUpgradePlans: [
+      planCatalog?.plans.pro,
+      planCatalog?.plans.team,
+    ].filter(
+      (plan): plan is NonNullable<typeof plan> =>
+        !!plan && plan.topUp?.eligible === true,
+    ),
     /** Team's monthly eval cap, straight from the catalog so it can't go stale
      * in the copy. The backend applies this amount per seat. */
     teamEvalIterations: teamEntry?.limits.maxEvalIterationsPerMonth ?? null,
@@ -485,6 +492,9 @@ export function useUpgradeCheckout({
     // is actually receiving. During a Team trial the persisted billing plan is
     // still Free, while the effective plan (and its limits) is Team.
     effectivePlan,
+    pricingVersion:
+      billingStatus?.pricingVersion ??
+      (billingStatus?.catalogPlanId?.endsWith("_v2") ? "v2" : undefined),
     // Keep the persisted plan separate for real billing/checkout decisions.
     currentPlan,
     organizationName: billingStatus?.organizationName ?? "your organization",

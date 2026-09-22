@@ -283,6 +283,29 @@ describe("PUT .../scenario", () => {
     );
   });
 
+  it("surfaces a guest refusal as 401, not 403 or 404 (REEV-6)", async () => {
+    // A sibling of the branch above, and deliberately a DIFFERENT status. The
+    // beta gate's answer is "not for your organization" — nothing the caller
+    // can act on, so 403. This one's answer is "authenticate", which is both
+    // actionable and what a client library already knows how to handle.
+    mutationMock.mockRejectedValue(
+      convexError(
+        "SIGN_IN_REQUIRED",
+        "Sign in to use User testing — it's off for guests."
+      )
+    );
+
+    const res = await call("PUT");
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { code?: string; message?: string };
+    expect(body.code).toBe("UNAUTHORIZED");
+    // Forwarded verbatim — it names the surface, and rewriting it in the
+    // mapper would put that copy in two places.
+    expect(body.message).toBe(
+      "Sign in to use User testing — it's off for guests."
+    );
+  });
+
   it("surfaces the admin gate as 403", async () => {
     mutationMock.mockRejectedValue(
       convexError(

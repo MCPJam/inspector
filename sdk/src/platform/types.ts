@@ -1,3 +1,18 @@
+import type {
+  SwarmJourneyFinding,
+  SwarmJourneyFindings,
+  SwarmJourneyFindingsJob,
+} from "../contract/swarm-finding.js";
+export type PlatformSwarmJourneyFinding = SwarmJourneyFinding;
+export type PlatformSwarmJourneyFindings = SwarmJourneyFindings;
+export type PlatformSwarmJourneyFindingsJob = SwarmJourneyFindingsJob;
+export type { SwarmJourneyFindingsJob };
+
+import type {
+  SwarmSessionVerdict,
+  JourneyRunVerdictSummary,
+  SwarmReport,
+} from "../contract/index.js";
 import type { CaseJudgeSettings } from "../contract/judge-settings.js";
 import type {
   JudgeRubric,
@@ -1125,7 +1140,8 @@ export interface PlatformEvalRunJudgeState {
   threshold: number | null;
 }
 
-export interface PlatformEvalRunGoalCompletionJudge extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGoalCompletionJudge
+  extends PlatformEvalRunJudgeState {
   progress?: {
     total: number;
     completed: number;
@@ -1169,7 +1185,8 @@ export interface PlatformEvalRunJudgeCase {
   reason: string | null;
 }
 
-export interface PlatformEvalRunGoalCompletionCase extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGoalCompletionCase
+  extends PlatformEvalRunJudgeCase {
   status?: "scored" | "error" | "skipped";
   gradingKey?: string;
   errorCode?: string;
@@ -1753,7 +1770,8 @@ export interface PlatformEvalSuiteSettingsBase {
 }
 
 /** A suite's settings as vocabulary 1 (no header) spells them. */
-export interface PlatformEvalSuiteSettings extends PlatformEvalSuiteSettingsBase {
+export interface PlatformEvalSuiteSettings
+  extends PlatformEvalSuiteSettingsBase {
   checks: PublicCheck[];
   /**
    * Suite defaults a case inherits under policy 2. Present only with
@@ -3542,6 +3560,7 @@ export interface PlatformJourney {
   /** Sessions run against EACH target. Total sessions = targets x this. */
   sessionsPerTarget: number | null;
   maxTurns: number | null;
+  setupWrites?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -3565,6 +3584,8 @@ export interface PlatformJourneyRunAttempt {
 }
 
 export interface PlatformJourneyRun {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   id: string;
   projectId: string;
   journeyId: string;
@@ -3614,6 +3635,23 @@ export interface PlatformJourneyRun {
 }
 
 export interface PlatformJourneyRunSession {
+  criteria?: {
+    status: "pending" | "completed" | "failed";
+    generation: number;
+    criterionIds?: string[];
+    results?: {
+      criterionId: string;
+      passed: boolean;
+      status?: "scored" | "error";
+    }[];
+  };
+  verdict?: SwarmSessionVerdict;
+  observations?: Array<{
+    evaluatorId: string;
+    predicateType: string;
+    role: "advisory" | "required";
+    status: "passed" | "failed" | "pending" | "unavailable";
+  }>;
   /**
    * The session's document id — the same value `listChatSessions` returns as
    * `id`, so a session found here can be looked up there.
@@ -3633,7 +3671,7 @@ export interface PlatformJourneyRunSession {
   /**
    * ARCHIVAL state (`active` | `archived`) — a run session stays `active`
    * forever unless archived, so this says nothing about how it went. Read
-   * `outcome` for the verdict.
+   * `verdict` for goal grading and execution lifecycle. `outcome` is legacy execution only.
    */
   status: string | null;
   /**
@@ -4024,6 +4062,7 @@ export interface PlatformSwarm {
   environmentIds: string[];
   sessionsPerTarget: number | null;
   maxTurns: number | null;
+  setupWrites?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -4281,7 +4320,9 @@ export interface PlatformActionableFinding {
  * `unavailable`.
  */
 export type PlatformInsightsObservationState =
-  "ready" | "partial" | "unavailable";
+  | "ready"
+  | "partial"
+  | "unavailable";
 
 /** Coverage for `currentFindings`, describing its OWN population. */
 export interface PlatformInsightsObservationCoverage {
@@ -4296,6 +4337,15 @@ export interface PlatformInsightsObservationCoverage {
 
 /** Where a finding's observation came from, and how complete it is. */
 export interface PlatformInsightsFindingProvenance {
+  recurrence?: {
+    claimId: string;
+    occurrences: number;
+    analyzedRuns: number;
+    firstSeenAt: number;
+    firstSourceId: string;
+    previousSourceId?: string;
+    novelty: "measured" | "notMeasured";
+  };
   candidateId: string;
   stage?: import("../contract/chain.js").UserValueStage;
   reason?: import("../contract/stage-derivation.js").StageReason;
@@ -4312,6 +4362,27 @@ export interface PlatformInsightsFindingProvenance {
    * run-wide mechanism rate is claimed. */
   mechanismBasis: "complete" | "sampled" | "none";
   affectedIterationIds: string[];
+  /** For a mechanism consolidated across error groups: the deterministic
+   * candidates it was merged from. */
+  sourceCandidateIds?: string[];
+  /**
+   * Per-member verification of an AI mechanism. Every trial the mechanism
+   * proposed was checked against its own recorded evidence; `confirmed` is
+   * the published count, and the others are disclosed, never counted.
+   * Absent on deterministic groups and on older backends.
+   */
+  verification?: {
+    proposed: number;
+    confirmed: number;
+    unsupported: number;
+    inconclusive: number;
+    unchecked: number;
+    members?: Array<{
+      iterationId: string;
+      verdict: "supported" | "unsupported" | "inconclusive" | "unchecked";
+      reason?: string;
+    }>;
+  };
   /** Per-prose-field origin for the view this provenance accompanies.
    * Producer-owned: a deterministic fallback sentence and a model that wrote
    * the same sentence are indistinguishable to a consumer. */
@@ -4332,15 +4403,44 @@ export interface PlatformInsightsFindingProvenance {
   populationCaveat?: string;
 }
 
-/** One iteration's trace report, as the run page's iteration drawer reads it. */
+/**
+ * Why one iteration has no model-written report.
+ *
+ * Closed so a reader gets an instruction rather than a code: "Trace too large
+ * to analyze" and "the daily analysis budget is spent" are different next
+ * steps. The producer narrows an unknown value to `analysis_unavailable`, so a
+ * newer server can add a reason without breaking an older client's label table.
+ */
+export type PlatformEvalIterationReportUnavailableReason =
+  | "trace_too_large"
+  | "context_too_large"
+  | "budget"
+  | "missing_trace"
+  | "extraction_rejected"
+  | "analysis_unavailable";
+
+/**
+ * One iteration's trace report, as the run page's iteration drawer reads it.
+ *
+ * `pending` is the state a reader meets most often on a large run: the read
+ * phase is still working through the population and THIS iteration's row has
+ * not been written yet. It is distinct from the absent report (`null` from the
+ * query) that means nobody ever analyzed the run.
+ *
+ * Pinned against the producer by `tests/fixtures/eval-iteration-report/wire.json`
+ * in mcpjam-backend, mirrored here — these declarations are hand-mirrored and
+ * nothing else notices them drifting.
+ */
 export interface PlatformEvalIterationReport {
   schemaVersion: 1;
   iterationId: string;
   runRevision: string;
   builtAt: number;
   modelUsed?: string;
-  status: "ready" | "stale" | "failed";
-  reason?: string;
+  status: "ready" | "stale" | "failed" | "pending";
+  reason?: PlatformEvalIterationReportUnavailableReason;
+  /** Present on `pending` only: iterations read so far, of the population. */
+  progress?: { done: number; total: number };
   rows: Array<{
     joinKey: string;
     stage: import("../contract/chain.js").UserValueStage;
@@ -4362,6 +4462,8 @@ export interface PlatformEvalFindingsAnalysis {
   models: string[];
   completeness: {
     iterationReports: number;
+    embedded?: number;
+    unindexed?: number;
     total: number;
     missingTraces: number;
   };
@@ -4413,6 +4515,8 @@ export interface PlatformUnifiedFindings {
 }
 
 export interface PlatformInsightsEnvelope {
+  journeyFindings?: PlatformSwarmJourneyFindings | null;
+  journeyFindingsJob?: PlatformSwarmJourneyFindingsJob | null;
   schemaVersion: 1;
   scope: PlatformInsightScope;
   status: PlatformInsightsStatus;
@@ -4949,6 +5053,10 @@ export interface PlatformReadinessStageResult {
  *
  * `billing_limit_reached` is the value a client keys a top-up prompt on — it
  * is machine-readable precisely so nobody has to string-match `detail`.
+ *
+ * `platform_cap_reached` is its deliberate opposite: MCPJam's own daily budget
+ * for observations is spent. Observations are MCPJam-paid, so there is nothing
+ * for the customer to buy, and a client must NOT offer a top-up for it.
  */
 export interface PlatformReadinessObservationState {
   status:
@@ -4961,6 +5069,7 @@ export interface PlatformReadinessObservationState {
   reason?:
     | "not_requested"
     | "billing_limit_reached"
+    | "platform_cap_reached"
     | "provider_error"
     | "provider_timeout"
     | "schema_invalid"

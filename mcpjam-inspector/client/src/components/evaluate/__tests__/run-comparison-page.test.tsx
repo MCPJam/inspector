@@ -145,7 +145,7 @@ it("shows each run's movement against the previous run of its own lane", () => {
   );
   // #7 passed 9 of 10 where #6 passed 8 of 10 — measured against #6, not
   // against lane B's run that happened to land in the same launch.
-  expect(lane.getByText("+10 pts")).toBeVisible();
+  expect(lane.getByText("+10%")).toBeVisible();
 });
 
 it("opens the run a row names", async () => {

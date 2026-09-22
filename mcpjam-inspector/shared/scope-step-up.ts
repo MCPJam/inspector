@@ -65,6 +65,7 @@ export interface ScopeStepUpRequiredEvent {
   continuationId: string;
   serverId: string;
   serverName?: string;
+  connectionId?: string;
   toolCallId: string;
   operation: Omit<StepUpOperationKey, "resourceUrl">;
   requiredScope?: string;
@@ -122,6 +123,9 @@ export function isScopeStepUpRequiredEvent(
     typeof value.expiresAt === "number" &&
     Number.isFinite(value.expiresAt) &&
     (value.serverName === undefined || typeof value.serverName === "string") &&
+    (value.connectionId === undefined ||
+      (typeof value.connectionId === "string" &&
+        value.connectionId.length > 0)) &&
     (value.requiredScope === undefined ||
       typeof value.requiredScope === "string") &&
     (value.resourceMetadataUrl === undefined ||

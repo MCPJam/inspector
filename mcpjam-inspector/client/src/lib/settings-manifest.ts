@@ -195,7 +195,7 @@ export const SETTINGS_DESTINATIONS: readonly SettingsDestination[] = [
       "auto-top-up",
     ]),
     matches: (p) =>
-      /^\/organizations\/[^/]+\/billing(?:\/usage)?$/.test(p) ||
+      /^\/organizations\/[^/]+\/billing(?:\/(?:usage|byok))?$/.test(p) ||
       p === "/billing",
   },
   org("audit-log", "Audit log", "/audit-log", ["activity", "CSV export"]),

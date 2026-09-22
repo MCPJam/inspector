@@ -1,5 +1,145 @@
 # `@mcpjam/sdk` changelog
 
+## 8.12.0
+
+### Minor Changes
+
+- [#5338](https://github.com/MCPJam/inspector/pull/5338) [`331907a`](https://github.com/MCPJam/inspector/commit/331907a16a25617016f5e3743d48cee1bf6ddb63) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - `EvalSuite.runWithClient` accepts a list of saved clients. It runs the suite against each in parallel and uploads one run per client, grouped in MCPJam under one run number. Adds `runGroupId` to the reporting config. The evals GitHub Action now shows grouped runs as one table with a row per client and model.
+
+- [#5359](https://github.com/MCPJam/inspector/pull/5359) [`2d59e6f`](https://github.com/MCPJam/inspector/commit/2d59e6ff815872a81070bcb8968e22ec146a29f8) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Swarm findings: add an `analysisUnavailable` coverage note, so a wave whose cause analysis never ran is distinguishable from one where the analysis ran and found nothing.
+
+- [#5340](https://github.com/MCPJam/inspector/pull/5340) [`cc8f06a`](https://github.com/MCPJam/inspector/commit/cc8f06a844ee7243a6dbb2ac29bbc0a2b11bbf16) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Swarm findings: carry recorded session signals, a plain-language persona account and proposal verification counts on the wire. All three additions are optional, so existing payloads keep parsing unchanged.
+
+### Patch Changes
+
+- [#5390](https://github.com/MCPJam/inspector/pull/5390) [`99bc573`](https://github.com/MCPJam/inspector/commit/99bc573e213994c6aa46beb4dbf3ac88b56dfcf8) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+
+  This changeset carries no code changes. It ships the inspector and SDK work that has been waiting on main since the last release, and bumps @mcpjam/cli in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+
+## 8.11.1
+
+### Patch Changes
+
+- [#5300](https://github.com/MCPJam/inspector/pull/5300) [`42c058f`](https://github.com/MCPJam/inspector/commit/42c058f0cd41078ee28533f0589bd0af3c7cbf7e) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Report the model on every iteration an `EvalSuite` or `EvalTest` run uploads. A run started with `runWithClient` showed an empty MODEL column, because only the `promptsToEvalResult` path stamped the provider and model that the run had already recorded. When a case fails in setup and never reaches the model, the run now names the model it was configured with — the saved client's, for a `runWithClient` run.
+
+  Report per-step verdicts too (`metadata.stepResults`), the same rows the hosted runner writes. An SDK case whose tool call matched still read "0 of 1 assertion passed" on the Steps tab, with a grey unknown icon, because no step ever carried a verdict.
+
+- [#5330](https://github.com/MCPJam/inspector/pull/5330) [`1ad2342`](https://github.com/MCPJam/inspector/commit/1ad2342d2c7bd7ec9ff4051ad1536dba1a37466f) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the
+  work already merged into main reaches npm. Version bump only — no code changes.
+
+## 8.11.0
+
+### Minor Changes
+
+- [#5281](https://github.com/MCPJam/inspector/pull/5281) [`4311e1f`](https://github.com/MCPJam/inspector/commit/4311e1f0b008b28bb02405e9bc87ac5accd5cb6e) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Expose versioned, evidence-backed swarm journey findings through the SDK and API contract. Render persona and goal findings from the shared analysis output, disclose unread sessions, and avoid reassuring summaries when no model analysis ran.
+
+## 8.10.1
+
+### Patch Changes
+
+- [#5290](https://github.com/MCPJam/inspector/pull/5290) [`dc212eb`](https://github.com/MCPJam/inspector/commit/dc212eb1b040c44e488203e2ef1a2bc8174e2876) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Keep a miscited Markdown case from failing the whole import, and give imported drafts their own review surface instead of listing them beside cases already in the suite. A blocked draft now names the missing field in a badge on its title, and importing clears a stale generation error that pointed at a setting import does not offer.
+
+- [#5298](https://github.com/MCPJam/inspector/pull/5298) [`7032855`](https://github.com/MCPJam/inspector/commit/703285536746b2e05bc49e45dacabb3582e374e8) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Widget evidence too large to send inline now goes to storage, so an MCP Apps server can report its evals.
+
+  Reporting a run embedded each widget snapshot's HTML in the request. A snapshot is a whole built app — a single-file bundle is commonly over half a megabyte — so one test case whose tool ran twice put more than 1MB on the wire and the upload failed with "Request body exceeds 1MB limit". Chunking could not save it: it splits between results, never inside one.
+
+  Small widgets still ride along inline, in the one request they always did, because that is what lets a retry resend identical bytes. Only a result that would not fit offloads its HTML to blob storage first and sends the id instead. The offload happens once, before the retry loop, so retries stay byte-identical either way.
+
+  The upload URL this path follows must now be https, or loopback — `npx convex dev` and a self-hosted deployment hand out `http://127.0.0.1`, and those still work. Anything else is refused rather than putting a built app on a cleartext wire.
+
+## 8.10.0
+
+### Minor Changes
+
+- [#5264](https://github.com/MCPJam/inspector/pull/5264) [`07d7090`](https://github.com/MCPJam/inspector/commit/07d709022c9922891145ee14a9637e3f5b7461fd) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Tell agents and scripts when an included operation's usage limit lifts. The SDK adds `describePlatformRefusal` and `platformRefusalHint`, which read a `RATE_LIMITED` refusal's backend code, limit, retry time and whether credits would help. MCP tool errors, CLI errors and in-app agent tool errors now carry that and say when to retry, without suggesting a top-up. Generation copy now says the quota belongs to the organization, not the project, and description proposals no longer claim a generation quota. The insight getters explain `platform_cap_exceeded` and `platform_unavailable`.
+
+- [#5248](https://github.com/MCPJam/inspector/pull/5248) [`b99eed6`](https://github.com/MCPJam/inspector/commit/b99eed6a297508c17f8fa19e78257d09361a9cb5) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Report swarm execution, goal grading, and advisory standard checks separately across the UI and platform API. Show shared run decisions, grading coverage, and session user-value chains while retaining persona-specific findings.
+
+### Patch Changes
+
+- [#5279](https://github.com/MCPJam/inspector/pull/5279) [`e059fd2`](https://github.com/MCPJam/inspector/commit/e059fd2d7bcc2753e2bbcc1ce004a824b009c320) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Stop an empty system prompt from failing every generation. A saved MCPJam client with no system prompt reads as `""`, and `runWithClient` passed it straight to the provider; Anthropic refuses an empty system block with `system: text content blocks must be non-empty`, so every case in the suite failed with a bare "Bad Request". `HostRunner` now treats an empty configured prompt as "none given" and uses its default, the same as it already did for a host snapshot.
+
+## 8.9.0
+
+### Minor Changes
+
+- [#5102](https://github.com/MCPJam/inspector/pull/5102) [`930c5c8`](https://github.com/MCPJam/inspector/commit/930c5c8e6e17aa000e4c0eb99923b3447165000f) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Use one versioned goal-completion judge contract across hosted evals and the SDK, with complete recorded traces, tool catalogs, runtime context and supported captured media. Add optional grading instructions, unscored evidence errors, durable per-iteration recovery, provenance and failed-only retries. Preserve custom judge definitions and existing explicit manual/off settings.
+
+  Expose bounded judge backtests through the SDK, CLI and MCP, with draft/source-bound continuation and cached page retries. Deploy the paired optional backend schema and handlers before publishing writers or enabling automatic grading. Grading is controlled by the suite's own settings.
+
+  **Data-egress change:** hosted v4 grading sends full recorded conversations and traces, tool schemas, runtime context and supported media bytes through OpenRouter to the selected model provider, with existing credential redaction. Review provider/data policies before enabling; explicit manual/off settings remain available on every suite.
+
+- [#5216](https://github.com/MCPJam/inspector/pull/5216) [`755ab24`](https://github.com/MCPJam/inspector/commit/755ab2472b34973441a1352f4e57e93e51d6d0db) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Ground swarm personas in observed workspace entities and add optional prerequisite setup. Both run in the background with no UI: journeys created in the app enable setup, and API callers opt in with `setupWrites`. Setup evidence and readiness are recorded on the run, separately from graded sessions.
+
+- [#5182](https://github.com/MCPJam/inspector/pull/5182) [`b5a74d7`](https://github.com/MCPJam/inspector/commit/b5a74d7f023a81d93d79622424d3c2af764269a8) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Drop the goal-completion judge's two operator deployment controls. Grading is on by default and is turned off through a suite's own judge settings, which every caller can already read and write.
+
+  `GoalJudgePolicy` no longer reports `executionPaused`, the resolved judge on a suite response no longer carries that field, and `judge_execution_paused` leaves the judge error code contract. Both were produced only by backend environment variables that were never set on any deployment, so no stored verdict or suite carries either value. Readers that treated the field as optional need no change.
+
+- [#5166](https://github.com/MCPJam/inspector/pull/5166) [`92d52c6`](https://github.com/MCPJam/inspector/commit/92d52c62b4f1e4b2c58cebd28a6bdd2a247cdc6f) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Add a `mcpjam/…` model provider so an eval can run on MCPJam-hosted inference
+  with no provider key: `model: "mcpjam/anthropic/claude-sonnet-4.5"` bills the
+  organization's credits and needs only `MCPJAM_API_KEY`. Exports
+  `releaseMcpjamModelLeases` for suites built by hand; `EvalSuite.run` already
+  calls it at teardown.
+
+- [#5183](https://github.com/MCPJam/inspector/pull/5183) [`e2f341a`](https://github.com/MCPJam/inspector/commit/e2f341a76eb7c0cf07d409407c47922ea182827c) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Say generation and insights are included with MCPJam, not billed to the customer.
+
+  Eight operations run a model whose cost is MCPJam's, not the organization's —
+  eval-case generation, the description-rewrite proposal, persona and journey
+  drafting, swarm wave insights, user-testing insights, and the two directory
+  readiness starts with `includeLlmObservations`. Every surface told the customer
+  otherwise: the MCP tool descriptions carried "COSTS MONEY", the CLI said
+  "spends credits", the approval cards warned about money, and the docs said
+  "SPENDS ORG CREDITS". For swarm wave insights and session clustering that copy
+  was already wrong today.
+
+  `risk` on those operations moves from `"spend"` to `"none"`, which is the single
+  lever for the MCP tool surface (`operationDescription` appends its spend warning
+  off that facet). What they actually consume is a bounded daily REQUEST quota —
+  `insightsPerDay` for the insight operations, a per-project generation quota for
+  the rest — so the copy now says "Included with MCPJam — no credits are consumed"
+  and names the quota instead.
+
+  They all stay GATED on the agent surface rather than deriving `direct` from the
+  new risk: the quota is shared across the organization, and an agent that
+  exhausts today's slice on its own initiative has taken something a person was
+  going to use. Each is a named `TIER_EXCEPTIONS` entry with its reason, and
+  `confirmSeverity` drops to `"none"` so no approval card claims a charge.
+
+  Still customer-paid and unchanged: eval suite/case runs, `request_eval_run_judge`,
+  the judge backtest, `start_eval_description_experiment`, journey launches and
+  chat.
+
+- [#5144](https://github.com/MCPJam/inspector/pull/5144) [`f702e88`](https://github.com/MCPJam/inspector/commit/f702e88d9f33ef57cba7873890e8fffa6f360a1c) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Export `assertCallToolResult` and `isCallToolResult` so a TypeScript caller can
+  narrow what `executeTool` returns, and fix the README's first example, which did
+  not type-check and asserted a result the everything server never sends.
+
+- [#5171](https://github.com/MCPJam/inspector/pull/5171) [`8441b80`](https://github.com/MCPJam/inspector/commit/8441b80d2d6274e4bc60710c3738d3e8c8b96ef8) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Export `STANDARD_CHECK_NAME_BY_KIND`, the name a reader recognises each standard
+  check by, keyed by the predicate kind that implements it. Derived from the
+  catalog rather than restated beside it, so a renamed check cannot leave a stale
+  title behind.
+
+### Patch Changes
+
+- [#5141](https://github.com/MCPJam/inspector/pull/5141) [`3edb6c1`](https://github.com/MCPJam/inspector/commit/3edb6c142c3389530f149f24d40b8faec6228e86) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Error surface: classify the OAuth consent state, and restyle the error card.
+
+  A server that needs OAuth consent rendered as "Unknown error" with the advice to file an issue. The client's OAuth orchestrator returned a hand-written sentence for its `reauth_required` result, the server-state hook dispatched that bare string, and the describer matched nothing in it, so an expected one-click state fell into the `internal/unknown` bucket and displayed copy written for MCPJam engineers.
+
+  The SDK gains an `auth/consent_required` catalog entry, at `warning` severity with a `user_config` origin, plus a message fallback matching MCPJam's own consent and reauthenticate wording so strings already persisted in client state classify too. The orchestrator now attaches the typed block to `reauth_required` and the hook forwards it through the connect-failure dispatch, so a live consent state never depends on the wording at all. The server card offers a Reconnect button for it.
+
+  `ErrorCard` is restyled across all of its call sites. Severity is carried by one accent — the icon and a hairline left rule — over a neutral surface, replacing the filled colour panel. The collapsed face keeps the title, the one-line explanation, the fix, and Copy; "Learn more" moves into the details panel with the rest of the evidence. Inside that panel a single likely cause renders as a sentence rather than a one-item bullet, the raw-error row is dropped when it only repeats the headline, a raw code shows as a chip, and long raw text wraps on word boundaries instead of mid-word. For `internal/unknown` only, the catalog's developer-facing causes and next steps are suppressed and the title reads "Connection error" whenever raw text is present.
+
+  The server connection card drops the red "Error" pill, which was the fourth red element announcing one failure and only toggled a disclosure the card already owns. "Failed (0)" now reads "Failed" until something has actually been retried, the OAuth step-failure line is no longer red, and the generic "Check troubleshooting" footer is hidden when an error card is present, since that card carries a docs link aimed at the specific error.
+
+- [#5240](https://github.com/MCPJam/inspector/pull/5240) [`0c3472a`](https://github.com/MCPJam/inspector/commit/0c3472adaa04293c4480cdde1bbeb2c74020d180) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Make the redesigned Evaluate experience public and use evaluate-enabled only for legacy Evaluate access. SDK links open the exact suite, case, or run in the new experience. Old commit links open the unfiltered project run table, while other legacy links preserve their artifact context.
+
+- [#5254](https://github.com/MCPJam/inspector/pull/5254) [`5dc148d`](https://github.com/MCPJam/inspector/commit/5dc148d2559f67332e6bb60cdd6f3f8f0da66275) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the
+  work already merged into main reaches npm. Version bump only — no code changes.
+
+- [#5245](https://github.com/MCPJam/inspector/pull/5245) [`318f5f5`](https://github.com/MCPJam/inspector/commit/318f5f590b59d18a74ce2403ba7ea6ae51693515) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the
+  work already merged into main reaches npm. Version bump only — no code changes.
+- Updated dependencies [[`930c5c8`](https://github.com/MCPJam/inspector/commit/930c5c8e6e17aa000e4c0eb99923b3447165000f)]:
+  - @mcpjam/evaluators@0.3.0
+
 ## 8.8.0
 
 ### Minor Changes

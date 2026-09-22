@@ -1,4 +1,5 @@
 import { useQuery } from "convex/react";
+import type { HostSnapshot } from "@/lib/host-snapshot";
 import type {
   EvalTraceBrowserInteractionStepView,
   EvalTraceWidgetRenderObservationView,
@@ -30,6 +31,8 @@ export interface SharedChatThread {
   startedAt: number;
   lastActivityAt: number;
   messagesBlobUrl?: string;
+  /** Frozen model/server/tool context, loaded only for trace viewers. */
+  recordedContext?: Record<string, unknown>;
   /**
    * Flat projections of the session's per-turn ratings, carrying the
    * WORST-TURN policy: `feedbackRating` is the minimum rating across the
@@ -208,7 +211,8 @@ export interface SharedChatThread {
  * hostConfigs table, so even after the host has rotated forward the
  * row this points at is still readable.
  */
-export interface SessionHistoricalHostConfig {
+export interface SessionHistoricalHostConfig
+  extends Omit<HostSnapshot, "hostStyle"> {
   hostConfigId: string;
   hostStyle: string;
   modelId: string;
@@ -229,7 +233,7 @@ export function useSessionHistoricalHostConfig({
 }) {
   const config = useQuery(
     "chatSessions:getSessionHistoricalHostConfig" as any,
-    sessionId ? ({ sessionId } as any) : "skip"
+    sessionId ? ({ sessionId } as any) : "skip",
   ) as SessionHistoricalHostConfig | null | undefined;
 
   return { config };
@@ -267,10 +271,21 @@ export function useSharedChatThreadList({
   return { threads };
 }
 
-export function useSharedChatThread({ threadId }: { threadId: string | null }) {
+export function useSharedChatThread({
+  threadId,
+  includeRecordedContext = false,
+}: {
+  threadId: string | null;
+  includeRecordedContext?: boolean;
+}) {
   const thread = useQuery(
     "chatSessions:getSession" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip"
+    threadId
+      ? ({
+          sessionId: threadId,
+          ...(includeRecordedContext ? { includeRecordedContext: true } : {}),
+        } as any)
+      : "skip",
   ) as SharedChatThread | null | undefined;
 
   return { thread };
@@ -283,7 +298,7 @@ export function useSharedChatWidgetSnapshots({
 }) {
   const snapshots = useQuery(
     "chatSessions:getWidgetSnapshots" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip"
+    threadId ? ({ sessionId: threadId } as any) : "skip",
   ) as SharedChatWidgetSnapshot[] | undefined;
 
   return { snapshots };
@@ -302,6 +317,7 @@ export interface SharedChatTurnTrace {
   };
   spanCount: number;
   modelId?: string;
+  requestPayloadsBlobUrl?: string | null;
   spansBlobUrl?: string | null;
   /** The `webmcp_*` page tools this turn advertised; see `ChatHistoryTurnTrace`. */
   pageToolsAtTurn?: MintedPageToolRecord[];
@@ -314,7 +330,7 @@ export function useSharedChatTurnTraces({
 }) {
   const traces = useQuery(
     "chatSessions:getSessionTurnTraces" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip"
+    threadId ? ({ sessionId: threadId } as any) : "skip",
   ) as SharedChatTurnTrace[] | undefined;
 
   return { traces };
@@ -347,7 +363,7 @@ export function useSharedChatTurnScores({
 }) {
   const scores = useQuery(
     "sessionScores:listBySession" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip"
+    threadId ? ({ sessionId: threadId } as any) : "skip",
   ) as SharedChatTurnScore[] | undefined;
 
   return { scores };
@@ -377,7 +393,7 @@ export function useSessionBrowserArtifacts({
 }) {
   const artifacts = useQuery(
     "chatSessions:getBrowserArtifacts" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip"
+    threadId ? ({ sessionId: threadId } as any) : "skip",
   ) as SessionBrowserArtifacts | undefined;
 
   return { artifacts };

@@ -1,3 +1,5 @@
+import { capRequestPayloadsForPersist } from "../../utils/live-chat-trace-stream";
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ModelMessage } from "ai";
 import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceVideoMeta } from "@/shared/eval-trace";
@@ -609,6 +611,7 @@ export function buildIterationFinishParams(args: {
   modelId?: string;
   systemPrompt?: string;
   spans?: EvalTraceSpan[];
+  requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   prompts?: PromptTraceSummary[];
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   widgetRenderObservations?: RunnerWidgetRenderObservation[];
@@ -755,6 +758,7 @@ export function buildIterationFinishParams(args: {
     modelId,
     systemPrompt,
     spans,
+    requestPayloads,
     prompts,
     widgetSnapshots,
     widgetRenderObservations,
@@ -924,6 +928,7 @@ export function buildIterationFinishParams(args: {
     ...(modelId ? { modelId } : {}),
     ...(systemPrompt ? { systemPrompt } : {}),
     ...(persistedSpans.length ? { spans: persistedSpans } : {}),
+    ...(requestPayloads?.length ? { requestPayloads } : {}),
     ...(prompts?.length ? { prompts } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
     ...(widgetRenderObservations?.length ? { widgetRenderObservations } : {}),
@@ -991,6 +996,7 @@ export type FinalizeEvalIterationParams = {
   /** Effective model used by the iteration; persisted on the eval session. */
   modelId?: string;
   spans?: EvalTraceSpan[];
+  requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   prompts?: PromptTraceSummary[];
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   /**
@@ -1093,6 +1099,7 @@ export async function finalizeEvalIteration(
     messages,
     modelId,
     spans,
+    requestPayloads,
     prompts,
     widgetSnapshots,
     systemPrompt,
@@ -1224,6 +1231,7 @@ export async function finalizeEvalIteration(
     messages,
     ...(modelId ? { modelId } : {}),
     spans,
+    requestPayloads,
     prompts,
     widgetSnapshots,
     systemPrompt,
@@ -1275,6 +1283,13 @@ export async function finalizeEvalIteration(
       ...(useW1Fallback
         ? {
             messages: sanitizeForConvexTransport(messages),
+            ...(requestPayloads?.length
+              ? {
+                  requestPayloadsJson: JSON.stringify(
+                    capRequestPayloadsForPersist(requestPayloads),
+                  ),
+                }
+              : {}),
             // Mirrors `appendEvalTurnTrace.systemPrompt`. Cursor Bugbot
             // follow-up "W1 omits systemPrompt": without this the W1
             // fallback persists a transcript with no resolved system

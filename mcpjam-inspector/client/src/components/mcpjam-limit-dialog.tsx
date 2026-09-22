@@ -1,12 +1,8 @@
-import { Button } from "@mcpjam/design-system/button";
+import { creditUpgradeBenefit } from "@/lib/credit-limit-copy";
+import { FrontierSignInDialogView } from "./billing/FrontierSignInDialogView";
+import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
+import { GuestCreditWallView } from "@/components/billing/GuestCreditWallView";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@mcpjam/design-system/dialog";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import {
@@ -21,41 +17,20 @@ import {
 } from "@/hooks/useOrganizations";
 import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
-import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
-import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
+import { useAppNavigate } from "@/lib/app-navigation";
 import { useUpgradeCheckout } from "@/hooks/use-upgrade-checkout";
 import { useUpgradeRequestRecipients } from "@/hooks/use-upgrade-request-recipients";
 import { CreditsLimitDialogView } from "@/components/billing/CreditsLimitDialogView";
-import { AllowanceLimitDialogView } from "@/components/billing/AllowanceLimitDialogView";
+import { ScenarioOwnerLimitDialogView } from "@/components/billing/ScenarioOwnerLimitDialogView";
 import { track } from "@/lib/analytics";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
-/**
- * The swarm wall's words, by which allowance ran out. The period itself is
- * resolved through the SDK error catalog, so this and the error card can never
- * disagree about what the backend refused — but the wording lives here, where
- * it can be edited without an SDK change.
- *
- * Every variant leads with the BYOK sentence: "I have my own key, why am I
- * blocked" is the question that filed this bug, and the modal is now the only
- * thing on screen to answer it.
- */
-const ALLOWANCE_COPY = {
-  daily: {
-    title: "Daily MCPJam limit reached",
-    description:
-      "Swarm generation is always billed to MCPJam, so your own API key doesn't cover it. This organization's daily allowance resets tomorrow.",
-  },
-  monthly: {
-    title: "Monthly MCPJam credits spent",
-    description:
-      "Swarm generation is always billed to MCPJam, so your own API key doesn't cover it. This organization's monthly credits renew with the billing period.",
-  },
-  unknown: {
-    title: "MCPJam model limit reached",
-    description:
-      "Swarm generation is always billed to MCPJam, so your own API key doesn't cover it. This organization's MCPJam allowance is spent.",
-  },
+/** Preserve the backend's allowance period without guessing a reset time. */
+const ALLOWANCE_RESET_COPY = {
+  daily: "Your organization's daily credits reset tomorrow.",
+  monthly:
+    "Your organization's included credits renew with the billing period.",
+  unknown: "",
 } as const;
 
 // BB-133 guest credit-wall A/B. PostHog multivariate flag: the "treatment"
@@ -69,14 +44,6 @@ const GUEST_WALL_FLAG = "guest-credit-wall-copy";
 // to send them to. The public pricing page is the same marketing surface the
 // Enterprise CTA already links to (www.mcpjam.com/contact).
 const GUEST_PRICING_URL = "https://www.mcpjam.com/pricing";
-
-// Design owns the hero art (Figma node 136-92). It's dropped into client/public
-// by design; the modal degrades to no image if the asset isn't present yet, so
-// shipping the flag ahead of the export can't render a broken image.
-const GUEST_WALL_ILLUSTRATION = "/guest-credit-wall.png";
-
-// The hero art's intrinsic size, used to reserve its box before the PNG decodes.
-const GUEST_WALL_ILLUSTRATION_SIZE = 582;
 
 const normalizeGuestVariant = (
   raw: string | boolean | undefined,
@@ -210,78 +177,19 @@ function GuestCreditWall() {
   };
 
   return (
-    <Dialog
-      open
-      onOpenChange={(next) => {
-        if (!next) handleDismiss();
-      }}
-    >
-      <DialogContent className="sm:max-w-md">
-        {isTreatment ? (
-          <>
-            <img
-              src={GUEST_WALL_ILLUSTRATION}
-              alt=""
-              aria-hidden
-              width={GUEST_WALL_ILLUSTRATION_SIZE}
-              height={GUEST_WALL_ILLUSTRATION_SIZE}
-              // Explicit intrinsic size reserves the box before the PNG decodes,
-              // so the CTAs don't jump up under a reaching cursor when it paints.
-              // Small, left-aligned hero per Figma 136-92 (DialogContent is a
-              // grid, so justify-self-start pins it left instead of stretching).
-              className="h-auto w-32 justify-self-start"
-              // Degrade to no image if the asset hasn't been dropped in yet, so
-              // the flag can ship ahead of the design export.
-              onError={(event) => {
-                event.currentTarget.style.display = "none";
-              }}
-            />
-            <DialogHeader>
-              <DialogTitle>There's so much more to jam on.</DialogTitle>
-              <DialogDescription>
-                You're out of guest credits. Create a free account to keep
-                inspecting your traces, evaluating tool calls, and comparing
-                clients.
-              </DialogDescription>
-            </DialogHeader>
-            {/* Primary is first in the DOM so Radix's focus scope lands on it —
-                Enter converts instead of opening pricing — and flex-row-reverse
-                restores the Figma order with the primary on the right. On a
-                narrow modal the buttons stack instead of cramping. */}
-            <div className="flex flex-col-reverse gap-2 sm:flex-row-reverse">
-              <Button onClick={handleCreateAccount} className="flex-1">
-                Create free account
-              </Button>
-              <Button
-                variant="outline"
-                onClick={handleSeePlans}
-                className="flex-1"
-              >
-                See paid plans
-              </Button>
-            </div>
-          </>
-        ) : (
-          <>
-            <DialogHeader>
-              <DialogTitle>You've used up your free guest credits.</DialogTitle>
-              <DialogDescription>
-                Sign in to get{" "}
-                <strong className="text-foreground font-medium">10×</strong> the
-                free credits.
-              </DialogDescription>
-            </DialogHeader>
-            <Button onClick={handleSignIn} className="w-full">
-              Sign in
-            </Button>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
+    <GuestCreditWallView
+      isTreatment={isTreatment}
+      onDismiss={handleDismiss}
+      onCreateAccount={handleCreateAccount}
+      onSeePlans={handleSeePlans}
+      onSignIn={handleSignIn}
+    />
   );
 }
 
 export function MCPJamLimitDialog() {
+  const frontierOpen = useFrontierSignInDialogStore((s) => s.isOpen);
+  const closeFrontier = useFrontierSignInDialogStore((s) => s.close);
   const isOpen = useMCPJamLimitDialogStore((s) => s.isOpen);
   const intent = useMCPJamLimitDialogStore((s) => s.intent);
   const limitOrganizationId = useMCPJamLimitDialogStore(
@@ -291,7 +199,7 @@ export function MCPJamLimitDialog() {
   const limitPeriod = useMCPJamLimitDialogStore((s) => s.period);
   const close = useMCPJamLimitDialogStore((s) => s.close);
   const setAuthStatus = useMCPJamLimitDialogStore((s) => s.setAuthStatus);
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, signIn } = useAuth();
   const { isAuthenticated } = useConvexAuth();
   // Look up the user's orgs as a fallback in case there is no stored
   // active-org for this user (e.g. brand-new sign-in). Sorted most-recent
@@ -301,15 +209,21 @@ export function MCPJamLimitDialog() {
   const appNavigate = useAppNavigate();
   const creditsImpressionTrackedRef = useRef(false);
 
+  // A User Testing link is billed to the scenario owner, so a tester (guest or
+  // signed in) has nothing to buy or sign in to. They get a notice instead, and
+  // none of the billing hooks below run for an org they may not belong to.
+  const isScenarioWall = limitSurface === "scenario";
+  const showScenarioWall =
+    isOpen && intent !== null && isScenarioWall && !frontierOpen;
   // Decide whether either variant is active before wiring billing hooks. This
   // component is mounted app-wide, so a closed dialog must not keep billing
   // and owner-member Convex subscriptions alive for the whole session.
-  const showGuestDialog = !user && intent === "guest" && isOpen;
-  const showTopupDialog = !!user && intent === "topup" && isOpen;
-  // A swarm gets its own variant of the wall, not just different words: both
-  // the upgrade picker and the BYOK link dead-end there, so neither renders.
+  const showGuestDialog =
+    !user && intent === "guest" && isOpen && !isScenarioWall;
+  const showTopupDialog =
+    !!user && intent === "topup" && isOpen && !isScenarioWall;
+  // Swarm recovery explains why a provider key cannot replace platform credits.
   const isSwarmWall = limitSurface === "swarm";
-  const allowanceCopy = ALLOWANCE_COPY[limitPeriod ?? "unknown"];
 
   useEffect(() => {
     setAuthStatus(isLoading ? "loading" : user ? "signedIn" : "guest");
@@ -321,14 +235,29 @@ export function MCPJamLimitDialog() {
 
   // Resolve which org's billing page to redirect to. Prefer the org that
   // actually hit the limit; fall back to local active org / recent org.
+  // Every candidate must be an org the user can open: the stored id is raw
+  // localStorage and can outlive a membership, and a billing query for an org
+  // the user isn't in throws into the app error boundary. `seatPending` orgs
+  // are listed but unlinked, so they are excluded the same way App does.
   // Declared above the `isLoading` guard so the upgrade hook below keeps a
   // stable call order.
   const resolveBillingOrgId = (): string | null => {
     if (!user) return null;
-    if (limitOrganizationId) return limitOrganizationId;
-    const stored = readStoredActiveOrganizationId(user.id);
-    if (stored) return stored;
-    return sortedOrganizations[0]?._id ?? null;
+    const selectableOrganizations = sortedOrganizations.filter(
+      (org) => !org.seatPending,
+    );
+    const candidates = [
+      limitOrganizationId,
+      readStoredActiveOrganizationId(user.id),
+      selectableOrganizations[0]?._id,
+    ];
+    return (
+      candidates.find(
+        (candidate) =>
+          !!candidate &&
+          selectableOrganizations.some((org) => org._id === candidate),
+      ) ?? null
+    );
   };
 
   const billingOrgId = resolveBillingOrgId();
@@ -363,12 +292,12 @@ export function MCPJamLimitDialog() {
   const isBillingReady = !creditsUpgrade.isLoadingBilling;
   const isFreeEffectivePlan =
     isBillingReady && creditsUpgrade.effectivePlan === "free";
-  const showCreditsUpgrade =
-    isFreeEffectivePlan && creditsUpgrade.canManageBilling;
+  const showCreditWall =
+    showTopupDialog && isBillingReady && !frontierOpen && !isLoading;
   // Buying credits and upgrading the plan are two different permissions:
   // admins can do the first, only owners the second. An admin who can't
   // upgrade must not be pitched the upgrade with no way to act on it — they
-  // get the buy-credits copy plus a way to ask an owner.
+  // get a way to ask an owner plus BYOK information.
   const showCreditsUpgradeRequest =
     !isKnownNonManager &&
     isFreeEffectivePlan &&
@@ -379,9 +308,28 @@ export function MCPJamLimitDialog() {
   // the resolved owners. Admins can buy credits but cannot upgrade, so naming
   // them here promised a recipient the button never writes to — and, on Free,
   // implied admins could upgrade at all.
+  const upgradeBenefit = creditUpgradeBenefit(
+    creditsUpgrade.creditUpgradePlans,
+  );
   const memberDescription = isFreeEffectivePlan
-    ? "Ask an organization owner to buy credits or upgrade the plan."
-    : "Ask an organization owner to buy credits.";
+    ? `${upgradeBenefit} Ask an owner to upgrade.`
+    : "Ask an owner to add shared credits and keep your team testing.";
+  const creditDescription =
+    isKnownNonManager || showCreditsUpgradeRequest
+      ? memberDescription
+      : isFreeEffectivePlan
+      ? `Your Free credits reset daily. ${upgradeBenefit}`
+      : "Add shared credits to keep your team testing.";
+  const swarmDescription = `${
+    limitPeriod
+      ? creditDescription.replace("Your Free credits reset daily. ", "")
+      : creditDescription
+  } ${
+    ALLOWANCE_RESET_COPY[limitPeriod ?? "unknown"]
+  } Swarm generation requires MCPJam credits, even with your own API key.`.replace(
+    / +/g,
+    " ",
+  );
   // Audience follows the billing permission, the same rule the eval wall uses.
   // `can_buy_credits` is what separates an admin from a plain member.
   const creditsAudience = creditsUpgrade.canManageBilling
@@ -394,6 +342,7 @@ export function MCPJamLimitDialog() {
       return;
     }
     if (
+      !showCreditWall ||
       isLoadingOrganizations ||
       creditsUpgrade.isLoadingBilling ||
       // Both request paths render a recipient button, so both have to wait for
@@ -418,17 +367,18 @@ export function MCPJamLimitDialog() {
       surface: limitSurface,
       // The swarm variant renders no upgrade picker, so reporting "upgrade"
       // there would name an action that isn't on screen.
-      primary_action: isKnownNonManager
-        ? requestRecipients.length > 0
-          ? "request_owner"
-          : "none"
-        : showCreditsUpgrade && !isSwarmWall
-        ? "upgrade"
-        : "buy_credits",
+      primary_action:
+        isKnownNonManager || showCreditsUpgradeRequest
+          ? requestRecipients.length > 0
+            ? "request_owner"
+            : "none"
+          : isFreeEffectivePlan
+          ? "explore_plans"
+          : "buy_credits",
       current_plan: creditsUpgrade.currentPlan,
       effective_plan: creditsUpgrade.effectivePlan,
       can_manage_billing: creditsUpgrade.canManageBilling,
-      can_buy_credits: !isKnownNonManager,
+      can_buy_credits: !isKnownNonManager && !isFreeEffectivePlan,
       request_action: creditsRequestAction,
       request_recipient_count: requestRecipients.length,
       billing_interval: creditsUpgrade.interval,
@@ -452,210 +402,90 @@ export function MCPJamLimitDialog() {
     isSwarmWall,
     limitSurface,
     requestRecipients.length,
-    showCreditsUpgrade,
     showCreditsUpgradeRequest,
     showTopupDialog,
+    showCreditWall,
   ]);
 
   if (isLoading) return null;
 
-  const handleTopUp = () => {
-    const orgId = resolveBillingOrgId();
-    // Don't dismiss the modal until we know we can route the user — on a
-    // fresh sign-in the membership query may still be in flight, in which
-    // case closing now would drop them out of the upsell silently.
-    if (!orgId) {
-      track("plan_limit_buy_credits_clicked", {
-        location: "plan_limit_dialog",
-        wall_kind: "organization_credits",
-        organization_id: null,
-        origin: "credits",
-        outcome: "blocked_missing_organization",
-        current_plan: creditsUpgrade.currentPlan,
-        effective_plan: creditsUpgrade.effectivePlan,
-      });
-      return;
-    }
-    close();
-    // The router strips ?... before resolving the route, so the
-    // `topup=open` flag is invisible to navigation but visible to the
-    // billing page on mount.
-    appNavigate(`/organizations/${orgId}/billing?topup=open`);
-    track("plan_limit_buy_credits_clicked", {
-      location: "plan_limit_dialog",
-      wall_kind: "organization_credits",
-      organization_id: orgId,
-      origin: "credits",
-      outcome: "billing_opened",
-      current_plan: creditsUpgrade.currentPlan,
-      effective_plan: creditsUpgrade.effectivePlan,
-    });
+  const engagementContext = {
+    surface: limitSurface,
+    audience: creditsAudience,
+    current_plan: creditsUpgrade.currentPlan,
+    effective_plan: creditsUpgrade.effectivePlan,
   };
-
-  const handleBYOK = () => {
-    // Two destinations, because this wall is no longer raised only from chat.
-    // Where a picker that honours the intent is on screen, keep the in-place
-    // behaviour: close the dialog and pop it open on "Your providers" so the
-    // user switches to an own-key model without leaving the page (the free
-    // models stay grayed). Everywhere else — the eval generation screen, the
-    // Ask MCPJam panel, the Markdown import dialog — nothing is listening,
-    // and firing the intent closed the dialog and did nothing at all. Those
-    // surfaces go to the org's AI providers page, where the keys live.
-    const { providersTabResponderCount, requestOpenProvidersTab } =
-      useModelPickerIntentStore.getState();
+  const creditEventContext = {
+    ...engagementContext,
+    location: "plan_limit_dialog",
+    wall_kind: "organization_credits",
+    origin: "credits",
+  };
+  const navigateToBilling = (
+    action: "buy_credits" | "byok" | "explore_plans",
+  ) => {
+    const destinations = {
+      buy_credits: { path: "billing?topup=open", outcome: "billing_opened" },
+      byok: { path: "billing/byok", outcome: "byok_explainer_opened" },
+      explore_plans: { path: "plans", outcome: "billing_opened" },
+    } as const;
     const orgId = resolveBillingOrgId();
-
-    if (providersTabResponderCount > 0) {
+    const destination = destinations[action];
+    // Keep the wall open until there is an organization to navigate to.
+    if (orgId) {
       close();
-      requestOpenProvidersTab();
-      track("plan_limit_byok_clicked", {
-        location: "plan_limit_dialog",
-        wall_kind: "organization_credits",
-        organization_id: billingOrgId,
-        origin: "credits",
-        outcome: "model_picker_opened",
-        current_plan: creditsUpgrade.currentPlan,
-        effective_plan: creditsUpgrade.effectivePlan,
-      });
-      return;
+      appNavigate(`/organizations/${orgId}/${destination.path}`);
     }
-
-    // Same guard as `handleTopUp`: with no org resolved yet there is nowhere
-    // to route, so hold the dialog rather than dropping the user on nothing.
-    if (!orgId) {
-      track("plan_limit_byok_clicked", {
-        location: "plan_limit_dialog",
-        wall_kind: "organization_credits",
-        organization_id: null,
-        origin: "credits",
-        outcome: "blocked_missing_organization",
-        current_plan: creditsUpgrade.currentPlan,
-        effective_plan: creditsUpgrade.effectivePlan,
-      });
-      return;
-    }
-
-    close();
-    appNavigate(buildOrganizationPath(orgId, "models"));
-    track("plan_limit_byok_clicked", {
-      location: "plan_limit_dialog",
-      wall_kind: "organization_credits",
-      organization_id: orgId,
-      origin: "credits",
-      outcome: "providers_settings_opened",
-      current_plan: creditsUpgrade.currentPlan,
-      effective_plan: creditsUpgrade.effectivePlan,
+    track(`plan_limit_${action}_clicked`, {
+      ...creditEventContext,
+      organization_id: orgId ?? null,
+      outcome: orgId ? destination.outcome : "blocked_missing_organization",
     });
   };
-
-  const handleExplorePlans = () => {
-    const orgId = resolveBillingOrgId();
-    // Same guard as `handleTopUp`: without an org there is no billing page to
-    // land on, so keep the dialog up rather than dropping them on nothing.
-    if (!orgId) {
-      track("plan_limit_explore_plans_clicked", {
-        location: "plan_limit_dialog",
-        wall_kind: "organization_credits",
-        organization_id: null,
-        origin: "credits",
-        outcome: "blocked_missing_organization",
-      });
-      return;
-    }
-    close();
-    // Plans render below credits and payment history, so the flag tells the
-    // billing page to scroll to them instead of landing at the top.
-    appNavigate(`/organizations/${orgId}/billing?plans=open`);
-    track("plan_limit_explore_plans_clicked", {
-      location: "plan_limit_dialog",
-      wall_kind: "organization_credits",
-      organization_id: orgId,
-      origin: "credits",
-      outcome: "billing_opened",
-    });
-  };
-
+  const handleTopUp = () => navigateToBilling("buy_credits");
+  const handleBYOK = () => navigateToBilling("byok");
+  const handleExplorePlans = () => navigateToBilling("explore_plans");
   const handleCreditsDismiss = () => {
     close();
     track("plan_limit_dialog_dismissed", {
-      location: "plan_limit_dialog",
-      wall_kind: "organization_credits",
+      ...creditEventContext,
       organization_id: billingOrgId,
       limit_kind: "credits",
-      origin: "credits",
-      current_plan: creditsUpgrade.currentPlan,
-      effective_plan: creditsUpgrade.effectivePlan,
-      audience: creditsAudience,
     });
-  };
-
-  const handleUpgrade = async () => {
-    const result = await creditsUpgrade.start();
-    if (result?.shouldDismiss) close();
   };
 
   return (
     <>
-      {showGuestDialog && <GuestCreditWall />}
-      {showTopupDialog && isSwarmWall && (
-        <AllowanceLimitDialogView
-          title={allowanceCopy.title}
-          // A member gets the owner guidance ON TOP of the explanation, not
-          // instead of it: "my own key is configured, why am I blocked" is the
-          // question that filed this bug, and it is not a question only
-          // billing managers ask.
-          description={
-            isKnownNonManager
-              ? `${allowanceCopy.description} ${memberDescription}`
-              : allowanceCopy.description
-          }
-          isKnownNonManager={isKnownNonManager}
-          requestRecipients={isBillingReady ? requestRecipients : []}
-          organizationId={billingOrgId}
-          organizationName={creditsUpgrade.organizationName}
-          teamName={creditsUpgrade.teamName}
-          onBuyCredits={handleTopUp}
-          onExplorePlans={handleExplorePlans}
-          onDismiss={handleCreditsDismiss}
+      {frontierOpen && (
+        <FrontierSignInDialogView
+          onDismiss={closeFrontier}
+          onSignIn={() => {
+            captureAppSignInReturnPath();
+            closeFrontier();
+            signIn(permalinkSignInOptions());
+          }}
         />
       )}
-      {showTopupDialog && !isSwarmWall && (
+      {showScenarioWall && <ScenarioOwnerLimitDialogView onDismiss={close} />}
+      {showGuestDialog && !frontierOpen && <GuestCreditWall />}
+      {showCreditWall && (
         <CreditsLimitDialogView
-          description={
-            isKnownNonManager
-              ? memberDescription
-              : showCreditsUpgrade
-              ? `Free credits reset daily. The ${
-                  creditsUpgrade.teamName
-                } plan replaces the daily cap with a monthly allowance${
-                  creditsUpgrade.isFlatPlan ? "" : " per seat"
-                }, so usage isn't rationed day to day.`
-              : "Buy credits to keep your team going, or use your own API key."
-          }
+          engagementContext={engagementContext}
+          isFreePlan={isFreeEffectivePlan}
+          description={isSwarmWall ? swarmDescription : creditDescription}
+          isSwarm={isSwarmWall}
           isKnownNonManager={isKnownNonManager}
-          showUpgrade={showCreditsUpgrade}
           showRequestUpgrade={showCreditsUpgradeRequest}
           // Empty until billing resolves: the draft's wording depends on the
           // plan, and RequestUpgradeButton already renders nothing without a
           // recipient.
           requestRecipients={isBillingReady ? requestRecipients : []}
-          requestAction={creditsRequestAction}
           organizationId={billingOrgId}
           organizationName={creditsUpgrade.organizationName}
-          interval={creditsUpgrade.interval}
-          onIntervalChange={creditsUpgrade.setInterval}
-          annualPriceLabel={creditsUpgrade.annualPriceLabel}
-          monthlyPriceLabel={creditsUpgrade.monthlyPriceLabel}
-          annualDiscountPct={creditsUpgrade.annualDiscountPct}
-          annualSupported={creditsUpgrade.annualSupported}
-          monthlySupported={creditsUpgrade.monthlySupported}
-          priceUnit={creditsUpgrade.priceUnit}
           teamName={creditsUpgrade.teamName}
-          isStarting={creditsUpgrade.isStarting}
-          isLoadingPrices={creditsUpgrade.isLoadingPrices}
-          onUpgrade={() => void handleUpgrade()}
           onBuyCredits={handleTopUp}
           onUseOwnKey={handleBYOK}
+          onExplorePlans={handleExplorePlans}
           onDismiss={handleCreditsDismiss}
         />
       )}

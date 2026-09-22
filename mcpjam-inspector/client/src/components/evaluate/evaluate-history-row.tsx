@@ -242,18 +242,20 @@ export function EvaluateHistoryRow({
         <RunClientsCell rows={clientRows} column="model" />
       </TableCell>
       <TableCell>
-        <span
-          className={cn(
-            "whitespace-nowrap rounded px-1.5 py-1 text-[10px] font-semibold uppercase",
-            result === "Passed"
-              ? "bg-success/15 text-foreground"
-              : result === "Failed"
-                ? "bg-destructive/10 text-destructive"
-                : "bg-muted text-muted-foreground",
-          )}
-        >
-          {result}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span
+            className={cn(
+              "whitespace-nowrap rounded px-1.5 py-1 text-[10px] font-semibold uppercase",
+              result === "Passed"
+                ? "bg-success/15 text-foreground"
+                : result === "Failed"
+                  ? "bg-destructive/10 text-destructive"
+                  : "bg-muted text-muted-foreground",
+            )}
+          >
+            {result}
+          </span>
+        </div>
       </TableCell>
       <TableCell
         className="whitespace-nowrap tabular-nums"

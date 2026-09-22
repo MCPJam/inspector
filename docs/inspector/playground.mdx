@@ -107,7 +107,16 @@ The picker opens on the tab that matches your currently selected model. When you
 
 When your MCPJam credit balance reaches zero, free models are grayed out in the picker with a tooltip explaining the limit. Models from your own providers remain enabled — switching to one is the fastest way to keep working. Paid top-up credits (if you have any) keep free models available even after your daily free allowance is exhausted.
 
-If the out-of-credits dialog appears, clicking **Use your own API key** closes the dialog. In the Playground chat, it opens the model picker directly on the **Your providers** tab so you can switch to an own-key model without leaving the page. From other surfaces (eval generation, Markdown import, Ask MCPJam), it takes you to your organization's AI providers settings page where you can add a key.
+If the out-of-credits dialog appears, the actions available depend on your plan and role:
+
+- **Free plan (owner)** — The dialog shows **Compare plans** (opens your organization's Plans settings) and **Learn more about BYOK** (opens the BYOK and credits explainer under Usage & billing).
+- **Free plan (admin or member)** — The dialog shows a **Request upgrade** link to email an organization owner.
+- **Paid plan (owner or admin)** — The dialog shows **Buy credits** to add shared credits to your organization.
+- **Paid plan (member)** — The dialog shows a **Request credits** link to email an organization owner.
+
+### Frontier models and sign-in
+
+Some frontier models require a signed-in account. If you select a frontier model as a guest, a sign-in prompt appears showing the supported providers. You can sign in to get access, or choose **Not now** to continue with a standard model. This prompt does not affect your credit balance.
 
 ## Multi-Model Compare
 
@@ -406,7 +415,7 @@ When you are signed in as a project member, the Playground gives the model a set
 
 Servers are identified by name or ID as saved in the project. Stdio servers are not supported for live operations — the model will receive a clear error rather than a connection failure.
 
-When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, `read_server_resource`, `start_claude_readiness_run`, and `start_openai_readiness_run` so you can approve or deny each one — these open a connection to one of your servers or spend credits. Read-only listing and polling tools never require approval, on any model. `cancel_readiness_run` is also direct — it stops traffic rather than starting it.
+When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, `read_server_resource`, `start_claude_readiness_run`, and `start_openai_readiness_run` so you can approve or deny each one — these open a connection to one of your servers. (The readiness starts consume no credits; the approval is about dialling somebody else's server, not about money.) Read-only listing and polling tools never require approval, on any model. `cancel_readiness_run` is also direct — it stops traffic rather than starting it.
 
 <Note>
   These tools are only available when you are signed in as a project member.

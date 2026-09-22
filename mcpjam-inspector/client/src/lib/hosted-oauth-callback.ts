@@ -1,3 +1,4 @@
+import type { ConnectionIntent } from "@/shared/oauth-connections";
 import {
   isHostedOAuthSurface,
   type HostedOAuthSurface,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/app-navigation";
 
 export interface HostedOAuthPendingMarker {
+  connectionIntent?: ConnectionIntent;
   surface: HostedOAuthSurface;
   organizationId?: string | null;
   projectId?: string | null;
@@ -129,6 +131,9 @@ export function writeHostedOAuthPendingMarker(
         serverId: marker.serverId ?? null,
         serverUrl: marker.serverUrl ?? null,
         sessionId: marker.sessionId ?? null,
+        ...(marker.connectionIntent
+          ? { connectionIntent: marker.connectionIntent }
+          : {}),
         accessScope: marker.accessScope ?? null,
         scenarioId: marker.scenarioId ?? null,
         returnPath: normalizeHostedOAuthReturnPath(
@@ -169,6 +174,17 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
 
     return {
       surface: parsed.surface,
+      ...(parsed.connectionIntent?.kind === "add"
+        ? { connectionIntent: { kind: "add" as const } }
+        : parsed.connectionIntent?.kind === "replace" &&
+          typeof parsed.connectionIntent.credentialId === "string"
+        ? {
+            connectionIntent: {
+              kind: "replace" as const,
+              credentialId: parsed.connectionIntent.credentialId,
+            },
+          }
+        : {}),
       organizationId:
         typeof parsed.organizationId === "string"
           ? parsed.organizationId

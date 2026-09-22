@@ -23,6 +23,22 @@ export interface SwarmDetailPersona {
 }
 
 /**
+ * The detail tab strip, in display order.
+ *
+ * Findings leads because it is what a reader wants from a settled wave. Run
+ * trails: it is the watch surface, and a live wave reaches it through
+ * {@link resolveSwarmRunDetailTab} rather than by being clicked, so leading
+ * with it put an in-flight view first on a page that is usually read after
+ * the fact.
+ */
+export const DETAIL_TAB_OPTIONS = [
+  { value: "findings" as const, label: "Findings" },
+  { value: "insights" as const, label: "Insights" },
+  { value: "sessions" as const, label: "Sessions" },
+  { value: "run" as const, label: "Run" },
+] as const;
+
+/**
  * Default landing: a live wave with no explicit tab opens the watch
  * surface (`run`). A finished wave, or an explicit `?tab=`, keeps the
  * parsed tab — including `?tab=run` on a settled wave, so the matrix

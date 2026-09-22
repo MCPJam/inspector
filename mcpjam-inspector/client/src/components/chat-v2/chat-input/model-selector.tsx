@@ -87,6 +87,7 @@ interface ModelSelectorProps {
    * org settings; omitted, the footer is absent rather than disabled.
    */
   onManageOrgProviders?: () => void;
+  platformPaidFallback?: boolean;
 }
 
 type GroupKey = string;
@@ -233,6 +234,7 @@ export function ModelSelector({
   analyticsLocation = "chat_input",
   respondToProviderTabIntent = false,
   onManageOrgProviders,
+  platformPaidFallback = false,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
@@ -879,13 +881,18 @@ export function ModelSelector({
                           )}
                         >
                           {tab === "provided"
-                            ? "Free models"
+                            ? (platformPaidFallback ? "MCPJam models" : "Free models")
                             : "Your providers"}
                         </button>
                       ))}
                     </div>
                   ) : null}
 
+                  {platformPaidFallback && providerTab === "provided" && (
+                    <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
+                      Shared free allowance is unavailable. These models use your purchased credits.
+                    </p>
+                  )}
                   <CommandList className="max-h-[min(320px,45vh)]">
                     {/* cmdk renders Empty whenever no rows are mounted, which
                         the empty providers tab below would otherwise inherit —
@@ -902,7 +909,7 @@ export function ModelSelector({
 
                     {showProvided ? (
                       <CommandGroup
-                        heading={isSearching ? "Free models" : undefined}
+                        heading={isSearching ? (platformPaidFallback ? "MCPJam models" : "Free models") : undefined}
                       >
                         {visibleSections.provided.map((group) => (
                           <div key={`${group.provider}:${group.providerType}`}>

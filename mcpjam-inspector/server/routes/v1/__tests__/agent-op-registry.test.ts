@@ -1915,6 +1915,80 @@ describe("tier derives from operation.risk", () => {
         "approves the start. confirmSeverity is none so the prompt does not " +
         "warn about money.",
     },
+    // ── PLATFORM-PAID MODEL CALLS ───────────────────────────────────────
+    //
+    // The eight below all run a model whose cost is MCPJam's, not the
+    // organization's: `risk` is `none` because there is no spend for a spend
+    // guard to warn about, and their descriptions say "no credits are
+    // consumed" rather than "COSTS MONEY".
+    //
+    // They stay GATED anyway, and the reason is the same for all eight, so it
+    // is stated once here: what they consume is a BOUNDED DAILY QUOTA that
+    // belongs to the whole organization (the `insightsPerDay` ledger for the
+    // insight ops, the organization's generation quota or MCPJam's daily analysis budget for the rest). A `direct`
+    // tool is one an agent may call without asking, and an agent that
+    // exhausted today's shared quota on its own initiative would have taken
+    // something a person was going to use, with no way to give it back until
+    // the UTC day rolls. Money is not the only thing worth an approval.
+    //
+    // Each entry carries the specific second reason too, because the shared
+    // one alone would not justify gating a read.
+    start_claude_readiness_run: {
+      tier: "gated",
+      reason:
+        "The optional model pass is platform-paid, so risk is none and " +
+        "would derive direct. Gated for the reason start_conformance_run is: " +
+        "a start dials a third party's server and persists a project row. " +
+        "confirmSeverity is none, so the prompt does not warn about money.",
+    },
+    start_openai_readiness_run: {
+      tier: "gated",
+      reason:
+        "The same as start_claude_readiness_run, plus submissionMode is " +
+        "never inferred — a person confirming the start is also confirming " +
+        "which submission shape is being graded.",
+    },
+    generate_eval_cases: {
+      tier: "gated",
+      reason:
+        "The authoring model is platform-paid, so risk is none and would " +
+        "derive direct. Gated because it PERSISTS generated cases into the " +
+        "suite — the one generation op that writes — and because it draws on " +
+        "the organization's shared daily generation quota.",
+    },
+    propose_eval_description_rewrite: {
+      tier: "gated",
+      reason:
+        "Platform-paid, so risk is none. Gated because it persists a " +
+        "proposing experiment row and draws on MCPJam's daily analysis " +
+        "budget; a caller that re-proposes in a loop exhausts it.",
+    },
+    generate_personas: {
+      tier: "gated",
+      reason:
+        "Platform-paid drafting, so risk is none. Gated on the shared daily " +
+        "generation quota: the drafts persist nothing, but the quota they " +
+        "consume is the organization's and does not come back until UTC " +
+        "midnight.",
+    },
+    generate_journeys: {
+      tier: "gated",
+      reason: "The same as generate_personas: platform-paid, shared quota.",
+    },
+    request_wave_insights: {
+      tier: "gated",
+      reason:
+        "Platform-paid, so risk is none. Gated on the insightsPerDay " +
+        "ledger, which is SHARED with user-testing and eval-run insights — " +
+        "a request here takes one from there, across the whole organization.",
+    },
+    request_user_testing_insights: {
+      tier: "gated",
+      reason:
+        "The same shared insightsPerDay ledger as request_wave_insights, " +
+        "plus a 409 until the window is mined, which a caller must not " +
+        "retry in a loop.",
+    },
   };
 
   const placementOf = (name: string): Placement | "unregistered" => {
@@ -2100,6 +2174,7 @@ const PROMPT_BEFORE_REGISTRY = [
   "- NEVER invent server names or ids. Call `list_project_servers` first and use exactly what it returns. If no server matches what the user described, ask which server they mean — do not guess and do not fabricate placeholders.",
   "- Before authoring tool-call assertions, check the server's real tool names with `list_server_tools`.",
   "- Author cases as `steps` arrays; prefer a `prompt` step plus `toolCalledWith`-style assertions on the tools the conversation showed. Set `expectedOutput` when the user stated one.",
+  "- For new AI-authored cases, use generate_eval_cases and its spend approval flow. Use create/update case tools only for explicit user payloads or already reviewed drafts. Keep each full workflow as ordered steps.",
   "- When creating a suite, set the suite `model` explicitly to `anthropic/claude-haiku-4.5` unless the user asks for a different model.",
   "- Some actions SPEND the user's quota or credits (running a suite or a case, generating cases, cancelling a run). Calling those tools does NOT perform them: it PROPOSES the action and returns an approval id, and a person must click to confirm. Say that you've proposed it and what it will do. NEVER say it has started, is running, or has been cancelled.",
   "- If a proposal tool is not available to you, you cannot run anything at all. Say so plainly and report the ids the user needs — do not imply you started something.",
@@ -2127,7 +2202,7 @@ const EXPECTED_PROMPT_NOTES = [
   "- `install_registry_server` writes a project servers row and stops — it is NOT a live connection. Calling it PROPOSES the install; a person approves it. After approval, follow with `get_project_server_connection_status`. OAuth servers need the browser connect-link; never write that URL into a shared channel.",
   "- When a server is erroring, won't connect, or behaves unexpectedly, run `diagnose_server` on it before guessing. It probes the URL, connects, initializes, and reports exactly what failed — which is usually the whole answer.",
   "- `start_claude_readiness_run` and `start_openai_readiness_run` return a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_readiness_run` and report what it says, never the receipt.",
-  "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional paid pass ran. A run whose observations were `billing-blocked` is still a complete, valid grade — say the observations were skipped for credit, never that the server has a problem.",
+  "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional model pass ran. That pass is platform-paid, so a run whose observations were `billing-blocked` was not refused for the organization's money — it is still a complete, valid grade, and the honest report is that the observations were skipped, never that the server has a problem.",
   "- A run that FAILED produced no grade at all. Report it as a run that could not finish, and never as a verdict about the server.",
   '- When a readiness run reports `authMode: "headless"` and a lane\'s `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.',
   "- `start_openai_readiness_run` needs `submissionMode` and it is NEVER inferred: guessing turns a missing input into a clean bill of health. Ask which shape is being submitted. The two package shapes are not available here — they need a package on the user's machine, so point them at `mcpjam readiness check`.",
@@ -2155,7 +2230,7 @@ const EXPECTED_PROMPT_NOTES = [
   "- `get_client` is the first step of every client edit, not an optional one: `update_client` and `set_client_servers` require the `configId` it returns as `expectedConfigId`, and a rename requires the `name` it returns as `expectedName`.",
   "- To run an eval suite against a specific client/model/computer/skills combination, compose it with `ensure_adhoc_environment` (or `run_eval_suite`'s `compose`) rather than `create_project_environment`. A composed environment is unnamed and deduplicated by content, so repeating the same stack reuses one row instead of littering the project's environment list with throwaway entries. Promote one with `name_environment` only when the user asks to keep it.",
   "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
-  "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again spends again.",
+  "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again runs another analysis against MCPJam's daily analysis budget.",
   "- `start_eval_description_experiment` launches TWO replayed runs (original + rewrite) and spends eval-iteration credits for both. Poll `get_eval_description_experiment`. Emulated engine only; a harness source is refused.",
   "- `connect_eval_github_repo` affects everyone who opens a pull request on that repository, and `outagePolicy: fail_closed` can block their merges. Ask which policy the user wants — never pick one for them — and check `list_eval_github_repos` first: a repository missing from `connectable` needs the MCPJam GitHub App installed on it, which no tool here can do. `connect_eval_check_repo` and `list_eval_check_repos` are the pre-rename spellings of the same two operations — a `check` there is a GITHUB check, never a case's grading check.",
   "- `call_server_tool` runs a real tool on the user's MCP server, as them, with effects MCPJam cannot undo. Calling it PROPOSES the call; a person approves it. Read the tool's schema from `list_server_tools` first and pass exactly the arguments you mean — the arguments you send are shown to the approver and are what will run, so a placeholder is a lie they will act on. Never call a tool to 'test' or 'see what happens'.",
@@ -2168,7 +2243,8 @@ const EXPECTED_PROMPT_NOTES = [
   "- `get_swarms_overview` is the right first read for 'how are our swarms doing'. Every rate in it is over GRADED sessions, never attempted ones, and `passRate: null` means nothing has been graded yet — it does not mean everything failed.",
   "- To explain why a run failed, read `get_journey_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
   "- Launching a journey fans out real model conversations and spends credits for every one. Calling `launch_journey_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_journey`.",
-  "- `request_wave_insights` spends against a daily budget SHARED with user-testing insights — burning it here takes it from there. Read the run scorecards first; they are free and usually explain the failure without a model pass.",
+  "- `request_wave_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
+  "- Included operations (generation and insights) can be refused with `RATE_LIMITED`. `canTopUp` is false on those refusals: tell the user when it lifts (`retryAfterSeconds`, or 00:00 UTC for a daily budget), and do not retry sooner, suggest topping up credits, or switch identities to get around it.",
   "- For user testing, read `get_user_testing_metrics` and `list_user_testing_findings` first. They answer how a scenario is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
   "- `get_user_testing_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole scenario.",
   "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",

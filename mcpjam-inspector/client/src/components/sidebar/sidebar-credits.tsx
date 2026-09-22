@@ -60,6 +60,9 @@ export function SidebarCredits({
   const billingStatus = useOrganizationBillingStatus(organizationId, {
     enabled: billingUiEnabled,
   });
+  const isV2 =
+    billingStatus?.pricingVersion === "v2" ||
+    balance?.billingModel === "monthly_flat";
   const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
     useEvalIterationQuota({ organizationId });
 
@@ -90,8 +93,10 @@ export function SidebarCredits({
   // billing card uses, so the two surfaces never disagree about whether a
   // limit exists.
   const showEvalIterationUsage =
-    isEvalIterationQuotaLoading ||
-    (evalIterationQuota !== undefined && evalIterationQuota.allowed !== null);
+    !isV2 &&
+    (isEvalIterationQuotaLoading ||
+      (evalIterationQuota !== undefined &&
+        evalIterationQuota.allowed !== null));
 
   const plan = billingStatus?.effectivePlan;
   const planLabel = plan ? `${formatPlanName(plan)} plan` : null;
@@ -151,9 +156,9 @@ export function SidebarCredits({
 
               {evalIterationQuota?.starterRemaining != null && (
                 <p className="text-xs">
-                  Starter eval iterations:{" "}
+                  Free starter eval iterations:{" "}
                   {evalIterationQuota.starterRemaining.toLocaleString()}{" "}
-                  remaining · one-time allowance
+                  remaining · one-time allowance of 500
                 </p>
               )}
               <SidebarUsageRow

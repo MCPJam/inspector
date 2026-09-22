@@ -1,3 +1,10 @@
+import { readPendingChatScopeStepUp } from "@/lib/scope-step-up-pending";
+import type { ConnectionIntent } from "@/shared/oauth-connections";
+import {
+  notifyOAuthConnectionsChanged,
+  OAUTH_CONNECTIONS_CHANGED,
+  listOAuthConnections,
+} from "@/lib/apis/web/oauth-connections";
 import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "@/lib/toast";
@@ -723,6 +730,7 @@ export interface EnsureServerConnectionResult {
 
 interface ReconnectServerInternalOptions {
   forceOAuthFlow?: boolean;
+  connectionIntent?: ConnectionIntent;
   allowInteractiveOAuthFlow?: boolean;
   select?: boolean;
   suppressErrors?: boolean;
@@ -1025,6 +1033,7 @@ export function useServerState({
   const prepareHostedProjectOAuthRedirect = useCallback(
     (params: {
       serverId?: string | null;
+      connectionIntent?: ConnectionIntent;
       serverName: string;
       serverUrl?: string | null;
       suppressErrorToast?: boolean;
@@ -1039,12 +1048,24 @@ export function useServerState({
         return false;
       }
 
+      const stepUp = readPendingChatScopeStepUp();
+      const connectionIntent =
+        params.connectionIntent ??
+        (stepUp?.event.connectionId &&
+        (stepUp.event.serverId === params.serverId ||
+          stepUp.event.serverName === params.serverName)
+          ? {
+              kind: "replace" as const,
+              credentialId: stepUp.event.connectionId,
+            }
+          : undefined);
       const returnPath = captureCurrentReturnPath();
       const organizationId =
         effectiveProjects[effectiveActiveProjectId]?.organizationId ?? null;
       clearHostedOAuthPendingState();
       writeHostedOAuthPendingMarker({
         surface: "project",
+        ...(connectionIntent ? { connectionIntent } : {}),
         organizationId,
         projectId: effectiveActiveProjectId,
         serverId: params.serverId,
@@ -1669,6 +1690,25 @@ export function useServerState({
       buildStatelessProtocolConnectMetadata,
     ]
   );
+
+  useEffect(() => {
+    if (HOSTED_MODE) return;
+    const refreshAccounts = () => {
+      for (const [name, server] of Object.entries(appStateServersRef.current)) {
+        if (server.useOAuth && server.connectionStatus === "connected") {
+          void guardedReconnectServer(name, server.config).catch((error) =>
+            logger.warn("Could not refresh account connections", {
+              serverName: name,
+              error,
+            }),
+          );
+        }
+      }
+    };
+    window.addEventListener(OAUTH_CONNECTIONS_CHANGED, refreshAccounts);
+    return () =>
+      window.removeEventListener(OAUTH_CONNECTIONS_CHANGED, refreshAccounts);
+  }, [guardedReconnectServer]);
 
   // Shared with the forms that feed this save path (XAAServerModal, ...) so a
   // form can never pass a config the save path would reject and lose the
@@ -2862,6 +2902,22 @@ export function useServerState({
           localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
         }
 
+        if (!result.success && hostedCallbackContext?.connectionIntent) {
+          toast.error(result.error ?? "Could not connect the account");
+          return;
+        }
+        if (result.success && hostedCallbackContext?.connectionIntent) {
+          if (!HOSTED_MODE && result.serverName) {
+            const existing =
+              appStateServersRef.current[result.serverName] ??
+              latestEffectiveServersRef.current[result.serverName];
+            if (existing)
+              await guardedReconnectServer(result.serverName, existing.config);
+          }
+          notifyOAuthConnectionsChanged();
+          toast.success("Account connected");
+          return;
+        }
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
           // Prefer the runtime entry over the project catalog: it holds the
@@ -3865,22 +3921,22 @@ export function useServerState({
                   },
                 }
               : // For XAA servers, offer a shortcut to the XAA Debugger so the
-                // dev can step through the handshake and pinpoint the failing
-                // claim (subject not provisioned, audience/issuer mismatch).
-                formData.useXaa
-                ? {
-                    action: {
-                      label: "Open XAA Debugger",
-                      onClick: () => {
-                        dispatch({
-                          type: "SELECT_SERVER",
-                          name: formData.name,
-                        });
-                        navigateApp(routePaths.xaaFlow);
-                      },
+              // dev can step through the handshake and pinpoint the failing
+              // claim (subject not provisioned, audience/issuer mismatch).
+              formData.useXaa
+              ? {
+                  action: {
+                    label: "Open XAA Debugger",
+                    onClick: () => {
+                      dispatch({
+                        type: "SELECT_SERVER",
+                        name: formData.name,
+                      });
+                      navigateApp(routePaths.xaaFlow);
                     },
-                  }
-                : undefined
+                  },
+                }
+              : undefined,
           );
         }
       } catch (error) {
@@ -4889,11 +4945,12 @@ export function useServerState({
       const server = latestEffectiveServersRef.current[serverName];
       if (!server) {
         const errorMessage = `Server ${serverName} not found`;
-        dispatch({
-          type: "CONNECT_FAILURE",
-          name: serverName,
-          error: errorMessage,
-        });
+        if (!options?.connectionIntent)
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: errorMessage,
+          });
         logger.error("Reconnection failed", {
           serverName,
           error: errorMessage,
@@ -4905,12 +4962,13 @@ export function useServerState({
         };
       }
 
-      dispatch({
-        type: "RECONNECT_REQUEST",
-        name: serverName,
-        config: server.config,
-        select,
-      });
+      if (!options?.connectionIntent)
+        dispatch({
+          type: "RECONNECT_REQUEST",
+          name: serverName,
+          config: server.config,
+          select,
+        });
       const token = nextOpToken(serverName);
       const hostedProjectServerId = activeProjectServersFlat?.find(
         (remoteServer) => remoteServer.name === serverName
@@ -4943,11 +5001,12 @@ export function useServerState({
         const serverUrl = (server.config as any)?.url?.toString?.();
         if (!serverUrl) {
           const errorMessage = "No server URL found for OAuth flow";
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: serverName,
-            error: errorMessage,
-          });
+          if (!options?.connectionIntent)
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: errorMessage,
+            });
           reportError(errorMessage);
           return {
             status: "failed",
@@ -5052,32 +5111,35 @@ export function useServerState({
             error instanceof Error
               ? error.message
               : "Failed to build the OAuth request";
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: serverName,
-            error: errorMessage,
-          });
+          if (!options?.connectionIntent)
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: errorMessage,
+            });
           reportError(errorMessage);
           return { status: "failed", error: errorMessage };
         }
 
-        clearOAuthData(serverName);
-        dispatch({
-          type: "UPSERT_SERVER",
-          name: serverName,
-          server: {
-            ...server,
-            connectionStatus: "oauth-flow",
-            enabled: true,
-            lastError: undefined,
-            useOAuth: true,
-          },
-        });
+        if (!options?.connectionIntent) clearOAuthData(serverName);
+        if (!options?.connectionIntent)
+          dispatch({
+            type: "UPSERT_SERVER",
+            name: serverName,
+            server: {
+              ...server,
+              connectionStatus: "oauth-flow",
+              enabled: true,
+              lastError: undefined,
+              useOAuth: true,
+            },
+          });
         let oauthResult: Awaited<ReturnType<typeof initiateOAuth>>;
         try {
-          await deleteServer(serverName);
+          if (!options?.connectionIntent) await deleteServer(serverName);
 
           prepareHostedProjectOAuthRedirect({
+            connectionIntent: options?.connectionIntent,
             serverId: hostedProjectServerId,
             serverName,
             serverUrl,
@@ -5095,11 +5157,12 @@ export function useServerState({
             error instanceof Error
               ? error.message
               : "Failed to start OAuth flow";
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: serverName,
-            error: errorMessage,
-          });
+          if (!options?.connectionIntent)
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: errorMessage,
+            });
           reportError(errorMessage);
           return {
             status: "failed",
@@ -5121,17 +5184,25 @@ export function useServerState({
             };
           }
           const errorMessage = oauthResult.error || "OAuth flow failed";
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: serverName,
-            error: errorMessage,
-            oauthTrace: oauthResult.oauthTrace,
-          });
+          if (!options?.connectionIntent)
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: errorMessage,
+              oauthTrace: oauthResult.oauthTrace,
+            });
           reportError(`OAuth failed: ${serverName}`);
           return {
             status: "failed",
             error: errorMessage,
           };
+        }
+        if (options?.connectionIntent) {
+          if (!HOSTED_MODE)
+            await guardedReconnectServer(serverName, server.config);
+          notifyOAuthConnectionsChanged();
+          toast.success("Account connected");
+          return { status: "connected" };
         }
         const oauthServerConfig = stripAuthorizationFromHttpConfig(
           oauthResult.serverConfig!
@@ -5165,12 +5236,13 @@ export function useServerState({
           return { status: "connected" };
         }
         const errorMessage = result.error || "Reconnection failed after OAuth";
-        dispatch({
-          type: "CONNECT_FAILURE",
-          name: serverName,
-          error: errorMessage,
-          oauthTrace: oauthResult.oauthTrace,
-        });
+        if (!options?.connectionIntent)
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: errorMessage,
+            oauthTrace: oauthResult.oauthTrace,
+          });
         reportError(errorMessage);
         return {
           status: "failed",
@@ -5195,11 +5267,12 @@ export function useServerState({
       }> => {
         if (server.authMethod !== "auto") return null;
         const fail = (errorMessage: string, status: "failed" | "reauth") => {
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: serverName,
-            error: errorMessage,
-          });
+          if (!options?.connectionIntent)
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: errorMessage,
+            });
           reportError(errorMessage);
           return { status, error: errorMessage };
         };
@@ -5279,11 +5352,12 @@ export function useServerState({
 
           if (!connectFailureRequiresOAuth(result)) {
             const errorMessage = result.error || "Reconnection failed";
-            dispatch({
-              type: "CONNECT_FAILURE",
-              name: serverName,
-              error: errorMessage,
-            });
+            if (!options?.connectionIntent)
+              dispatch({
+                type: "CONNECT_FAILURE",
+                name: serverName,
+                error: errorMessage,
+              });
             logger.error("OAuth reconnect failed", { serverName, result });
             reportError(errorMessage || `Failed to reconnect: ${serverName}`);
             return {
@@ -5318,11 +5392,12 @@ export function useServerState({
             error instanceof Error ? error.message : "Unknown error";
 
           if (!requiresFreshOAuthAuthorization(error)) {
-            dispatch({
-              type: "CONNECT_FAILURE",
-              name: serverName,
-              error: errorMessage,
-            });
+            if (!options?.connectionIntent)
+              dispatch({
+                type: "CONNECT_FAILURE",
+                name: serverName,
+                error: errorMessage,
+              });
             logger.error("OAuth reconnect failed", {
               serverName,
               error: errorMessage,
@@ -5386,16 +5461,17 @@ export function useServerState({
               error: authResult.error,
             };
           }
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: serverName,
-            error: authResult.error,
-            // Carry the orchestrator's typed block through. The reducer
-            // prefers it over re-describing the message, which is what keeps
-            // this state off `internal/unknown`.
-            normalized: authResult.normalized,
-            oauthTrace: authResult.oauthTrace,
-          });
+          if (!options?.connectionIntent)
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: authResult.error,
+              // Carry the orchestrator's typed block through. The reducer
+              // prefers it over re-describing the message, which is what keeps
+              // this state off `internal/unknown`.
+              normalized: authResult.normalized,
+              oauthTrace: authResult.oauthTrace,
+            });
           reportError(authResult.error);
           return {
             status: "reauth",
@@ -5413,12 +5489,13 @@ export function useServerState({
             // OAuth init failed before any redirect — nothing is pending.
             autoOAuthEscalation.markFailed(escalationIdentity);
           }
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: serverName,
-            error: authResult.error,
-            oauthTrace: authResult.oauthTrace,
-          });
+          if (!options?.connectionIntent)
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: authResult.error,
+              oauthTrace: authResult.oauthTrace,
+            });
           reportError(`Failed to connect: ${serverName}`);
           return {
             status: "failed",
@@ -5463,16 +5540,17 @@ export function useServerState({
           autoOAuthEscalation.markFailed(escalationIdentity);
         }
         const errorMessage = result.error || "Reconnection failed";
-        dispatch({
-          type: "CONNECT_FAILURE",
-          name: serverName,
-          error: errorMessage,
-          oauthTrace: authResult.oauthTrace,
-          // Preserve the backend-attached normalized block so the reducer
-          // doesn't have to re-derive a (less specific) slug from just
-          // the message string.
-          ...(result.normalized ? { normalized: result.normalized } : {}),
-        });
+        if (!options?.connectionIntent)
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: errorMessage,
+            oauthTrace: authResult.oauthTrace,
+            // Preserve the backend-attached normalized block so the reducer
+            // doesn't have to re-derive a (less specific) slug from just
+            // the message string.
+            ...(result.normalized ? { normalized: result.normalized } : {}),
+          });
         logger.error("Reconnection failed", { serverName, result });
         reportError(errorMessage || `Failed to reconnect: ${serverName}`);
         return {
@@ -5488,11 +5566,12 @@ export function useServerState({
             error: errorMessage,
           };
         }
-        dispatch({
-          type: "CONNECT_FAILURE",
-          name: serverName,
-          error: errorMessage,
-        });
+        if (!options?.connectionIntent)
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: errorMessage,
+          });
         logger.error("Reconnection failed", {
           serverName,
           error: errorMessage,
@@ -5525,11 +5604,29 @@ export function useServerState({
       serverName: string,
       options?: {
         forceOAuthFlow?: boolean;
+        connectionIntent?: ConnectionIntent;
         allowInteractiveOAuthFlow?: boolean;
-      }
+      },
     ) => {
+      let connectionIntent = options?.connectionIntent;
+      if (options?.forceOAuthFlow && !connectionIntent) {
+        const target = tryResolveProjectServer(serverName);
+        if (target) {
+          const result = await listOAuthConnections(
+            target.projectId,
+            target.serverId,
+          );
+          const current = result.connections.find((c) => c.isDefault);
+          if (current)
+            connectionIntent = {
+              kind: "replace",
+              credentialId: current.connectionId,
+            };
+        }
+      }
       await reconnectServerInternal(serverName, {
         forceOAuthFlow: options?.forceOAuthFlow,
+        connectionIntent,
         allowInteractiveOAuthFlow: options?.allowInteractiveOAuthFlow ?? true,
         select: true,
       });

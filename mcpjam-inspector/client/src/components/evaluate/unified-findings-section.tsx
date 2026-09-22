@@ -61,6 +61,10 @@ function UnifiedFindingsBody({
     <section data-testid="unified-findings-section">
       <div>
         <UnifiedFindingsPanel
+          runPending={iterations.some(
+            (iteration) =>
+              iteration.status === "pending" || iteration.status === "running",
+          )}
           analysis={state.experiment?.analysis}
           snapshot={state.experiment?.snapshot ?? null}
           findings={state.findings}
@@ -69,6 +73,7 @@ function UnifiedFindingsBody({
           observationCoverage={state.envelope?.observationCoverage ?? null}
           mode={state.mode}
           analyze={state.analyze}
+          analysisFailure={state.analysisFailure}
           build={state.build}
           scopeControl={scopeControl}
           iterationRows={affectedRowsById(iterations, clientLabel)}

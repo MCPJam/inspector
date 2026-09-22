@@ -395,10 +395,22 @@ describe("eval-edit operation execution", () => {
     expect(gen?.headers["idempotency-key"]).toBeUndefined();
   });
 
-  it("generate_eval_cases is labelled as spending", () => {
+  it("generate_eval_cases is NOT labelled as spending", () => {
     // `operationDescription` appends the "COSTS MONEY" warning to the MCP tool
-    // off this facet, and the operation spends the organization's credits.
-    expect(generateEvalCasesOperation.risk).toBe("spend");
+    // off this facet, and the authoring model is platform-paid: the
+    // organization's credits are not touched, so that warning would be a lie.
+    // What generation DOES consume is a bounded daily request quota, which is
+    // why the agent surface still gates it (TIER_EXCEPTIONS in the
+    // inspector's `agent-op-registry.test.ts`) rather than deriving `direct`.
+    expect(generateEvalCasesOperation.risk).toBe("none");
+    expect(generateEvalCasesOperation.description).not.toMatch(/spends/i);
+    expect(generateEvalCasesOperation.description).toContain(
+      "no customer credits consumed"
+    );
+    // The quota is the organization's, not the project's.
+    expect(generateEvalCasesOperation.description).not.toMatch(
+      /project's daily generation quota/
+    );
   });
 
   it("generate_eval_cases omits varyUserStyles when not enabled", async () => {

@@ -25,6 +25,8 @@
  */
 
 export const ANALYTICS_EVENTS = {
+  // Launch discovery funnel; action is a closed vocabulary (launch-engagement.ts).
+  platform_launch_engagement: { source: "client" },
   // --- Chat (paired: client event + server twin) ---
   send_message: { source: "client" },
   send_message_server: { source: "server" },
@@ -147,6 +149,7 @@ export const ANALYTICS_EVENTS = {
   // text), location: chat_tab | playground_single | playground_compare.
   chat_starter_prompt_clicked: { source: "client" },
   chat_tab_viewed: { source: "client" },
+  platform_paid_fallback_notice: { source: "client" },
   chat_voice_input_recording_canceled: { source: "client" },
   chat_voice_input_recording_started: { source: "client" },
   chat_voice_input_recording_stopped: { source: "client" },
@@ -261,6 +264,24 @@ export const ANALYTICS_EVENTS = {
   evaluate_tab_viewed: { source: "client" },
   export_server_clicked: { source: "client" },
   generate_tests_button_clicked: { source: "client" },
+  // The Swarms / User Testing gate (REEV-6). `guest_feature_preview_shown`
+  // counts arrivals by a SIGNED-OUT visitor only, and `location` separates
+  // Swarms from User Testing rather than one audience from another.
+  //
+  // It used to fire for plan-locked members too, back when both shared one
+  // component, which quietly inflated the sign-up funnel with billing
+  // impressions. They are separate components now and a plan-locked arrival
+  // is counted by `billing_upsell_gate_viewed`, which the upsell itself
+  // fires. Do not re-point this event at the shared shell without splitting
+  // the audiences again.
+  //
+  // The nudge pair measures the dialog the guest CTA opens; the
+  // sign-up/sign-in clicks inside it reuse `sign_up_button_clicked` /
+  // `login_button_clicked` with the same location, exactly as the invite
+  // nudge below does.
+  guest_feature_preview_shown: { source: "client" },
+  guest_feature_nudge_shown: { source: "client" },
+  guest_feature_nudge_dismissed: { source: "client" },
   guest_refresh_failure: { source: "client" },
   guest_refresh_success: { source: "client" },
   host_capabilities_dialog_opened: { source: "client" },
@@ -366,6 +387,14 @@ export const ANALYTICS_EVENTS = {
   // sign-in vs create-account conversion across control and treatment.
   plan_limit_create_account_clicked: { source: "client" },
   plan_limit_see_plans_clicked: { source: "client" },
+  // --- Plan confirmation step on the organization plans page ---
+  // The modal that stands between an Upgrade/Change plan card and Stripe.
+  // `shown` vs `submitted` measures how many confirmations are abandoned, and
+  // `interval_selected` says how often the cycle is changed at the last step.
+  plans_upgrade_confirm_shown: { source: "client" },
+  plans_upgrade_confirm_interval_selected: { source: "client" },
+  plans_upgrade_confirm_submitted: { source: "client" },
+  plans_upgrade_confirm_dismissed: { source: "client" },
   credit_topup_dialog_shown: { source: "client" },
   credit_topup_package_selected: { source: "client" },
   credit_topup_dialog_dismissed: { source: "client" },

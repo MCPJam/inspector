@@ -19,6 +19,7 @@ import {
   SheetTitle,
 } from "@mcpjam/design-system/sheet";
 import { cn } from "@mcpjam/design-system/cn";
+import { hostSnapshotFromStyle } from "@/lib/host-snapshot";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import {
   average,
@@ -29,6 +30,7 @@ import {
   iterationLatencyP50,
   iterationLatencyP95,
   runClientLogo,
+  runClientIdentity,
 } from "../evals/helpers";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
@@ -905,8 +907,15 @@ function IterationDrawer({
           · {formatRunId(iteration._id)}
         </SheetDescription>
       </SheetHeader>
-      <div className="min-h-0 flex-1 overflow-y-auto p-6">
+      {/* Must be a flex column: `layoutMode="full"` makes IterationDetails and
+          its TraceViewer (fillContent) flex-1 items. Without a flex parent the
+          nested flex-1 / min-h-0 inside TraceTimeline collapses to 0 and the
+          Trace tab paints only its resize handle. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-6">
         <IterationDetails
+          hostSnapshot={hostSnapshotFromStyle(
+            runClientIdentity(target.run).hostStyle,
+          )}
           iteration={iteration}
           testCase={null}
           layoutMode="full"
@@ -920,6 +929,7 @@ function IterationDrawer({
                   steps={authored.steps}
                   chain={decisionChain}
                   envelope={context.envelope}
+                  trace={context.trace}
                   scoresSection={context.scoresSection}
                   judgeHidden={context.judgeHidden}
                 />

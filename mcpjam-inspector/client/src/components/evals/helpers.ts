@@ -421,11 +421,9 @@ export function runRevisionLabel(run: RunContextSource): string | null {
  */
 export function buildHostNamesById(
   attachments:
-    | Array<{ namedHostId: string; hostName: string | null }>
-    | undefined,
+    Array<{ namedHostId: string; hostName: string | null }> | undefined,
   projectHosts:
-    | Array<{ hostId: string; name: string; displayName?: string }>
-    | undefined,
+    Array<{ hostId: string; name: string; displayName?: string }> | undefined,
 ): Map<string, string | null> {
   const map = new Map<string, string | null>();
   const projectHostById = new Map(
@@ -1552,4 +1550,30 @@ export function iterationCosts(
   return iterations
     .map((iteration) => iteration.usage?.estimatedCostUsd)
     .filter((value): value is number => typeof value === "number");
+}
+
+/**
+ * Statuses a run can still be cancelled from.
+ *
+ * Mirrors the backend gate in `cancelSuiteRunRows` (Convex `testSuites.ts`),
+ * which rejects anything else with `Cannot cancel run with status: …`.
+ * `grading` counts: the trials are done but the gating judge is still billing.
+ */
+export function isRunCancellable(run: { status?: string | null }): boolean {
+  return (
+    run.status === "pending" ||
+    run.status === "running" ||
+    run.status === "grading"
+  );
+}
+
+/**
+ * Ids of every still-cancellable run in `runs` — what a Cancel button hands to
+ * `handleCancelRun`. A launch fans out into one run per client-model pairing,
+ * so cancelling a launch means cancelling all of them.
+ */
+export function cancellableRunIds(
+  runs: readonly { _id: string; status?: string | null }[],
+): string[] {
+  return runs.filter(isRunCancellable).map((run) => run._id);
 }

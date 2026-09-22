@@ -1,6 +1,6 @@
 ---
 name: user-value-chain-glossary
-description: Defines every member of MCPJam's user-value chain vocabulary — the six stages, the five stage states, the twenty-nine stage reasons, the seven failure categories, the four verdicts, the stage-analytics exclusion classes, the five friction signals and the nine suspected conditions — plus the population rules that decide what a count means. Use when reading a `decisionSummary`, a stage chain, a trial's `frictionSignals` or `suspectedConditionVerdict`, or stage analytics returned by MCPJam's eval tools and you need to know what a wire value means or whether a number can be compared.
+description: Defines every member of MCPJam's user-value chain vocabulary — the six stages, the five stage states, the twenty-nine stage reasons, the seven failure categories, the four verdicts, the stage-analytics exclusion classes, the five friction signals and the nine suspected conditions, and the swarm findings vocabularies — plus the population rules that decide what a count means. Use when reading a `decisionSummary`, a stage chain, a trial's `frictionSignals` or `suspectedConditionVerdict`, or stage analytics returned by MCPJam's eval tools and you need to know what a wire value means or whether a number can be compared.
 ---
 
 # The user-value chain, member by member
@@ -369,3 +369,102 @@ Three absences are three different facts, and none may impersonate another:
 - **The deployment does not serve the route.** A fact about the deployment,
   never about the run. Rendering it as "never measured" is a dark-ship failure:
   it reports every run on that deployment as unmeasured.
+
+## Swarm findings
+
+A swarm run's shared findings (`journeyFindings` on the insights envelope,
+`sdk/src/contract/swarm-finding.ts`) reuse the stages and stage states above
+and add five vocabularies of their own. Code decides every one of them; a
+model only writes the phrase slots (`outcomePhrase`, `mechanismPhrase`,
+`fixPhrase`). The label is the word the web app prints.
+
+### Dispositions
+
+What happened to one goal, or to a persona across its goals. The tone is
+fixed by the disposition (`SWARM_FINDING_TONE_OF_DISPOSITION`), never chosen
+separately.
+
+| Wire value | Label | Tone | Meaning |
+| --- | --- | --- | --- |
+| `notRun` | Not run | muted | No session for this goal started, so nothing about it was tested. |
+| `blockedConnecting` | Stuck | fail | The session never got a working connection to the server. |
+| `lostFindingTool` | Lost | fail | The agent could not find or pick the tool the goal needed. |
+| `blockedCallingTool` | Annoyed | fail | The agent picked a tool, but the call itself failed. |
+| `blockedByResponse` | Frustrated | fail | The call returned, but what came back did not let the agent go on. |
+| `goalMissed` | Stalled | fail | The chain ran to the end and the goal was still not met. |
+| `goalMetWithFriction` | Uneasy | warn | The goal was met, with friction along the way. |
+| `goalMet` | Relieved | ok | The goal was met. |
+| `notMeasured` | Unscored | muted | Sessions ran, but nothing graded the outcome. Not evidence either way. |
+
+### Summary kinds
+
+Which kind of sentence leads the run's summary.
+
+| Wire value | Label | Meaning |
+| --- | --- | --- |
+| `notLaunched` | Not launched | No session started. Nothing about the server was tested. |
+| `unread` | Not fully read | Sessions ran, but not enough of them were read to say how the goals went. |
+| `broken` | Goals blocked | At least one goal ended in a fail disposition. |
+| `friction` | Goals met with friction | No goal broke, and at least one was met with friction. |
+| `landed` | Goals met | Every measured goal was met. |
+| `ungraded` | Not graded | Sessions ran and nothing was graded. |
+
+### Coverage notes
+
+Ways the findings could understate what happened. Each one is a caveat on the
+counts, never a finding about the server.
+
+| Wire value | Label |
+| --- | --- |
+| `sessionScanCapped` | Session scan limit reached |
+| `budgetExhausted` | Analysis budget exhausted |
+| `transcriptMissing` | Transcript unavailable |
+| `contextTooLarge` | Transcript exceeds analysis limits |
+| `extractionRejected` | Analysis could not be verified |
+| `chainUnmeasured` | Journey stages not measured |
+| `judgeNotRun` | Judge did not run |
+| `sessionsWithdrawn` | Some sessions were withdrawn |
+| `sessionsRateLimited` | Some sessions were rate limited |
+| `partialRead` | Only part of this wave was read |
+| `toolCatalogMissing` | Tool catalog unavailable |
+| `mechanismsRejected` | A possible cause was rejected |
+| `analysisUnavailable` | Causes could not be analysed |
+
+### Bases
+
+How a finding is known.
+
+| Wire value | Label | Meaning |
+| --- | --- | --- |
+| `verifiedMechanism` | Verified explanation | A model explanation that was checked against the cited transcript turns. |
+| `sessionReport` | Session report | What the persona itself reported, quoted in `reportExcerpt`. A report, not a verified cause. |
+| `populationFact` | Population fact | A count computed by code over the sessions, with no model involved. |
+
+### Scope levels
+
+How wide a finding reaches. A finding never speaks for more than its scope.
+
+| Wire value | Meaning |
+| --- | --- |
+| `session` | One session. |
+| `goal` | Every session of one goal for one persona. |
+| `persona` | All of one persona's goals. It cannot single out which goal. |
+| `target` | One environment or host, across personas. |
+| `wave` | The whole swarm run. |
+
+### Signals
+
+A fact the runtime RECORDED about a session, with no model involved. A signal
+says what was observed, never why. Sessions sharing one are grouped so the same
+question can be asked about them together; agreeing on a signal is not evidence
+that they share a cause, and it is not evidence that any of them missed its
+goal. Listed in the priority order a session is keyed by, so a reply that was
+cut off is never filed under the tool error that preceded it.
+
+| Wire value | Label | Meaning |
+| --- | --- | --- |
+| `outputTruncated` | Reply cut off | A turn stopped because it reached its output limit, so whatever it had not written yet was never sent. |
+| `hallucinatedTool` | Called a tool that does not exist | The assistant called a tool name the server does not provide. |
+| `toolErrored` | A tool errored | At least one tool call returned an error. |
+| `noToolCalled` | No tool used | The session finished without using any tool. |
+| `turnCapReached` | Hit the turn limit | The session used every turn it was allowed. |

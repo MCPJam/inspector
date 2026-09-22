@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PREDICATE_STAGE,
+  STANDARD_CHECK_NAME_BY_KIND,
   USER_VALUE_STAGES,
 } from "@mcpjam/sdk/contract";
 import {
@@ -25,9 +26,11 @@ import {
   buildCaseScorecard,
   caseLibraryKinds,
   deriveRubricSource,
+  expectationOf,
   removeCaseScorer,
   ROUTE_OWNED_KINDS,
   purposeOf,
+  RUBRIC_SOURCE_HINT,
   scorerRowLabel,
   spineLibraryKinds,
   stepScope,
@@ -127,8 +130,8 @@ describe("buildCaseScorecard — provenance", () => {
         .map((row) => [row.provenance, row.label]),
     ).toEqual([
       ["step", "No tool errors so far"],
-      ["case", "Final message non-empty"],
-      ["suite", "Token budget under 4000"],
+      ["case", "Catch an empty answer"],
+      ["suite", "Track increases in token usage"],
     ]);
   });
 
@@ -492,7 +495,72 @@ describe("labels", () => {
     // it like the whole-run one would claim it checked the entire trial.
     const predicate = { type: "noToolErrors" } as Predicate;
     expect(scorerRowLabel(predicate, "step")).toBe("No tool errors so far");
-    expect(scorerRowLabel(predicate, "case")).toBe("No tool errors");
+  });
+
+  it("titles a standard check by what it evaluates, from the catalog", () => {
+    // The rule that implements it is this row's expectation, not its name.
+    const predicate = { type: "noToolErrors" } as Predicate;
+    expect(scorerRowLabel(predicate, "case")).toBe(
+      STANDARD_CHECK_NAME_BY_KIND.noToolErrors,
+    );
+    expect(scorerRowLabel(predicate, "suite")).toBe("Tool errors (isError)");
+  });
+
+  it("titles a check the catalog does not name by its purpose, not its rule", () => {
+    // The rule is the row's EXPECTED line; a title that repeated it would put
+    // the same words twice on the run page.
+    const predicate = {
+      type: "responseContains",
+      value: "ORD-48213",
+    } as Predicate;
+    expect(scorerRowLabel(predicate, "case")).toBe(purposeOf(predicate));
+    expect(scorerRowLabel(predicate, "case")).toBe("Check what the answer says");
+    expect(scorerRowLabel(predicate, "case")).not.toBe(
+      formatCriterion({ predicate }),
+    );
+  });
+});
+
+describe("expectationOf", () => {
+  const judgeRow = (input: CaseScorecardInput) => {
+    const row = allRows(input).find((candidate) => candidate.judge);
+    if (!row) throw new Error("no judge row");
+    return row;
+  };
+
+  it("gives the judge row the case's own expected outcome", () => {
+    // The judge was asked to decide THIS sentence; a generic restatement of
+    // "the configured rubric" tells a reader nothing they cannot already see.
+    const expectedOutput =
+      "Server diagnostics reveal connection status and the run completes.";
+    expect(expectationOf(judgeRow({ ...base, expectedOutput }))).toBe(
+      expectedOutput,
+    );
+  });
+
+  it("names what the judge graded against when the case authored no outcome", () => {
+    // The same sentence the authoring pane shows under the judge row, so the
+    // two panes agree on what an empty goal means for THIS case.
+    const row = judgeRow(base);
+    expect(expectationOf(row)).toBe(
+      RUBRIC_SOURCE_HINT[row.judge!.rubricSource],
+    );
+    expect(expectationOf(row)).not.toContain("configured judge rubric");
+    const blank = judgeRow({ ...base, expectedOutput: "   " });
+    expect(expectationOf(blank)).toBe(
+      RUBRIC_SOURCE_HINT[blank.judge!.rubricSource],
+    );
+  });
+
+  it("gives a check row the configured rule, not its title", () => {
+    const predicate = { type: "noToolErrors" } as Predicate;
+    const row = allRows({
+      ...base,
+      predicates: { mode: "extend", list: [predicate] },
+    }).find((candidate) => candidate.predicate?.type === "noToolErrors");
+    if (!row) throw new Error("no check row");
+    expect(row.label).toBe("Tool errors (isError)");
+    expect(expectationOf(row)).toBe(formatCriterion({ predicate }));
   });
 });
 

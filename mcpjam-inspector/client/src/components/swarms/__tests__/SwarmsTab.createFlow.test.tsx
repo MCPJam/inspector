@@ -72,7 +72,9 @@ const { hostsRef, projectServersRef } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@/hooks/useClients", () => ({
+vi.mock("@/hooks/useClients", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useClients")>()),
+  useHost: () => ({ host: null, isLoading: false }),
   useHostList: () => ({
     hosts: hostsRef.current,
     isLoading: false,
@@ -89,6 +91,11 @@ vi.mock("@/hooks/use-previewed-environment-id", () => ({
 
 vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <div data-testid="server-group-picker" />,
+}));
+
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -216,6 +223,7 @@ vi.mock("convex/react", () => ({
     isLoading: false,
   }),
   useConvexAuth: () => ({ isAuthenticated: true }),
+  useConvex: () => ({ query: convexQueryMock }),
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -300,6 +308,9 @@ vi.mock("@/components/project-environments/environment-picker", () => ({
 }));
 
 const createSwarmMock = vi.fn();
+// The launch preflight (`projectEnvironments:resolveEnvironmentForLaunch`)
+// goes through `useConvex().query`; resolves a runnable target by default.
+const convexQueryMock = vi.fn();
 const createPersonaMock = vi.fn();
 const createJourneyMock = vi.fn();
 const updateJourneyMock = vi.fn();
@@ -349,6 +360,10 @@ function fillDescribe(text = "Support agents answering refunds") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  convexQueryMock.mockResolvedValue({
+    effectiveModelId: "anthropic/claude-haiku-4.5",
+    modelSource: "host",
+  });
   environmentsFlagRef.current = true;
   // The flow now mirrors its resumable state into sessionStorage, so a leftover
   // draft would otherwise resume the previous case's slate.
@@ -437,11 +452,15 @@ describe("SwarmsTab — New swarm create flow", () => {
     // A linkable route rather than in-page state, so the browser back button
     // exits the flow and a reload doesn't drop the user back on the list.
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    // The empty state's own button, not the header's. This project has no
+    // personas, and since REEV-6 the header offers creation only once the list
+    // has something in it, so this is the button an empty project actually
+    // shows. The assertion is unchanged: whichever button you press, creation
+    // is a route, not an in-page state flip.
     fireEvent.click(
-      within(screen.getByTestId("swarms-tab-header-chrome")).getByRole(
-        "button",
-        { name: /^create new swarm$/i },
-      ),
+      within(screen.getByTestId("swarms-empty-hero")).getByRole("button", {
+        name: /^create new swarm$/i,
+      }),
     );
     expect(navigateMock).toHaveBeenCalledWith("/swarms/new");
     // Still on the list: navigation is what swaps the view, not a state flip.
@@ -1030,6 +1049,39 @@ describe("SwarmsTab — New swarm create flow", () => {
     });
   });
 
+  it("refuses to generate or write goals when a target resolves to no model", async () => {
+    // The launch contract, checked before any generation or durable write:
+    // the environment inherits from a client that pins no model.
+    convexQueryMock.mockRejectedValue(
+      Object.assign(new Error("Server Error"), {
+        data: {
+          code: "ENV_MODEL_REQUIRED",
+          message: 'Environment "Claude" has no model to run.',
+          details: { hostId: "host-1" },
+        },
+      }),
+    );
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    expect(
+      (await screen.findAllByText(/Claude has no model/)).length,
+    ).toBeGreaterThan(0);
+    expect(convexQueryMock).toHaveBeenCalledWith(
+      "projectEnvironments:resolveEnvironmentForLaunch",
+      { projectId: "proj-1", environmentId: "env-1" },
+    );
+    // Caught before the persona slate, so nothing costs credits or persists.
+    expect(generateSwarmPersonaBatchMock).not.toHaveBeenCalled();
+    expect(createSwarmMock).not.toHaveBeenCalled();
+    expect(createPersonaMock).not.toHaveBeenCalled();
+    expect(createJourneyMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Edit client" }),
+    ).toBeInTheDocument();
+  });
+
   it("writes nothing until Launch, then creates personas, journeys, and one run each", async () => {
     openDescribe();
     fillDescribe();
@@ -1045,6 +1097,11 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    expect(createSwarmMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ setupWrites: true }),
+      }),
+    );
     expect(createPersonaMock).toHaveBeenCalledTimes(2);
     expect(createPersonaMock.mock.calls[0][0]).toMatchObject({
       projectId: "proj-1",
@@ -1060,9 +1117,9 @@ describe("SwarmsTab — New swarm create flow", () => {
       name: "Refund a charge",
       goal: "Refund the charge",
       environmentIds: ["env-1"],
-      config: { sessionsPerTarget: 1, maxTurns: 6 },
+      config: { sessionsPerTarget: 1, maxTurns: 6, setupWrites: true },
     });
-    // Grading is opt-in: an untouched launch stamps no rubric and no judge.
+    // Untouched authoring omits overrides; the backend applies automatic grading defaults.
     expect(
       screen.queryByTestId("new-swarm-grading-toggle"),
     ).not.toBeInTheDocument();
@@ -1082,7 +1139,8 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(
       screen.getAllByLabelText(/Watch Refund Chaser/).length,
     ).toBeGreaterThan(0);
-    expect(screen.getByText(/Running: Refund a charge/)).toBeInTheDocument();
+    // No run/session has arrived in this fixture yet; pending is evidence-based.
+    expect(screen.getByText(/Pending: Refund a charge/)).toBeInTheDocument();
     const swarmRunGroupId = (launchJourneyRunMock.mock.calls[0]![0] as {
       swarmRunGroupId: string;
     }).swarmRunGroupId;
@@ -1608,11 +1666,13 @@ describe("SwarmsTab — New swarm create flow", () => {
     ).toHaveTextContent(/1 conversation/i);
   });
 
-  it("prices a reused persona at its saved sessions, with no counter", async () => {
-    // SUTB-26: a counter sizes the goals this swarm creates, never one the
-    // user already saved. Launch does not rewrite a shared journey's config,
-    // so the card quotes what that journey will really run and offers no
-    // control that would imply otherwise.
+  it("seeds a reused persona's counter from its saved sessions", async () => {
+    // Supersedes SUTB-26, which had no counter here at all: launch does not
+    // rewrite a shared journey's config, so the card offered no control.
+    // It now sets the size for THIS run through an override, which leaves
+    // the shared definition alone — and the counter starts at what the
+    // goals already carry, so leaving it alone launches the size it
+    // always did.
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
     ];
@@ -1632,11 +1692,9 @@ describe("SwarmsTab — New swarm create flow", () => {
       screen.getByTestId("new-swarm-launch-session-estimate"),
     ).toHaveTextContent(/3 conversations/i);
     expect(screen.getByTestId("new-swarm-persona-subtotal")).toHaveTextContent(
-      /1 goal at the iterations already saved = 3 conversations/i,
+      /1 goal × 3 iterations = 3 conversations/i,
     );
-    expect(
-      screen.queryByTestId("new-swarm-persona-iterations"),
-    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-persona-iterations")).toHaveValue(3);
 
     fireEvent.click(
       screen.getByRole("button", { name: /^back to describe$/i }),

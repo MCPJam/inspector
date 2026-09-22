@@ -5,6 +5,9 @@ import { readStoredActiveOrganizationId } from "@/lib/active-organization-storag
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 export interface CreditBalanceState {
+  platformPaidFallback?: boolean;
+  platformFreeBudgetExhausted?: boolean;
+  platformFreeBudgetResetAt?: number | null;
   /** Shared paid top-up credits currently available to the organization. */
   paidCreditsRemaining: number;
   /**
@@ -76,6 +79,9 @@ export const normalizeBalance = (
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
   return {
+    platformPaidFallback: r.platformPaidFallback === true,
+    platformFreeBudgetExhausted: r.platformFreeBudgetExhausted === true,
+    platformFreeBudgetResetAt: optionalNumberOrUndefined(r.platformFreeBudgetResetAt) ?? null,
     paidCreditsRemaining: optionalNumber(r.paidCreditsRemaining),
     outstandingDeficitCredits: optionalNumberOrUndefined(
       r.outstandingDeficitCredits,

@@ -207,6 +207,16 @@ Get-Process -Id (Get-NetTCPConnection -LocalPort 6274).OwningProcess | Stop-Proc
 
 The desktop app automatically clears stale GPU and HTTP caches (`Cache`, `Code Cache`, `GPUCache`) the first time it launches after a version change. This handles most renderer or GPU process crashes caused by cached data from a previous build. If the app still fails to start after an update, use the **Reset app data and quit** option in the recovery dialog.
 
+### Update button does nothing after a download completes
+
+If you click **Update** and nothing happens — or the app refuses to quit after a download finishes — this was a known bug fixed in 3.8.1. The app was continuing to check for updates even after a build was already staged, which caused the system to forget the staged build. After that, both the Update button and quitting were silently refused.
+
+The fix is included in 3.8.1 and later. If you are on an affected version:
+
+- **Quitting:** quit normally (Cmd+Q / Alt+F4). The app now always completes the quit even if the install fails.
+- **Update button stuck:** click **Update** once. If the staged build has gone missing, the app relaunches automatically, re-downloads the update, and installs it without a second click.
+- **If neither works:** use the **Reset app data and quit** option in the recovery dialog, or download the latest release manually from the [releases page](https://github.com/MCPJam/inspector/releases).
+
 ## Getting Help
 
 If you're still experiencing issues:

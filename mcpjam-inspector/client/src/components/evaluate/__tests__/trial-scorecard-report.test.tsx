@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { TrialScorecardRow } from "../case-scorecard/trial-scorecard-row";
+import { RUBRIC_SOURCE_HINT } from "../case-scorecard/case-scorecard-model";
 import type { JoinedScorecardRow } from "../case-scorecard/trial-results";
 
 const check = {
@@ -36,9 +37,13 @@ describe("Scorecard report", () => {
       "text-foreground",
     );
     expect(screen.getByText("Passed")).not.toHaveClass("text-success");
-    expect(screen.getByText("10.2s end to end.")).toBeVisible();
-    expect(screen.getByText("Why it passed")).toBeVisible();
-    expect(screen.getByText("Finished within the budget.")).toBeVisible();
+    // Two lines, not three: the reason leads ACTUAL and the evidence follows
+    // it, in one cell. No "Why it passed" line repeating the reason.
+    const actual = screen.getByTestId("trial-scorecard-reason");
+    expect(actual).toHaveTextContent("Finished within the budget.");
+    expect(actual).toHaveTextContent("10.2s end to end.");
+    expect(screen.queryByText("Why it passed")).toBeNull();
+    expect(screen.queryByText("Reason")).toBeNull();
     expect(screen.queryByText("This gates the trial")).toBeNull();
   });
   it("labels missing evidence honestly and retains advisory semantics", () => {
@@ -57,7 +62,7 @@ describe("Scorecard report", () => {
     );
     expect(screen.getByText("Missed · advisory")).toBeVisible();
     expect(screen.getByText("No observation recorded.")).toBeVisible();
-    expect(screen.getByText("No reason recorded.")).toBeVisible();
+    expect(screen.queryByText("No reason recorded.")).toBeNull();
   });
   it("withholds the judge's reason and evidence during blind review but retains its controls", () => {
     render(
@@ -79,7 +84,7 @@ describe("Scorecard report", () => {
       screen.getByRole("button", { name: "Label iteration" }),
     ).toBeVisible();
   });
-  it("uses a cited narrative without changing the recorded verdict or reason", () => {
+  it("uses a cited narrative as ACTUAL without changing the recorded verdict", () => {
     render(
       <ul>
         <TrialScorecardRow
@@ -102,7 +107,9 @@ describe("Scorecard report", () => {
       ),
     ).toHaveAttribute("data-narrative-source", "ai");
     expect(screen.getByText("Passed")).toBeVisible();
-    expect(screen.getByText("Finished within the budget.")).toBeVisible();
+    // The narrative IS the actual; the recorded reason is not printed again
+    // under it.
+    expect(screen.queryByText("Finished within the budget.")).toBeNull();
   });
   it("falls back to measured evidence when the narrative is stale", () => {
     render(
@@ -121,7 +128,9 @@ describe("Scorecard report", () => {
       </ul>,
     );
     expect(screen.queryByText("An outdated claim.")).toBeNull();
-    expect(screen.getByText("10.2s end to end.")).toBeVisible();
+    expect(screen.getByTestId("trial-scorecard-reason")).toHaveTextContent(
+      "10.2s end to end.",
+    );
     expect(
       screen.getByText("Narrative predates the latest grade."),
     ).toBeVisible();
@@ -149,4 +158,68 @@ describe("Scorecard report", () => {
     ).toBeNull();
   });
 
+  it("gives the judge row the case's expected outcome as its expectation", () => {
+    // The sentence the judge was asked to decide, verbatim. A reader comparing
+    // EXPECTED with ACTUAL is comparing the case's own words with what ran.
+    const goal =
+      "Server diagnostics reveal connection status and the run completes.";
+    render(
+      <ul>
+        <TrialScorecardRow
+          row={{
+            ...check,
+            key: "judge:goalCompletion",
+            label: "Outcome achieved",
+            provenance: "judge",
+            judge: {
+              suiteMode: "expected_output",
+              model: "gpt-5",
+              threshold: 0.7,
+              suiteCriteriaCount: 0,
+              skippedForCase: false,
+              runsForCase: true,
+              rubricSource: "expected_output",
+              goal,
+            },
+          }}
+          layout="report"
+        />
+      </ul>,
+    );
+    expect(screen.getByText(goal)).toBeVisible();
+    expect(
+      screen.queryByText(
+        "Satisfy the task according to the configured judge rubric.",
+      ),
+    ).toBeNull();
+  });
+
+  it("names what the judge graded against when the case has no goal", () => {
+    render(
+      <ul>
+        <TrialScorecardRow
+          row={{
+            ...check,
+            key: "judge:goalCompletion",
+            label: "Outcome achieved",
+            provenance: "judge",
+            judge: {
+              suiteMode: "automatic",
+              model: "gpt-5",
+              threshold: 0.7,
+              suiteCriteriaCount: 2,
+              skippedForCase: false,
+              runsForCase: true,
+              rubricSource: "suite_criteria",
+              goal: "",
+            },
+          }}
+          layout="report"
+        />
+      </ul>,
+    );
+    expect(
+      screen.getByText(RUBRIC_SOURCE_HINT.suite_criteria),
+    ).toBeVisible();
+  });
 });

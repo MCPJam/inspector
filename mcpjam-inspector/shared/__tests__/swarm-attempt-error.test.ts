@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  accountLimitCode,
   humanizeSwarmAttemptError,
   humanizeSwarmAttemptErrorMessage,
   isAccountLimit,
@@ -221,6 +222,22 @@ describe("isAccountLimit", () => {
     expect(isAccountLimit(undefined, "spend_cap_exceeded")).toBe(true);
   });
 
+  it("recognizes MCPJam's model-limit sentence stored under the generic code", () => {
+    // Rows written before the runner kept the denial code: the humanized
+    // sentence is all that is left to say MCPJam, not a provider, stopped it.
+    expect(
+      isAccountLimit(
+        "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Try again in 621 minutes.",
+        "rate_limited"
+      )
+    ).toBe(true);
+    expect(
+      isAccountLimit(
+        "Monthly MCPJam model limit reached. Top up or use BYOK to keep chatting."
+      )
+    ).toBe(true);
+  });
+
   it("does NOT claim a 429 on the user's own provider key", () => {
     // BB-172: the user's own key really was throttled. No MCPJam code appears,
     // and the advice differs — MCPJam cannot lift someone else's rate limit.
@@ -229,4 +246,87 @@ describe("isAccountLimit", () => {
     // The per-host sweep stamps this code with no message.
     expect(isAccountLimit(undefined, "rate_limited")).toBe(false);
   });
+});
+
+describe("accountLimitCode", () => {
+  it("reads the code out of the raw agent envelope", () => {
+    expect(accountLimitCode(REAL_RATE_LIMIT_ERROR)).toBe("user_rate_limit");
+  });
+
+  it("reads the code out of the wire form the runner composes", () => {
+    expect(
+      accountLimitCode("Daily credit limit reached. (ORG_RATE_LIMIT, HTTP 429)")
+    ).toBe("org_rate_limit");
+  });
+
+  it("prefers the structured code over the message", () => {
+    expect(
+      accountLimitCode("(user_rate_limit, HTTP 429)", "wallet_locked")
+    ).toBe("wallet_locked");
+  });
+
+  it("returns nothing for a provider throttle or the humanized sentence", () => {
+    expect(accountLimitCode("429 Too Many Requests")).toBeUndefined();
+    expect(accountLimitCode(undefined, "rate_limited")).toBeUndefined();
+    // The sentence identifies the limit, but it names no code to store.
+    expect(
+      accountLimitCode(
+        humanizeSwarmAttemptErrorMessage(REAL_RATE_LIMIT_ERROR)
+      )
+    ).toBeUndefined();
+  });
+});
+
+describe("spending reservation contention", () => {
+  it("explains a truncated historical database conflict", () => {
+    const info = humanizeSwarmAttemptError(
+      'Backend stream error: 500 {"code":"Server Error: Documents read from or written to the \\"streamSpendingReservations\\" table changed while this mutation was being run and on every subsequent retry.'
+    );
+    expect(info.code).toBe("spending_reservation_busy");
+    expect(info.message).toContain("internal execution failure");
+    expect(info.message).not.toContain("streamSpendingReservations");
+  });
+
+  it("reads the structured busy response from the shared stream engine", () => {
+    const info = humanizeSwarmAttemptError(
+      'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam is temporarily busy. Please retry.","isRetryable":true}'
+    );
+    expect(info).toMatchObject({code: "spending_reservation_busy", httpStatus: 503, message: "MCPJam is temporarily busy. Please retry."});
+  });
+
+  it("does not classify other database errors as spending contention", () => {
+    const info = humanizeSwarmAttemptError(
+      'Documents read from or written to the "chatSessions" table changed while this mutation was being run'
+    );
+    expect(info.code).toBeUndefined();
+  });
+});
+
+it.each(["platform_free_budget_exhausted", "account_suspended", "guest_model_not_allowed", "guest_input_too_large"])("treats %s as an account refusal", (code) => {
+  const info = humanizeSwarmAttemptError(JSON.stringify({ code, error: "Admission refused" }));
+  expect(isAccountLimit(info.message, info.code)).toBe(true);
+});
+
+it("keeps transient admission metadata from persona refusals", () => {
+  const result = humanizeSwarmAttemptError(
+    'swarm-agent https://example.test/persona failed (429): {"code":"user_rate_limit","error":"MCPJam model limit reached for the moment.","refusalReason":"holds_committed","isRetryable":true,"retryAfter":15000,"outstandingHolds":2}',
+  );
+  expect(result).toMatchObject({
+    refusalReason: "holds_committed",
+    isRetryable: true,
+    retryAfterMs: 15000,
+    outstandingHolds: 2,
+  });
+});
+it.each([
+  "<!DOCTYPE html><html>Cloudflare",
+  "<!-- proxy --><html><head>502",
+  "<html>truncated",
+])("scrubs HTML error pages: %s", (body) => {
+  const result = humanizeSwarmAttemptError(
+    `swarm-agent https://example.test/persona failed (502): ${body}`,
+  );
+  expect(result.code).toBe("upstream_error_page");
+  expect(result.message).toContain("HTTP 502");
+  expect(result.message).not.toMatch(/<|Cloudflare/);
 });

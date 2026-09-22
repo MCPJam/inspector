@@ -237,6 +237,23 @@ describe("useServerState hosted OAuth callback guards", () => {
     readStoredOAuthConfigMock.mockReturnValue({});
   });
 
+  it("keeps the base connection intact when adding an account fails", async () => {
+    window.history.replaceState({}, "", "/");
+    const { initiateOAuth, clearOAuthData } = await import("@/lib/oauth/mcp-oauth");
+    const { deleteServer } = await import("@/state/mcp-api");
+    vi.mocked(initiateOAuth).mockResolvedValue({ success: false, error: "Consent declined" } as any);
+    vi.mocked(clearOAuthData).mockClear();
+    vi.mocked(deleteServer).mockClear();
+    const dispatch = vi.fn();
+    const { result } = renderHostedServerState(dispatch);
+    await act(async () => {
+      await result.current.handleReconnect("asana", { forceOAuthFlow: true, connectionIntent: { kind: "add" } });
+    });
+    expect(clearOAuthData).not.toHaveBeenCalled();
+    expect(deleteServer).not.toHaveBeenCalled();
+    expect(dispatch.mock.calls.some(([action]) => ["RECONNECT_REQUEST", "CONNECT_FAILURE"].includes(action.type))).toBe(false);
+  });
+
   // A `?code=` on a route this hook does not own must not be claimed. The
   // GitHub App bind returns to `/settings/integrations/github/callback`, and
   // this effect used to complete it as an MCP flow, fail, toast "No pending

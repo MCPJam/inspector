@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Info, Settings } from "lucide-react";
+import { BarChart3, Info, Settings } from "lucide-react";
 import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { Card, CardContent } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
@@ -38,20 +38,26 @@ import { consumeUrlFlag } from "@/lib/url-flag";
 
 interface CreditBalanceCardProps {
   organizationId?: string | null;
+  organizationName?: string;
   canManageCredits?: boolean;
+  pricingVersion?: "v1" | "v2";
   /** Optional override for the chat session id used by the top-up flow. */
   chatSessionId?: string;
 }
 
 export function CreditBalanceCard({
   organizationId,
+  organizationName,
   canManageCredits = false,
   chatSessionId,
+  pricingVersion,
 }: CreditBalanceCardProps = {}) {
   const navigate = useAppNavigate();
   const { balance, isLoading } = useCreditBalance({
     organizationId,
   });
+  const isV2 =
+    pricingVersion === "v2" || balance?.billingModel === "monthly_flat";
   const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
     useEvalIterationQuota({
       organizationId,
@@ -108,12 +114,27 @@ export function CreditBalanceCard({
     balance?.billingModel === "monthly_flat";
   const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
   const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
+  const rolloverRemaining = Math.min(
+    Math.max(0, balance?.rolloverCreditsRemaining ?? 0),
+    Math.max(0, monthlyRemaining),
+  );
+  const hasRollover = showMonthly && rolloverRemaining > 0;
+  // The API reports remaining rollover, not the initial rollover grant.
+  // Compare against the monthly allowance plus currently available rollover.
+  const meterCapacity = monthlyTotal + rolloverRemaining;
   const paidRemaining = balance?.paidCreditsRemaining ?? 0;
   const monthlyExhausted =
-    showMonthly && monthlyRemaining <= 0 && paidRemaining <= 0;
+    !isLoading &&
+    !!balance &&
+    showMonthly &&
+    monthlyRemaining <= 0 &&
+    paidRemaining <= 0;
   const showEvalIterationUsage =
-    isEvalIterationQuotaLoading ||
-    (evalIterationQuota !== undefined && evalIterationQuota.allowed !== null);
+    !isLoading &&
+    !isV2 &&
+    (isEvalIterationQuotaLoading ||
+      (evalIterationQuota !== undefined &&
+        evalIterationQuota.allowed !== null));
   const evalIterationLabel = getEvalIterationQuotaLabel(
     evalIterationQuota?.windowKind,
   );
@@ -130,8 +151,9 @@ export function CreditBalanceCard({
               Organization usage
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Model credits and eval iterations are shared across this
-              organization.
+              {isV2 || isLoading
+                ? "Credits are shared across this organization."
+                : "Model credits and eval iterations are shared across this organization."}
             </p>
           </div>
           {organizationId && canManageCredits ? (
@@ -146,7 +168,8 @@ export function CreditBalanceCard({
                 )
               }
             >
-              See more
+              <BarChart3 className="mr-2 size-4" aria-hidden="true" />
+              See Usage
             </Button>
           ) : null}
         </div>
@@ -164,35 +187,57 @@ export function CreditBalanceCard({
           </ErrorBoundary>
         ) : null}
 
+        {balance?.platformPaidFallback && (
+          <p className="text-xs text-muted-foreground" role="status">
+            MCPJam’s shared free allowance is unavailable. New requests use your
+            purchased credits.
+          </p>
+        )}
+
         {showMonthly ? (
           <UsageRow
-            label="Monthly credits"
-            tooltip={
+            label={hasRollover ? "Available plan credits" : "Monthly credits"}
+            tooltip={`${
               balance?.rolloverCapCredits != null
                 ? `Unused credits can roll over up to ${balance.rolloverCapCredits.toLocaleString()} credits under your plan.`
                 : "Your organization’s available monthly credit allowance."
-            }
+            } Monthly allowance ${formatMonthlyResetText(
+              balance?.monthlyResetAt,
+            )}.`}
             rightText={
               isLoading || !balance
                 ? null
-                : `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()} · ${formatMonthlyResetText(
-                    balance.monthlyResetAt,
-                  )}`
+                : hasRollover
+                ? `${monthlyRemaining.toLocaleString()} credits remaining`
+                : `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()} remaining`
             }
             fillPercent={
-              isLoading || monthlyTotal <= 0
+              isLoading || meterCapacity <= 0
                 ? 0
-                : (monthlyRemaining / monthlyTotal) * 100
+                : Math.min(
+                    100,
+                    Math.max(0, (monthlyRemaining / meterCapacity) * 100),
+                  )
             }
             ariaLabel="Monthly credits remaining"
-            ariaValueText={`${monthlyRemaining.toLocaleString()} of ${monthlyTotal.toLocaleString()} monthly credits remaining`}
+            ariaValueText={
+              hasRollover
+                ? `${monthlyRemaining.toLocaleString()} plan credits remaining, including ${rolloverRemaining.toLocaleString()} rollover credits`
+                : `${monthlyRemaining.toLocaleString()} of ${monthlyTotal.toLocaleString()} monthly credits remaining`
+            }
             isLoading={isLoading}
             showCoin
             testId="usage-monthly"
           />
         ) : (
           <UsageRow
-            label="Free daily credits"
+            label={
+              isLoading
+                ? "Credits"
+                : balance?.platformFreeBudgetExhausted
+                ? "Free allowance temporarily unavailable"
+                : "Free daily credits"
+            }
             rightText={
               isLoading || !balance
                 ? null
@@ -213,14 +258,39 @@ export function CreditBalanceCard({
           />
         )}
 
+        {!isLoading && (balance?.rolloverCreditsRemaining ?? 0) > 0 && (
+          <div
+            className="-mt-2 rounded-lg border border-border bg-muted/30 p-3 text-xs"
+            data-testid="usage-rollover"
+          >
+            <p className="font-medium">
+              {Math.max(
+                0,
+                monthlyRemaining - rolloverRemaining,
+              ).toLocaleString()}{" "}
+              monthly credits +{" "}
+              {balance!.rolloverCreditsRemaining!.toLocaleString()} rollover
+              credits
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              Included in your available balance. Rollover is unused credit
+              carried from a previous billing period.
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              Monthly allowance: {monthlyTotal.toLocaleString()} credits ·{" "}
+              {formatMonthlyResetText(balance?.monthlyResetAt)}
+            </p>
+          </div>
+        )}
+
         {evalIterationQuota?.starterRemaining != null && (
           <p className="text-sm">
-            Starter eval iterations:{" "}
+            Free starter eval iterations:{" "}
             {evalIterationQuota.starterRemaining.toLocaleString()} remaining ·
-            one-time allowance.{" "}
+            one-time allowance of 500.{" "}
             {evalIterationQuota.starterRemaining === 0
               ? "Further runs use your plan’s metered credits."
-              : "This allowance does not renew."}
+              : "This allowance does not renew. Model usage consumes credits separately."}
           </p>
         )}
         {monthlyExhausted ? (
@@ -282,12 +352,19 @@ export function CreditBalanceCard({
           />
         ) : null}
 
-        {!isLoading && hasPaidHistory && balance && (
+        {!isLoading && (isV2 || hasPaidHistory) && balance && (
           <div
             className="flex items-center justify-between gap-2"
             data-testid="usage-paid"
           >
-            <span className="text-xs font-medium">Shared paid credits</span>
+            <div>
+              <span className="text-xs font-medium">
+                {isV2 ? "Top-up credits" : "Shared paid credits"}
+              </span>
+              {isV2 && (
+                <p className="text-xs text-muted-foreground">Never expire</p>
+              )}
+            </div>
             <span className="flex items-center gap-1 text-xs font-medium">
               <CoinStackIcon aria-hidden="true" className="size-3" />
               {paidRemaining.toLocaleString()} credits
@@ -303,17 +380,6 @@ export function CreditBalanceCard({
             <span>Outstanding credit debt</span>
             <span>
               {balance!.outstandingDeficitCredits!.toLocaleString()} credits
-            </span>
-          </div>
-        )}
-        {!isLoading && (balance?.rolloverCreditsRemaining ?? 0) > 0 && (
-          <div
-            className="flex items-center justify-between gap-2 text-xs"
-            data-testid="usage-rollover"
-          >
-            <span>Carried credits (included in monthly balance)</span>
-            <span>
-              {balance!.rolloverCreditsRemaining!.toLocaleString()} credits
             </span>
           </div>
         )}
@@ -340,10 +406,10 @@ export function CreditBalanceCard({
                     organizationId,
                   )}/plans`}
                 >
-                  Upgrade to Pro to buy credits
+                  Compare plans for more monthly credits and top-ups
                 </a>
               ) : (
-                "Upgrade to Pro to buy credits"
+                "Compare plans for more monthly credits and top-ups"
               )}
             </p>
           )
@@ -371,13 +437,13 @@ export function CreditBalanceCard({
                     className="self-center text-xs text-muted-foreground"
                     data-testid="usage-ask-admin"
                   >
-                    Ask org admin to top up credits
+                    Ask an owner or admin to add credits
                   </span>
                 )}
               </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Add credits when you need them. Purchased credits are shared
-                across your organization.
+                Add shared credits so your organization can continue testing
+                after its included allowance runs out.
               </p>
             </section>
             <section
@@ -428,6 +494,7 @@ export function CreditBalanceCard({
           chatSessionId={chatSessionId ?? ""}
           lastUserMessage=""
           organizationId={organizationId}
+          organizationName={organizationName}
           source={topupSource}
         />
       )}
@@ -504,6 +571,7 @@ function UsageRow({
       ) : (
         <Progress
           value={fillPercent}
+          aria-valuenow={fillPercent}
           aria-label={ariaLabel ?? `${label} remaining`}
           className={
             fillPercent <= 10

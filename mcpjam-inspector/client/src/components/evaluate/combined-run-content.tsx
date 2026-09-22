@@ -40,7 +40,7 @@ import {
   previousHeroIterations,
   previousLaunchRuns,
 } from "./run-verdict-hero-deltas";
-import { RunVerdictHero } from "./run-verdict-hero";
+import { HeroExplanation, RunVerdictHero } from "./run-verdict-hero";
 import { UnifiedFindingsSection } from "./unified-findings-section";
 import type { SingleRunContent } from "./evaluate-run-content";
 
@@ -277,6 +277,7 @@ export function CombinedRunContent({
                 }
                 key={findingsRun._id}
                 run={findingsRun}
+                view={reports.get(findingsRun._id)?.view}
                 iterations={
                   history.details.get(findingsRun._id)?.iterations ?? []
                 }
@@ -311,11 +312,13 @@ export function CombinedRunContent({
 function SelectedRunFindings({
   scopeControl,
   run,
+  view,
   iterations,
   onOpenIteration,
 }: {
   scopeControl?: React.ReactNode;
   run: EvalSuiteRun;
+  view?: RunVerdictHeroView;
   iterations: readonly EvalIteration[];
   onOpenIteration: Parameters<typeof SingleRunContent>[0]["onOpenIteration"];
 }) {
@@ -333,6 +336,14 @@ function SelectedRunFindings({
       scopeControl={scopeControl}
       suiteRunId={run._id}
       iterations={iterations}
+      // Before the Findings panel, these columns came directly from the
+      // run's diagnostics. Keep them available without requesting AI, scoped
+      // to the selected run. With no diagnosis, retain the panel's empty state.
+      fallback={
+        view?.sentence.kind === "brokeAt" ? (
+          <HeroExplanation view={view} />
+        ) : undefined
+      }
       generation={{
         pending: generation.pending,
         failedGeneration: generation.failedGeneration,

@@ -1,3 +1,4 @@
+import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 /**
  * Shared web-chat streaming turn.
  *
@@ -120,7 +121,7 @@ import {
 } from "./../routes/web/hosted-rpc-logs.js";
 import { buildServerNamesById } from "./../routes/web/auth.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
-import { getClientIp } from "./client-ip.js";
+import { getSpendClientIp } from "./client-ip.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
 import {
   resolveWebAuthorizedHarnessStrategy,
@@ -514,7 +515,7 @@ export interface WebChatTurnRuntime {
    * fail for "your sandbox was reset, earlier files are gone".
    */
   ackSandboxNotices?: (notices: SandboxNoticeReason[]) => void;
-  /** Hono context (needed for getClientIp fallback / future hooks). */
+  /** Hono context (needed for getSpendClientIp fallback / future hooks). */
   c: Context;
 }
 
@@ -836,6 +837,11 @@ export async function streamWebChatTurn(
             projectId: persist.projectId,
             chatSessionId: persist.chatSessionId!,
             manager,
+            connectionId: toolConnectionAttribution(
+              preparedTools[toolName],
+              toolInput,
+              info.toolCallId,
+            )?.connectionId,
             serverName: scopeStepUpServerNamesById[info.serverId],
             info,
             toolName,
@@ -1045,6 +1051,11 @@ export async function streamWebChatTurn(
       turnTrace: PersistedTurnTrace,
       harnessSessionCommit?: HarnessSessionCommitPayload,
     ) => {
+      if (prepared.connectionsAtTurn)
+        turnTrace = {
+          ...turnTrace,
+          connectionsAtTurn: prepared.connectionsAtTurn,
+        };
       const isDirectChat = !isScenarioSession;
       // Capture the live tool catalog. Failures must never block the persist.
       // Surfaces with synthetic server ids (mcpjam-agent) opt out via
@@ -1290,7 +1301,7 @@ export async function streamWebChatTurn(
       progressivePlan,
       discoveryState,
       authHeader: runtime.authHeader,
-      clientIp: runtime.clientIp ?? getClientIp(c),
+      clientIp: runtime.clientIp ?? getSpendClientIp(c),
       scenarioId: persist.scenarioId,
       accessVersion: persist.accessVersion,
       mcpClientManager: manager,
@@ -1372,7 +1383,7 @@ export async function streamWebChatTurn(
     progressivePlan,
     discoveryState,
     authHeader: runtime.authHeader,
-    clientIp: runtime.clientIp ?? getClientIp(c),
+    clientIp: runtime.clientIp ?? getSpendClientIp(c),
     scenarioId: persist.scenarioId,
     accessVersion: persist.accessVersion,
     projectId: persist.projectId,

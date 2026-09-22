@@ -672,6 +672,231 @@ describe("reportEvalResults", () => {
     expect(body.results[0].widgetSnapshots[0].widgetHtmlBlobId).toBeUndefined();
   });
 
+  it("offloads widget evidence to storage when one result is too large to send inline", async () => {
+    // Two calls of a ~600KB built app: over the 1MB body limit, and chunking
+    // cannot help because it only splits between results.
+    const bigWidgetHtml = `<html>${"x".repeat(600_000)}</html>`;
+    const snapshot = (toolCallId: string) => ({
+      toolCallId,
+      toolName: "create_view",
+      protocol: "mcp-apps" as const,
+      serverId: "server-1",
+      resourceUri: "ui://widget/create-view.html",
+      toolMetadata: { ui: { resourceUri: "ui://widget/create-view.html" } },
+      widgetCsp: null,
+      widgetPermissions: null,
+      widgetPermissive: true,
+      prefersBorder: true,
+      widgetHtml: bigWidgetHtml,
+    });
+
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes("artifacts/upload-url")) {
+        return Promise.resolve(
+          okResponse({ uploadUrl: "https://example.com/upload" })
+        );
+      }
+      if (String(url) === "https://example.com/upload") {
+        return Promise.resolve(okResponse({ storageId: "storage_1" }));
+      }
+      return Promise.resolve(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    });
+    global.fetch = fetchMock as any;
+
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "widget-snapshots",
+      results: [
+        {
+          caseTitle: "happy-path",
+          passed: true,
+          widgetSnapshots: [snapshot("call-1"), snapshot("call-2")],
+        },
+      ],
+    });
+
+    const reportCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).includes("eval-ingest/report")
+    );
+    expect(reportCall).toBeDefined();
+    const body = JSON.parse(reportCall![1].body);
+    for (const sent of body.results[0].widgetSnapshots) {
+      expect(sent.widgetHtml).toBeUndefined();
+      expect(sent.widgetHtmlBlobId).toBe("storage_1");
+    }
+    // The point of the offload: the request now fits.
+    expect(new TextEncoder().encode(reportCall![1].body).length).toBeLessThan(
+      1024 * 1024
+    );
+  });
+
+  it("leaves a small widget inline while offloading the oversized one beside it", async () => {
+    const bigWidgetHtml = `<html>${"x".repeat(600_000)}</html>`;
+    const widget = (toolCallId: string, widgetHtml: string) => ({
+      toolCallId,
+      toolName: "create_view",
+      protocol: "mcp-apps" as const,
+      serverId: "server-1",
+      resourceUri: "ui://widget/create-view.html",
+      toolMetadata: { ui: { resourceUri: "ui://widget/create-view.html" } },
+      widgetCsp: null,
+      widgetPermissions: null,
+      widgetPermissive: true,
+      prefersBorder: true,
+      widgetHtml,
+    });
+
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes("artifacts/upload-url")) {
+        return Promise.resolve(
+          okResponse({ uploadUrl: "https://example.com/upload" })
+        );
+      }
+      if (String(url) === "https://example.com/upload") {
+        return Promise.resolve(okResponse({ storageId: "storage_1" }));
+      }
+      return Promise.resolve(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    });
+    global.fetch = fetchMock as any;
+
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "widget-snapshots",
+      results: [
+        {
+          caseTitle: "small-widget",
+          passed: true,
+          widgetSnapshots: [widget("call-1", "<html>small</html>")],
+        },
+        {
+          caseTitle: "big-widget",
+          passed: true,
+          widgetSnapshots: [
+            widget("call-2", bigWidgetHtml),
+            widget("call-3", bigWidgetHtml),
+          ],
+        },
+      ],
+    });
+
+    const reportCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).includes("eval-ingest/report")
+    );
+    expect(reportCall).toBeDefined();
+    const sent = JSON.parse(reportCall![1].body).results;
+    // Order is preserved and the small case is untouched.
+    expect(sent.map((result: any) => result.caseTitle)).toEqual([
+      "small-widget",
+      "big-widget",
+    ]);
+    expect(sent[0].widgetSnapshots[0].widgetHtml).toBe("<html>small</html>");
+    expect(sent[0].widgetSnapshots[0].widgetHtmlBlobId).toBeUndefined();
+    for (const snapshot of sent[1].widgetSnapshots) {
+      expect(snapshot.widgetHtml).toBeUndefined();
+      expect(snapshot.widgetHtmlBlobId).toBe("storage_1");
+    }
+  });
+
+  const oversizedWidgetResult = () => {
+    const bigWidgetHtml = `<html>${"x".repeat(600_000)}</html>`;
+    return {
+      caseTitle: "big-widget",
+      passed: true,
+      // Two of them: one alone still fits, so only a pair forces the offload.
+      widgetSnapshots: ["call-1", "call-2"].map((toolCallId) => ({
+        toolCallId,
+        toolName: "create_view",
+        protocol: "mcp-apps" as const,
+        serverId: "server-1",
+        resourceUri: "ui://widget/create-view.html",
+        toolMetadata: {},
+        widgetCsp: null,
+        widgetPermissions: null,
+        widgetPermissive: true,
+        prefersBorder: true,
+        widgetHtml: bigWidgetHtml,
+      })),
+    };
+  };
+
+  const mockUploadUrl = (uploadUrl: string) =>
+    vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes("artifacts/upload-url")) {
+        return Promise.resolve(okResponse({ uploadUrl }));
+      }
+      if (String(url) === uploadUrl) {
+        return Promise.resolve(okResponse({ storageId: "storage_1" }));
+      }
+      return Promise.resolve(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    });
+
+  it.each([
+    "https://example.com/upload",
+    "http://127.0.0.1:3210/upload",
+    "http://localhost:3210/upload",
+  ])("uploads widget evidence through %s", async (uploadUrl) => {
+    const fetchMock = mockUploadUrl(uploadUrl);
+    global.fetch = fetchMock as any;
+
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "widget-snapshots",
+      results: [oversizedWidgetResult()],
+    });
+
+    expect(
+      fetchMock.mock.calls.some((call) => String(call[0]) === uploadUrl)
+    ).toBe(true);
+  });
+
+  it("never sends widget evidence to a cleartext URL off the machine", async () => {
+    const uploadUrl = "http://cdn.example.com/upload";
+    const fetchMock = mockUploadUrl(uploadUrl);
+    global.fetch = fetchMock as any;
+
+    // The widget app is not put on a cleartext wire. Reporting then fails,
+    // because the snapshot stays inline and the payload is over the limit —
+    // a loud failure is the right outcome for a server handing out http URLs.
+    await expect(
+      reportEvalResults({
+        apiKey: "sk_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "widget-snapshots",
+        results: [oversizedWidgetResult()],
+      })
+    ).rejects.toThrow();
+    expect(
+      fetchMock.mock.calls.some((call) => String(call[0]) === uploadUrl)
+    ).toBe(false);
+  });
+
   it("wraps reporting failures in EvalReportingError and captures once", async () => {
     const fetchMock = jest
       .fn()
@@ -849,10 +1074,9 @@ describe("printRunUrl", () => {
       results: [{ caseTitle: "case", passed: true }],
     });
 
-    // The UNFLAGGED /evals route: /ci-evals sits behind a flag whose redirect
-    // drops the run path.
+    // The public Evaluate link preserves the exact uploaded run.
     expect(logLines(logSpy)).toEqual([
-      "[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/suite_print_1/runs/run_print_1?project=proj_resolved",
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evaluate/suite/suite_print_1/runs/run_print_1?project=proj_resolved",
     ]);
   });
 
@@ -878,7 +1102,7 @@ describe("printRunUrl", () => {
     // `?project=default` that resolves to nothing.
     const [line] = logLines(logSpy);
     expect(line).toBe(
-      "[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/suite_print_2/runs/run_print_2"
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evaluate/suite/suite_print_2/runs/run_print_2"
     );
   });
 
@@ -951,7 +1175,7 @@ describe("printRunUrl", () => {
     });
 
     expect(logLines(logSpy)).toEqual([
-      "[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/suite_chunk/runs/run_chunk?project=proj_chunk",
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evaluate/suite/suite_chunk/runs/run_chunk?project=proj_chunk",
     ]);
   });
 
@@ -994,7 +1218,7 @@ describe("printRunUrl", () => {
     });
 
     expect(logLines(logSpy)).toEqual([
-      "[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/suite_reuse/runs/run_reuse?project=proj_reuse",
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evaluate/suite/suite_reuse/runs/run_reuse?project=proj_reuse",
     ]);
   });
 

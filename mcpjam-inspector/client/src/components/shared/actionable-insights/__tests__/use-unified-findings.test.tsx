@@ -735,3 +735,85 @@ describe("one Analyze findings action", () => {
     expect(borrowed.requestInsight).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("automatic analysis failures", () => {
+  it.each([
+    ["failed", "enrich", "evidence_changed", false, null, true],
+    ["failed", "enrich", "cancelled", false, null, true],
+    ["pending", "enrich", "evidence_changed", false, null, false],
+    ["failed", "build", "evidence_changed", false, null, false],
+    ["failed", "enrich", "evidence_changed", true, null, false],
+    ["failed", "enrich", "evidence_changed", false, 200, false],
+  ] as const)(
+    "handles %s %s %s pending=%s enrichment=%s",
+    (status, kind, errorCode, pending, generatedAt, visible) => {
+      const envelope = structuredClone(ENVELOPE);
+      envelope.unifiedFindings!.job = {
+        jobId: "auto",
+        kind,
+        status,
+        errorCode,
+        startedAt: 100,
+        updatedAt: 100,
+      };
+      envelope.unifiedFindings!.snapshot!.enrichment =
+        generatedAt === null
+          ? null
+          : { ...ENVELOPE.unifiedFindings!.snapshot!.enrichment!, generatedAt };
+      const { result } = renderHook(() =>
+        useUnifiedFindings({
+          suiteRunId: "run_1",
+          envelope,
+          generation: generation({ pending }),
+        }),
+      );
+      expect(result.current.analysisFailure !== null).toBe(visible);
+      if (visible) {
+        expect(result.current.analyze.error).toBeNull();
+        expect(result.current.analysisFailure?.errorCode).toBe(
+          errorCode === "cancelled" ? undefined : errorCode,
+        );
+      }
+    },
+  );
+
+  it("says nothing about a green run whose analysis found nothing", () => {
+    // An all-pass run is now analyzed like any other: every iteration gets a
+    // report, and the reasoning half legitimately proposes no mechanism. That
+    // is a COMPLETED job with an empty findings list — never "AI analysis did
+    // not complete", which would read as a failure of a job that succeeded.
+    const envelope = structuredClone(ENVELOPE);
+    envelope.currentFindings = [];
+    envelope.unifiedFindings!.snapshot!.deterministicFindings = [];
+    envelope.unifiedFindings!.snapshot!.provenance = [];
+    envelope.unifiedFindings!.snapshot!.enrichment = {
+      ...ENVELOPE.unifiedFindings!.snapshot!.enrichment!,
+      discovery: {
+        reviewedIterations: 8,
+        totalIterations: 8,
+        reviewedFailedIterations: 0,
+        totalFailedIterations: 0,
+        missingTraces: 0,
+        truncatedTraces: 0,
+        omittedEvidence: 0,
+      },
+    };
+    envelope.unifiedFindings!.job = {
+      jobId: "auto",
+      kind: "enrich",
+      status: "completed",
+      startedAt: 100,
+      updatedAt: 100,
+    };
+    const { result } = renderHook(() =>
+      useUnifiedFindings({
+        suiteRunId: "run_1",
+        envelope,
+        generation: generation(),
+      }),
+    );
+    expect(result.current.analysisFailure).toBeNull();
+    expect(result.current.analyze.error).toBeNull();
+    expect(result.current.findings).toEqual([]);
+  });
+});

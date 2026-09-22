@@ -35,6 +35,7 @@ const {
   getInitializationInfoMock,
   importHostedOAuthTokensMock,
   tryResolveProjectServerMock,
+  listOAuthConnectionsMock,
   mockConvexQuery,
   mockCreateServer,
   mockCreateServerIfMissing,
@@ -45,6 +46,7 @@ const {
   mockUseDbUserReady,
   mockHostedMode,
 } = vi.hoisted(() => ({
+  listOAuthConnectionsMock: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
   toastWarning: vi.fn(),
@@ -133,6 +135,13 @@ vi.mock("@/lib/apis/web/context", () => ({
   tryGetHostedServerDisplayName: vi.fn(),
   tryResolveProjectServer: tryResolveProjectServerMock,
 }));
+
+vi.mock("@/lib/apis/web/oauth-connections", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/lib/apis/web/oauth-connections")
+  >();
+  return { ...actual, listOAuthConnections: listOAuthConnectionsMock };
+});
 
 vi.mock("@/lib/apis/hosted-oauth-import-tokens-api", async (importOriginal) => {
   const actual = await importOriginal<
@@ -307,6 +316,11 @@ async function flushAsyncWork(iterations = 5): Promise<void> {
 }
 
 beforeEach(() => {
+  listOAuthConnectionsMock.mockReset().mockResolvedValue({
+    connections: [],
+    shared: false,
+  });
+  readStoredOAuthConfigMock.mockReset();
   mockHostedMode.mockReturnValue(false);
   mockUseDbUserReady.mockReturnValue(true);
   vi.mocked(authFetch).mockReset();
@@ -3433,6 +3447,27 @@ describe("useServerState OAuth callback failures", () => {
       ),
       { duration: 8000 }
     );
+  });
+
+  it("replaces the default hosted account without clearing the active server", async () => {
+    listOAuthConnectionsMock.mockResolvedValue({
+      connections: [{ connectionId: "default-account", isDefault: true }],
+      shared: false,
+    });
+    const { deleteServer } = await import("@/state/mcp-api");
+    const { result } = renderUseServerState();
+    await act(async () => {
+      await result.current.handleReconnect("demo-server", {
+        forceOAuthFlow: true,
+      });
+    });
+    expect(listOAuthConnectionsMock).toHaveBeenCalledWith(
+      "project_default",
+      "srv_demo"
+    );
+    expect(initiateOAuthMock).toHaveBeenCalled();
+    expect(clearOAuthDataMock).not.toHaveBeenCalled();
+    expect(deleteServer).not.toHaveBeenCalled();
   });
 
   it("keeps saved registry OAuth settings when forcing a fresh reconnect", async () => {

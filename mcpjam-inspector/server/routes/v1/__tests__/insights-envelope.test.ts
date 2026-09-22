@@ -40,6 +40,7 @@ import evals from "../evals.js";
 import journeys from "../journeys.js";
 import { v1OnError } from "../envelope.js";
 import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
+import swarmFindingsWire from "../../../../../sdk/tests/fixtures/swarm-findings-wire.json";
 
 // Id-SHAPED, like `RUN` below, and for the same reason the run/suite fixtures
 // were reshaped: `proj_a` is a value production cannot produce, and fixtures
@@ -278,6 +279,8 @@ describe("journey-run detail — insights embed", () => {
         ...ENVELOPE,
         scope: { kind: "swarm_wave", id: "wave_1", runId: RUN },
         runHealth: { targets: [] },
+        journeyFindings: swarmFindingsWire,
+        journeyFindingsJob: { status: "completed", updatedAt: 0 },
       },
     });
     const res = await makeApp(journeys).request(
@@ -285,6 +288,12 @@ describe("journey-run detail — insights embed", () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
+    expect((body.insights as Record<string, unknown>).journeyFindings).toEqual(
+      swarmFindingsWire,
+    );
+    expect(
+      (body.insights as Record<string, unknown>).journeyFindingsJob,
+    ).toEqual({ status: "completed", updatedAt: 0 });
     expect((body.insights as Record<string, unknown>).runHealth).toEqual({
       targets: [],
     });

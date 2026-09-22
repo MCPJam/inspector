@@ -1,17 +1,4 @@
-/**
- * Navigation for the flag-gated Evaluate (New) tab.
- *
- * A copy of `evals/create-suite-navigation.ts`'s playground half, bound to
- * `/evaluate` instead of `/evals`. Deliberately duplicated rather than
- * parameterized: the two tabs ship side by side only until the new one
- * replaces the old, and a shared prefix argument would have to be threaded
- * through every caller of `navigatePlaygroundEvalsRoute` in the v1 tab —
- * exactly the shared-surface edit this tab exists to avoid.
- *
- * Runs mode has no counterpart here: the new landing's Runs view is in-page
- * state over `ProjectRunsTable`, and the commit-keyed CI lens stays on
- * `/evals/runs` under the original tab.
- */
+/** Navigation for public Evaluate, including its project run table. */
 import type { EvalRoute } from "@/lib/eval-route-types";
 import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 import type { SuiteNavigation } from "../evals/suite-iterations-view";

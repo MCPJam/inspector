@@ -21,6 +21,7 @@ import {
   type FindingsSessionScope,
   type FindingsStageNarrowing,
 } from "./findings-goal-sessions";
+import { FindingText } from "@/components/shared/actionable-insights/finding-text";
 
 export const EMPTY_STAGE_COPY =
   "No finding landed on this stage. This is not evidence that the stage passed.";
@@ -153,11 +154,18 @@ export function FindingsGoalInspect({
   const canListSessions = Boolean(sessionScope && onOpenSession);
   const [openEvidence, setOpenEvidence] = useState(canListSessions ? 0 : -1);
 
-  // Footer rules: no sessions means no control at all, and a single session is
-  // a link rather than something to expand. Only a real list earns the toggle.
+  // No sessions means no control at all, and a lone session under a lone
+  // finding is a link rather than something to expand.
+  //
+  // Several findings earn the toggle even over ONE session: the list renders
+  // under a single row, so without it row 0 keeps the only way in and every
+  // other finding — a second failed rubric check over that same session — is
+  // text with nothing to click. The empty-stage footer below is unaffected:
+  // it only renders when there is no evidence at all.
   const sessionCount = goal.sessions;
   const canShowSessions = canListSessions && sessionCount > 0;
-  const sessionsAreExpandable = canShowSessions && sessionCount > 1;
+  const sessionsAreExpandable =
+    canShowSessions && (sessionCount > 1 || stageModel.evidence.length > 1);
 
   useEffect(() => {
     setOpenEvidence(canListSessions ? 0 : -1);
@@ -297,7 +305,7 @@ export function FindingsGoalInspect({
                       data-testid="findings-evidence-row"
                     >
                       <p className="text-sm font-semibold leading-relaxed text-zinc-50">
-                        {evidence.observation}
+                        <FindingText text={evidence.observation} />
                       </p>
                       {sessionsAreExpandable ? (
                         <button

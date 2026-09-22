@@ -16,6 +16,11 @@ const context = {
   features: { integrations: true },
 };
 describe("settings destinations", () => {
+  it("keeps the BYOK explainer under Usage & billing", () => {
+    expect(
+      resolveSettingsDestination("/organizations/org-a/billing/byok")?.id,
+    ).toBe("org-billing");
+  });
   it("makes Support a searchable Settings destination", () => {
     expect(resolveSettingsDestination("/settings/support")?.id).toBe(
       "personal-support",
