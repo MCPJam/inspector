@@ -89,9 +89,10 @@ merely re-run:
 - `docs/webmcp-inspector.md`
 - `client/src/lib/__tests__/tool-form.webmcp-declarative.test.ts`
 
-Dated documents — the security audits under `docs/security-audits/`, the
-recorded benchmarks in `docs/browser-viewer-unification-*` — are deliberately
-**not** in that list. They describe a run that happened against a browser that
+Dated documents — the security audits under `docs/security-audits/`, and the
+recorded viewer-unification benchmarks, which now live with MCPJam's planning
+documents rather than in this repository — are deliberately **not** in that
+list. They describe a run that happened against a browser that
 was current then, and rewriting them would make them false.
 
 ## 5. Re-bundle the daemon
