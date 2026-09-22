@@ -99,6 +99,14 @@ In hosted mode, the cloud backend handles token refresh on your behalf. If your 
 
 When you connect to such a server, the app shows a warning: "This server's sign-in service is on a private network. MCPJam's hosted web app can't renew this connection automatically." You can continue using the server until the access token expires, but you'll need to sign in again when the connection expires. For fully-local setups, run `npx @mcpjam/inspector@latest` on your computer or use the MCPJam desktop app.
 
+### No resource template browsing
+
+Browsing resource templates is not available in the hosted app. To use resource templates, run `npx @mcpjam/inspector@latest` on your computer or use the MCPJam desktop app.
+
+### No elicitation responses
+
+Responding to server input requests (elicitation) is not available in the hosted app. To use elicitation, run `npx @mcpjam/inspector@latest` on your computer or use the MCPJam desktop app.
+
 ### No tunneling
 
 Tunneling exposes a local MCP server over HTTPS for remote access. Since the hosted app connects to already-remote servers, tunneling is not applicable.
