@@ -420,7 +420,7 @@ function EnvironmentModeBar({
           className="text-[11px] text-muted-foreground"
           data-testid="suite-env-no-servers-hint"
         >
-          No server group picked — runs will have no tools.
+          No server group picked. Runs will have no tools.
         </p>
       ) : null}
       {unresolvedCount > 0 ? (

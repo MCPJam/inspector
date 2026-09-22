@@ -506,7 +506,7 @@ describe("eval zero-server notice", () => {
       ];
       renderBar({ environmentIds: ["env-1"] });
       expect(screen.getByTestId("suite-env-no-servers-hint")).toHaveTextContent(
-        "No server group picked — runs will have no tools.",
+        "No server group picked. Runs will have no tools.",
       );
     },
   );
