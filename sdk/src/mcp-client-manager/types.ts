@@ -21,7 +21,14 @@ import type {
 // beta.4 moved the stdio transport params to the `/stdio` subpath.
 import type { StdioServerParameters } from "@modelcontextprotocol/client/stdio";
 import type { RetryPolicy } from "../retry.js";
-import type { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
+import type {
+  RefreshTokenOAuthProvider,
+  RefreshTokensRotatedHandler,
+} from "./refresh-token-auth-provider.js";
+
+// Re-exported so a caller configuring `onTokensRotated` can name its type
+// without reaching into the provider module.
+export type { RefreshTokensRotatedHandler } from "./refresh-token-auth-provider.js";
 import type { TraceContextProvider } from "./trace-context.js";
 import type { HttpExchangeLogger } from "./http-exchange-log.js";
 import type { ToolSet } from "ai";
@@ -436,6 +443,7 @@ export type StdioServerConfig = BaseServerConfig & {
   refreshToken?: never;
   clientId?: never;
   clientSecret?: never;
+  onTokensRotated?: never;
   onUnauthorized?: never;
 };
 
@@ -471,6 +479,21 @@ export type HttpServerConfig = BaseServerConfig & {
   clientId?: string;
   /** OAuth client secret. Optional, used with refreshToken. */
   clientSecret?: string;
+  /**
+   * Called when the authorization server rotates the refresh token, so a
+   * long-lived caller can persist the replacement.
+   *
+   * Most authorization servers issue single-use refresh tokens, so the value
+   * passed as `refreshToken` stops working once it has been exchanged. Within
+   * one process the SDK keeps using the newest token and this is invisible.
+   * Across processes it is not: a CI job configured from a secret authorizes
+   * once and fails afterwards, with nothing to say why. Persist what this hook
+   * hands you, back to wherever `refreshToken` came from.
+   *
+   * Only fires when the token actually changed, and never fails a connection
+   * that has already authorized.
+   */
+  onTokensRotated?: RefreshTokensRotatedHandler;
   /**
    * Optional 401 recovery hook. When provided for access-token based HTTP
    * configs, MCPClientManager calls it once after an operation fails with a

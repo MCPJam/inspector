@@ -95,7 +95,36 @@ With this configuration, the SDK:
 
 - exchanges the refresh token for an access token during connection
 - automatically retries with a fresh access token when the server returns an auth challenge
-- stores rotated refresh tokens returned by the authorization server
+- keeps using the newest refresh token the authorization server returns, **for the life of the process**
+
+<Warning>
+**A refresh token is usually single-use, so persist the rotation or the next
+process cannot authorize.** Most authorization servers hand back a new refresh
+token on every exchange and immediately invalidate the old one. Inside one
+process the SDK handles that for you. Across processes it cannot: the value you
+passed as `refreshToken` is spent, so a long-lived caller configured from a
+secret — a CI job, a cron, a worker — authorizes once and then fails, with
+nothing in the logs to say a credential was replaced.
+
+Use `onTokensRotated` to store the replacement wherever the original came from:
+
+```typescript
+const manager = new MCPClientManager({
+  asana: {
+    url: "https://mcp.asana.com/mcp",
+    refreshToken: await secrets.read("ASANA_REFRESH_TOKEN"),
+    clientId: process.env.ASANA_CLIENT_ID!,
+    onTokensRotated: async ({ refreshToken }) => {
+      await secrets.write("ASANA_REFRESH_TOKEN", refreshToken);
+    },
+  },
+});
+```
+
+It fires only when the token actually changed, and it never fails a connection
+that has already authorized — so if the write has to be reliable, treat this as
+a notification and do the work somewhere it can be retried.
+</Warning>
 
 <Note>
 `refreshToken` is only supported for HTTP servers. When you use it, do not also set `accessToken`, `authProvider`, or an `Authorization` header in `requestInit.headers`.

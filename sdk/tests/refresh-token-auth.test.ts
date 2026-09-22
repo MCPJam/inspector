@@ -42,6 +42,138 @@ describe("RefreshTokenOAuthProvider", () => {
     expect(params?.get("refresh_token")).toBe("rt_rotated");
   });
 
+  // Rotation has to escape the process or a long-lived caller silently dies on
+  // its second run: most authorization servers issue single-use refresh tokens,
+  // so the value the caller was configured with is spent after one exchange.
+  it("reports a rotated refresh token to the caller", () => {
+    const seen: Array<{ refreshToken: string; access: string | undefined }> =
+      [];
+    const provider = new RefreshTokenOAuthProvider(
+      "cid",
+      "rt_original",
+      undefined,
+      ({ refreshToken, tokens }) =>
+        void seen.push({ refreshToken, access: tokens.access_token })
+    );
+
+    provider.saveTokens({
+      access_token: "at_123",
+      token_type: "bearer",
+      refresh_token: "rt_rotated",
+    });
+
+    expect(seen).toEqual([{ refreshToken: "rt_rotated", access: "at_123" }]);
+  });
+
+  it("stays quiet when the server returns the same refresh token", () => {
+    const seen: string[] = [];
+    const provider = new RefreshTokenOAuthProvider(
+      "cid",
+      "rt_same",
+      undefined,
+      ({ refreshToken }) => void seen.push(refreshToken)
+    );
+
+    // An authorization server that does not rotate has nothing to persist, and
+    // reporting it would turn every refresh into a pointless write.
+    provider.saveTokens({
+      access_token: "at_1",
+      token_type: "bearer",
+      refresh_token: "rt_same",
+    });
+
+    expect(seen).toEqual([]);
+    expect(provider.prepareTokenRequest()?.get("refresh_token")).toBe(
+      "rt_same"
+    );
+  });
+
+  it("stays quiet when the response carries no refresh token", () => {
+    const seen: string[] = [];
+    const provider = new RefreshTokenOAuthProvider(
+      "cid",
+      "rt_original",
+      undefined,
+      ({ refreshToken }) => void seen.push(refreshToken)
+    );
+
+    provider.saveTokens({ access_token: "at_1", token_type: "bearer" });
+
+    expect(seen).toEqual([]);
+    // The configured token must survive a response that omitted one.
+    expect(provider.prepareTokenRequest()?.get("refresh_token")).toBe(
+      "rt_original"
+    );
+  });
+
+  it("keeps the new token even when the handler throws", () => {
+    const provider = new RefreshTokenOAuthProvider(
+      "cid",
+      "rt_original",
+      undefined,
+      () => {
+        throw new Error("secret store unavailable");
+      }
+    );
+
+    // A failed write costs the NEXT process, not this one. Throwing here would
+    // fail a connection that has already authorized successfully.
+    expect(() =>
+      provider.saveTokens({
+        access_token: "at_1",
+        token_type: "bearer",
+        refresh_token: "rt_rotated",
+      })
+    ).not.toThrow();
+    expect(provider.prepareTokenRequest()?.get("refresh_token")).toBe(
+      "rt_rotated"
+    );
+  });
+
+  it("does not reject when the handler returns a rejected promise", async () => {
+    const provider = new RefreshTokenOAuthProvider(
+      "cid",
+      "rt_original",
+      undefined,
+      async () => {
+        throw new Error("write failed");
+      }
+    );
+
+    provider.saveTokens({
+      access_token: "at_1",
+      token_type: "bearer",
+      refresh_token: "rt_rotated",
+    });
+    // An unhandled rejection here would take the process down in CI, which is
+    // the opposite of the resilience this hook is meant to add.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(provider.prepareTokenRequest()?.get("refresh_token")).toBe(
+      "rt_rotated"
+    );
+  });
+
+  it("reports each rotation in turn across repeated refreshes", () => {
+    const seen: string[] = [];
+    const provider = new RefreshTokenOAuthProvider(
+      "cid",
+      "rt_1",
+      undefined,
+      ({ refreshToken }) => void seen.push(refreshToken)
+    );
+
+    for (const refresh_token of ["rt_2", "rt_3", "rt_3", "rt_4"]) {
+      provider.saveTokens({
+        access_token: "at",
+        token_type: "bearer",
+        refresh_token,
+      });
+    }
+
+    // rt_3 twice in a row is one rotation, not two.
+    expect(seen).toEqual(["rt_2", "rt_3", "rt_4"]);
+  });
+
   it("tokens() returns stored tokens after saveTokens()", () => {
     const provider = new RefreshTokenOAuthProvider("cid", "rt_abc");
     const tokens = { access_token: "at_1", token_type: "bearer" };
