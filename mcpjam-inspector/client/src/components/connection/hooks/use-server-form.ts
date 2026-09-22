@@ -641,18 +641,18 @@ export function useServerForm(
 
     if (type === "stdio") {
       if (!commandInput || commandInput.trim() === "") {
-        return "Command is required for STDIO servers";
+        return "Enter the command that starts your STDIO server.";
       }
     } else if (type === "http") {
       if (!url || url.trim() === "") {
-        return "URL is required for HTTP servers";
+        return "Enter your server’s URL.";
       }
 
       let urlObj: URL;
       try {
         urlObj = new URL(url.trim());
       } catch {
-        return "Invalid URL format";
+        return "Enter a complete server URL, such as https://example.com/mcp.";
       }
 
       // Enforce HTTPS in hosted mode or when explicitly required

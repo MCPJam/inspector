@@ -19,18 +19,18 @@ export function validateServerFormData(
 ): string | null {
   if (formData.type === "stdio") {
     if (!formData.command || formData.command.trim() === "") {
-      return "Command is required for STDIO connections";
+      return "Enter the command that starts your STDIO server.";
     }
     return null;
   }
   if (!formData.url || formData.url.trim() === "") {
-    return "URL is required for HTTP connections";
+    return "Enter your server’s URL.";
   }
   let parsedUrl: URL;
   try {
     parsedUrl = new URL(formData.url);
-  } catch (err) {
-    return `Invalid URL format: ${formData.url} ${err}`;
+  } catch {
+    return "Enter a complete server URL, such as https://example.com/mcp.";
   }
   if (HOSTED_MODE && parsedUrl.protocol !== "https:") {
     return "MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.";
