@@ -1,6 +1,14 @@
-# robots.txt for app.mcpjam.com — authenticated app shell, not content.
-# Crawling is allowed on purpose: every response carries X-Robots-Tag: noindex,
-# and robots can only honor that directive if they are allowed to fetch the
-# page (a Disallow here would blind them to it and risk link-only indexing).
+# serveStatic does not look at Host, so this one file answers /robots.txt on
+# every hostname this process serves: the app shell, caniuse.dev,
+# score.mcpjam.com, preview and tunnel domains, and self-hosted installs. It
+# therefore says only what is true of all of them — crawling is allowed.
+#
+# Indexing is decided per response by X-Robots-Tag, in
+# server/middleware/indexing-headers.ts, which does read Host. Crawling has to
+# stay allowed for that to work: a robot only sees the directive if it is
+# allowed to fetch the response. A Disallow would also leave the URL itself
+# indexable from an external link, which is the wrong trade on
+# /results/<token> and /bench/results/<secret>, where the URL is the whole
+# credential and a bare URL in search results is the outcome to avoid.
 User-agent: *
 Allow: /
