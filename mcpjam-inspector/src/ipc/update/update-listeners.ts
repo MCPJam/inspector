@@ -142,8 +142,26 @@ let isQuittingForUpdate = false;
  * click calls it a second time. The crash report came in through exactly that
  * door: `before-quit` -> `installUpdateOnQuit()` -> `quitAndInstall()`.
  *
- * Set only on a call that RETURNED. A call that threw never reached
- * `AddObserver`, so retrying it is legitimate and stays allowed.
+ * Set BEFORE the call, not after. Electron's `QuitAndInstall` registers the
+ * observer and only then does the work that can fail, so "it returned" is the
+ * wrong moment: a throw from downstream of `AddObserver` — a mis-signed staged
+ * build or a corrupt Squirrel staging dir, which is the failure the catch
+ * blocks exist for — would leave the observer registered with the latch still
+ * down, and the retry would walk into the NOTREACHED this exists to prevent.
+ *
+ * Setting it first gives up retrying after a throw. The trade is deliberate,
+ * and the asymmetry decides it: we cannot tell from out here whether a throw
+ * happened before or after `AddObserver`, so the choice is between refusing a
+ * retry that might have worked (cost: the user is sent to the releases page,
+ * which always works) and permitting one that is a guaranteed crash report
+ * plus an updater left in a state Electron does not expect.
+ *
+ * It also closes the re-entrant window. `Browser::Quit()` emits `before-quit`
+ * SYNCHRONOUSLY into JS from inside the very call we are making, and that
+ * handler reaches `installUpdateOnQuit()` (see `main.ts`). With the latch set
+ * afterwards the nested call would find it still down, held back only by
+ * `isQuittingForUpdate` — the flag this docblock just finished arguing cannot
+ * carry this guard.
  */
 let quitAndInstallCalled = false;
 let trustedWindow: BrowserWindow | null = null;
@@ -182,8 +200,10 @@ function quitAndInstallOnce(): boolean {
     );
     return false;
   }
-  autoUpdater.quitAndInstall();
+  // Before, not after — see the latch's docblock. `AddObserver` runs inside
+  // this call ahead of anything that can throw or re-enter.
   quitAndInstallCalled = true;
+  autoUpdater.quitAndInstall();
   return true;
 }
 
@@ -799,11 +819,13 @@ export function setupAutoUpdaterEvents(): void {
         startStalledQuitWatchdog();
       } catch (error) {
         // quitAndInstall can throw on macOS when the staged build is
-        // mis-signed or Squirrel's staging dir is corrupted. Don't leave the
-        // quitting flag stuck — surface the error so the user can retry.
+        // mis-signed or Squirrel's staging dir is corrupted. The latch is
+        // already spent (set before the call), so there is no retry to offer
+        // — hand over the path that does work rather than leaving a button
+        // that can only produce this same throw.
         log.error("quitAndInstall threw:", error);
         isQuittingForUpdate = false;
-        broadcastUpdateError();
+        handOverManualDownload("Queued install threw; offering manual download");
       }
     }
   });
@@ -866,9 +888,11 @@ export function registerUpdateListeners(mainWindow: BrowserWindow): void {
         // nowhere, nothing else will ever clear the spinner.
         startStalledQuitWatchdog();
       } catch (error) {
+        // See the queued-install path above: the latch is spent, so a retry is
+        // not on the table and the releases page is.
         log.error("quitAndInstall threw:", error);
         isQuittingForUpdate = false;
-        broadcastUpdateError();
+        handOverManualDownload("Restart click threw; offering manual download");
       }
     } else if (currentStatus.kind === "pending") {
       log.info("Update still downloading — queuing install for completion");
@@ -939,6 +963,26 @@ export function registerUpdateListeners(mainWindow: BrowserWindow): void {
   }
 }
 
+/**
+ * Retire a `downloaded` status on the way out of a quit that cannot install.
+ *
+ * Both quit-path exits — the latch refusing, and a throw — leave a process
+ * that can no longer run the install, and the quit itself is not guaranteed to
+ * finish: `before-quit` in `main.ts` preventDefault()s for the async browser
+ * teardown and only re-quits once that settles. If that hangs, the app is
+ * still up on a `downloaded` status, showing a Restart button wired to an
+ * install this process can no longer perform.
+ *
+ * No `broadcastUpdateError()`, unlike `handOverManualDownload`: the status
+ * broadcast `setStatus` already does is enough, and a toast fired at a window
+ * that may be tearing down is noise.
+ */
+function retireInstallOnQuit(): void {
+  const version =
+    currentStatus.kind === "downloaded" ? currentStatus.version : undefined;
+  setStatus({ kind: "manual", version });
+}
+
 export function installUpdateOnQuit(): boolean {
   if (!app.isPackaged) {
     return false;
@@ -950,14 +994,20 @@ export function installUpdateOnQuit(): boolean {
     try {
       if (!quitAndInstallOnce()) {
         // The user asked to QUIT. Let them — a refusal here must never be
-        // what traps them in an app that will not close. The staged build is
-        // still staged; the next launch installs it.
+        // what traps them in an app that will not close. The staged build
+        // survives; the next launch offers it again.
+        //
+        // (On Squirrel.Windows it is also already APPLIED — that happens at
+        // download time. On Squirrel.Mac only `quitAndInstall` runs ShipIt, so
+        // a plain quit leaves it unapplied. Same outcome for the user,
+        // different mechanism, and macOS is where this was reported.)
         log.info(
           "Staged update found at quit, but this process already spent its " +
             "one quitAndInstall — quitting without installing",
         );
         isQuittingForUpdate = false;
         isInstallingOnQuit = false;
+        retireInstallOnQuit();
         return false;
       }
       return true;
@@ -970,6 +1020,10 @@ export function installUpdateOnQuit(): boolean {
       // be tearing down so we don't bother broadcasting.
       log.error("installUpdateOnQuit: quitAndInstall threw:", error);
       isQuittingForUpdate = false;
+      // The latch is spent even though the call threw (it is set before the
+      // call), so this process has no install left to give. Retire, same as
+      // the refusal above.
+      retireInstallOnQuit();
       return false;
     }
   }

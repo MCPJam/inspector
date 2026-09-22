@@ -710,10 +710,18 @@ describe("update-listeners", () => {
     expect(() => installUpdateOnQuit()).not.toThrow();
     // Returned false so the caller falls through to the normal quit path
     // instead of being trapped in event.preventDefault().
-    expect(installUpdateOnQuit()).toBe(true);
-    // ^ second call: the previous throw cleared `isQuittingForUpdate`, and
-    // status is still "downloaded", so the second call re-enters and this
-    // time quitAndInstall doesn't throw (mockImplementationOnce). Returns true.
+    expect(installUpdateOnQuit()).toBe(false);
+    // ^ second call. This used to expect `true` — it re-entered because the
+    // throw cleared `isQuittingForUpdate` while the status stayed
+    // `downloaded`, which is precisely the re-entry that produced
+    // INSPECTOR-ELECTRON-WF. The latch is spent by the throwing call now, so
+    // there is no second `quitAndInstall`...
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+    // ...and the status is retired rather than left inviting a click that
+    // this process can no longer honour.
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toMatchObject({ kind: "manual" });
   });
 
   it("fires update-error broadcast when stuck in pending+installRequested past the watchdog", async () => {
@@ -895,6 +903,14 @@ describe("update-listeners", () => {
     // true here would `preventDefault()` a quit that nothing will finish.
     expect(installUpdateOnQuit()).toBe(false);
     expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+
+    // And the status is retired on the way out. The quit can still stall on
+    // the async browser teardown in `main.ts`, and an app left up on
+    // `downloaded` shows a Restart button wired to an install this process
+    // can no longer perform.
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toMatchObject({ kind: "manual", version: "3.8.1" });
   });
 
   it("hands over the manual download when a click follows a spent install", async () => {
@@ -910,6 +926,10 @@ describe("update-listeners", () => {
     emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
     ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
     emitAutoUpdaterEvent("error", new Error("network died mid-install"));
+    // That error already broadcast `update-error`. Without this the assertion
+    // below would pass on the FIRST notification and say nothing about the
+    // second click, which is the whole subject of the test.
+    (window.webContents.send as any).mockClear();
 
     ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
 
@@ -1035,7 +1055,7 @@ describe("update-listeners", () => {
     }
   });
 
-  it("catches quitAndInstall throws and surfaces an error broadcast", async () => {
+  it("does not retry quitAndInstall after a throw, and hands over instead", async () => {
     const window = createWindow();
     windows.push(window);
     const { registerUpdateListeners } = await loadUpdateListeners();
@@ -1053,10 +1073,19 @@ describe("update-listeners", () => {
     expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
     expect(window.webContents.send).toHaveBeenCalledWith("update-error");
 
-    // isQuittingForUpdate should not be stuck — a subsequent click should
-    // attempt quitAndInstall again (mock no longer throws).
+    // This used to assert the opposite — that a second click retried. The
+    // latch is set BEFORE the call now, because Electron registers the
+    // observer ahead of the work that throws, so a throw may well have left
+    // the registration behind and a retry would hit the NOTREACHED. We cannot
+    // tell from out here which kind of throw it was, so the retry goes.
+    //
+    // It must not just go quiet, though: the status is retired so the button
+    // becomes the releases page rather than one that can only throw again.
     ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
-    expect(quitAndInstallMock).toHaveBeenCalledTimes(2);
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toMatchObject({ kind: "manual" });
   });
 });
 
