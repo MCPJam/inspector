@@ -85,6 +85,23 @@ const STAGE_COLOR: Record<SankeyStage, { node: string; head: string }> = {
   sentiment: { node: "#bda2d8", head: "#7a5da3" },
 };
 
+/**
+ * One hue per question column, for the same reason the four axes have one
+ * each. Sharing `--foreground` across every question painted all of them, and
+ * the ribbons between them, as a single dark slab — the paragraph above says
+ * why that reads as one mass rather than as a flow.
+ *
+ * Three entries because the backend caps a scope at three questions. They are
+ * literal hex like the four axes above: this is the diagram's own palette, not
+ * a status vocabulary, and a role token would tie a column's identity to a
+ * meaning it does not carry.
+ */
+const QUESTION_COLOR: ReadonlyArray<{ node: string; head: string }> = [
+  { node: "#d89bb0", head: "#b05a78" },
+  { node: "#d4bc7a", head: "#9a7d32" },
+  { node: "#7eb8c0", head: "#3d7a84" },
+];
+
 function RebuildButton({
   onRebuild,
   busy,
@@ -231,14 +248,16 @@ export function SessionFlowSankey({
     ),
   ]);
   const stages = sankey?.stages?.map((stage) => stage.id) ?? STAGE_ORDER;
+  // Hue by position in the catalog order the server sent, so a column keeps
+  // its colour for as long as the question exists.
   const colors = {
     ...STAGE_COLOR,
     ...Object.fromEntries(
       stages
         .filter((stage) => stage.startsWith("question:"))
-        .map((stage) => [
+        .map((stage, index) => [
           stage,
-          { node: "var(--foreground)", head: "var(--muted-foreground)" },
+          QUESTION_COLOR[index % QUESTION_COLOR.length],
         ]),
     ),
   };

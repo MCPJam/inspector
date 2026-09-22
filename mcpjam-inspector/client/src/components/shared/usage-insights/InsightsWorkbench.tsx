@@ -215,8 +215,20 @@ export function InsightsWorkbench({
   const resolvedUrlSelection = useMemo<InsightsSelection | null>(() => {
     if (!urlSelection || urlSelection.length === 0) return null;
     const nodes = breakdown?.sankey?.nodes ?? [];
+    const questionLabels = breakdown?.sankey?.stages ?? [];
     return {
-      questions: urlSelection.filter((ref) => "questionId" in ref),
+      // A shared link carries ids, not names. The chip's text comes from the
+      // catalog this reader just loaded, so a link cannot put words of its own
+      // into a chip that claims to be a question, and a question renamed since
+      // the link was saved reads under its current name.
+      questions: urlSelection
+        .filter((ref) => "questionId" in ref)
+        .map(({ label: _fromUrl, ...ref }) => {
+          const stage = questionLabels.find(
+            (candidate) => candidate.questionId === ref.questionId,
+          );
+          return { ...ref, ...(stage ? { label: stage.label } : {}) };
+        }),
       themes: urlSelection
         .filter((ref) => "dimension" in ref)
         .map((theme) => {
