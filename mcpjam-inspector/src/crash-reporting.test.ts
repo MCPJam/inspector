@@ -22,6 +22,8 @@ import {
   CAPTURED_EXIT_REASONS,
   childProcessIntegrationOptions,
   crashReportingIntegrations,
+  dropUpdaterInstallSpawnRejection,
+  isUpdaterInstallSpawnRejection,
   registerMainProcessCrashHandlers,
 } from "./crash-reporting";
 
@@ -123,7 +125,7 @@ describe("registerMainProcessCrashHandlers", () => {
 
   it("registers both process-level listeners", () => {
     capture();
-    registerMainProcessCrashHandlers({ error: vi.fn() });
+    registerMainProcessCrashHandlers({ error: vi.fn(), warn: vi.fn() });
 
     expect(added.map(([e]) => e)).toEqual([
       "uncaughtException",
@@ -133,7 +135,7 @@ describe("registerMainProcessCrashHandlers", () => {
 
   it("writes both to the electron-log file", () => {
     capture();
-    const log = { error: vi.fn() };
+    const log = { error: vi.fn(), warn: vi.fn() };
     registerMainProcessCrashHandlers(log);
 
     const error = new Error("main blew up");
@@ -152,6 +154,28 @@ describe("registerMainProcessCrashHandlers", () => {
     );
   });
 
+  it("logs a skipped install as its own warning, not as a rejection", () => {
+    // INSPECTOR-ELECTRON-WK. The app quit cleanly and skipped one install, so
+    // filing it under "unhandled rejection" describes the wrong event. It is
+    // dropped from Sentry, which makes this log line the only surviving
+    // record — it has to say what happened.
+    capture();
+    const log = { error: vi.fn(), warn: vi.fn() };
+    registerMainProcessCrashHandlers(log);
+
+    added[1][1](
+      new Error(
+        "AutoUpdater process with arguments --processStartAndWait,mcpjam-inspector.exe is already running",
+      ) as never,
+    );
+
+    expect(log.error).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    expect(String(log.warn.mock.calls[0]![0])).toContain(
+      "offered again on the next launch",
+    );
+  });
+
   it("survives a logger that throws", () => {
     // An exception thrown from inside an uncaughtException handler is
     // unrecoverable; a failing logger must not be what kills the app.
@@ -160,9 +184,79 @@ describe("registerMainProcessCrashHandlers", () => {
       error: () => {
         throw new Error("log transport is dead");
       },
+      warn: () => {
+        throw new Error("log transport is dead");
+      },
     });
 
     expect(() => added[0][1](new Error("x") as never)).not.toThrow();
     expect(() => added[1][1]("y" as never)).not.toThrow();
+  });
+});
+
+describe("isUpdaterInstallSpawnRejection", () => {
+  const collision = (exe: string) =>
+    new Error(
+      `AutoUpdater process with arguments --processStartAndWait,${exe} is already running`,
+    );
+
+  it("matches the Squirrel spawn collision Electron leaves floating", () => {
+    expect(isUpdaterInstallSpawnRejection(collision("mcpjam-inspector.exe"))).toBe(
+      true,
+    );
+    // The exe name is whatever the build is called, so it cannot be part of
+    // the match.
+    expect(isUpdaterInstallSpawnRejection(collision("Some Other Name.exe"))).toBe(
+      true,
+    );
+  });
+
+  it("reads a bare string rejection too", () => {
+    // `unhandledRejection` hands over whatever was rejected with, which is not
+    // required to be an Error.
+    expect(
+      isUpdaterInstallSpawnRejection(
+        "AutoUpdater process with arguments --processStartAndWait,x.exe is already running",
+      ),
+    ).toBe(true);
+  });
+
+  it("leaves every other rejection alone", () => {
+    // Especially the updater's OWN other failures: those are real and the
+    // main process deliberately carries no `ignoreErrors`.
+    expect(
+      isUpdaterInstallSpawnRejection(
+        new Error("No update available, can't quit and install"),
+      ),
+    ).toBe(false);
+    expect(isUpdaterInstallSpawnRejection(new Error("Load failed"))).toBe(false);
+    expect(isUpdaterInstallSpawnRejection(undefined)).toBe(false);
+    expect(isUpdaterInstallSpawnRejection(null)).toBe(false);
+  });
+});
+
+describe("dropUpdaterInstallSpawnRejection", () => {
+  const event = (value: string) => ({
+    exception: { values: [{ type: "Error", value }] },
+  });
+
+  it("drops the skipped-install rejection", () => {
+    expect(
+      dropUpdaterInstallSpawnRejection(
+        event(
+          "AutoUpdater process with arguments --processStartAndWait,mcpjam-inspector.exe is already running",
+        ),
+      ),
+    ).toBeNull();
+  });
+
+  it("passes everything else through unchanged", () => {
+    const other = event("Cannot read properties of undefined");
+    expect(dropUpdaterInstallSpawnRejection(other)).toBe(other);
+
+    // An event with no exception at all — a captureMessage, say — must not be
+    // swallowed by an empty-string match.
+    const message = {};
+    expect(dropUpdaterInstallSpawnRejection(message)).toBe(message);
   });
 });

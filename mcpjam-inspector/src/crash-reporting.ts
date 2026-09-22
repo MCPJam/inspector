@@ -27,8 +27,86 @@ export const CAPTURED_EXIT_REASONS = [
   "oom",
 ] as const;
 
+/**
+ * The one rejection `installUpdateOnQuit` provably cannot catch.
+ *
+ * INSPECTOR-ELECTRON-WK. On Windows, Electron's `quitAndInstall` is:
+ *
+ *     quitAndInstall() {
+ *       if (!this.updateAvailable) { return this.emitError(...); }
+ *       squirrelUpdate.processStart();   // floating promise, never awaited
+ *       app.quit();
+ *     }
+ *
+ * `processStart()` spawns `Update.exe --processStartAndWait`, and
+ * `spawnUpdate` REJECTS when a different Update.exe invocation is still
+ * running (`spawnedProcess && !isSameArgs(args)`) — a check or download that
+ * had not finished when the user quit. Electron neither awaits that promise
+ * nor emits `error` for it, so:
+ *
+ * - the synchronous `try/catch` around `quitAndInstall()` cannot see it,
+ * - there is no promise handle to attach a `.catch()` to,
+ * - it lands on `process.on("unhandledRejection")` and is reported as an
+ *   unhandled error.
+ *
+ * Which is a lie about what happened. `app.quit()` runs regardless, so the
+ * app closes normally; the staged update is simply not applied that once and
+ * is offered again on the next launch. Nothing crashed, nothing is in an
+ * undefined state, and no code of ours was negligent — there is no version of
+ * this app that can handle that promise.
+ *
+ * Matching the message and not a flag, because this string can only come from
+ * `processStart`, which only runs from `quitAndInstall`. There is no other
+ * caller to confuse it with.
+ */
+const UPDATER_INSTALL_SPAWN_COLLISION =
+  /AutoUpdater process with arguments .* is already running/;
+
+export function isUpdaterInstallSpawnRejection(reason: unknown): boolean {
+  const message =
+    reason instanceof Error
+      ? reason.message
+      : typeof reason === "string"
+        ? reason
+        : "";
+  return UPDATER_INSTALL_SPAWN_COLLISION.test(message);
+}
+
+/** Minimal structural view of the event, mirroring `FingerprintableEvent` in
+ *  `shared/sentry-config.ts` — declared rather than imported so this module
+ *  keeps its single `@sentry/electron/main` dependency. */
+export interface SendableEvent {
+  exception?: {
+    values?: { type?: string; value?: string }[];
+  };
+}
+
+/**
+ * Drop the skipped-install rejection, keeping every other one.
+ *
+ * A `beforeSend` and not an `ignoreErrors` entry: `ignoreErrors` is a blunt
+ * substring match over every event, and `buildElectronSentryConfig` documents
+ * at length why the main process deliberately carries none — the strings that
+ * are noise in a browser are real updater failures here. This drops exactly
+ * one known-benign shape and leaves that property intact.
+ *
+ * It costs the Sentry-side count of how often an install is skipped. That is
+ * the trade: `registerMainProcessCrashHandlers` logs the same rejection to
+ * electron-log, which is the file a user attaches to a bug report, so the
+ * evidence survives where a reader would look for it. If the skipped installs
+ * ever need counting, the honest way is a deliberate low-level capture, not
+ * leaving a benign condition masquerading as an unhandled rejection.
+ */
+export function dropUpdaterInstallSpawnRejection<T extends SendableEvent>(
+  event: T,
+): T | null {
+  const value = event.exception?.values?.[0]?.value ?? "";
+  return UPDATER_INSTALL_SPAWN_COLLISION.test(value) ? null : event;
+}
+
 interface CrashLogger {
   error: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
 }
 
 /**
@@ -55,6 +133,20 @@ export function registerMainProcessCrashHandlers(log: CrashLogger): void {
 
   process.on("unhandledRejection", (reason) => {
     try {
+      if (isUpdaterInstallSpawnRejection(reason)) {
+        // Not a crash, and not ours to catch — see the predicate. Logged as
+        // its own line so the log says what actually happened (an update was
+        // skipped) rather than filing it under unhandled rejections, and so
+        // the evidence is still here after `dropUpdaterInstallSpawnRejection`
+        // keeps it out of Sentry.
+        log.warn(
+          "[main] staged update not applied at quit: another Update.exe was " +
+            "still running. The app quit normally; the update will be " +
+            "offered again on the next launch.",
+          reason,
+        );
+        return;
+      }
       log.error("[main] unhandled rejection", reason);
     } catch {
       // See above.

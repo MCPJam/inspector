@@ -16,6 +16,7 @@ import {
 } from "../shared/sentry-config.js";
 import {
   crashReportingIntegrations,
+  dropUpdaterInstallSpawnRejection,
   registerMainProcessCrashHandlers,
 } from "./crash-reporting.js";
 
@@ -37,6 +38,12 @@ Sentry.init({
   // crash-reporting.ts. `sentryMinidumpIntegration` (native crash upload) is
   // already on by default in @sentry/electron 5.12 and is left alone.
   integrations: crashReportingIntegrations,
+  // Drops the ONE rejection the app cannot catch: Electron leaves
+  // `quitAndInstall`'s Squirrel spawn promise floating, so a collision with an
+  // in-flight Update.exe arrives as an unhandled rejection for something that
+  // quit cleanly and merely skipped an install (INSPECTOR-ELECTRON-WK). Every
+  // other rejection is left alone; see `dropUpdaterInstallSpawnRejection`.
+  beforeSend: dropUpdaterInstallSpawnRejection,
 });
 
 import type { BrowserWindowConstructorOptions } from "electron";
