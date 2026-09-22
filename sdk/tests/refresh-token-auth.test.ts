@@ -45,7 +45,7 @@ describe("RefreshTokenOAuthProvider", () => {
   // Rotation has to escape the process or a long-lived caller silently dies on
   // its second run: most authorization servers issue single-use refresh tokens,
   // so the value the caller was configured with is spent after one exchange.
-  it("reports a rotated refresh token to the caller", () => {
+  it("reports a rotated refresh token to the caller", async () => {
     const seen: Array<{ refreshToken: string; access: string | undefined }> =
       [];
     const provider = new RefreshTokenOAuthProvider(
@@ -56,7 +56,7 @@ describe("RefreshTokenOAuthProvider", () => {
         void seen.push({ refreshToken, access: tokens.access_token })
     );
 
-    provider.saveTokens({
+    await provider.saveTokens({
       access_token: "at_123",
       token_type: "bearer",
       refresh_token: "rt_rotated",
@@ -65,7 +65,65 @@ describe("RefreshTokenOAuthProvider", () => {
     expect(seen).toEqual([{ refreshToken: "rt_rotated", access: "at_123" }]);
   });
 
-  it("stays quiet when the server returns the same refresh token", () => {
+  // `auth()` awaits `saveTokens`, so awaiting the handler here is what makes
+  // the write survive a process that exits the moment the job is done —
+  // the CI shape this hook exists for. A detached write would race exit.
+  it("does not resolve until the handler has finished writing", async () => {
+    const order: string[] = [];
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const provider = new RefreshTokenOAuthProvider(
+      "cid",
+      "rt_original",
+      undefined,
+      async () => {
+        await blocked;
+        order.push("written");
+      }
+    );
+
+    const saved = provider
+      .saveTokens({
+        access_token: "at_1",
+        token_type: "bearer",
+        refresh_token: "rt_rotated",
+      })
+      .then(() => order.push("saveTokens resolved"));
+
+    await Promise.resolve();
+    expect(order).toEqual([]);
+
+    release();
+    await saved;
+    expect(order).toEqual(["written", "saveTokens resolved"]);
+  });
+
+  // The handler gets a copy. Handing out the live object would let a caller
+  // that normalizes or redacts before writing corrupt what the provider holds.
+  it("hands the handler a token set it cannot mutate", async () => {
+    const provider = new RefreshTokenOAuthProvider(
+      "cid",
+      "rt_original",
+      undefined,
+      ({ tokens }) => {
+        (tokens as { access_token?: string }).access_token = "clobbered";
+      }
+    );
+
+    const original = {
+      access_token: "at_1",
+      token_type: "bearer",
+      refresh_token: "rt_rotated",
+    };
+    await provider.saveTokens(original);
+
+    expect(provider.tokens()?.access_token).toBe("at_1");
+    expect(original.access_token).toBe("at_1");
+  });
+
+  it("stays quiet when the server returns the same refresh token", async () => {
     const seen: string[] = [];
     const provider = new RefreshTokenOAuthProvider(
       "cid",
@@ -76,7 +134,7 @@ describe("RefreshTokenOAuthProvider", () => {
 
     // An authorization server that does not rotate has nothing to persist, and
     // reporting it would turn every refresh into a pointless write.
-    provider.saveTokens({
+    await provider.saveTokens({
       access_token: "at_1",
       token_type: "bearer",
       refresh_token: "rt_same",
@@ -88,7 +146,7 @@ describe("RefreshTokenOAuthProvider", () => {
     );
   });
 
-  it("stays quiet when the response carries no refresh token", () => {
+  it("stays quiet when the response carries no refresh token", async () => {
     const seen: string[] = [];
     const provider = new RefreshTokenOAuthProvider(
       "cid",
@@ -97,7 +155,7 @@ describe("RefreshTokenOAuthProvider", () => {
       ({ refreshToken }) => void seen.push(refreshToken)
     );
 
-    provider.saveTokens({ access_token: "at_1", token_type: "bearer" });
+    await provider.saveTokens({ access_token: "at_1", token_type: "bearer" });
 
     expect(seen).toEqual([]);
     // The configured token must survive a response that omitted one.
@@ -106,7 +164,7 @@ describe("RefreshTokenOAuthProvider", () => {
     );
   });
 
-  it("keeps the new token even when the handler throws", () => {
+  it("keeps the new token even when the handler throws", async () => {
     const provider = new RefreshTokenOAuthProvider(
       "cid",
       "rt_original",
@@ -116,15 +174,15 @@ describe("RefreshTokenOAuthProvider", () => {
       }
     );
 
-    // A failed write costs the NEXT process, not this one. Throwing here would
+    // A failed write costs the NEXT run, not this one. Throwing here would
     // fail a connection that has already authorized successfully.
-    expect(() =>
+    await expect(
       provider.saveTokens({
         access_token: "at_1",
         token_type: "bearer",
         refresh_token: "rt_rotated",
       })
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
     expect(provider.prepareTokenRequest()?.get("refresh_token")).toBe(
       "rt_rotated"
     );
@@ -140,20 +198,21 @@ describe("RefreshTokenOAuthProvider", () => {
       }
     );
 
-    provider.saveTokens({
-      access_token: "at_1",
-      token_type: "bearer",
-      refresh_token: "rt_rotated",
-    });
     // An unhandled rejection here would take the process down in CI, which is
     // the opposite of the resilience this hook is meant to add.
-    await new Promise((resolve) => setImmediate(resolve));
+    await expect(
+      provider.saveTokens({
+        access_token: "at_1",
+        token_type: "bearer",
+        refresh_token: "rt_rotated",
+      })
+    ).resolves.toBeUndefined();
     expect(provider.prepareTokenRequest()?.get("refresh_token")).toBe(
       "rt_rotated"
     );
   });
 
-  it("reports each rotation in turn across repeated refreshes", () => {
+  it("reports each rotation in turn across repeated refreshes", async () => {
     const seen: string[] = [];
     const provider = new RefreshTokenOAuthProvider(
       "cid",
@@ -163,7 +222,7 @@ describe("RefreshTokenOAuthProvider", () => {
     );
 
     for (const refresh_token of ["rt_2", "rt_3", "rt_3", "rt_4"]) {
-      provider.saveTokens({
+      await provider.saveTokens({
         access_token: "at",
         token_type: "bearer",
         refresh_token,

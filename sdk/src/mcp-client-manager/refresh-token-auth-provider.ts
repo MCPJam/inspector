@@ -10,19 +10,23 @@ import type {
  *
  * Rotation is single-use at most authorization servers — WorkOS AuthKit, which
  * fronts MCPJam's own MCP server, is one — so the token a long-lived caller was
- * configured with stops working the moment it is first exchanged. Inside one
- * process that does not matter, because this provider keeps using the newest
- * one. Across processes it matters completely: a CI job configured from a
+ * configured with stops working the moment it is first exchanged. For the life
+ * of the connection that does not matter, because this provider keeps using
+ * the newest one. Beyond it matters completely: a CI job configured from a
  * secret gets exactly one successful run, and the second fails to authorize
  * with nothing in the logs to say a credential was silently replaced.
  *
  * This is the only way out. Persist `refreshToken` wherever the value came
- * from, and the next process starts from a token that still works.
+ * from, and the next run starts from a token that still works.
+ *
+ * The handler is awaited before the connection completes, so a job that exits
+ * as soon as it is done still gets the write. Keep it bounded: one that never
+ * settles stalls the connection.
  *
  * Errors are swallowed deliberately: a failed write must not break a
- * connection that has already authorized successfully. If persistence has to
- * be reliable, do the work somewhere it can be retried and treat this as the
- * notification it is.
+ * connection that has already authorized successfully. Nothing is logged
+ * either, so a handler that needs its failure recorded has to record it
+ * itself, somewhere the write can be retried.
  */
 export type RefreshTokensRotatedHandler = (rotated: {
   /** The refresh token to store. Never empty. */
@@ -62,7 +66,7 @@ export class RefreshTokenOAuthProvider implements OAuthClientProvider {
     return this.currentTokens;
   }
 
-  saveTokens(tokens: OAuthTokens) {
+  async saveTokens(tokens: OAuthTokens): Promise<void> {
     this.currentTokens = tokens;
     if (!tokens.refresh_token) return;
 
@@ -74,18 +78,22 @@ export class RefreshTokenOAuthProvider implements OAuthClientProvider {
     this.currentRefreshToken = tokens.refresh_token;
     if (!rotated || !this._onTokensRotated) return;
 
-    // Fire and forget, and never let it reach the connection. The token is
-    // already stored above, so a failed write costs the NEXT process, not this
-    // one — and throwing here would fail a connection that just authorized.
+    // AWAITED, not fire-and-forget. `auth()` awaits `saveTokens`, so the
+    // connection waits for the write — and a detached write would lose the
+    // race with `process.exit`, which is how a short CI job ends and exactly
+    // the failure this hook exists to prevent. Awaiting also orders repeated
+    // rotations, so the last value written is the newest one.
     try {
-      void Promise.resolve(
-        this._onTokensRotated({
-          refreshToken: tokens.refresh_token,
-          tokens,
-        })
-      ).catch(() => {});
+      await this._onTokensRotated({
+        refreshToken: tokens.refresh_token,
+        // A copy: a handler must not be able to mutate the token set this
+        // provider is still holding.
+        tokens: { ...tokens },
+      });
     } catch {
-      /* a handler that threw synchronously is still the caller's problem */
+      // Swallowed on purpose: the token is already stored above, so a failed
+      // write costs the NEXT run, not the connection that just authorized.
+      // Nothing is logged — the handler is the only place that knows how.
     }
   }
 

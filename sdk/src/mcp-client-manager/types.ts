@@ -484,14 +484,18 @@ export type HttpServerConfig = BaseServerConfig & {
    * long-lived caller can persist the replacement.
    *
    * Most authorization servers issue single-use refresh tokens, so the value
-   * passed as `refreshToken` stops working once it has been exchanged. Within
-   * one process the SDK keeps using the newest token and this is invisible.
-   * Across processes it is not: a CI job configured from a secret authorizes
-   * once and fails afterwards, with nothing to say why. Persist what this hook
-   * hands you, back to wherever `refreshToken` came from.
+   * passed as `refreshToken` stops working once it has been exchanged. For the
+   * life of the connection the SDK keeps using the newest token and this is
+   * invisible. Beyond it is not: a reconnect, and any later run, starts from
+   * the `refreshToken` this config was built with, so a CI job configured from
+   * a secret authorizes once and fails afterwards with nothing to say why.
+   * Persist what this hook hands you, back to wherever `refreshToken` came
+   * from.
    *
-   * Only fires when the token actually changed, and never fails a connection
-   * that has already authorized.
+   * Only fires when the token actually changed. It is awaited before the
+   * connection completes, so keep the write bounded. It never fails a
+   * connection that has already authorized, and a handler error is swallowed
+   * without being logged — log it yourself if you need to know.
    */
   onTokensRotated?: RefreshTokensRotatedHandler;
   /**
