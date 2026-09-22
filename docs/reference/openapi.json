@@ -5180,11 +5180,18 @@
         },
         "responses": {
           "200": {
-            "description": "The cases the job authored and committed.",
+            "description": "The cases the job authored and committed, or the job's own status when it finished without committing (failed, cancelled, or still pending at the end of the wait).",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EvalCaseImported"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/EvalCaseImported"
+                    },
+                    {
+                      "$ref": "#/components/schemas/EvalAuthoringJobAccepted"
+                    }
+                  ]
                 }
               }
             }
@@ -5314,11 +5321,18 @@
         },
         "responses": {
           "200": {
-            "description": "The cases written, and any the commit skipped.",
+            "description": "The cases written and any the commit skipped, or the job's own status when it finished without committing (failed, cancelled, or still pending at the end of the wait).",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EvalCaseImported"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/EvalCaseImported"
+                    },
+                    {
+                      "$ref": "#/components/schemas/EvalAuthoringJobAccepted"
+                    }
+                  ]
                 }
               }
             }
@@ -16954,6 +16968,10 @@
           "status": {
             "type": "string",
             "enum": ["pending", "completed", "failed", "cancelled"]
+          },
+          "error": {
+            "type": "string",
+            "description": "Why the job stopped. Present only on a failed job."
           },
           "generationModel": {
             "type": "string"

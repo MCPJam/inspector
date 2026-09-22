@@ -905,9 +905,13 @@ it("follows a linked authoring job instead of trusting this browser's memory", a
       rerunningSuiteId={null}
     />,
   );
+  // `takeOver`, because the link IS the request to review that job: a failed
+  // job keeps its id on the suite, and without this the link stood down to it
+  // and showed the reader their own dead import instead.
   expect(followAuthoringJob).toHaveBeenCalledWith(
     { projectId: "project-1", suiteId: "suite-1" },
     "job_77",
+    { takeOver: true, source: "import" },
   );
 });
 

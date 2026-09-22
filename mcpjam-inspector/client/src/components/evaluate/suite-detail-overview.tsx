@@ -149,6 +149,7 @@ export function SuiteDetailOverview({
   configLocked = false,
   projectId = null,
   importJobId = null,
+  onClearImportJob,
   onGeneratingChange,
 }: {
   suite: EvalSuite;
@@ -211,6 +212,15 @@ export function SuiteDetailOverview({
    * from the job itself rather than from this tab's memory.
    */
   importJobId?: string | null;
+  /**
+   * Drop `?importJob=` from the URL.
+   *
+   * Leaving the review has to clear the param as well as mark the drafts seen:
+   * the surface opens on `importJobId` alone, so marking them seen left the
+   * reader on the review with the breadcrumb doing nothing, and the only way
+   * out was to edit the address bar.
+   */
+  onClearImportJob?: () => void;
   /** Retained for callers; verdicts are read in the report, not history rows. */
   decisionSummaryEnabled?: boolean;
   /**
@@ -424,7 +434,15 @@ export function SuiteDetailOverview({
     // job still holds, and committed drafts are already excluded from it, so
     // the surface opens on exactly the cases that still need a person.
     if (!projectId || !importJobId) return;
-    void followAuthoringJob({ projectId, suiteId: suite._id }, importJobId);
+    // `takeOver`, because opening a review link IS the request to review that
+    // job. Without it the link stood down to whatever id the suite still
+    // held, and a failed job keeps its id: a colleague's link then showed the
+    // reader their own dead import instead of the job they were sent.
+    void followAuthoringJob({ projectId, suiteId: suite._id }, importJobId, {
+      takeOver: true,
+      // `?importJob=` is only ever handed out by an import.
+      source: "import",
+    });
   }, [projectId, importJobId, suite._id]);
   /**
    * An import lands on its drafts; a later visit lands on the suite.
@@ -477,7 +495,10 @@ export function SuiteDetailOverview({
   }, [nextDraftId]);
   const exitImportReview = useCallback(() => {
     if (projectId) markImportReviewSeen({ projectId, suiteId: suite._id });
-  }, [projectId, suite._id]);
+    // Both, or the reader does not leave: `reviewingImport` is true whenever
+    // the param is set, whatever the store says about drafts being seen.
+    onClearImportJob?.();
+  }, [projectId, suite._id, onClearImportJob]);
   useEffect(() => {
     if (!reviewingImport) return;
     onGeneratingChange?.({

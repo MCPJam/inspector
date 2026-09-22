@@ -9302,6 +9302,11 @@ evals.post(
       let launch: ResolvedEnvironmentForLaunch;
       try {
         launch = await resolveEnvironmentForLaunch(readClient, {
+          // Same projection `cases/generate` and the run path resolve with.
+          // Omitting it read the environment's servers differently from the
+          // way the run will, so an env-backed suite authored cases against
+          // one tool catalog and then ran against another.
+          serverSource: EVAL_LAUNCH_SERVER_SOURCE,
           projectId,
           environmentId,
         });

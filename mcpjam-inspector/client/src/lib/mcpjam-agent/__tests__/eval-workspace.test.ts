@@ -95,13 +95,23 @@ it("clears a finished job's drafts when a new import starts", async () => {
   // A second import appended its cases to the first one's, so a six-case
   // document read back as twelve drafts — two of every case. A person's own
   // staged drafts carry no job and stay.
+  //
+  // The job is read from `authoringJobId` on the draft, NOT from its
+  // `draftId`: the status query answers `draftId` as the Convex row id, so it
+  // never carries the job that staged it.
   const key = evalSuiteKey(scope);
   useEvalGeneration.setState({
     suites: {
       [key]: {
         status: "ready",
         drafts: [
-          { id: "authoring-old:0", revision: "r", input, authoring: { draftId: "old:0" } },
+          {
+            id: "authoring-k57abc",
+            revision: "r",
+            input,
+            authoring: { draftId: "k57abc" },
+            authoringJobId: "old",
+          },
           { id: "mine", revision: "r", input },
         ],
       } as never,
@@ -116,6 +126,43 @@ it("clears a finished job's drafts when a new import starts", async () => {
   );
   const ids = useEvalGeneration.getState().suites[key].drafts.map((d) => d.id);
   expect(ids).toEqual(["mine"]);
+});
+
+it("keeps the drafts of the job it is re-following", async () => {
+  // Re-following one job is ordinary: the review link is revisited, the
+  // component remounts, the tab reloads. Dropping its drafts re-staged them
+  // from the server, which threw away the local half of the review with
+  // nothing on screen to say so.
+  const key = evalSuiteKey(scope);
+  useEvalGeneration.setState({
+    suites: {
+      [key]: {
+        status: "ready",
+        drafts: [
+          {
+            id: "authoring-k57abc",
+            revision: "r",
+            input,
+            authoring: { draftId: "k57abc" },
+            authoringJobId: "job_1",
+            issueResolutions: { 0: "checked against the catalog" },
+          },
+        ],
+      } as never,
+    },
+  });
+  vi.mocked(readJob)
+    .mockReset()
+    .mockResolvedValue(authoredJob({ jobId: "job_1", drafts: [] }));
+  await followAuthoringJob(
+    { projectId: scope.projectId, suiteId: scope.suiteId },
+    "job_1",
+  );
+  const drafts = useEvalGeneration.getState().suites[key].drafts;
+  expect(drafts.map((d) => d.id)).toEqual(["authoring-k57abc"]);
+  expect(drafts[0].issueResolutions).toEqual({
+    0: "checked against the catalog",
+  });
 });
 
 it("lets a newer authoring job take the suite over from an older one", async () => {

@@ -2241,6 +2241,9 @@ export function SuiteIterationsView({
                       ? (route.importJob ?? null)
                       : null
                   }
+                  onClearImportJob={() =>
+                    navigation.toSuiteOverview(suite._id)
+                  }
                   onEditSuite={() => navigation.toSuiteEdit(suite._id)}
                   onEditCases={onCreateTestCase}
                   onDescribeCases={onDescribeTestCase}

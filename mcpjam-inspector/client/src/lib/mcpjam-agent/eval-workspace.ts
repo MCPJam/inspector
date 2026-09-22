@@ -195,6 +195,15 @@ export interface GeneratedDraft {
   authoringPrepared?: boolean;
   issueResolutions?: Record<string, string>;
   acceptedAdditionIds?: string[];
+  /**
+   * The authoring job that staged this draft.
+   *
+   * Recorded HERE rather than derived from `authoring.draftId`: the status
+   * query answers `draftId` as the Convex row id
+   * (`convex/evalAuthoringState.ts`), overwriting the `<jobId>:<n>` form the
+   * worker wrote into the draft JSON, so the id carries no job.
+   */
+  authoringJobId?: string;
   id: string;
   revision: string;
   input: CreateEvalTestCaseInput;
@@ -430,7 +439,12 @@ export function startEvalGeneration(
       options,
     },
   })
-    .then(({ jobId }) => followAuthoringJob(scope, jobId, { takeOver: true }))
+    .then(({ jobId }) =>
+      followAuthoringJob(scope, jobId, {
+        takeOver: true,
+        source: "generation",
+      }),
+    )
     .catch((error) =>
       updateGeneration(key, (state) => ({
         ...state,
@@ -664,6 +678,17 @@ export async function followAuthoringJob(
      * Generate button refuse every retry.
      */
     takeOver?: boolean;
+    /**
+     * What this job is, when the caller already knows.
+     *
+     * The surface picks itself from `authoringSource`, which otherwise only
+     * arrives with the first poll: an import started after a generation sat
+     * behind "No cases yet" until the round trip landed, and a generation
+     * started after an import flashed the import surface for the same beat.
+     * Callers that cannot know (a resume, a review link for a job they have
+     * not read) leave it out, and the poll fills it in.
+     */
+    source?: GenerationState["authoringSource"];
   },
 ) {
   if (authoringPolls.has(jobId)) return;
@@ -682,11 +707,21 @@ export async function followAuthoringJob(
     //
     // Drafts with no authoring job are a person's own staging (Describe, a
     // generated draft they have not saved) and are left alone.
+    //
+    // THIS job's drafts are kept. Re-following one is ordinary: the review
+    // link is revisited, the component remounts, the tab is reloaded. Dropping
+    // them here re-staged every draft from the server on the way back, which
+    // threw away the local half of the review (typed issue resolutions,
+    // accepted additions, edits made in the step editor) with nothing on
+    // screen to say it had happened.
     drafts: state.drafts.filter(
-      (draft) =>
-        !draft.authoring || draft.authoring.draftId.startsWith(`${jobId}:`),
+      (draft) => !draft.authoring || draft.authoringJobId === jobId,
     ),
     authoringJobId: jobId,
+    // Set with the claim, not on the first poll. Carrying the PREVIOUS job's
+    // value into this one is the bug; `undefined` when the caller does not
+    // know is merely unknown, and the poll settles it a beat later.
+    authoringSource: options?.source,
     status: "running",
   }));
   try {
@@ -729,6 +764,7 @@ export async function followAuthoringJob(
             id: `authoring-${draft.draftId}`,
             revision: generateId(),
             authoring: draft,
+            authoringJobId: jobId,
             acceptedAdditionIds: [],
             input: {
               suiteId: scope.suiteId!,

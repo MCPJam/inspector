@@ -125,6 +125,9 @@ export function ImportDatasetDialog({
       if (current !== generation.current) return;
       void followAuthoringJob({ projectId, suiteId }, result.jobId, {
         takeOver: true,
+        // The dialog knows what it started, so the import surface can open on
+        // the wait rather than after the first poll answers.
+        source: "import",
       });
       onOpenChange(false);
     } catch (e) {
