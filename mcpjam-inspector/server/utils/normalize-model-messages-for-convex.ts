@@ -1,13 +1,6 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
 /**
- * Convex streamText validates Message[] strictly. Persisted or provider-shaped
- * traces often omit toolCallId on tool-call / tool-result parts (e.g. only
- * toolName: "invocation"), which breaks validation and surfaces as
- * AI_InvalidPromptError. Repair IDs in-order so each tool-result pairs with
- * the preceding assistant tool-call round-trip.
- */
-/**
  * Build the `{ type, value }` envelope `modelMessageSchema` requires on a
  * tool-result `output`, or `undefined` when there is nothing to build one
  * from.
@@ -46,11 +39,7 @@ export function toModelMessageToolOutput(
     ) {
       return envelope as { type: string; value: unknown };
     }
-    if (
-      type === "text" ||
-      type === "error-text" ||
-      type === "content"
-    ) {
+    if (type === "text" || type === "error-text" || type === "content") {
       // Recognized tag, value the schema will not accept under it. Keep the
       // payload and re-declare it rather than nesting the whole envelope.
       return { type: "json", value: value ?? null };
@@ -59,6 +48,13 @@ export function toModelMessageToolOutput(
   return { type: "json", value: payload };
 }
 
+/**
+ * Convex streamText validates Message[] strictly. Persisted or provider-shaped
+ * traces often omit toolCallId on tool-call / tool-result parts (e.g. only
+ * toolName: "invocation"), which breaks validation and surfaces as
+ * AI_InvalidPromptError. Repair IDs in-order so each tool-result pairs with
+ * the preceding assistant tool-call round-trip.
+ */
 export function normalizeModelMessagesForConvex(
   messages: ModelMessage[],
 ): ModelMessage[] {

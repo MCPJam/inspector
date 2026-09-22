@@ -405,7 +405,6 @@ function coerceToolInput(raw: unknown): unknown {
   }
 }
 
-/** AI-SDK `ToolResultPart.output` discriminators we must NOT re-wrap. */
 /** Build the persisted `tool-result` `output` for a harness tool result, matching
  *  the emulated engine's canonical single-wrap shape (shared/http-tool-calls.ts).
  *
@@ -414,8 +413,8 @@ function coerceToolInput(raw: unknown): unknown {
  *  hand back an already-typed `{type, value}` output. Blindly wrapping that as
  *  `{type:"json", value: rawOutput}` produced the double-nested
  *  `{type:json,value:{type:json,value:…}}` seen in persisted transcripts. So:
- *  errors → `error-text`; an already-typed output passes through unchanged;
- *  anything else is wrapped once as `{type:"json", value}`. */
+ *  errors → `error-text`; a typed output whose value fits its tag passes
+ *  through unchanged; anything else is wrapped once as `{type:"json", value}`. */
 export function toToolResultOutput(
   rawOutput: unknown,
   isError: boolean,
@@ -436,9 +435,7 @@ export function toToolResultOutput(
   // `error-json`, so a genuine one was re-wrapped as `json` and lost its
   // error signal), and it trusted the type tag without checking the value
   // against it.
-  return (
-    toModelMessageToolOutput(rawOutput) ?? { type: "json", value: null }
-  );
+  return toModelMessageToolOutput(rawOutput) ?? { type: "json", value: null };
 }
 
 /** Per-process id for lease attribution (logs/debugging). */
