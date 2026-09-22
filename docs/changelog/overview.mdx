@@ -9,6 +9,14 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-22
+
+#### Added
+
+- **Customer question columns in the session flow diagram** — the session flow Sankey diagram (scenario and swarm scopes) now supports custom yes/no question columns to the right of the four theme axes (Goal, Behavior, Outcome, Sentiment). Project editors can add up to three columns: click **+** at the end of the header row to open two inline fields — a short column label and the yes/no question to ask — then press Enter or click **Save** to commit both together. Clicking an existing column header reopens the same editor with both fields pre-filled. An **×** that appears on hover and keyboard focus removes the column. Readers see the columns and their Yes/No answer counts but have no authoring controls. The canvas widens as columns are added rather than squeezing existing ones. Answers are backfilled against up to the 500 most recent sessions; older sessions may be unanswered.
+
+- **Question columns are selectable filters** — clicking a Yes or No node in a question column adds it as a filter chip and narrows the drill-down, the same way theme nodes do. A Sentiment → Question link selects both endpoints. Yes and No answers OR within the same question; different questions AND. Shared URLs carry the question version so a link saved against an older question wording never silently matches a renamed one. When a question changes or is removed, any stale chips and open flow selections are cleared with a toast notification. Legacy theme-only share links continue to work.
+
 ### 2026-09-18
 
 #### Changed
