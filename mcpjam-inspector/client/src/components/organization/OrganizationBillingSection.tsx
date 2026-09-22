@@ -292,7 +292,7 @@ function PlanCtaContent({
     );
   }
 
-  return <span>{label}</span>;
+  return <span className="min-w-0 truncate">{label}</span>;
 }
 
 const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
@@ -1241,7 +1241,7 @@ export function OrganizationBillingSection({
                         <TableRow className="border-b hover:bg-transparent [&_th]:align-top [&_th]:h-full">
                           <TableHead
                             style={{ width: `${LABEL_COLUMN_WIDTH_PCT}%` }}
-                            className="sticky left-0 z-20 h-full min-h-0 min-w-[11rem] whitespace-normal bg-card text-left shadow-[1px_0_0_0_hsl(var(--border))] px-4 pt-5 pb-4 align-top"
+                            className="sticky left-0 z-20 h-full min-h-0 whitespace-normal bg-card text-left shadow-[1px_0_0_0_hsl(var(--border))] px-4 pt-5 pb-4 align-top"
                           >
                             <div className="flex h-full min-h-[11rem] flex-col">
                               <div className="flex min-h-0 flex-1 flex-col">

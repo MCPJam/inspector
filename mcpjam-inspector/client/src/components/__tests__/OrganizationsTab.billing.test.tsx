@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { OrganizationsTab } from "../OrganizationsTab";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
+import { offeredPlans } from "@/lib/pricing-catalog";
 
 const mockUseAuth = vi.fn();
 const mockUseConvexAuth = vi.fn();
@@ -580,7 +581,7 @@ describe("OrganizationsTab billing", () => {
         (columns, cell) => columns + (cell as HTMLTableCellElement).colSpan,
         0,
       ),
-    ).toBe(Object.keys(catalog.plans).length + 1);
+    ).toBe(offeredPlans(catalog).length + 1);
     expect(
       within(getPlanColumn("Team")).queryByText("Legacy"),
     ).not.toBeInTheDocument();
