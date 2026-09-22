@@ -278,6 +278,23 @@ capability rather than inferring support from a field.
 This step is the only part of the program that changes a file in the backend repository, and what
 it changes is a DTO projection, not storage.
 
+### Known residue, deliberately left for GA
+
+One public value still spells a renamed noun after this step: the insights envelope's
+`InsightScope`, whose `kind` reads `swarm_wave` and whose `user_testing_window` variant carries
+`scenarioId` (`sdk/src/platform/types.ts` `PlatformInsightScope`, produced by the backend's
+`convex/swarmWaveInsights.ts` and passed through the inspector verbatim).
+
+It is left alone on purpose rather than overlooked. The envelope is shared by three surfaces —
+eval runs, swarm runs and user-testing windows — and is produced in one backend function that
+every one of them reads; projecting it means threading the negotiated vocabulary through a
+producer none of the four families above touches. That is a larger change than the projection
+this step is, and it buys nothing until a consumer branches on the value, which none does today.
+
+It moves with the GA deletion, where vocabulary 1 goes and the projection layer can be removed
+rather than extended. Anyone adding a consumer that branches on `InsightScope.kind` before then
+should move it first.
+
 ## Handed back: trial
 
 **`trial` → `iteration` was rename #4 in the first draft of this document. It is withdrawn.** The
