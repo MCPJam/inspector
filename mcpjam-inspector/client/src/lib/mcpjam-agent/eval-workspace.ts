@@ -304,13 +304,21 @@ function updateGeneration(
 export function importedDraftBlockedBadge(
   draft: GeneratedDraft,
 ): string | undefined {
-  if (!importedDraftBlockedReason(draft)) return undefined;
-  const missing = [
-    !draft.input.title?.trim() && "title",
-    !draft.input.query?.trim() && "prompt",
-    !draft.input.expectedOutput?.trim() && "expected outcome",
-  ].filter((field): field is string => typeof field === "string");
-  return missing.length ? `Missing ${missing.join(", ")}` : "Can't be added";
+  const reason = importedDraftBlockedReason(draft);
+  if (!reason) return undefined;
+  // Short form OF THE REASON. This used to list whichever of title/prompt/
+  // expected outcome was empty, which was a different question: a case
+  // blocked by its issues, or one that opens with a tool call and needs no
+  // prompt, was labelled "Missing expected outcome" and sent the reader
+  // hunting for a field that was never required.
+  if (/blocking issues/i.test(reason)) return "Fix the issues";
+  if (/case title/i.test(reason)) return "Missing title";
+  if (/at least one step/i.test(reason)) return "No steps";
+  if (/each prompt step/i.test(reason)) return "Empty prompt";
+  if (/Step ids/i.test(reason)) return "Repeated step ids";
+  if (/Negative cases/i.test(reason)) return "Tool call in a negative case";
+  if (/assertion, expected outcome/i.test(reason)) return "Nothing to check";
+  return "Can't be added";
 }
 
 /**
