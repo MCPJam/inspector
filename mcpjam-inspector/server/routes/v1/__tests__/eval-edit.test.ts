@@ -2338,6 +2338,82 @@ describe("v1 eval-edit routes", () => {
     );
   }
 
+  // The backend hashes the job input to decide whether a replayed idempotency
+  // key is the SAME request. Resolving the suite's model into the payload put
+  // a value the caller never sent into that hash, so a suite whose model
+  // changed between a timeout and the retry made the retry look like a
+  // different request: it died with "Idempotency key was reused with a
+  // different request" for a caller who had sent byte-identical bytes twice.
+  //
+  // Nothing is lost by omitting it: a case with no models inherits the suite's
+  // model at RUN time, which is where the runner can see keys this route
+  // cannot.
+  it("sends the same import payload after the suite's model changes", async () => {
+    const oldUrl = process.env.CONVEX_HTTP_URL;
+    process.env.CONVEX_HTTP_URL = "https://backend.test";
+    const payloadFor = async (modelId: string) => {
+      const backend = authoringBackend({
+        status: {
+          jobId: "job",
+          projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          source: "import",
+          status: "completed",
+          drafts: [],
+        },
+      });
+      try {
+        await importWith({
+          body: { idempotencyKey: "same-key" },
+          query: (name) =>
+            name === "hostConfigsV2:getSuiteConfig"
+              ? Promise.resolve({ modelId })
+              : undefined,
+        });
+        return backend.sent();
+      } finally {
+        backend.restore();
+      }
+    };
+    try {
+      const first = await payloadFor("claude-sonnet-4-5");
+      const second = await payloadFor("claude-haiku-4-5");
+      expect(second).toEqual(first);
+      // The caller named no model, so the job carries none.
+      expect(first.options?.caseModels).toBeUndefined();
+    } finally {
+      if (oldUrl === undefined) delete process.env.CONVEX_HTTP_URL;
+      else process.env.CONVEX_HTTP_URL = oldUrl;
+    }
+  });
+
+  it("still forwards the models the caller names", async () => {
+    const oldUrl = process.env.CONVEX_HTTP_URL;
+    process.env.CONVEX_HTTP_URL = "https://backend.test";
+    const backend = authoringBackend({
+      status: {
+        jobId: "job",
+        projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        source: "import",
+        status: "completed",
+        drafts: [],
+      },
+    });
+    try {
+      await importWith({
+        body: { caseModels: [{ model: "claude-haiku-4-5" }] },
+      });
+      expect(backend.sent().options.caseModels).toEqual([
+        expect.objectContaining({ model: "claude-haiku-4-5" }),
+      ]);
+    } finally {
+      backend.restore();
+      if (oldUrl === undefined) delete process.env.CONVEX_HTTP_URL;
+      else process.env.CONVEX_HTTP_URL = oldUrl;
+    }
+  });
+
   it("forwards the document and a defaulted file name", async () => {
     const oldFlag = process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
     const oldUrl = process.env.CONVEX_HTTP_URL;

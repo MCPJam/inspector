@@ -9337,9 +9337,14 @@ evals.post(
       serverNames = resolved.serverNames;
     }
 
-    const caseModels =
-      body.caseModels?.map(toPersistedModelEntry) ??
-      (await defaultCaseModels(readClient, suiteId));
+    // Only what the CALLER asked for. A case with no models inherits the
+    // suite's model at run time (see `defaultCaseModels`), so resolving it
+    // here buys nothing and costs idempotency: the backend hashes the job
+    // input to decide whether a replayed key is the same request, so a suite
+    // whose model changed between a timeout and the retry turned the retry
+    // into "Idempotency key was reused with a different request" — for a
+    // caller who had sent byte-identical bytes both times.
+    const caseModels = body.caseModels?.map(toPersistedModelEntry);
 
     return startAuthoringJobAndAwait(c, {
       token,
@@ -9355,7 +9360,9 @@ evals.post(
         // A pasted document has no file behind it; the name is only the label
         // a reviewer sees on the case.
         fileName: body.fileName ?? "import.txt",
-        options: { caseModels },
+        // Omitted, not `undefined`: the key's presence is part of what the
+        // backend hashes for idempotency.
+        options: caseModels ? { caseModels } : {},
       },
       requestKey: idempotencyKey ?? randomUUID(),
       commit: {
