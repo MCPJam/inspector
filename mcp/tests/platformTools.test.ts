@@ -5,12 +5,15 @@ import {
   listProjectPluginsOperation,
   listProjectServersOperation,
   listProjectsOperation,
+  listScenariosOperation,
   runEvalSuiteOperation,
+  showServersOperation,
 } from "@mcpjam/sdk/platform";
 import {
   EXCLUDED_FROM_CATALOG,
   PLATFORM_CATALOG_OPERATIONS,
   PLATFORM_TOOL_WIDGET_VIEWS,
+  platformWidgetUi,
   registerPlatformCatalogTools,
   runPlatformOperation,
 } from "../src/tools/platformTools.js";
@@ -18,7 +21,10 @@ import {
   registerShowServersTool,
   SHOW_SERVERS_RESOURCE_URI,
 } from "../src/tools/showServers.js";
-import { PLATFORM_WIDGET_RESOURCE_URIS } from "../src/shared/platform-widgets.js";
+import {
+  PLATFORM_WIDGETS_ENABLED,
+  PLATFORM_WIDGET_RESOURCE_URIS,
+} from "../src/shared/platform-widgets.js";
 import type { PlatformToolContext } from "../src/server.js";
 import type { SessionToolRegistrar } from "../src/tools/sessionToolRegistrar.js";
 
@@ -385,17 +391,23 @@ describe("platform tool registration", () => {
     ).not.toContain("COSTS MONEY");
   });
 
-  it("registers show_servers with the MCP Apps UI resource", () => {
+  it("registers show_servers, with its MCP Apps UI resource only while widgets are on", () => {
     const { registrar, registrations } = fakeRegistrar();
 
     registerShowServersTool(registrar, fakeToolContext({ bearerToken: "jwt" }));
 
+    // The tool itself registers either way: pausing the widgets must not
+    // remove a tool name hosts and agents already call.
     expect(registrations).toHaveLength(1);
     const registration = registrations[0]!;
     expect(registration.name).toBe("show_servers");
     expect(registration.config.annotations?.readOnlyHint).toBe(true);
-    expect(registration.ui?.resourceUri).toBe(SHOW_SERVERS_RESOURCE_URI);
-    expect(registration.ui?.html).toContain("<html");
+    if (PLATFORM_WIDGETS_ENABLED) {
+      expect(registration.ui?.resourceUri).toBe(SHOW_SERVERS_RESOURCE_URI);
+      expect(registration.ui?.html).toContain("<html");
+    } else {
+      expect(registration.ui).toBeUndefined();
+    }
   });
 
   it("registers the whole operation catalog in order", () => {
@@ -587,7 +599,12 @@ describe("platform tool registration", () => {
     );
 
     for (const registration of registrations) {
-      const view = WIDGET_TOOLS[registration.name];
+      // Widgets paused ⇒ every tool registers plain, whatever the view map
+      // says. The map itself is still checked below, so it cannot rot while
+      // the switch is off.
+      const view = PLATFORM_WIDGETS_ENABLED
+        ? WIDGET_TOOLS[registration.name]
+        : undefined;
       if (view) {
         expect(registration.ui?.resourceUri).toBe(
           PLATFORM_WIDGET_RESOURCE_URIS[view]
@@ -595,7 +612,9 @@ describe("platform tool registration", () => {
         expect(registration.ui?.html).toContain("<html");
         expect(registration.ui?.callback).toBeTypeOf("function");
       } else {
-        expect(PLAIN_TOOLS).toContain(registration.name);
+        if (PLATFORM_WIDGETS_ENABLED) {
+          expect(PLAIN_TOOLS).toContain(registration.name);
+        }
         expect(registration.ui).toBeUndefined();
       }
     }
@@ -827,21 +846,22 @@ describe("widget payload tagging", () => {
         ],
       },
     });
-    const { registrar, registrations } = fakeRegistrar();
-    registerPlatformCatalogTools(
-      registrar,
-      fakeToolContext({ bearerToken: "jwt" })
-    );
-    const registration = registrations.find(
-      (candidate) => candidate.name === "list_scenarios"
-    )!;
+    // The widget UI is built here rather than read off a registration: the
+    // tagging contract is the same whether or not PLATFORM_WIDGETS_ENABLED is
+    // currently attaching it to the tool.
+    const context = fakeToolContext({ bearerToken: "jwt" });
+    const ui = platformWidgetUi(context, listScenariosOperation, "scenarios");
 
-    const tagged = (await registration.ui!.callback!({})) as ToolResult;
+    const tagged = (await ui.callback({})) as ToolResult;
     expect(tagged.isError).toBeUndefined();
     expect(tagged.structuredContent?.widget).toBe("scenarios");
     expect(jsonBodyOf(tagged).widget).toBe("scenarios");
 
-    const plain = (await registration.callback({})) as ToolResult;
+    const plain = (await runPlatformOperation(
+      context,
+      listScenariosOperation,
+      {}
+    )) as ToolResult;
     expect(plain.isError).toBeUndefined();
     expect(plain.structuredContent).not.toHaveProperty("widget");
     expect(jsonBodyOf(plain)).not.toHaveProperty("widget");
@@ -852,10 +872,13 @@ describe("widget payload tagging", () => {
       "/projects": PROJECTS_PAGE,
       "/servers": { items: [] },
     });
-    const { registrar, registrations } = fakeRegistrar();
-    registerShowServersTool(registrar, fakeToolContext({ bearerToken: "jwt" }));
+    const ui = platformWidgetUi(
+      fakeToolContext({ bearerToken: "jwt" }),
+      showServersOperation,
+      "servers"
+    );
 
-    const result = (await registrations[0]!.ui!.callback!({})) as ToolResult;
+    const result = (await ui.callback({})) as ToolResult;
 
     expect(result.isError).toBeUndefined();
     expect(result.structuredContent?.widget).toBe("servers");
