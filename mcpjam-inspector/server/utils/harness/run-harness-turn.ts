@@ -427,10 +427,14 @@ export function toToolResultOutput(
   isError: boolean,
 ): { type: string; value: unknown } {
   if (isError) {
+    // `JSON.stringify(undefined)` is `undefined`, not `"undefined"`, so a
+    // failed tool with no payload would produce a value that serializes away
+    // and fails `modelMessageSchema` — an invalid message describing an error.
+    const text =
+      typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput);
     return {
       type: "error-text",
-      value:
-        typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput),
+      value: text ?? "The tool reported an error with no payload.",
     };
   }
   if (
@@ -442,7 +446,9 @@ export function toToolResultOutput(
   ) {
     return rawOutput as { type: string; value: unknown };
   }
-  return { type: "json", value: rawOutput };
+  // Explicit null, never undefined: the latter serializes away and leaves
+  // `{"type":"json"}`, which the schema rejects like a missing `output`.
+  return { type: "json", value: rawOutput ?? null };
 }
 
 /** Per-process id for lease attribution (logs/debugging). */

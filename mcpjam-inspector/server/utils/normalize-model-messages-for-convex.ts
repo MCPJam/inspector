@@ -7,6 +7,50 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
  * AI_InvalidPromptError. Repair IDs in-order so each tool-result pairs with
  * the preceding assistant tool-call round-trip.
  */
+/**
+ * The `type`s `modelMessageSchema` accepts on a tool-result `output`.
+ */
+const TOOL_OUTPUT_TYPES = new Set([
+  "text",
+  "json",
+  "error-text",
+  "error-json",
+  "content",
+]);
+
+/**
+ * Coerce a tool-result payload into the `{ type, value }` union the schema
+ * requires, or `undefined` when there is nothing to coerce.
+ *
+ * `json` is the wrapper for an unknown payload because it accepts any JSON
+ * value; `text` would reject anything but a string.
+ *
+ * This exists because the repair it replaces assigned `result` straight onto
+ * `output`, which traded a missing key for a malformed one — the schema
+ * rejects a bare payload exactly as it rejects an absent `output`, so a
+ * v4-shaped message still failed. It failed invisibly, too: the offending
+ * index lives in the part of the log Convex truncates.
+ */
+function toToolResultOutput(
+  payload: unknown,
+): { type: string; value: unknown } | undefined {
+  if (payload === undefined) return undefined;
+  if (
+    payload !== null &&
+    typeof payload === "object" &&
+    TOOL_OUTPUT_TYPES.has(
+      (payload as { type?: unknown }).type as string,
+    ) &&
+    "value" in payload
+  ) {
+    const typed = payload as { type: string; value: unknown };
+    // `value: undefined` serializes away, leaving `{"type":"json"}`, which
+    // fails the same check a missing `output` does. Land it on null.
+    return typed.value === undefined ? { ...typed, value: null } : typed;
+  }
+  return { type: "json", value: payload };
+}
+
 export function normalizeModelMessagesForConvex(
   messages: ModelMessage[],
 ): ModelMessage[] {
@@ -55,8 +99,13 @@ export function normalizeModelMessagesForConvex(
           pendingToolCallIds.splice(idx, 1);
         }
       }
-      if (out.output === undefined && out.result !== undefined) {
-        out.output = out.result;
+      // `result` is the AI SDK v4 spelling and still reaches this point from
+      // older traces and replayed transcripts. Both keys go through the same
+      // coercion so a malformed `output` is repaired rather than trusted.
+      const output =
+        toToolResultOutput(out.output) ?? toToolResultOutput(out.result);
+      if (output) {
+        out.output = output;
       }
       return out;
     }

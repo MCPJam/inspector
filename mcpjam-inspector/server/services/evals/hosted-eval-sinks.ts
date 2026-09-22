@@ -121,7 +121,10 @@ export function buildHostedEvalSinks(
               type: "tool-result",
               toolCallId: event.toolCallId,
               ...(event.toolName ? { toolName: event.toolName } : {}),
-              output: event.output,
+              // `event.output` is `part.output ?? rawResult` upstream, so it
+              // can be undefined — and an undefined value serializes away,
+              // leaving a tool-result with no `output` at all.
+              output: event.output ?? { type: "json", value: null },
               ...(event.isError ? { isError: true } : {}),
             },
           ],

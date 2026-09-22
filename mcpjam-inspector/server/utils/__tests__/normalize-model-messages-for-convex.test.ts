@@ -1,5 +1,6 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { describe, expect, it } from "vitest";
+import { modelMessageSchema } from "ai";
 import { normalizeModelMessagesForConvex } from "../normalize-model-messages-for-convex";
 
 /** Shape observed when Convex rejects AI_InvalidPromptError (missing toolCallId). */
@@ -139,5 +140,85 @@ describe("normalizeModelMessagesForConvex", () => {
     expect(assist.content[0].toolCallId).toBe("c1");
     expect(tool.content[0].toolCallId).toBe("c1");
     expect((out[0] as { content: unknown }).content).toBe("hi");
+  });
+});
+
+/**
+ * Asserted against the SDK's real `modelMessageSchema`, not a hand-written
+ * copy of it: the whole failure class here is a message this repo believed was
+ * valid and the backend's schema did not.
+ *
+ * The backend validates with `ai@7` while the inspector builds against
+ * `ai@6`. Both were checked against every shape below and agree on the
+ * tool-result `output` union, so testing with the local copy is not a
+ * weaker assertion — but it is the reason a `text` output is never
+ * synthesised here: only `json` accepts an arbitrary payload in both.
+ */
+describe("normalizeModelMessagesForConvex — tool-result output", () => {
+  const base = { type: "tool-result", toolCallId: "call_1", toolName: "search" };
+  const toolMessage = (part: Record<string, unknown>) =>
+    [{ role: "tool", content: [part] }] as unknown as ModelMessage[];
+  // Mirrors the wire: `JSON.stringify` silently drops an undefined value, and
+  // that is how a half-built output reaches the backend looking like a missing
+  // one.
+  const overWire = (messages: ModelMessage[]) =>
+    JSON.parse(JSON.stringify(messages)) as ModelMessage[];
+
+  const parseFirst = (messages: ModelMessage[]) =>
+    modelMessageSchema.safeParse(overWire(normalizeModelMessagesForConvex(messages))[0]);
+
+  const outputOf = (messages: ModelMessage[]) =>
+    (
+      overWire(normalizeModelMessagesForConvex(messages))[0] as unknown as {
+        content: Array<{ output?: unknown }>;
+      }
+    ).content[0].output;
+
+  it.each([
+    ["a v4 result carrying an object", { ...base, result: { distance: "2.4km" } }],
+    ["a v4 result carrying a string", { ...base, result: "2.4km" }],
+    ["an unwrapped output", { ...base, output: { distance: "2.4km" } }],
+    ["an output whose value is undefined", { ...base, output: { type: "json", value: undefined } }],
+    ["an undefined output beside a result", { ...base, output: undefined, result: { a: 1 } }],
+  ])("repairs %s into a valid ModelMessage", (_label, part) => {
+    expect(parseFirst(toolMessage(part)).success).toBe(true);
+  });
+
+  it("wraps a bare payload as json rather than assigning it raw", () => {
+    // The bug this replaces: the old repair copied `result` onto `output`
+    // untouched, which the schema rejects exactly as it rejects no output.
+    expect(outputOf(toolMessage({ ...base, result: { distance: "2.4km" } }))).toEqual({
+      type: "json",
+      value: { distance: "2.4km" },
+    });
+  });
+
+  it("lands an undefined value on null so it survives serialization", () => {
+    expect(outputOf(toolMessage({ ...base, output: { type: "json", value: undefined } }))).toEqual({
+      type: "json",
+      value: null,
+    });
+  });
+
+  it.each([
+    ["json", { type: "json", value: { d: 1 } }],
+    ["error-text", { type: "error-text", value: "boom" }],
+    ["content", { type: "content", value: [{ type: "text", text: "x" }] }],
+  ])("leaves an already-valid %s output untouched", (_label, output) => {
+    const messages = toolMessage({ ...base, output });
+    expect(parseFirst(messages).success).toBe(true);
+    expect(outputOf(messages)).toEqual(output);
+  });
+
+  /**
+   * Deliberately NOT repaired. A tool-result with neither key means the output
+   * was lost upstream, and inventing one would grade the case against a value
+   * the tool never returned. The backend's 400 names the index instead, which
+   * is the honest failure.
+   */
+  it("leaves a tool-result with no output and no result for the backend to reject", () => {
+    const messages = toolMessage({ ...base });
+    expect(outputOf(messages)).toBeUndefined();
+    expect(parseFirst(messages).success).toBe(false);
   });
 });
