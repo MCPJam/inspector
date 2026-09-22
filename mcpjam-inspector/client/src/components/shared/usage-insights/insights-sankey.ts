@@ -40,7 +40,9 @@ export function stageValueLabel<S extends string = SankeyStage>(
 export function parseNodeId<S extends string = SankeyStage>(
   id: string,
 ): { stage: S; key: string } {
-  const separator = id.indexOf(":");
+  const separator = id.startsWith("question:")
+    ? id.lastIndexOf(":")
+    : id.indexOf(":");
   return {
     stage: id.slice(0, separator) as S,
     key: id.slice(separator + 1),
@@ -82,9 +84,30 @@ export function selectionForNode(
   node: InsightsSankeyNode<SankeyStage>,
 ): InsightsSelection | null {
   if (!node.clickable) return null;
+  if (node.stage.startsWith("question:")) {
+    if (node.questionVersion === undefined || !["yes", "no"].includes(node.key))
+      return null;
+    return {
+      themes: [],
+      questions: [
+        {
+          questionId: node.stage.slice(9),
+          version: node.questionVersion,
+          value: node.key === "yes",
+          label: node.label,
+        },
+      ],
+    };
+  }
   if (node.key === SANKEY_UNLABELED || node.key === SANKEY_OTHER) return null;
   return {
-    themes: [{ dimension: node.stage, clusterId: node.key, label: node.label }],
+    themes: [
+      {
+        dimension: node.stage as "goal" | "behavior" | "outcome" | "sentiment",
+        clusterId: node.key,
+        label: node.label,
+      },
+    ],
   };
 }
 
@@ -100,7 +123,12 @@ export function selectionForLink(
   const from = selectionForNode(source);
   const to = selectionForNode(target);
   if (!from || !to) return null;
-  return { themes: [...from.themes, ...to.themes] };
+  return {
+    themes: [...from.themes, ...to.themes],
+    ...(from.questions || to.questions
+      ? { questions: [...(from.questions ?? []), ...(to.questions ?? [])] }
+      : {}),
+  };
 }
 
 export type SankeyLayoutNode<S extends string = SankeyStage> =
@@ -204,7 +232,8 @@ export function layoutSankey<S extends string>(
 
   // Ribbons stack in the same order their endpoints do, so bands never cross
   // inside a single node's face.
-  const stageIndexOf = (id: string) => stages.indexOf(parseNodeId<S>(id).stage);
+  const stageIndexOf = (id: string) =>
+    stages.indexOf(sankey.nodes.find((node) => node.id === id)!.stage);
   const orderOf = (id: string) => sankey.nodes.findIndex((n) => n.id === id);
   const ordered = [...sankey.links].sort(
     (a, b) =>

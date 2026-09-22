@@ -24,7 +24,7 @@ import {
 import {
   parseSelectionParam,
   serializeSelectionParam,
-  type ThemeRef,
+  type SelectionRef,
 } from "@/hooks/scenario-usage-filters";
 import { getShareableAppOrigin } from "@/lib/scenario-session";
 import {
@@ -261,9 +261,7 @@ export function SwarmRunDetail({
   }, [liveProgress, navigate, parsedTab, selParam, swarmId]);
 
   const handleSelectionChange = useCallback(
-    (
-      themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null,
-    ) => {
+    (themes: ReadonlyArray<SelectionRef> | null) => {
       navigate(
         buildSwarmPath(swarmId, {
           tab,

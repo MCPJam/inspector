@@ -1,10 +1,12 @@
+import { toast } from "sonner";
+import { SessionQuestionFlow } from "./SessionQuestionFlow";
 import { useCallback, useEffect, useMemo, type ReactNode } from "react";
 import {
   chipKey,
   isSameSelection,
   removeChipsByKeys,
   type InsightsSelection,
-  type ThemeRef,
+  type SelectionRef,
   type UsageFilterChip,
   type UsageFilterState,
 } from "@/hooks/scenario-usage-filters";
@@ -32,13 +34,9 @@ interface InsightsWorkbenchProps {
   /** Force-applied filter transform (e.g. User Testing's hide-synthetic). */
   augmentFilter?: (filter: UsageFilterState) => UsageFilterState;
   /** Selection restored from the `sel` URL parameter. */
-  urlSelection?: ReadonlyArray<
-    Pick<ThemeRef, "dimension" | "clusterId">
-  > | null;
+  urlSelection?: ReadonlyArray<SelectionRef> | null;
   /** Persist flow selection changes in the owning route. */
-  onSelectionChange?: (
-    themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null,
-  ) => void;
+  onSelectionChange?: (themes: ReadonlyArray<SelectionRef> | null) => void;
   initialView?: InsightsView;
   onViewChange?: (view: InsightsView) => void;
   /** Open a session in the Sessions browser (the parent owns the tab flip). */
@@ -212,20 +210,35 @@ export function InsightsWorkbench({
   );
 
   const urlSelectionKey = urlSelection
-    ?.map((theme) => `${theme.dimension}:${theme.clusterId}`)
+    ?.map((ref) => JSON.stringify(ref))
     .join("\0");
   const resolvedUrlSelection = useMemo<InsightsSelection | null>(() => {
     if (!urlSelection || urlSelection.length === 0) return null;
     const nodes = breakdown?.sankey?.nodes ?? [];
+    const questionLabels = breakdown?.sankey?.stages ?? [];
     return {
-      themes: urlSelection.map((theme) => {
-        const node = nodes.find(
-          (candidate) =>
-            candidate.stage === theme.dimension &&
-            candidate.key === theme.clusterId,
-        );
-        return { ...theme, ...(node ? { label: node.label } : {}) };
-      }),
+      // A shared link carries ids, not names. The chip's text comes from the
+      // catalog this reader just loaded, so a link cannot put words of its own
+      // into a chip that claims to be a question, and a question renamed since
+      // the link was saved reads under its current name.
+      questions: urlSelection
+        .filter((ref) => "questionId" in ref)
+        .map(({ label: _fromUrl, ...ref }) => {
+          const stage = questionLabels.find(
+            (candidate) => candidate.questionId === ref.questionId,
+          );
+          return { ...ref, ...(stage ? { label: stage.label } : {}) };
+        }),
+      themes: urlSelection
+        .filter((ref) => "dimension" in ref)
+        .map((theme) => {
+          const node = nodes.find(
+            (candidate) =>
+              candidate.stage === theme.dimension &&
+              candidate.key === theme.clusterId,
+          );
+          return { ...theme, ...(node ? { label: node.label } : {}) };
+        }),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- identity via key
   }, [urlSelectionKey, breakdown?.sankey]);
@@ -254,6 +267,42 @@ export function InsightsWorkbench({
     flow.commitSelection,
     flow.setFlowSelection,
     flow.flowSelectionRef,
+  ]);
+
+  // Metadata is authoritative only after the subscription resolves. Never
+  // reinterpret a selection saved against an earlier question wording.
+  useEffect(() => {
+    const questions = breakdown?.questionBreakdown;
+    if (!questions) return;
+    const obsolete = flow.filter.chips.filter(
+      (chip) =>
+        chip.kind === "question" &&
+        !questions.some(
+          (q) => q.questionId === chip.questionId && q.version === chip.version,
+        ),
+    );
+    if (!obsolete.length) return;
+    for (const chip of obsolete) flow.handleClearChip(chipKey(chip));
+    if (
+      flow.flowSelection?.questions?.some(
+        (q) =>
+          !questions.some(
+            (current) =>
+              current.questionId === q.questionId &&
+              current.version === q.version,
+          ),
+      )
+    )
+      flow.commitSelection(null);
+    toast.info(
+      "A question changed or was removed. Its old selection was cleared.",
+    );
+  }, [
+    breakdown?.questionBreakdown,
+    flow.filter.chips,
+    flow.handleClearChip,
+    flow.flowSelection,
+    flow.commitSelection,
   ]);
 
   // Topic-map dot click → open that session. Clear the filter first so an
@@ -339,6 +388,8 @@ export function InsightsWorkbench({
           const label =
             chip.kind === "cluster"
               ? chip.label ?? "Cluster"
+              : chip.kind === "question"
+              ? chip.label ?? `Question: ${chip.value ? "Yes" : "No"}`
               : chip.label ?? `${chip.key}: ${chip.value}`;
           return (
             <button
@@ -363,18 +414,53 @@ export function InsightsWorkbench({
       )}
     >
       <div className={fillBody ? "min-h-0 flex-1 overflow-hidden" : undefined}>
-        <SessionFlowSankey
-          goalGroupsByJourney={scope.kind === "swarm"}
-          breakdown={breakdown}
-          selection={flow.flowSelection}
-          onSelectNode={flow.handleSelectFlow}
-          onSelectLink={flow.handleSelectFlow}
-          onRebuild={handleRebuild}
-          rebuildBusy={rebuildBusy}
-          fillHeight={fillBody}
-          scrollLayout={!fillBody}
-          headerActions={viewChrome}
-        />
+        <ErrorBoundary
+          key={cohortKey}
+          fallback={
+            <SessionFlowSankey
+              goalGroupsByJourney={scope.kind === "swarm"}
+              breakdown={breakdown}
+              selection={flow.flowSelection}
+              onSelectNode={flow.handleSelectFlow}
+              onSelectLink={flow.handleSelectFlow}
+              onRebuild={handleRebuild}
+              rebuildBusy={rebuildBusy}
+              fillHeight={fillBody}
+              scrollLayout={!fillBody}
+              headerActions={viewChrome}
+            />
+          }
+        >
+          {scope.kind === "benchmark" ? (
+            <SessionFlowSankey
+              goalGroupsByJourney={false}
+              breakdown={breakdown}
+              selection={flow.flowSelection}
+              onSelectNode={flow.handleSelectFlow}
+              onSelectLink={flow.handleSelectFlow}
+              onRebuild={handleRebuild}
+              rebuildBusy={rebuildBusy}
+              fillHeight={fillBody}
+              scrollLayout={!fillBody}
+              headerActions={viewChrome}
+            />
+          ) : (
+            <SessionQuestionFlow
+              scope={scope}
+              testId={`${testIdPrefix}-questions`}
+              goalGroupsByJourney={scope.kind === "swarm"}
+              breakdown={breakdown}
+              selection={flow.flowSelection}
+              onSelectNode={flow.handleSelectFlow}
+              onSelectLink={flow.handleSelectFlow}
+              onRebuild={handleRebuild}
+              rebuildBusy={rebuildBusy}
+              fillHeight={fillBody}
+              scrollLayout={!fillBody}
+              headerActions={viewChrome}
+            />
+          )}
+        </ErrorBoundary>
       </div>
       {chipRow}
     </div>

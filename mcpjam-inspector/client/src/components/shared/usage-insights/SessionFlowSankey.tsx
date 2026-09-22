@@ -19,7 +19,10 @@ import {
 } from "@/components/shared/usage-insights/insights-sankey";
 import { cn } from "@/lib/utils";
 
-interface SessionFlowSankeyProps {
+export interface SessionFlowSankeyProps {
+  questionHeaders?: Partial<Record<SankeyStage, ReactNode>>;
+  questionCreate?: ReactNode;
+  questionEditing?: boolean;
   breakdown: UsageBreakdown | null | undefined;
   /** Currently open selection, so its endpoints can read as selected. */
   selection: InsightsSelection | null;
@@ -82,6 +85,23 @@ const STAGE_COLOR: Record<SankeyStage, { node: string; head: string }> = {
   sentiment: { node: "#bda2d8", head: "#7a5da3" },
 };
 
+/**
+ * One hue per question column, for the same reason the four axes have one
+ * each. Sharing `--foreground` across every question painted all of them, and
+ * the ribbons between them, as a single dark slab — the paragraph above says
+ * why that reads as one mass rather than as a flow.
+ *
+ * Three entries because the backend caps a scope at three questions. They are
+ * literal hex like the four axes above: this is the diagram's own palette, not
+ * a status vocabulary, and a role token would tie a column's identity to a
+ * meaning it does not carry.
+ */
+const QUESTION_COLOR: ReadonlyArray<{ node: string; head: string }> = [
+  { node: "#d89bb0", head: "#b05a78" },
+  { node: "#d4bc7a", head: "#9a7d32" },
+  { node: "#7eb8c0", head: "#3d7a84" },
+];
+
 function RebuildButton({
   onRebuild,
   busy,
@@ -114,6 +134,9 @@ function RebuildButton({
  */
 export function SessionFlowSankey({
   breakdown,
+  questionHeaders,
+  questionCreate,
+  questionEditing,
   selection,
   onSelectNode,
   onSelectLink,
@@ -142,9 +165,15 @@ export function SessionFlowSankey({
   // "journeys" on the swarm panel, "goals" on the scenario one.
   const goalNoun = (stageTitles?.goal ?? STAGE_TITLES.goal).toLowerCase();
 
-  const titles = useMemo(
-    () => ({ ...STAGE_TITLES, ...stageTitles }),
-    [stageTitles],
+  const titles = useMemo<Record<SankeyStage, string>>(
+    () => ({
+      ...STAGE_TITLES,
+      ...Object.fromEntries(
+        (sankey?.stages ?? []).map((stage) => [stage.id, stage.label]),
+      ),
+      ...stageTitles,
+    }),
+    [stageTitles, sankey?.stages],
   );
 
   /**
@@ -210,11 +239,28 @@ export function SessionFlowSankey({
     );
   }
 
-  const selectedKeys = new Set(
-    (selection?.themes ?? []).map(
+  const selectedKeys = new Set([
+    ...(selection?.themes ?? []).map(
       (theme) => `${theme.dimension}:${theme.clusterId}`,
     ),
-  );
+    ...(selection?.questions ?? []).map(
+      (q) => `question:${q.questionId}:${q.value ? "yes" : "no"}`,
+    ),
+  ]);
+  const stages = sankey?.stages?.map((stage) => stage.id) ?? STAGE_ORDER;
+  // Hue by position in the catalog order the server sent, so a column keeps
+  // its colour for as long as the question exists.
+  const colors = {
+    ...STAGE_COLOR,
+    ...Object.fromEntries(
+      stages
+        .filter((stage) => stage.startsWith("question:"))
+        .map((stage, index) => [
+          stage,
+          QUESTION_COLOR[index % QUESTION_COLOR.length],
+        ]),
+    ),
+  };
 
   return (
     <div
@@ -320,18 +366,39 @@ export function SessionFlowSankey({
 
       <FlowSankeyDiagram
         sankey={sankey}
-        stages={STAGE_ORDER}
+        stages={stages}
         stageTitles={titles}
-        stageColors={STAGE_COLOR}
+        stageColors={colors}
+        headerContent={questionHeaders}
+        headerTrailing={questionCreate}
+        headerHeight={
+          questionEditing
+            ? 160
+            : questionCreate || questionHeaders
+            ? 38
+            : undefined
+        }
         unitNoun="sessions"
         discordantHighlight
         selectedKeys={selectedKeys}
         onSelectNode={(node) => {
           const next = selectionForNode(node);
+          if (next?.questions)
+            next.questions = next.questions.map((q) => ({
+              ...q,
+              label: `${titles[node.stage]}: ${q.value ? "Yes" : "No"}`,
+            }));
           if (next) onSelectNode(next);
         }}
         onSelectLink={(source, target) => {
           const next = selectionForLink(source, target);
+          if (next?.questions)
+            next.questions = next.questions.map((q) => ({
+              ...q,
+              label: `${titles[`question:${q.questionId}`]}: ${
+                q.value ? "Yes" : "No"
+              }`,
+            }));
           if (next) onSelectLink(next);
         }}
         isSelectable={(node) => selectionForNode(node) !== null}
