@@ -1,4 +1,11 @@
-import { useCallback, useId, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import type {
   InsightsSankey,
@@ -137,9 +144,15 @@ export function FlowSankeyDiagram<S extends string>({
   fillHeight = false,
   fillRemainingViewport = false,
   labelForNode,
+  headerContent,
+  headerTrailing,
+  headerHeight = HEADER_HEIGHT,
   isSelectable,
   isLinkSelectable,
 }: {
+  headerContent?: Partial<Record<S, ReactNode>>;
+  headerTrailing?: ReactNode;
+  headerHeight?: number;
   sankey: InsightsSankey<S>;
   stages: readonly S[];
   stageTitles: Record<S, string>;
@@ -178,6 +191,11 @@ export function FlowSankeyDiagram<S extends string>({
     target: InsightsSankeyNode<S>,
   ) => boolean;
 }) {
+  // The canvas widens with the column count instead of squeezing columns into a
+  // fixed width, and reserves a strip on the right for the authoring control so
+  // it cannot land on top of the last column's labels.
+  const authoringWidth = headerTrailing ? 240 : 0;
+  const viewWidth = Math.max(VIEW_WIDTH, stages.length * 260) + authoringWidth;
   const [hovered, setHovered] = useState<string | null>(null);
   const [readout, setReadout] = useState<string | null>(null);
   const pane = usePaneSize(fillHeight && !fillRemainingViewport);
@@ -221,7 +239,7 @@ export function FlowSankeyDiagram<S extends string>({
       return contentHeight;
     }
     const available = Math.round(
-      (chartPaneSize.height / chartPaneSize.width) * VIEW_WIDTH - HEADER_HEIGHT,
+      (chartPaneSize.height / chartPaneSize.width) * viewWidth - headerHeight,
     );
     return Math.max(contentHeight, available);
   }, [
@@ -230,25 +248,27 @@ export function FlowSankeyDiagram<S extends string>({
     chartPaneSize.height,
     chartPaneSize.width,
     contentHeight,
+    viewWidth,
+    headerHeight,
   ]);
 
   const layout = useMemo(() => {
     if (sankey.nodes.length === 0) return null;
-    const usable = VIEW_WIDTH - LABEL_GUTTER;
+    const usable = viewWidth - LABEL_GUTTER - authoringWidth;
     const lastIndex = Math.max(1, stages.length - 1);
     const columnX = stages.map(
       (_, index) => 40 + (index * (usable - SANKEY_NODE_WIDTH)) / lastIndex,
     );
-    return layoutSankey(sankey, VIEW_WIDTH, height, columnX, stages);
-  }, [sankey, height, stages]);
+    return layoutSankey(sankey, viewWidth, height, columnX, stages);
+  }, [sankey, height, stages, viewWidth, authoringWidth]);
 
   const chartNeedsScroll =
     fillHeight &&
     !fillRemainingViewport &&
     chartPaneSize.height > 0 &&
-    height + HEADER_HEIGHT >
+    height + headerHeight >
       (chartPaneSize.width > 0
-        ? (chartPaneSize.height / chartPaneSize.width) * VIEW_WIDTH
+        ? (chartPaneSize.height / chartPaneSize.width) * viewWidth
         : 0) +
         1;
 
@@ -261,11 +281,16 @@ export function FlowSankeyDiagram<S extends string>({
         className={cn(
           "w-full min-w-0",
           fillHeight && !fillRemainingViewport && "min-h-0 flex-1",
-          chartNeedsScroll ? "overflow-auto" : "overflow-hidden",
+          chartNeedsScroll || stages.length > 4
+            ? "overflow-auto"
+            : "overflow-hidden",
         )}
       >
         <svg
-          viewBox={`0 0 ${VIEW_WIDTH} ${height + HEADER_HEIGHT}`}
+          viewBox={`0 0 ${viewWidth} ${height + headerHeight}`}
+          style={
+            stages.length > 4 ? { minWidth: stages.length * 190 } : undefined
+          }
           role="group"
           aria-label={ariaLabel}
           preserveAspectRatio="xMidYMin meet"
@@ -277,17 +302,39 @@ export function FlowSankeyDiagram<S extends string>({
           )}
         >
           <g>
-            {stages.map((stage, index) => (
-              <text
-                key={stage}
-                x={layout.columnX[index]}
-                y={14}
-                fill={stageColors[stage].head}
-                className="text-[10.5px] font-semibold uppercase [letter-spacing:0.13em]"
+            {stages.map((stage, index) =>
+              headerContent?.[stage] ? (
+                <foreignObject
+                  key={stage}
+                  x={layout.columnX[index]}
+                  y={0}
+                  width={235}
+                  height={headerHeight}
+                >
+                  {headerContent[stage]}
+                </foreignObject>
+              ) : (
+                <text
+                  key={stage}
+                  x={layout.columnX[index]}
+                  y={14}
+                  fill={stageColors[stage].head}
+                  className="text-[10.5px] font-semibold uppercase [letter-spacing:0.13em]"
+                >
+                  {stageTitles[stage]}
+                </text>
+              ),
+            )}
+            {headerTrailing ? (
+              <foreignObject
+                x={viewWidth - 225}
+                y={0}
+                width={220}
+                height={headerHeight}
               >
-                {stageTitles[stage]}
-              </text>
-            ))}
+                {headerTrailing}
+              </foreignObject>
+            ) : null}
           </g>
 
           <defs>
@@ -320,7 +367,7 @@ export function FlowSankeyDiagram<S extends string>({
             ))}
           </defs>
 
-          <g transform={`translate(0, ${HEADER_HEIGHT})`}>
+          <g transform={`translate(0, ${headerHeight})`}>
             {layout.links.map((link, index) => {
               const id = `${link.source.id}→${link.target.id}`;
               const selectable =
@@ -367,7 +414,7 @@ export function FlowSankeyDiagram<S extends string>({
             })}
           </g>
 
-          <g transform={`translate(0, ${HEADER_HEIGHT})`}>
+          <g transform={`translate(0, ${headerHeight})`}>
             {layout.nodes.map((node) => {
               const selectable = !!onSelectNode && nodeSelectable(node);
               const emphasized =

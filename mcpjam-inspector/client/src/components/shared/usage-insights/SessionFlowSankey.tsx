@@ -19,7 +19,10 @@ import {
 } from "@/components/shared/usage-insights/insights-sankey";
 import { cn } from "@/lib/utils";
 
-interface SessionFlowSankeyProps {
+export interface SessionFlowSankeyProps {
+  questionHeaders?: Partial<Record<SankeyStage, ReactNode>>;
+  questionCreate?: ReactNode;
+  questionEditing?: boolean;
   breakdown: UsageBreakdown | null | undefined;
   /** Currently open selection, so its endpoints can read as selected. */
   selection: InsightsSelection | null;
@@ -114,6 +117,9 @@ function RebuildButton({
  */
 export function SessionFlowSankey({
   breakdown,
+  questionHeaders,
+  questionCreate,
+  questionEditing,
   selection,
   onSelectNode,
   onSelectLink,
@@ -142,9 +148,15 @@ export function SessionFlowSankey({
   // "journeys" on the swarm panel, "goals" on the scenario one.
   const goalNoun = (stageTitles?.goal ?? STAGE_TITLES.goal).toLowerCase();
 
-  const titles = useMemo(
-    () => ({ ...STAGE_TITLES, ...stageTitles }),
-    [stageTitles],
+  const titles = useMemo<Record<SankeyStage, string>>(
+    () => ({
+      ...STAGE_TITLES,
+      ...Object.fromEntries(
+        (sankey?.stages ?? []).map((stage) => [stage.id, stage.label]),
+      ),
+      ...stageTitles,
+    }),
+    [stageTitles, sankey?.stages],
   );
 
   /**
@@ -210,11 +222,26 @@ export function SessionFlowSankey({
     );
   }
 
-  const selectedKeys = new Set(
-    (selection?.themes ?? []).map(
+  const selectedKeys = new Set([
+    ...(selection?.themes ?? []).map(
       (theme) => `${theme.dimension}:${theme.clusterId}`,
     ),
-  );
+    ...(selection?.questions ?? []).map(
+      (q) => `question:${q.questionId}:${q.value ? "yes" : "no"}`,
+    ),
+  ]);
+  const stages = sankey?.stages?.map((stage) => stage.id) ?? STAGE_ORDER;
+  const colors = {
+    ...STAGE_COLOR,
+    ...Object.fromEntries(
+      stages
+        .filter((stage) => stage.startsWith("question:"))
+        .map((stage) => [
+          stage,
+          { node: "var(--foreground)", head: "var(--muted-foreground)" },
+        ]),
+    ),
+  };
 
   return (
     <div
@@ -320,18 +347,39 @@ export function SessionFlowSankey({
 
       <FlowSankeyDiagram
         sankey={sankey}
-        stages={STAGE_ORDER}
+        stages={stages}
         stageTitles={titles}
-        stageColors={STAGE_COLOR}
+        stageColors={colors}
+        headerContent={questionHeaders}
+        headerTrailing={questionCreate}
+        headerHeight={
+          questionEditing
+            ? 160
+            : questionCreate || questionHeaders
+            ? 38
+            : undefined
+        }
         unitNoun="sessions"
         discordantHighlight
         selectedKeys={selectedKeys}
         onSelectNode={(node) => {
           const next = selectionForNode(node);
+          if (next?.questions)
+            next.questions = next.questions.map((q) => ({
+              ...q,
+              label: `${titles[node.stage]}: ${q.value ? "Yes" : "No"}`,
+            }));
           if (next) onSelectNode(next);
         }}
         onSelectLink={(source, target) => {
           const next = selectionForLink(source, target);
+          if (next?.questions)
+            next.questions = next.questions.map((q) => ({
+              ...q,
+              label: `${titles[`question:${q.questionId}`]}: ${
+                q.value ? "Yes" : "No"
+              }`,
+            }));
           if (next) onSelectLink(next);
         }}
         isSelectable={(node) => selectionForNode(node) !== null}
