@@ -157,7 +157,7 @@ describe("serverDraftToFormData in hosted mode", () => {
       );
       expect(
         hostedAdapter({ name: "x", url: "http://insecure.com/mcp" }),
-      ).toEqual({ ok: false, error: "Hosted mode requires HTTPS server URLs" });
+      ).toEqual({ ok: false, error: "MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app." });
     } finally {
       vi.doUnmock("@/lib/config");
       vi.resetModules();

@@ -4321,7 +4321,7 @@ export default function App() {
     if (!HOSTED_MODE || !isHostedTabBlocked(activeTab)) {
       return;
     }
-    toast.error(`${activeTab} is not available in hosted mode.`);
+    toast.error("Tracing isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.");
     setActiveOrganizationId(undefined);
     if (window.location.pathname !== routePaths.servers) {
       navigateApp(routePaths.servers, { replace: true });

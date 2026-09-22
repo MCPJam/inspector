@@ -33,7 +33,7 @@ export function validateServerFormData(
     return `Invalid URL format: ${formData.url} ${err}`;
   }
   if (HOSTED_MODE && parsedUrl.protocol !== "https:") {
-    return "Hosted mode requires HTTPS server URLs";
+    return "MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.";
   }
   return null;
 }

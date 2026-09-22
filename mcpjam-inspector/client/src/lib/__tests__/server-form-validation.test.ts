@@ -55,7 +55,7 @@ describe("validateServerFormData", () => {
   it("rejects plain http in hosted mode", async () => {
     const validate = await importValidator(true);
     expect(validate(httpForm({ url: "http://localhost:8787/mcp" }))).toMatch(
-      /Hosted mode requires HTTPS/i,
+      /hosted web app requires an HTTPS/i,
     );
   });
 
