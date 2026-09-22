@@ -485,21 +485,21 @@ describe("SuiteIterationsView caseListInSidebar", () => {
     );
   });
   /*
-   * `suite.delete` IS in the backend's CI-locked set, so the trash on a
-   * CI-owned suite is a button whose only outcome is a `409` — the exact
-   * failure this change exists to replace, reached by the one verb that is
-   * not spelled "edit".
+   * DELETE SURVIVES BOTH LOCKS, and that is the whole point of this pair.
    *
-   * The prop answers by ROLE, and role is not the question: an org owner holds
-   * `suite.delete` on a CI-owned suite and still cannot use it.
+   * The test above passes `readOnlyConfig`; this one passes `configLocked`.
+   * Neither is about deleting. `readOnlyConfig` means "this surface does not
+   * offer suite controls"; `configLocked` means "this suite's configuration
+   * lives in a repository". Deleting edits no configuration — it removes the
+   * row — so the ROLE prop is the whole answer, and `suite.delete` is no
+   * longer in the backend's CI-locked set either.
    *
-   * Note the pairing with the test above: that one passes `readOnlyConfig` and
-   * still expects `true`. The two are deliberately different — `readOnlyConfig`
-   * is about editing configuration, and the platform refuses delete for
-   * ownership, not for that. Wiring delete to `editingDisabled` would pass this
-   * test and break that one, which is why both are here.
+   * Wiring delete back to `editingDisabled` or `configLocked` would restore
+   * the dead end from issue #5381: a suite the SDK re-mints on every
+   * `suiteName` change, with duplicate as the only "way out" and the original
+   * left behind. Both tests are here so that regression fails loudly.
    */
-  it("withholds suite delete from RunOverview when CI owns the suite", () => {
+  it("keeps suite delete on RunOverview when CI owns the suite", () => {
     render(
       withDataRouter(
       <SuiteIterationsView
@@ -534,7 +534,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
 
     expect(mocks.runOverview).toHaveBeenCalledWith(
       expect.objectContaining({
-        canDeleteSuite: false,
+        canDeleteSuite: true,
       })
     );
   })
@@ -585,12 +585,13 @@ describe("SuiteIterationsView caseListInSidebar", () => {
       />,)
     );
 
-    // `RunOverview` takes no `configLocked` — every control it renders runs or
-    // stops a run, none edits — so the lock shows up here as the withdrawn
-    // delete, and on the header as the withheld case authoring.
+    // `RunOverview` takes no `configLocked` — every control it renders runs,
+    // stops a run, or deletes the suite, and none of those edits the suite —
+    // so delete is untouched here and the lock shows up on the header as the
+    // withheld case authoring.
     expect(mocks.runOverview).toHaveBeenCalledWith(
       expect.objectContaining({
-        canDeleteSuite: false,
+        canDeleteSuite: true,
       })
     );
 
