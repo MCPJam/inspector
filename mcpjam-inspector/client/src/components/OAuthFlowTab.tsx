@@ -280,7 +280,20 @@ export const OAuthFlowTab = ({
     oauthFlowStateRef.current = oauthFlowState;
   }, [oauthFlowState]);
 
+  // Every applyOAuthFlowState caller REPLACES the flow (server switch, Reset,
+  // profile save) rather than merging into it, so each one starts a new
+  // generation. A step that was already in flight keeps the generation it
+  // started in, and its late writes are dropped below: `updateState` merges,
+  // so a step resolving after a reset would otherwise re-advance `currentStep`
+  // onto a state whose discovery metadata and client id the reset just
+  // cleared, and the next click failed with "Missing authorization endpoint or
+  // client ID". The Reset button and the agent's ui_reset_oauth_flow already
+  // refuse while `isInitiatingAuth`; the profile-save reset cannot.
+  const flowGenerationRef = useRef(0);
+  const machineRunGenerationRef = useRef(0);
+
   const applyOAuthFlowState = useCallback((next: OAuthFlowState) => {
+    flowGenerationRef.current += 1;
     oauthFlowStateRef.current = next;
     setOAuthFlowState(next);
   }, []);
@@ -331,6 +344,19 @@ export const OAuthFlowTab = ({
       setOAuthFlowState((prev) => ({ ...prev, ...updates }));
     },
     [],
+  );
+
+  // The state machine's only writer. Direct callers of updateOAuthFlowState
+  // (log clearing, the callback handler) are user actions on the CURRENT flow
+  // and stay unguarded; a machine step belongs to the generation it started in.
+  const updateOAuthFlowStateFromMachine = useCallback(
+    (updates: Partial<OAuthFlowState>) => {
+      if (machineRunGenerationRef.current !== flowGenerationRef.current) {
+        return;
+      }
+      updateOAuthFlowState(updates);
+    },
+    [updateOAuthFlowState],
   );
 
   const processedCodeRef = useRef<string | null>(null);
@@ -389,7 +415,7 @@ export const OAuthFlowTab = ({
       protocolVersion,
       state: oauthFlowStateRef.current,
       getState: () => oauthFlowStateRef.current,
-      updateState: updateOAuthFlowState,
+      updateState: updateOAuthFlowStateFromMachine,
       serverUrl: profile.serverUrl,
       serverName: serverIdentifier,
       customScopes: profile.scopes.trim() || undefined,
@@ -417,11 +443,12 @@ export const OAuthFlowTab = ({
     customHeaders,
     registrationStrategy,
     activeServer?.hasClientSecret,
-    updateOAuthFlowState,
+    updateOAuthFlowStateFromMachine,
   ]);
 
   const proceedToNextStep = useCallback(async () => {
     if (oauthStateMachine) {
+      machineRunGenerationRef.current = flowGenerationRef.current;
       await oauthStateMachine.proceedToNextStep();
     }
   }, [oauthStateMachine]);
@@ -772,6 +799,7 @@ export const OAuthFlowTab = ({
       exchangeTimeoutRef.current = setTimeout(() => {
         exchangeTimeoutRef.current = null;
         setIsAdvancing(true);
+        machineRunGenerationRef.current = flowGenerationRef.current;
         // This promise had no rejection handler: a token exchange that threw
         // left the UI frozen mid-flow with nothing logged anywhere.
         Promise.resolve(oauthStateMachine?.proceedToNextStep())
