@@ -20,7 +20,8 @@ const MOVED_CLOUD_GROUPS = [
   "sessions",
   "clients",
   "environments",
-  "journeys",
+  // `journeys` survives as an ALIAS of this row — see the note on `studies`.
+  "goals",
   "personas",
   "swarms",
   // The merged group. `scenarios` and `user-testing` survive as ALIASES, which

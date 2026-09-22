@@ -2416,12 +2416,12 @@ describe("operation catalog consistency", () => {
     list_studies: {},
     get_study: { study: "c" },
     list_chat_sessions: {},
-    list_journeys: {},
-    list_journey_runs: { journey: "j" },
-    get_journey_run: { run: "r" },
-    list_journey_run_sessions: { run: "r" },
-    launch_journey_run: { journey: "j" },
-    cancel_journey_run: { run: "r" },
+    list_goals: {},
+    list_goal_runs: { goalId: "j" },
+    get_goal_run: { run: "r" },
+    list_goal_run_sessions: { run: "r" },
+    launch_goal_run: { goalId: "j" },
+    cancel_goal_run: { run: "r" },
     publish_study: { environment: "e" },
     unpublish_study: { environment: "e" },
     get_capabilities: {},
@@ -2468,16 +2468,18 @@ describe("operation catalog consistency", () => {
       destination: "td",
     },
     generate_personas: { environmentId: "e" },
-    get_journey: { journey: "j" },
-    create_journey: {
+    // The deprecated spelling, kept here so the alias fold stays exercised
+    // by the ratchet that parses every minimal input.
+    get_goal: { journey: "j" },
+    create_goal: {
       goal: "buy a thing",
       persona: "pe",
-      sessionsPerTarget: 1,
+      iterations: 1,
       maxTurns: 8,
     },
-    update_journey: { journey: "j", goal: "buy two things" },
-    archive_journey: { journey: "j" },
-    generate_journeys: {
+    update_goal: { goalId: "j", goal: "buy two things" },
+    archive_goal: { goalId: "j" },
+    generate_goals: {
       environmentId: "e",
       persona: { name: "Ada", role: "buyer" },
     },
@@ -2487,7 +2489,7 @@ describe("operation catalog consistency", () => {
     update_swarm: { swarm: "sw", name: "checkout v2" },
     archive_swarm: { swarm: "sw" },
     get_swarms_overview: {},
-    get_journey_run_scorecard: { run: "r" },
+    get_goal_run_scorecard: { run: "r" },
     list_swarm_findings: {},
     dismiss_swarm_finding: { finding: "f" },
     undismiss_swarm_finding: { finding: "f" },
@@ -2610,7 +2612,13 @@ describe("operation catalog consistency", () => {
         `missing fixture for ${operation.name}`
       ).toBeDefined();
       expect(operation.name).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
-      expect(operation.inputSchema.safeParse(minimalInput).success).toBe(true);
+      const parsed = operation.inputSchema.safeParse(minimalInput);
+      // The failure message names the operation: with 200-odd fixtures, a bare
+      // `expected false to be true` costs a bisect to find which one moved.
+      expect(
+        parsed.success,
+        `${operation.name}: ${JSON.stringify((parsed as { error?: { issues?: unknown } }).error?.issues)}`
+      ).toBe(true);
     }
     expect(
       showServersOperation.inputSchema.safeParse({ project: "" }).success
@@ -2706,9 +2714,9 @@ describe("operation catalog consistency", () => {
       "name_environment",
       // Launching starts a fan-out that SPENDS model credits — the most
       // consequential write on this surface.
-      "launch_journey_run",
+      "launch_goal_run",
       // Cancelling settles a run's attempts — a state change, not a read.
-      "cancel_journey_run",
+      "cancel_goal_run",
       // Scenarios: publishing exposes an environment to people outside the
       // project, unpublishing tears that down. Both are writes.
       "publish_study",
@@ -2723,7 +2731,7 @@ describe("operation catalog consistency", () => {
       "reset_computer",
       "delete_sandbox_image",
       // Swarms authoring. Creating a persona or a journey persists but starts
-      // nothing and spends nothing — `launch_journey_run` above is the call
+      // nothing and spends nothing — `launch_goal_run` above is the call
       // that costs.
       "create_persona",
       "update_persona",
@@ -2746,9 +2754,9 @@ describe("operation catalog consistency", () => {
       "pause_trace_destination",
       "resume_trace_destination",
       "backfill_trace_destination",
-      "create_journey",
-      "update_journey",
-      "archive_journey",
+      "create_goal",
+      "update_goal",
+      "archive_goal",
       "create_swarm",
       "update_swarm",
       "archive_swarm",
@@ -2756,7 +2764,7 @@ describe("operation catalog consistency", () => {
       // on the organization's account, and a read that spends is a lie about
       // what calling it costs.
       "generate_personas",
-      "generate_journeys",
+      "generate_goals",
       // Insights: dismissal is a judgement someone recorded, and requesting a
       // pass spends against the org's shared daily budget.
       "dismiss_swarm_finding",

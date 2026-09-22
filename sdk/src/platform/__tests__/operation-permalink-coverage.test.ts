@@ -35,11 +35,11 @@ const ROUTE_DEBT_ALLOWLIST: Readonly<Record<string, string>> = {
   build_sandbox_image: "computer/images/:imageId",
   promote_sandbox_image: "computer/images/:imageId",
   // Journeys and personas: edited inside the Swarms surface as component state.
-  list_journeys: "swarms/journeys/:journeyId",
-  get_journey: "swarms/journeys/:journeyId",
-  create_journey: "swarms/journeys/:journeyId",
-  update_journey: "swarms/journeys/:journeyId",
-  generate_journeys: "swarms/journeys/:journeyId",
+  list_goals: "swarms/journeys/:journeyId",
+  get_goal: "swarms/journeys/:journeyId",
+  create_goal: "swarms/journeys/:journeyId",
+  update_goal: "swarms/journeys/:journeyId",
+  generate_goals: "swarms/journeys/:journeyId",
   list_personas: "swarms/personas/:personaId",
   // Readiness runs: the /conformance section rediscovers the LATEST run for a
   // server, so no query parameter or segment can address a specific one.
@@ -157,7 +157,7 @@ describe("every catalog operation declares a permalink policy", () => {
       "generate_eval_cases",
       "create_project",
       "create_persona",
-      "launch_journey_run",
+      "launch_goal_run",
       "start_conformance_run",
       "get_conformance_run",
       "start_claude_readiness_run",

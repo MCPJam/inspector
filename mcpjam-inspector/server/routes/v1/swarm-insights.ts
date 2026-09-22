@@ -35,9 +35,11 @@
  * documents.
  */
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
 import { createConvexClient } from "./convex-client.js";
+import { markDeprecated } from "./deprecation.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
@@ -181,13 +183,20 @@ function toOverviewDto(row: OverviewRow) {
   return {
     runs: row.runs.map((run) => ({
       runId: run.runId,
+      // `get_swarms_overview` KEPT its name through the goal rename, so this
+      // shape has no renamed twin to carry the new spellings. It emits both
+      // until GA: the `goal*`/`swarmRunId` names are canonical, the
+      // `journey*`/`waveId` ones are here for callers written before it.
+      goalId: run.journeyRefId,
+      goalName: run.journeyName,
+      goalArchived: run.journeyArchived,
       journeyId: run.journeyRefId,
       journeyName: run.journeyName,
       journeyArchived: run.journeyArchived,
       personaName: run.personaName,
       status: run.status,
       ...(run.swarmRunGroupId !== undefined
-        ? { waveId: run.swarmRunGroupId }
+        ? { swarmRunId: run.swarmRunGroupId, waveId: run.swarmRunGroupId }
         : {}),
       summary: run.summary,
       goalCompletion: run.goalScoreSummary
@@ -213,7 +222,7 @@ function toOverviewDto(row: OverviewRow) {
          * regression by an order of magnitude.
          */
         sessionsGraded: finding.sessionsGraded,
-        /** Consecutive runs of this journey where the criterion failed. */
+        /** Consecutive runs of this goal where the criterion failed. */
         runStreak: finding.runStreak,
       })),
       targets: run.targets.map((target) => ({
@@ -360,30 +369,59 @@ async function requireFindingInProject(
 
 // ── Reads ───────────────────────────────────────────────────────────────────
 
-// GET /v1/projects/:projectId/journeys-overview
-//
-// NOT `/journeys/overview`: that path would be matched by the
-// `/journeys/:journeyId` route registered in `./journeys.ts`, and which one
-// won would depend on mount order — a caller asking for the overview would
-// intermittently get a 404 for a journey named "overview". A distinct segment
-// cannot collide.
-swarmInsights.get("/projects/:projectId/journeys-overview", async (c) => {
-  const projectId = c.req.param("projectId");
-  const client = createConvexClient(await getConvexBearerForRequest(c));
-  let row: OverviewRow;
-  try {
-    row = (await client.query(
-      "journeyRuns:getSwarmOverview" as never,
-      { projectId } as never
-    )) as OverviewRow;
-  } catch (error) {
-    throw translateReadError(error);
-  }
-  return v1Resource(c, toOverviewDto(row));
-});
+/**
+ * Register one route under its canonical path and its pre-rename alias.
+ *
+ * Same handler, same authorization, same body — only the path differs, so the
+ * alias carries `Deprecation: true` and nothing else about it is special.
+ * Deleted at GA. The operations reached through these paths KEPT their names
+ * (`get_swarms_overview`, `list_swarm_findings`); it is the routes underneath
+ * them that moved with the noun.
+ */
+function both(
+  method: "get" | "post",
+  canonicalPath: string,
+  legacyPath: string,
+  handler: (c: Context) => Promise<Response>
+): void {
+  swarmInsights[method](canonicalPath, handler);
+  swarmInsights[method](legacyPath, (c) => {
+    markDeprecated(c, `/api/v1${canonicalPath.replace(/:(\w+)/g, "{$1}")}`);
+    return handler(c);
+  });
+}
 
-// GET /v1/projects/:projectId/journey-runs/:runId/scorecard
-swarmInsights.get(
+// GET /v1/projects/:projectId/goals-overview   (alias: /journeys-overview)
+//
+// NOT `/goals/overview`: that path would be matched by the `/goals/:goalId`
+// route registered in `./goals.ts`, and which one won would depend on mount
+// order — a caller asking for the overview would intermittently get a 404 for
+// a goal named "overview". A distinct segment cannot collide.
+both(
+  "get",
+  "/projects/:projectId/goals-overview",
+  "/projects/:projectId/journeys-overview",
+  async (c) => {
+    const projectId = c.req.param("projectId");
+    const client = createConvexClient(await getConvexBearerForRequest(c));
+    let row: OverviewRow;
+    try {
+      row = (await client.query(
+        "journeyRuns:getSwarmOverview" as never,
+        { projectId } as never
+      )) as OverviewRow;
+    } catch (error) {
+      throw translateReadError(error);
+    }
+    return v1Resource(c, toOverviewDto(row));
+  }
+);
+
+// GET /v1/projects/:projectId/goal-runs/:runId/scorecard
+//   (alias: /journey-runs/:runId/scorecard)
+both(
+  "get",
+  "/projects/:projectId/goal-runs/:runId/scorecard",
   "/projects/:projectId/journey-runs/:runId/scorecard",
   async (c) => {
     const projectId = c.req.param("projectId");
@@ -414,13 +452,18 @@ swarmInsights.get(
   }
 );
 
-// GET /v1/projects/:projectId/journey-findings
-swarmInsights.get("/projects/:projectId/journey-findings", async (c) => {
-  const projectId = c.req.param("projectId");
-  const client = createConvexClient(await getConvexBearerForRequest(c));
-  const rows = await listFindingRows(client, projectId);
-  return v1PageJson(c, rows.map(toFindingDto));
-});
+// GET /v1/projects/:projectId/goal-findings   (alias: /journey-findings)
+both(
+  "get",
+  "/projects/:projectId/goal-findings",
+  "/projects/:projectId/journey-findings",
+  async (c) => {
+    const projectId = c.req.param("projectId");
+    const client = createConvexClient(await getConvexBearerForRequest(c));
+    const rows = await listFindingRows(client, projectId);
+    return v1PageJson(c, rows.map(toFindingDto));
+  }
+);
 
 // GET /v1/projects/:projectId/waves/:waveId/insights
 swarmInsights.get("/projects/:projectId/waves/:waveId/insights", async (c) => {
@@ -546,8 +589,11 @@ swarmInsights.delete(
   }
 );
 
-// POST /v1/projects/:projectId/journey-findings/:findingId/dismiss
-swarmInsights.post(
+// POST /v1/projects/:projectId/goal-findings/:findingId/dismiss
+//   (alias: /journey-findings/:findingId/dismiss)
+both(
+  "post",
+  "/projects/:projectId/goal-findings/:findingId/dismiss",
   "/projects/:projectId/journey-findings/:findingId/dismiss",
   async (c) => {
     const projectId = c.req.param("projectId");
@@ -566,12 +612,15 @@ swarmInsights.post(
   }
 );
 
-// POST /v1/projects/:projectId/journey-findings/:findingId/undismiss
+// POST /v1/projects/:projectId/goal-findings/:findingId/undismiss
+//   (alias: /journey-findings/:findingId/undismiss)
 //
 // The counterpart, and it earns its own route rather than a PATCH with a
 // boolean: dismissing is a judgement someone made, and undoing it is a
 // deliberate act, not a field edit.
-swarmInsights.post(
+both(
+  "post",
+  "/projects/:projectId/goal-findings/:findingId/undismiss",
   "/projects/:projectId/journey-findings/:findingId/undismiss",
   async (c) => {
     const projectId = c.req.param("projectId");

@@ -45,7 +45,7 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
   getBackgroundRunBearerForRequest: async () => async () => "convex-jwt",
 }));
 
-import journeys from "../journeys.js";
+import goals from "../goals.js";
 import personas from "../personas.js";
 import swarms from "../swarms.js";
 import swarmInsights from "../swarm-insights.js";
@@ -226,7 +226,7 @@ describe("journey authoring", () => {
     // membership of whatever project it lives in — so without the preflight a
     // member of both could author a journey in A that runs B's persona.
     queryMock.mockResolvedValue([personaRow({ _id: "persona_in_a" })]);
-    const res = await call(journeys, "POST", `/projects/${PROJECT}/journeys`, {
+    const res = await call(goals, "POST", `/projects/${PROJECT}/journeys`, {
       body: {
         goal: "buy a thing",
         personaId: "persona_in_b",
@@ -246,7 +246,7 @@ describe("journey authoring", () => {
           : { _id: "swarm_1", projectId: OTHER_PROJECT }
       )
     );
-    const res = await call(journeys, "POST", `/projects/${PROJECT}/journeys`, {
+    const res = await call(goals, "POST", `/projects/${PROJECT}/journeys`, {
       body: {
         goal: "buy a thing",
         personaId: "persona_1",

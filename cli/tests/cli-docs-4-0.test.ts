@@ -40,6 +40,8 @@ const MOVED_CLOUD_GROUPS = [
   "environments",
   "capabilities",
   "personas",
+  // Both spellings, for the same reason `hosts` sits beside `clients`.
+  "goals",
   "journeys",
   "swarms",
   // The merged group, and both spellings it still answers to. `scenarios` and

@@ -33,7 +33,7 @@ import builtInTools from "./built-in-tools.js";
 import environments from "./environments.js";
 import plugins from "./plugins.js";
 import skills from "./skills.js";
-import journeys from "./journeys.js";
+import goals from "./goals.js";
 import personas from "./personas.js";
 import secrets from "./secrets.js";
 import traceDestinations from "./trace-destinations.js";
@@ -167,19 +167,20 @@ v1.route("/", plugins);
 // by default (no GUEST_ALLOWED_V1_RULES entry): the Convex reads are
 // member-gated, and a share-link visitor has no business enumerating skills.
 v1.route("/", skills);
-// Journeys + journey runs — the public API for Swarms. Flag-gated beta
+// Goals + goal runs — the public API for Swarms, with the pre-rename
+// `/journeys` paths kept alongside as deprecated aliases. Flag-gated beta
 // (`sandboxes-enabled`, enforced server-side on writes), so these are absent
 // from the OpenAPI spec and from the MCP/agent/workspace catalogs until GA.
 // Guest-DENIED by default: no GUEST_ALLOWED_V1_RULES entry matches them, and
-// none should — a journey run spends hosted-model credits.
+// none should — a goal run spends hosted-model credits.
 // GENERATION MOUNTS FIRST, and the order is load-bearing rather than
-// stylistic: `/personas/generate` and `/journeys/generate` are static segments
-// that would otherwise be matched by the `:personaId` / `:journeyId` params in
+// stylistic: `/personas/generate` and `/goals/generate` are static segments
+// that would otherwise be matched by the `:personaId` / `:goalId` params in
 // the routers below, turning both endpoints into 404s for a resource called
 // "generate". Registering them ahead of the parameterised routes is the fix;
 // keeping them in their own module is what makes the requirement visible.
 v1.route("/", swarmGenerateV1);
-v1.route("/", journeys);
+v1.route("/", goals);
 // Personas and swarm containers — the authoring half of Swarms. Same beta
 // gate, same guest denial: authoring is a member-only surface end to end.
 v1.route("/", personas);

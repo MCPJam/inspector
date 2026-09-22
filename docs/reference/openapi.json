@@ -8493,14 +8493,14 @@
         }
       }
     },
-    "/projects/{projectId}/journeys/generate": {
+    "/projects/{projectId}/goals/generate": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         }
       ],
       "post": {
-        "operationId": "generateJourneys",
+        "operationId": "generateGoals",
         "tags": ["Swarms"],
         "summary": "Draft journeys for a persona",
         "description": "Returns DRAFTS and persists nothing — see `POST /projects/{projectId}/personas/generate` for why, and for the quota this counts against.",
@@ -8510,7 +8510,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/JourneyGenerateRequest"
+                "$ref": "#/components/schemas/GoalGenerateRequest"
               }
             }
           }
@@ -8547,17 +8547,17 @@
         }
       }
     },
-    "/projects/{projectId}/journeys/{journeyId}": {
+    "/projects/{projectId}/goals/{goalId}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/journeyId"
+          "$ref": "#/components/parameters/goalId"
         }
       ],
       "get": {
-        "operationId": "getJourney",
+        "operationId": "getGoal",
         "tags": ["Swarms"],
         "summary": "Get a journey",
         "responses": {
@@ -8566,7 +8566,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Journey"
+                  "$ref": "#/components/schemas/Goal"
                 }
               }
             }
@@ -8589,7 +8589,7 @@
         }
       },
       "patch": {
-        "operationId": "updateJourney",
+        "operationId": "updateGoal",
         "tags": ["Swarms"],
         "summary": "Update a journey",
         "description": "Editing a journey never disturbs a run already under way: a run pins its own immutable snapshot of the definition at launch.",
@@ -8599,7 +8599,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/JourneyUpdateRequest"
+                "$ref": "#/components/schemas/GoalUpdateRequest"
               }
             }
           }
@@ -8610,7 +8610,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Journey"
+                  "$ref": "#/components/schemas/Goal"
                 }
               }
             }
@@ -8636,7 +8636,7 @@
         }
       },
       "delete": {
-        "operationId": "archiveJourney",
+        "operationId": "archiveGoal",
         "tags": ["Swarms"],
         "summary": "Archive a journey",
         "description": "ARCHIVES rather than deletes, and the response says so. Existing runs keep pointing at the definition they executed, so their history stays readable.",
@@ -8646,7 +8646,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JourneyArchived"
+                  "$ref": "#/components/schemas/GoalArchived"
                 }
               }
             }
@@ -8894,14 +8894,14 @@
         }
       }
     },
-    "/projects/{projectId}/journeys": {
+    "/projects/{projectId}/goals": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         }
       ],
       "get": {
-        "operationId": "listJourneys",
+        "operationId": "listGoals",
         "tags": ["Swarms"],
         "summary": "List journeys",
         "description": "The project's journeys, newest first. Archived journeys are excluded.",
@@ -8914,7 +8914,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JourneyPage"
+                  "$ref": "#/components/schemas/GoalPage"
                 }
               }
             }
@@ -8937,7 +8937,7 @@
         }
       },
       "post": {
-        "operationId": "createJourney",
+        "operationId": "createGoal",
         "tags": ["Swarms"],
         "summary": "Create a journey",
         "description": "Creates one journey: a persona pursuing a `goal` against one or more environments. To draft several with a model first, use `POST /projects/{projectId}/journeys/generate` — that route persists nothing.\n\n`personaId` and `swarmId` must belong to THIS project. Naming one from another project is a `404`, not a silent cross-project reference.\n\nCreating a journey does not run it. Launch it with `POST /projects/{projectId}/journeys/{journeyId}/runs`.",
@@ -8958,7 +8958,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/JourneyCreateRequest"
+                "$ref": "#/components/schemas/GoalCreateRequest"
               }
             }
           }
@@ -8969,7 +8969,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Journey"
+                  "$ref": "#/components/schemas/Goal"
                 }
               }
             }
@@ -8998,17 +8998,17 @@
         }
       }
     },
-    "/projects/{projectId}/journeys/{journeyId}/runs": {
+    "/projects/{projectId}/goals/{goalId}/runs": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/journeyId"
+          "$ref": "#/components/parameters/goalId"
         }
       ],
       "get": {
-        "operationId": "listJourneyRuns",
+        "operationId": "listGoalRuns",
         "tags": ["Swarm runs"],
         "summary": "List a journey's runs",
         "description": "Newest first. Compact records — `attempts` is on the single-run read.",
@@ -9021,7 +9021,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JourneyRunPage"
+                  "$ref": "#/components/schemas/GoalRunPage"
                 }
               }
             }
@@ -9044,7 +9044,7 @@
         }
       },
       "post": {
-        "operationId": "launchJourneyRun",
+        "operationId": "launchGoalRun",
         "tags": ["Swarm runs"],
         "summary": "Launch a journey",
         "description": "Answers **202**: the run row exists and its fan-out has started. It is not finished — poll `GET /projects/{projectId}/journey-runs/{runId}` until `status` leaves `running`.\n\n**SPENDS.** A launch fans out into `targets × sessionsPerTarget` chat sessions, every one of which runs a model on your organization's account.\n\nTwo different 429s can come back and they mean different waits: the per-minute burst brake (retry in seconds) and your plan's daily launch cap (resets at UTC midnight). Both normally carry `Retry-After` — honor it when it is there, and back off on your own when it is not, rather than blocking on a header that may not come. A retried `Idempotency-Key` consumes NO quota.",
@@ -9065,7 +9065,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/JourneyRunLaunchRequest"
+                "$ref": "#/components/schemas/GoalRunLaunchRequest"
               }
             }
           }
@@ -9076,7 +9076,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JourneyRunLaunched"
+                  "$ref": "#/components/schemas/GoalRunLaunched"
                 }
               }
             }
@@ -9105,7 +9105,7 @@
         }
       }
     },
-    "/projects/{projectId}/journey-runs/{runId}": {
+    "/projects/{projectId}/goal-runs/{runId}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9115,7 +9115,7 @@
         }
       ],
       "get": {
-        "operationId": "getJourneyRun",
+        "operationId": "getGoalRun",
         "tags": ["Swarm runs"],
         "summary": "Get a journey run",
         "description": "The full record, including per-session `attempts` and `targetSummaries`.\n\nRead `canceled` before reporting a failure: a stopped run carries `status: \"failed\"`.",
@@ -9125,7 +9125,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JourneyRun"
+                  "$ref": "#/components/schemas/GoalRun"
                 }
               }
             }
@@ -9148,7 +9148,7 @@
         }
       }
     },
-    "/projects/{projectId}/journey-runs/{runId}/sessions": {
+    "/projects/{projectId}/goal-runs/{runId}/sessions": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9158,7 +9158,7 @@
         }
       ],
       "get": {
-        "operationId": "listJourneyRunSessions",
+        "operationId": "listGoalRunSessions",
         "tags": ["Swarm runs"],
         "summary": "List a run's sessions",
         "description": "One entry per chat session the run produced. Summaries, not transcripts — read a transcript through the chat-session routes using `id`.",
@@ -9171,7 +9171,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JourneyRunSessionPage"
+                  "$ref": "#/components/schemas/GoalRunSessionPage"
                 }
               }
             }
@@ -9194,7 +9194,7 @@
         }
       }
     },
-    "/projects/{projectId}/journey-runs/{runId}/cancel": {
+    "/projects/{projectId}/goal-runs/{runId}/cancel": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9204,7 +9204,7 @@
         }
       ],
       "post": {
-        "operationId": "cancelJourneyRun",
+        "operationId": "cancelGoalRun",
         "tags": ["Swarm runs"],
         "summary": "Cancel a journey run",
         "description": "Stops a run and settles its in-flight attempts. IDEMPOTENT: cancelling an already-cancelled run answers 200 with `alreadyCanceled: true` and `finalized: 0`, not a 409.\n\nAddressed entirely by the path `runId` — there is no body.\n\nDeliberately NOT behind the beta gate: cancelling REDUCES exposure and spend, so an organization that loses the flag can still stop a run that is under way.",
@@ -9214,7 +9214,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JourneyRunCanceled"
+                  "$ref": "#/components/schemas/GoalRunCanceled"
                 }
               }
             }
@@ -9240,7 +9240,7 @@
         }
       }
     },
-    "/projects/{projectId}/journeys-overview": {
+    "/projects/{projectId}/goals-overview": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9280,7 +9280,7 @@
         }
       }
     },
-    "/projects/{projectId}/journey-runs/{runId}/scorecard": {
+    "/projects/{projectId}/goal-runs/{runId}/scorecard": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9290,7 +9290,7 @@
         }
       ],
       "get": {
-        "operationId": "getJourneyRunScorecard",
+        "operationId": "getGoalRunScorecard",
         "tags": ["Swarm insights"],
         "summary": "Get a run's rubric scorecard",
         "description": "The deterministic rubric result for one run. No model, no spend.\n\nDivide by `sessionsGraded`, never `sessionsTotal`, and keep `failedGradingCount` separate from `failCount` — a crashed judge is not a regression.",
@@ -9323,7 +9323,7 @@
         }
       }
     },
-    "/projects/{projectId}/journey-findings": {
+    "/projects/{projectId}/goal-findings": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9366,7 +9366,7 @@
         }
       }
     },
-    "/projects/{projectId}/journey-findings/{findingId}/dismiss": {
+    "/projects/{projectId}/goal-findings/{findingId}/dismiss": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9409,7 +9409,7 @@
         }
       }
     },
-    "/projects/{projectId}/journey-findings/{findingId}/undismiss": {
+    "/projects/{projectId}/goal-findings/{findingId}/undismiss": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -13616,11 +13616,11 @@
           "type": "string"
         }
       },
-      "journeyId": {
-        "name": "journeyId",
+      "goalId": {
+        "name": "goalId",
         "in": "path",
         "required": true,
-        "description": "Journey ID, as returned by the project's journey list.",
+        "description": "Goal ID, as returned by the project's goal list.",
         "schema": {
           "type": "string"
         }
@@ -25689,7 +25689,7 @@
           }
         }
       },
-      "Journey": {
+      "Goal": {
         "type": "object",
         "description": "A persona's task: what they are trying to accomplish, and across which targets. Launching one is `POST /projects/{projectId}/journeys/{journeyId}/runs`.",
         "required": [
@@ -25700,7 +25700,7 @@
           "personaId",
           "swarmId",
           "environmentIds",
-          "sessionsPerTarget",
+          "iterations",
           "maxTurns",
           "createdAt",
           "updatedAt"
@@ -25737,7 +25737,7 @@
             "type": "string",
             "description": "Legacy host-pinned grounding. Absent on an environment-based journey."
           },
-          "sessionsPerTarget": {
+          "iterations": {
             "type": ["integer", "null"],
             "description": "Sessions run against EACH target. Total sessions = targets × this."
           },
@@ -25758,14 +25758,14 @@
           }
         }
       },
-      "JourneyPage": {
+      "GoalPage": {
         "type": "object",
         "required": ["items"],
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Journey"
+              "$ref": "#/components/schemas/Goal"
             }
           },
           "nextCursor": {
@@ -25774,9 +25774,9 @@
           }
         }
       },
-      "JourneyCreateRequest": {
+      "GoalCreateRequest": {
         "type": "object",
-        "required": ["goal", "personaId", "sessionsPerTarget", "maxTurns"],
+        "required": ["goal", "personaId", "iterations", "maxTurns"],
         "additionalProperties": false,
         "properties": {
           "name": {
@@ -25814,7 +25814,7 @@
               "type": "string"
             }
           },
-          "sessionsPerTarget": {
+          "iterations": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100
@@ -25826,7 +25826,7 @@
           }
         }
       },
-      "JourneyUpdateRequest": {
+      "GoalUpdateRequest": {
         "type": "object",
         "description": "PATCH with a TRI-STATE, and the third state is the point: a field absent leaves it alone, present sets it, and `null` CLEARS it. There is no other way to say \"stop fanning this journey out across environments and go back to its host targets\".\n\n`sessionsPerTarget` and `maxTurns` must be sent TOGETHER — they are one config object upstream, so a partial update would need a read-modify-write that could silently clobber a concurrent edit. Requiring both is a 400 you can fix rather than a lost update you never see.",
         "additionalProperties": false,
@@ -25865,7 +25865,7 @@
               "type": "string"
             }
           },
-          "sessionsPerTarget": {
+          "iterations": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100
@@ -25877,7 +25877,7 @@
           }
         }
       },
-      "JourneyArchived": {
+      "GoalArchived": {
         "type": "object",
         "description": "Journeys ARCHIVE rather than delete: existing runs keep pointing at the definition they executed.",
         "required": ["id", "projectId", "archived"],
@@ -25896,13 +25896,14 @@
       },
       "Swarm": {
         "type": "object",
-        "description": "An authoring container for journeys. It holds DEFAULTS, not execution state — launching happens per journey.",
+        "description": "An authoring container for goals. It holds DEFAULTS, not execution state — launching happens per goal.",
         "required": [
           "id",
           "projectId",
           "name",
           "description",
           "environmentIds",
+          "iterations",
           "sessionsPerTarget",
           "maxTurns",
           "createdAt",
@@ -25926,10 +25927,16 @@
             "items": {
               "type": "string"
             },
-            "description": "Default fan-out for journeys authored under this container."
+            "description": "Default fan-out for goals authored under this container."
+          },
+          "iterations": {
+            "type": ["integer", "null"],
+            "description": "Sessions run against EACH target. Total sessions = targets x this."
           },
           "sessionsPerTarget": {
-            "type": ["integer", "null"]
+            "type": ["integer", "null"],
+            "deprecated": true,
+            "description": "Pre-rename spelling of `iterations`, emitted alongside it until general availability."
           },
           "maxTurns": {
             "type": ["integer", "null"]
@@ -25966,8 +25973,13 @@
       },
       "SwarmCreateRequest": {
         "type": "object",
-        "required": ["name", "sessionsPerTarget", "maxTurns"],
+        "description": "Send `iterations` or its deprecated `sessionsPerTarget` alias — exactly one of the two.",
+        "required": ["name", "maxTurns"],
         "additionalProperties": false,
+        "oneOf": [
+          { "required": ["iterations"] },
+          { "required": ["sessionsPerTarget"] }
+        ],
         "properties": {
           "name": {
             "type": "string",
@@ -25984,10 +25996,17 @@
             },
             "minItems": 1
           },
-          "sessionsPerTarget": {
+          "iterations": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100
+          },
+          "sessionsPerTarget": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "deprecated": true,
+            "description": "Pre-rename spelling of `iterations`. Accepted until general availability; never alongside it."
           },
           "maxTurns": {
             "type": "integer",
@@ -25998,9 +26017,10 @@
       },
       "SwarmUpdateRequest": {
         "type": "object",
-        "description": "Same tri-state as the journey patch (`null` clears), and the same rule that `sessionsPerTarget` and `maxTurns` travel together.",
+        "description": "Same tri-state as the goal patch (`null` clears), and the same rule that `iterations` (or its deprecated `sessionsPerTarget` alias, never both) and `maxTurns` travel together.",
         "additionalProperties": false,
         "minProperties": 1,
+        "not": { "required": ["iterations", "sessionsPerTarget"] },
         "properties": {
           "name": {
             "type": "string",
@@ -26024,10 +26044,17 @@
               }
             ]
           },
-          "sessionsPerTarget": {
+          "iterations": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100
+          },
+          "sessionsPerTarget": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "deprecated": true,
+            "description": "Pre-rename spelling of `iterations`. Accepted until general availability; never alongside it."
           },
           "maxTurns": {
             "type": "integer",
@@ -26096,7 +26123,7 @@
           }
         }
       },
-      "JourneyGenerateRequest": {
+      "GoalGenerateRequest": {
         "type": "object",
         "description": "Exactly ONE grounding source: `serverAttachmentId` or `environmentId`. Sending both is a 400 — a request that is already confused about what it wants should not have a winner picked for it.",
         "required": ["persona"],
@@ -26108,7 +26135,7 @@
           "environmentId": {
             "type": "string"
           },
-          "journeyCount": {
+          "goalCount": {
             "type": "integer"
           },
           "persona": {
@@ -26152,7 +26179,7 @@
                 "journeys": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/JourneyDraft"
+                    "$ref": "#/components/schemas/GoalDraft"
                   }
                 }
               }
@@ -26161,7 +26188,7 @@
           "journeys": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/JourneyDraft"
+              "$ref": "#/components/schemas/GoalDraft"
             }
           }
         }
@@ -26390,7 +26417,7 @@
           }
         }
       },
-      "JourneyDraft": {
+      "GoalDraft": {
         "type": "object",
         "required": ["goal"],
         "additionalProperties": true,
@@ -26420,7 +26447,7 @@
           }
         }
       },
-      "JourneyRunTarget": {
+      "GoalRunTarget": {
         "type": "object",
         "required": ["hostId"],
         "properties": {
@@ -26439,7 +26466,7 @@
           }
         }
       },
-      "JourneyRunAttempt": {
+      "GoalRunAttempt": {
         "type": "object",
         "description": "One session's execution record: (target, session index).",
         "required": [
@@ -26485,7 +26512,7 @@
           }
         }
       },
-      "JourneyRunSummary": {
+      "GoalRunSummary": {
         "type": "object",
         "required": ["total", "succeeded", "failed", "rateLimited"],
         "properties": {
@@ -26504,12 +26531,12 @@
           }
         }
       },
-      "JourneyRun": {
+      "GoalRun": {
         "type": "object",
         "required": [
           "id",
           "projectId",
-          "journeyId",
+          "goalId",
           "status",
           "canceled",
           "stale",
@@ -26524,10 +26551,10 @@
           "projectId": {
             "type": "string"
           },
-          "journeyId": {
+          "goalId": {
             "type": "string"
           },
-          "waveId": {
+          "swarmRunId": {
             "type": "string",
             "description": "The batch this run was launched with. Sibling runs of one co-launched wave share it; a solo relaunch is a wave of one. Absent on a run launched without one."
           },
@@ -26555,12 +26582,12 @@
             "description": "Raw marker behind `canceled` / `stale`."
           },
           "summary": {
-            "$ref": "#/components/schemas/JourneyRunSummary"
+            "$ref": "#/components/schemas/GoalRunSummary"
           },
           "targets": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/JourneyRunTarget"
+              "$ref": "#/components/schemas/GoalRunTarget"
             }
           },
           "persona": {
@@ -26591,7 +26618,7 @@
             "type": "array",
             "description": "Per-session execution records. Present on the single-run read only — lists stay compact.",
             "items": {
-              "$ref": "#/components/schemas/JourneyRunAttempt"
+              "$ref": "#/components/schemas/GoalRunAttempt"
             }
           },
           "targetSummaries": {
@@ -26652,14 +26679,14 @@
           }
         }
       },
-      "JourneyRunPage": {
+      "GoalRunPage": {
         "type": "object",
         "required": ["items"],
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/JourneyRun"
+              "$ref": "#/components/schemas/GoalRun"
             }
           },
           "nextCursor": {
@@ -26668,7 +26695,7 @@
           }
         }
       },
-      "JourneyRunSession": {
+      "GoalRunSession": {
         "type": "object",
         "required": [
           "id",
@@ -26699,7 +26726,7 @@
           "runId": {
             "type": "string"
           },
-          "journeyId": {
+          "goalId": {
             "type": "string"
           },
           "personaId": {
@@ -26857,14 +26884,14 @@
           }
         }
       },
-      "JourneyRunSessionPage": {
+      "GoalRunSessionPage": {
         "type": "object",
         "required": ["items"],
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/JourneyRunSession"
+              "$ref": "#/components/schemas/GoalRunSession"
             }
           },
           "nextCursor": {
@@ -26873,12 +26900,12 @@
           }
         }
       },
-      "JourneyRunLaunchRequest": {
+      "GoalRunLaunchRequest": {
         "type": "object",
         "description": "Optional. A launch with no options is a BODYLESS POST — omit the body entirely rather than sending `null`, which is rejected.",
         "additionalProperties": false,
         "properties": {
-          "waveId": {
+          "swarmRunId": {
             "type": "string",
             "maxLength": 64,
             "description": "Opaque id linking the sibling runs of one co-launched batch. Mint it yourself and reuse it across the launches you want grouped."
@@ -26893,15 +26920,15 @@
           }
         }
       },
-      "JourneyRunLaunched": {
+      "GoalRunLaunched": {
         "type": "object",
-        "required": ["id", "journeyId", "projectId", "status", "deduped"],
+        "required": ["id", "goalId", "projectId", "status", "deduped"],
         "properties": {
           "id": {
             "type": "string",
             "description": "The run id. Poll it, or stop it with `cancel`."
           },
-          "journeyId": {
+          "goalId": {
             "type": "string"
           },
           "projectId": {
@@ -26918,7 +26945,7 @@
           }
         }
       },
-      "JourneyRunCanceled": {
+      "GoalRunCanceled": {
         "type": "object",
         "required": [
           "id",
@@ -27165,6 +27192,9 @@
         "type": "object",
         "required": [
           "runId",
+          "goalId",
+          "goalName",
+          "goalArchived",
           "journeyId",
           "journeyName",
           "journeyArchived",
@@ -27180,15 +27210,30 @@
           "runId": {
             "type": "string"
           },
-          "journeyId": {
+          "goalId": {
             "type": "string"
           },
-          "journeyName": {
+          "goalName": {
             "type": "string"
+          },
+          "goalArchived": {
+            "type": "boolean",
+            "description": "The run stays readable after its goal is archived; this is how you tell."
+          },
+          "journeyId": {
+            "type": "string",
+            "deprecated": true,
+            "description": "Pre-rename spelling of `goalId`, emitted alongside it until general availability."
+          },
+          "journeyName": {
+            "type": "string",
+            "deprecated": true,
+            "description": "Pre-rename spelling of `goalName`, emitted alongside it until general availability."
           },
           "journeyArchived": {
             "type": "boolean",
-            "description": "The run stays readable after its journey is archived; this is how you tell."
+            "deprecated": true,
+            "description": "Pre-rename spelling of `goalArchived`, emitted alongside it until general availability."
           },
           "personaName": {
             "type": "string"
@@ -27196,11 +27241,16 @@
           "status": {
             "type": "string"
           },
-          "waveId": {
+          "swarmRunId": {
             "type": "string"
           },
+          "waveId": {
+            "type": "string",
+            "deprecated": true,
+            "description": "Pre-rename spelling of `swarmRunId`, emitted alongside it until general availability."
+          },
           "summary": {
-            "$ref": "#/components/schemas/JourneyRunSummary"
+            "$ref": "#/components/schemas/GoalRunSummary"
           },
           "goalCompletion": {
             "description": "`null` when nothing has been graded — never zeroes, which would read as \"everything failed\".",
@@ -28808,6 +28858,8 @@
               "readSwarms",
               "readUserTesting",
               "writeSwarms",
+              "launchGoalRun",
+              "cancelGoalRun",
               "launchJourneyRun",
               "cancelJourneyRun",
               "publishUserTestingScenario",
@@ -28832,14 +28884,24 @@
               },
               "writeSwarms": {
                 "type": "boolean",
-                "description": "Authoring personas, journeys and swarms."
+                "description": "Authoring personas, goals and swarms."
+              },
+              "launchGoalRun": {
+                "type": "boolean"
+              },
+              "cancelGoalRun": {
+                "type": "boolean",
+                "description": "Stays TRUE for an organization that has lost the beta. Losing the feature is exactly when stopping a run matters most."
               },
               "launchJourneyRun": {
-                "type": "boolean"
+                "type": "boolean",
+                "deprecated": true,
+                "description": "Pre-rename spelling of `launchGoalRun`, emitted alongside it until general availability."
               },
               "cancelJourneyRun": {
                 "type": "boolean",
-                "description": "Stays TRUE for an organization that has lost the beta. Losing the feature is exactly when stopping a run matters most."
+                "deprecated": true,
+                "description": "Pre-rename spelling of `cancelGoalRun`, emitted alongside it until general availability."
               },
               "publishUserTestingScenario": {
                 "type": "boolean",

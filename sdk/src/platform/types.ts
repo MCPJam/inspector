@@ -3759,6 +3759,198 @@ export interface PlatformTunnelClosed {
 // per organization, so an unflagged caller gets a structured
 // FEATURE_UNAVAILABLE error from those.
 
+// ── Goals ───────────────────────────────────────────────────────────────────
+//
+// The public shape of what a swarm executes. Storage still calls the row a
+// `journey` and always will; these types are the projection the API serves.
+//
+// Three fields are spelled differently here than in the `PlatformJourney*`
+// family they replace, and each is a rename the product already made: the
+// owning id is `goalId`, the batch is `swarmRunId`, and the per-target
+// execution count is `iterations` — what the UI's Iterations stepper has
+// always written.
+
+export interface PlatformGoal {
+  id: string;
+  projectId: string;
+  name: string;
+  /** What the persona is trying to accomplish. Drives the whole run. */
+  goal: string;
+  personaId: string;
+  /** The swarm container this goal was authored under, if any. Opaque. */
+  swarmId: string | null;
+  /** Environments this goal fans out across. Empty on a host-pinned goal. */
+  environmentIds: string[];
+  serverAttachmentId?: string;
+  /** Sessions run against EACH target. Total sessions = targets x this. */
+  iterations: number | null;
+  maxTurns: number | null;
+  setupWrites?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PlatformGoalRunTarget {
+  hostId: string;
+  hostName?: string;
+  /** Execution identity. Two targets can share a `hostId`. */
+  targetId?: string;
+  modelId?: string;
+}
+
+export interface PlatformGoalRunAttempt {
+  chatSessionId: string | null;
+  hostId: string;
+  targetId: string | null;
+  sessionIndex: number;
+  status: string;
+  errorCode: string | null;
+  errorMessage: string | null;
+}
+
+export interface PlatformGoalRun {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
+  id: string;
+  projectId: string;
+  goalId: string;
+  /**
+   * The batch this run was launched with. Sibling runs of one co-launched
+   * wave share it; a solo relaunch is a wave of one.
+   */
+  swarmRunId?: string;
+  status: "running" | "completed" | "partial" | "failed" | "rate_limited";
+  /**
+   * True when someone STOPPED this run. It reports `status: "failed"` because
+   * the backend records cancellation as a marker rather than a status literal
+   * — so check this before showing a run as a failure.
+   */
+  canceled: boolean;
+  /** True when the runner went silent and the watchdog settled the run. */
+  stale: boolean;
+  /** Raw marker behind `canceled` / `stale`, when present. */
+  error?: string;
+  summary: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    rateLimited: number;
+  };
+  targets: PlatformGoalRunTarget[];
+  persona?: {
+    personaId: string | null;
+    name: string | null;
+    role: string | null;
+  };
+  /** Per-session execution records. Present on the single-run read. */
+  attempts?: PlatformGoalRunAttempt[];
+  targetSummaries?: Array<{
+    hostId: string;
+    targetId?: string;
+    total: number;
+    succeeded: number;
+    failed: number;
+    rateLimited: number;
+  }>;
+  createdAt: number;
+  lastHeartbeatAt?: number;
+  /** Common insights envelope (detail response only; lists stay compact).
+   * Absent on servers deployed before the envelope existed. */
+  insights?: PlatformInsightsEnvelope;
+}
+
+export interface PlatformGoalRunSession {
+  criteria?: {
+    status: "pending" | "completed" | "failed";
+    generation: number;
+    criterionIds?: string[];
+    results?: {
+      criterionId: string;
+      passed: boolean;
+      status?: "scored" | "error";
+    }[];
+  };
+  verdict?: SwarmSessionVerdict;
+  observations?: Array<{
+    evaluatorId: string;
+    predicateType: string;
+    role: "advisory" | "required";
+    status: "passed" | "failed" | "pending" | "unavailable";
+  }>;
+  /**
+   * The session's document id — the same value `listChatSessions` returns as
+   * `id`, so a session found here can be looked up there.
+   */
+  id: string;
+  /**
+   * The RUNTIME key for the same session, which the chat transport and the
+   * app's deep links use. Distinct from `id` and not interchangeable with it.
+   */
+  chatSessionId: string;
+  projectId: string;
+  hostId?: string;
+  runId?: string;
+  goalId?: string;
+  personaId?: string;
+  personaLabel?: string;
+  /**
+   * ARCHIVAL state (`active` | `archived`) — a run session stays `active`
+   * forever unless archived, so this says nothing about how it went. Read
+   * `verdict` for goal grading and execution lifecycle. `outcome` is legacy execution only.
+   */
+  status: string | null;
+  /**
+   * How this session's run attempt ended: `succeeded` | `failed` |
+   * `rate_limited` | `running` | `pending`, or null when the attempt cannot
+   * be matched (historical runs). Absent on servers that predate the field.
+   */
+  outcome?: string | null;
+  readiness: unknown;
+  goalScore: unknown;
+  messageCount: number;
+  preview?: string;
+  modelId?: string;
+  startedAt: number | null;
+  lastActivityAt: number | null;
+}
+
+export interface PlatformGoalRunLaunched {
+  /** The run id. Poll `getGoalRun` with it, or stop it with `cancel`. */
+  id: string;
+  goalId: string;
+  projectId: string;
+  /**
+   * Always `"running"` — the run row exists and its fan-out has been started.
+   * The response is a 202: nothing here says the goal has finished, only
+   * that it is under way.
+   */
+  status: string;
+  /**
+   * True when an idempotency key replayed onto a run that ALREADY existed, so
+   * nothing new was started. A retry of a dropped response lands here, which
+   * is how you tell "I launched it" from "it was already going".
+   */
+  deduped: boolean;
+}
+
+export interface PlatformGoalRunCanceled {
+  id: string;
+  /** The run's terminal status after the cancel settled it. */
+  status: PlatformGoalRun["status"];
+  canceled: true;
+  /** True when the run was ALREADY canceled and this call did nothing. */
+  alreadyCanceled: boolean;
+  /** Attempts this call moved to terminal. Zero on an idempotent replay. */
+  finalized: number;
+}
+
+export interface PlatformGoalArchived {
+  id: string;
+  projectId: string;
+  archived: true;
+}
+
+/** @deprecated Use {@link PlatformGoal}. */
 export interface PlatformJourney {
   id: string;
   projectId: string;
@@ -3779,6 +3971,7 @@ export interface PlatformJourney {
   updatedAt: number;
 }
 
+/** @deprecated Use {@link PlatformGoalRunTarget}. */
 export interface PlatformJourneyRunTarget {
   hostId: string;
   hostName?: string;
@@ -3787,6 +3980,7 @@ export interface PlatformJourneyRunTarget {
   modelId?: string;
 }
 
+/** @deprecated Use {@link PlatformGoalRunAttempt}. */
 export interface PlatformJourneyRunAttempt {
   chatSessionId: string | null;
   hostId: string;
@@ -3797,6 +3991,11 @@ export interface PlatformJourneyRunAttempt {
   errorMessage: string | null;
 }
 
+/**
+ * @deprecated Use {@link PlatformGoalRun}, which spells the owning id `goalId`
+ * and the batch `swarmRunId`. NOT an alias: this shape is what the deprecated
+ * `/journey-runs` routes still send.
+ */
 export interface PlatformJourneyRun {
   verdictSummary?: JourneyRunVerdictSummary;
   report?: SwarmReport;
@@ -3848,6 +4047,7 @@ export interface PlatformJourneyRun {
   insights?: PlatformInsightsEnvelope;
 }
 
+/** @deprecated Use {@link PlatformGoalRunSession}. */
 export interface PlatformJourneyRunSession {
   criteria?: {
     status: "pending" | "completed" | "failed";
@@ -3959,6 +4159,7 @@ export interface PlatformScenarioDeleted {
 }
 
 /** Result of `POST /projects/{p}/journeys/{journeyId}/runs`. */
+/** @deprecated Use {@link PlatformGoalRunLaunched}. */
 export interface PlatformJourneyRunLaunched {
   /** The run id. Poll `getJourneyRun` with it, or stop it with `cancel`. */
   id: string;
@@ -3979,6 +4180,7 @@ export interface PlatformJourneyRunLaunched {
 }
 
 /** Result of `POST /projects/{p}/journey-runs/{runId}/cancel`. */
+/** @deprecated Use {@link PlatformGoalRunCanceled}. */
 export interface PlatformJourneyRunCanceled {
   id: string;
   /** The run's terminal status after the cancel settled it. */
@@ -4262,20 +4464,28 @@ export interface PlatformPersonaDeleted {
 }
 
 /** Result of archiving a journey. Its runs and transcripts stay readable. */
+/** @deprecated Use {@link PlatformGoalArchived}. */
 export interface PlatformJourneyArchived {
   id: string;
   projectId: string;
   archived: true;
 }
 
-/** A swarm CONTAINER: shared execution config for the journeys authored in it. */
+/** A swarm CONTAINER: shared execution config for the goals authored in it. */
 export interface PlatformSwarm {
   id: string;
   projectId: string;
   name: string;
   description: string | null;
-  /** Default fan-out for journeys authored under this container. */
+  /** Default fan-out for goals authored under this container. */
   environmentIds: string[];
+  /** Sessions run against EACH target. Total sessions = targets x this. */
+  iterations: number | null;
+  /**
+   * @deprecated Use {@link PlatformSwarm.iterations}. Emitted alongside it
+   * until GA because `create_swarm`/`update_swarm` kept their names through
+   * the goal rename and so have no renamed twin to carry the new spelling.
+   */
   sessionsPerTarget: number | null;
   maxTurns: number | null;
   setupWrites?: boolean;
@@ -4336,11 +4546,26 @@ export interface PlatformSwarmOverviewFinding {
 
 export interface PlatformSwarmOverviewRun {
   runId: string;
+  /**
+   * The goal this run executed, and its name and archived state.
+   *
+   * `get_swarms_overview` kept its name through the goal rename, so this shape
+   * has no renamed twin to carry the new spellings. It emits both until GA.
+   */
+  goalId: string;
+  goalName: string;
+  goalArchived: boolean;
+  /** @deprecated Use {@link PlatformSwarmOverviewRun.goalId}. */
   journeyId: string;
+  /** @deprecated Use {@link PlatformSwarmOverviewRun.goalName}. */
   journeyName: string;
+  /** @deprecated Use {@link PlatformSwarmOverviewRun.goalArchived}. */
   journeyArchived: boolean;
   personaName: string;
   status: string;
+  /** The batch this run was launched with. */
+  swarmRunId?: string;
+  /** @deprecated Use {@link PlatformSwarmOverviewRun.swarmRunId}. */
   waveId?: string;
   summary: {
     total: number;
@@ -4941,7 +5166,7 @@ export interface PlatformCapabilities {
   };
   /**
    * The booleans to branch on. Note that the exposure-REDUCING ones
-   * (`cancelJourneyRun`, `unpublishStudy`) stay true for an org
+   * (`cancelGoalRun`, `unpublishStudy`) stay true for an org
    * that has lost the beta — losing the feature is exactly when stopping it
    * matters most.
    */
@@ -4949,7 +5174,13 @@ export interface PlatformCapabilities {
     readSwarms: boolean;
     readUserTesting: boolean;
     writeSwarms: boolean;
+    /** Launching a goal run. Spends hosted model credits. */
+    launchGoalRun: boolean;
+    /** Stopping a goal run. Ungated by design — see above. */
+    cancelGoalRun: boolean;
+    /** @deprecated Use {@link launchGoalRun}. Emitted alongside it until GA. */
     launchJourneyRun: boolean;
+    /** @deprecated Use {@link cancelGoalRun}. Emitted alongside it until GA. */
     cancelJourneyRun: boolean;
     /** Publishing an environment as a study. Admin-only, and beta-gated. */
     publishStudy: boolean;

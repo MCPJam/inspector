@@ -150,18 +150,18 @@ const PAIRS: Readonly<Record<string, string>> = {
   Persona: "PlatformPersona",
   PersonaDeleted: "PlatformPersonaDeleted",
   PersonaDraft: "PlatformPersonaDraft",
-  Journey: "PlatformJourney",
-  JourneyArchived: "PlatformJourneyArchived",
+  Goal: "PlatformGoal",
+  GoalArchived: "PlatformGoalArchived",
   Swarm: "PlatformSwarm",
   SwarmArchived: "PlatformSwarmArchived",
 
   // ── A2: Swarm runs ────────────────────────────────────────────────────
-  JourneyRun: "PlatformJourneyRun",
-  JourneyRunTarget: "PlatformJourneyRunTarget",
-  JourneyRunAttempt: "PlatformJourneyRunAttempt",
-  JourneyRunSession: "PlatformJourneyRunSession",
-  JourneyRunLaunched: "PlatformJourneyRunLaunched",
-  JourneyRunCanceled: "PlatformJourneyRunCanceled",
+  GoalRun: "PlatformGoalRun",
+  GoalRunTarget: "PlatformGoalRunTarget",
+  GoalRunAttempt: "PlatformGoalRunAttempt",
+  GoalRunSession: "PlatformGoalRunSession",
+  GoalRunLaunched: "PlatformGoalRunLaunched",
+  GoalRunCanceled: "PlatformGoalRunCanceled",
 
   // ── A3: Swarm insights ────────────────────────────────────────────────
   ScorecardCriterion: "PlatformScorecardCriterion",

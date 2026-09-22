@@ -102,19 +102,19 @@ import {
   updatePersonaOperation,
   listSecretsOperation,
   getSecretOperation,
-  listJourneysOperation,
-  getJourneyOperation,
-  createJourneyOperation,
-  updateJourneyOperation,
-  listJourneyRunsOperation,
-  getJourneyRunOperation,
-  listJourneyRunSessionsOperation,
+  listGoalsOperation,
+  getGoalOperation,
+  createGoalOperation,
+  updateGoalOperation,
+  listGoalRunsOperation,
+  getGoalRunOperation,
+  listGoalRunSessionsOperation,
   listSwarmsOperation,
   getSwarmOperation,
   createSwarmOperation,
   updateSwarmOperation,
   getSwarmOverviewOperation,
-  getJourneyRunScorecardOperation,
+  getGoalRunScorecardOperation,
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
@@ -254,19 +254,19 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   listSecretsOperation,
   getSecretOperation,
 
-  listJourneysOperation,
-  getJourneyOperation,
-  createJourneyOperation,
-  updateJourneyOperation,
-  listJourneyRunsOperation,
-  getJourneyRunOperation,
-  listJourneyRunSessionsOperation,
+  listGoalsOperation,
+  getGoalOperation,
+  createGoalOperation,
+  updateGoalOperation,
+  listGoalRunsOperation,
+  getGoalRunOperation,
+  listGoalRunSessionsOperation,
   listSwarmsOperation,
   getSwarmOperation,
   createSwarmOperation,
   updateSwarmOperation,
   getSwarmOverviewOperation,
-  getJourneyRunScorecardOperation,
+  getGoalRunScorecardOperation,
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
@@ -313,9 +313,9 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Reaches OUTSIDE MCPJam and changes a shared repository for everyone who opens a pull request against it — with fail_closed it can block their merges. The suite settings sheet has this at the point of intent, next to the repository picker and the policy explainer, which is the context the decision needs. Available on the API, the CLI and the gated agent surfaces, where it goes through an approval proposal.",
   connect_eval_check_repo:
     "The pre-rename spelling of connect_eval_github_repo, excluded for the same reason and by the same line.",
-  launch_journey_run:
+  launch_goal_run:
     "Launching spends model credits across a whole fan-out. The Swarms tab puts the journey, its targets and its session count in front of you first; a chat tool would start all of it from an id.",
-  cancel_journey_run:
+  cancel_goal_run:
     "The Swarms tab has a Stop control with the run in front of you; a chat tool would cancel by id with none of that context.",
   // Swarms authoring writes that REMOVE or SPEND. The reversible half of
   // authoring (create/update persona, journey, swarm) is advertised above —
@@ -364,13 +364,13 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Same as list_trace_destinations: the section is the better view of it. Available on the API and CLI.",
   list_trace_destination_backfills:
     "Backfill history is operational detail an admin reads while diagnosing an export. Available on the API and CLI.",
-  archive_journey:
+  archive_goal:
     "Takes a journey off the roster. The tab shows its run history first, which is the thing you are deciding about.",
   archive_swarm:
     "Takes a container off the roster; the tab shows the journeys authored under it.",
   generate_personas:
     "Runs a model on the organization's account. The create flow in the Swarms tab is where generation belongs — it shows the drafts and lets you pick, where a chat tool would spend and hand back prose.",
-  generate_journeys:
+  generate_goals:
     "Same as generate_personas: spends, and the drafts want the picker the tab already has.",
   request_wave_insights:
     "Spends against the organization's shared daily insights budget. The Swarms tab has the button, next to the wave it applies to.",

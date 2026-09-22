@@ -79,6 +79,12 @@ import {
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
+  PlatformGoal,
+  PlatformGoalArchived,
+  PlatformGoalRun,
+  PlatformGoalRunCanceled,
+  PlatformGoalRunLaunched,
+  PlatformGoalRunSession,
   PlatformStudy,
   PlatformStudyDeleted,
   PlatformStudyDetail,
@@ -12246,6 +12252,679 @@ export const deleteProjectServerOperation: PlatformOperation<
 /** Any catalog operation with its input/output types erased. */
 export type AnyPlatformOperation = PlatformOperation<any, unknown>;
 
+// ── Goals (the Swarms product) ──────────────────────────────────────────────
+//
+// "Swarm" is not a resource noun in this API. A swarm is a container users
+// author in the UI; a GOAL (a persona pursuing a task against one or more
+// environments) is what executes, and a GOAL RUN is what it produces. The
+// marketing name appears in help text, where it belongs.
+//
+// This family replaces the `*_journey*` operations, which still work from the
+// deprecated section below and still call their own old routes. They go at GA.
+//
+// BETA (`sandboxes-enabled`), gated server-side per organization — but only on
+// the exposure-CREATING writes: launch and authoring. Those answer a structured
+// FEATURE_UNAVAILABLE to an unflagged caller.
+//
+// The reads here need project membership and nothing more, and
+// `cancel_goal_run` is ungated for the same reason: an organization that has
+// lost the flag with a run already in flight must still be able to see it and
+// stop it. Losing the feature is when stopping it matters most.
+
+const DEPRECATED_GOAL_SELECTOR_SUFFIX =
+  " DEPRECATED: use `goalId`, which means exactly this.";
+
+/**
+ * Fold a `goalId` selector onto its deprecated `journey` spelling.
+ *
+ * The selector is `goalId`, not `goal`, and that is not a stylistic choice: a
+ * goal's own TASK TEXT is the field `goal` (`PlatformGoal.goal`, and
+ * `update_goal`'s editable body), so one input object cannot carry both. The
+ * id keeps the suffix; the task keeps the bare noun.
+ *
+ * Exactly one, never both, for the reason {@link foldStudySelector} gives:
+ * `launch_goal_run` spends model credits, so silently preferring one of two
+ * possibly-different ids would spend them on the wrong goal.
+ */
+function foldGoalSelector(input: {
+  goalId?: string;
+  journey?: string;
+}): string {
+  if (input.goalId !== undefined && input.journey !== undefined) {
+    throw operationInputError(
+      "Pass either goalId or its deprecated journey alias, not both."
+    );
+  }
+  const selected = input.goalId ?? input.journey;
+  if (selected === undefined) {
+    throw operationInputError(
+      "goalId is required — the id from list_goals or create_goal."
+    );
+  }
+  return selected;
+}
+
+const listGoalsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+export type ListGoalsInput = z.infer<typeof listGoalsInput>;
+
+export type ListGoalsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformGoal[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listGoalsOperation: PlatformOperation<
+  ListGoalsInput,
+  ListGoalsResult
+> = {
+  name: "list_goals",
+  title: "List MCPJam goals",
+  description:
+    "List the goals in an MCPJam project. A goal is one persona pursuing a task against one or more environments — the unit that Swarms actually executes. Use the returned id with list_goal_runs.",
+  readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/journeys/:journeyId` route: goals are edited inside the Swarms surface as component state. The route string is the APP's, which the rename does not move."
+  ),
+  inputSchema: listGoalsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listGoals({ projectId: project.id }, { signal });
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+const goalRunsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  goalId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Goal id, from list_goals."),
+  journey: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Goal id, from list_goals." + DEPRECATED_GOAL_SELECTOR_SUFFIX),
+  cursor: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Pass the previous response's nextCursor to get the next page."),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+export type ListGoalRunsInput = z.infer<typeof goalRunsInput>;
+
+export type ListGoalRunsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformGoalRun[];
+  nextCursor?: string;
+};
+
+export const listGoalRunsOperation: PlatformOperation<
+  ListGoalRunsInput,
+  ListGoalRunsResult
+> = {
+  name: "list_goal_runs",
+  title: "List runs of an MCPJam goal",
+  description:
+    "List a goal's runs, newest first, with each run's status and pass/fail rollup. A run someone STOPPED reports status 'failed' with canceled: true — check that flag before calling a run a failure.",
+  readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((run) => ({
+      type: "journey_run" as const,
+      id: run.id,
+      projectId: run.projectId,
+    }))
+  ),
+  inputSchema: goalRunsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const goalId = foldGoalSelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listGoalRuns(
+      {
+        projectId: project.id,
+        goalId,
+        ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
+const goalRunSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  run: z.string().trim().min(1).describe("Goal run id."),
+});
+export type GetGoalRunInput = z.infer<typeof goalRunSelectorInput>;
+
+export type GetGoalRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformGoalRun;
+};
+
+export const getGoalRunOperation: PlatformOperation<
+  GetGoalRunInput,
+  GetGoalRunResult
+> = {
+  name: "get_goal_run",
+  title: "Get one MCPJam goal run",
+  description:
+    "One goal run in full: status, per-target rollups, and the per-session attempt records. This is what to poll after launching a run — status leaves 'running' once every attempt has settled. The detail carries an `insights` envelope: findings AGGREGATED over the run's swarm run with exemplar sessions, plus runHealth for launch outcomes (which are never findings — a rate-limited target is not a broken server). Only actionTarget mcp_server with actionability ready authorizes proposing a server change.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "journey_run",
+      id: result.run.id,
+      projectId: result.run.projectId,
+    },
+  ]),
+  inputSchema: goalRunSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.getGoalRun(
+      { projectId: project.id, runId: input.run },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const goalRunSessionsInput = goalRunSelectorInput.extend({
+  cursor: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Pass the previous response's nextCursor to get the next page."),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+export type ListGoalRunSessionsInput = z.infer<typeof goalRunSessionsInput>;
+
+export type ListGoalRunSessionsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformGoalRunSession[];
+  nextCursor?: string;
+};
+
+export const listGoalRunSessionsOperation: PlatformOperation<
+  ListGoalRunSessionsInput,
+  ListGoalRunSessionsResult
+> = {
+  name: "list_goal_run_sessions",
+  title: "List the sessions a goal run produced",
+  description:
+    "The chat sessions a goal run produced — one per persona attempt against each target — with graded verdicts, check observations, readiness, goal scores and a first-message preview. `verdict` is the graded goal result; `outcome` is execution lifecycle. A broken execution may have met its goal. Transcript bodies are not on this API yet; use the returned `id` in the app to open a session.",
+  readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((session) => ({
+      type: "chat_session" as const,
+      id: session.chatSessionId,
+      projectId: session.projectId,
+    }))
+  ),
+  inputSchema: goalRunSessionsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listGoalRunSessions(
+      {
+        projectId: project.id,
+        runId: input.run,
+        ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
+export type CancelGoalRunInput = z.infer<typeof goalRunSelectorInput>;
+
+export type CancelGoalRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformGoalRunCanceled;
+};
+
+const launchGoalRunInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  goalId: z.string().trim().min(1).optional().describe("Goal id to launch."),
+  journey: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Goal id to launch." + DEPRECATED_GOAL_SELECTOR_SUFFIX),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Retry key. A launch spends model credits, so a retry after a dropped response must not run the goal twice — replaying a key returns the ORIGINAL run with deduped: true. Omit it and every call starts a new run."
+    ),
+  swarmRunId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe("Opaque id linking the sibling runs of one co-launched batch."),
+  environmentIds: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe(
+      "Fan out across these project environments instead of the goal's authored targets."
+    ),
+});
+export type LaunchGoalRunInput = z.infer<typeof launchGoalRunInput>;
+
+export type LaunchGoalRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformGoalRunLaunched;
+};
+
+export const launchGoalRunOperation: PlatformOperation<
+  LaunchGoalRunInput,
+  LaunchGoalRunResult
+> = {
+  name: "launch_goal_run",
+  risk: "spend",
+  title: "Launch an MCPJam goal run",
+  description:
+    "Start a goal run and return immediately with its id — a fan-out can take hours, so nothing here waits for it. Poll get_goal_run, or list_goal_run_sessions for per-session detail. IDEMPOTENT on idempotencyKey: pass one, because a launch spends model credits and a retry must not run the goal twice. Behind the sandboxes-enabled beta.",
+  readOnly: false,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "journey_run",
+      id: result.run.id,
+      projectId: result.run.projectId,
+    },
+  ]),
+  inputSchema: launchGoalRunInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const goalId = foldGoalSelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.launchGoalRun(
+      {
+        projectId: project.id,
+        goalId,
+        ...(input.swarmRunId ? { swarmRunId: input.swarmRunId } : {}),
+        ...(input.environmentIds?.length
+          ? { environmentIds: input.environmentIds }
+          : {}),
+      },
+      {
+        signal,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      }
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+export const cancelGoalRunOperation: PlatformOperation<
+  CancelGoalRunInput,
+  CancelGoalRunResult
+> = {
+  name: "cancel_goal_run",
+  risk: "destructive",
+  title: "Stop a running MCPJam goal run",
+  description:
+    "Stop a goal run that is still running, settling its in-flight and pending sessions. Idempotent — cancelling an already-cancelled run succeeds with alreadyCanceled: true. A run that finished on its own conflicts instead, so you cannot be told you stopped something that had already completed.",
+  readOnly: false,
+  permalink: noPermalink("mutation-only"),
+  inputSchema: goalRunSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.cancelGoalRun(
+      { projectId: project.id, runId: input.run },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const goalSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  goalId: z.string().trim().min(1).optional().describe("Goal id."),
+  journey: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Goal id." + DEPRECATED_GOAL_SELECTOR_SUFFIX),
+});
+
+export type GetGoalInput = z.infer<typeof goalSelectorInput>;
+export type GetGoalResult = {
+  project: SelectedProjectInfo;
+  goal: PlatformGoal;
+};
+
+export const getGoalOperation: PlatformOperation<GetGoalInput, GetGoalResult> =
+  {
+    name: "get_goal",
+    title: "Get one MCPJam goal",
+    description:
+      "One goal in full: its task, persona, environments and execution config. Read this before launching if you need to know how many sessions a run will produce — that is targets x iterations, and it is what spends.",
+    readOnly: true,
+    permalink: noPermalink(
+      "route-not-addressable",
+      "No `swarms/journeys/:journeyId` route: goals are edited inside the Swarms surface as component state. The route string is the APP's, which the rename does not move."
+    ),
+    inputSchema: goalSelectorInput,
+    async execute(input, { client, signal, onScopeResolved }) {
+      const goalId = foldGoalSelector(input);
+      const { project } = await resolveProjectOrThrow(
+        { client, signal, onScopeResolved },
+        input.project
+      );
+      const goal_ = await client.getGoal(
+        { projectId: project.id, goalId },
+        { signal }
+      );
+      return { project: toSelectedProjectInfo(project), goal: goal_ };
+    },
+  };
+
+const createGoalInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  goal: z
+    .string()
+    .trim()
+    .min(1)
+    .max(4000)
+    .describe(
+      "What the persona is trying to accomplish. Drives the whole run."
+    ),
+  persona: z.string().trim().min(1).describe("Persona id to run as."),
+  name: z.string().trim().min(1).max(200).optional(),
+  swarm: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Swarm container id. Authoring provenance only."),
+  environmentIds: z
+    .array(z.string().min(1))
+    .min(1)
+    .optional()
+    .describe("Environments to fan out across, in order."),
+  iterations: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .describe(
+      "Sessions per target. TOTAL sessions = targets x this, and the total is what spends."
+    ),
+  maxTurns: z.number().int().min(1).max(200),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Use a test account."
+    ),
+  idempotencyKey: z.string().trim().min(1).max(200).optional(),
+});
+
+export type CreateGoalInput = z.infer<typeof createGoalInput>;
+export type CreateGoalResult = {
+  project: SelectedProjectInfo;
+  goal: PlatformGoal;
+};
+
+export const createGoalOperation: PlatformOperation<
+  CreateGoalInput,
+  CreateGoalResult
+> = {
+  name: "create_goal",
+  title: "Create an MCPJam goal",
+  description:
+    "Author a goal: a persona, a task, and the environments to pursue it against. Creating does NOT run it — launch_goal_run does, and that is the call that spends. Behind the sandboxes-enabled beta.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/journeys/:journeyId` route: goals are edited inside the Swarms surface as component state. The route string is the APP's, which the rename does not move."
+  ),
+  inputSchema: createGoalInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const goal_ = await client.createGoal(
+      {
+        projectId: project.id,
+        goal: input.goal,
+        personaId: input.persona,
+        iterations: input.iterations,
+        maxTurns: input.maxTurns,
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.swarm !== undefined ? { swarmId: input.swarm } : {}),
+        ...(input.environmentIds !== undefined
+          ? { environmentIds: input.environmentIds }
+          : {}),
+      },
+      {
+        signal,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      }
+    );
+    return { project: toSelectedProjectInfo(project), goal: goal_ };
+  },
+};
+
+const updateGoalInput = goalSelectorInput.extend({
+  name: z.string().trim().min(1).max(200).optional(),
+  goal: z.string().trim().min(1).max(4000).optional(),
+  environmentIds: z
+    .union([z.array(z.string().min(1)).min(1), z.null()])
+    .optional()
+    .describe("null clears the fan-out and returns the goal to its hosts."),
+  iterations: z.number().int().min(1).max(100).optional(),
+  maxTurns: z.number().int().min(1).max(200).optional(),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing iterations/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
+    ),
+});
+
+export type UpdateGoalInput = z.infer<typeof updateGoalInput>;
+export type UpdateGoalResult = CreateGoalResult;
+
+export const updateGoalOperation: PlatformOperation<
+  UpdateGoalInput,
+  UpdateGoalResult
+> = {
+  name: "update_goal",
+  title: "Update an MCPJam goal",
+  description:
+    "Edit a goal. iterations and maxTurns must be sent together; setupWrites requires that pair. A run already in flight keeps the config it launched with.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/journeys/:journeyId` route: goals are edited inside the Swarms surface as component state. The route string is the APP's, which the rename does not move."
+  ),
+  inputSchema: updateGoalInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const goalId = foldGoalSelector(input);
+    requireConfigPair(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const goal_ = await client.updateGoal(
+      {
+        projectId: project.id,
+        goalId,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.goal !== undefined ? { goal: input.goal } : {}),
+        ...(input.environmentIds !== undefined
+          ? { environmentIds: input.environmentIds }
+          : {}),
+        ...(input.iterations !== undefined
+          ? { iterations: input.iterations }
+          : {}),
+        ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), goal: goal_ };
+  },
+};
+
+export type ArchiveGoalInput = z.infer<typeof goalSelectorInput>;
+export type ArchiveGoalResult = {
+  project: SelectedProjectInfo;
+  goal: PlatformGoalArchived;
+};
+
+export const archiveGoalOperation: PlatformOperation<
+  ArchiveGoalInput,
+  ArchiveGoalResult
+> = {
+  name: "archive_goal",
+  title: "Archive an MCPJam goal",
+  description:
+    "Take a goal off the roster. Its runs, sessions and scorecards stay readable — the evidence for past decisions is not deleted with the goal that produced it. A second call answers not-found.",
+  readOnly: false,
+  risk: "destructive",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: goalSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const goalId = foldGoalSelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const goal_ = await client.archiveGoal(
+      { projectId: project.id, goalId },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), goal: goal_ };
+  },
+};
+
+export type GetGoalRunScorecardInput = z.infer<typeof goalRunSelectorInput>;
+export type GetGoalRunScorecardResult = {
+  project: SelectedProjectInfo;
+  scorecard: PlatformRunScorecard;
+};
+
+export const getGoalRunScorecardOperation: PlatformOperation<
+  GetGoalRunScorecardInput,
+  GetGoalRunScorecardResult
+> = {
+  name: "get_goal_run_scorecard",
+  title: "Get a journey run's rubric scorecard",
+  description:
+    "Per-criterion pass/fail counts for one run. DETERMINISTIC — no model involved — so this is the first thing to read when explaining a failure, and usually the whole answer. failedGradingCount is grading that BROKE, not a product failure; do not add it to failCount. Answers not-found when the run has no rubric.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "journey_run",
+      id: result.scorecard.runId,
+      projectId: result.project?.id,
+    },
+  ]),
+  inputSchema: goalRunSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const scorecard = await client.getGoalRunScorecard(
+      { projectId: project.id, runId: input.run },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), scorecard };
+  },
+};
+
 // ── Journeys (the Swarms product) ───────────────────────────────────────────
 //
 // "Swarm" is not a resource noun in this API. A swarm is a container users
@@ -12278,6 +12957,9 @@ export type ListJourneysResult = {
   otherProjects: ProjectInfo[];
 };
 
+/**
+ * @deprecated Use {@link listGoalsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const listJourneysOperation: PlatformOperation<
   ListJourneysInput,
   ListJourneysResult
@@ -12333,6 +13015,9 @@ export type ListJourneyRunsResult = {
   nextCursor?: string;
 };
 
+/**
+ * @deprecated Use {@link listGoalRunsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const listJourneyRunsOperation: PlatformOperation<
   ListJourneyRunsInput,
   ListJourneyRunsResult
@@ -12388,6 +13073,9 @@ export type GetJourneyRunResult = {
   run: PlatformJourneyRun;
 };
 
+/**
+ * @deprecated Use {@link getGoalRunOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getJourneyRunOperation: PlatformOperation<
   GetJourneyRunInput,
   GetJourneyRunResult
@@ -12437,6 +13125,9 @@ export type ListJourneyRunSessionsResult = {
   nextCursor?: string;
 };
 
+/**
+ * @deprecated Use {@link listGoalRunSessionsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const listJourneyRunSessionsOperation: PlatformOperation<
   ListJourneyRunSessionsInput,
   ListJourneyRunSessionsResult
@@ -12521,6 +13212,9 @@ export type LaunchJourneyRunResult = {
   run: PlatformJourneyRunLaunched;
 };
 
+/**
+ * @deprecated Use {@link launchGoalRunOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const launchJourneyRunOperation: PlatformOperation<
   LaunchJourneyRunInput,
   LaunchJourneyRunResult
@@ -12564,6 +13258,9 @@ export const launchJourneyRunOperation: PlatformOperation<
   },
 };
 
+/**
+ * @deprecated Use {@link cancelGoalRunOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const cancelJourneyRunOperation: PlatformOperation<
   CancelJourneyRunInput,
   CancelJourneyRunResult
@@ -12770,19 +13467,40 @@ function requireExactlyOneGrounding(input: {
 }
 
 function requireConfigPair(input: {
-  sessionsPerTarget?: number;
+  iterations?: number;
   maxTurns?: number;
   setupWrites?: boolean;
 }): void {
   if (
-    (input.sessionsPerTarget === undefined) !==
-      (input.maxTurns === undefined) ||
-    (input.setupWrites !== undefined && input.sessionsPerTarget === undefined)
+    (input.iterations === undefined) !== (input.maxTurns === undefined) ||
+    (input.setupWrites !== undefined && input.iterations === undefined)
   ) {
     throw operationInputError(
-      "sessionsPerTarget and maxTurns must be sent together; setupWrites requires that pair."
+      "iterations and maxTurns must be sent together; setupWrites requires that pair."
     );
   }
+}
+
+/**
+ * The per-target session count off an operation that takes both spellings.
+ *
+ * Only the operations that KEPT their name through the goal rename need this:
+ * a renamed operation takes `iterations` alone, and its deprecated twin takes
+ * `sessionsPerTarget` alone, so neither has two spellings to reconcile.
+ * `create_swarm` and `update_swarm` have no twin, so they carry both until GA.
+ * Passing both is refused rather than resolved by precedence — this number
+ * multiplies into what a launch spends.
+ */
+function foldIterations(input: {
+  iterations?: number;
+  sessionsPerTarget?: number;
+}): number | undefined {
+  if (input.iterations !== undefined && input.sessionsPerTarget !== undefined) {
+    throw operationInputError(
+      "Pass either iterations or its deprecated sessionsPerTarget alias, not both."
+    );
+  }
+  return input.iterations ?? input.sessionsPerTarget;
 }
 
 // ── Swarms authoring ────────────────────────────────────────────────────────
@@ -13783,6 +14501,9 @@ export type GetJourneyResult = {
   journey: PlatformJourney;
 };
 
+/**
+ * @deprecated Use {@link getGoalOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getJourneyOperation: PlatformOperation<
   GetJourneyInput,
   GetJourneyResult
@@ -13862,6 +14583,9 @@ export type CreateJourneyResult = {
   journey: PlatformJourney;
 };
 
+/**
+ * @deprecated Use {@link createGoalOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const createJourneyOperation: PlatformOperation<
   CreateJourneyInput,
   CreateJourneyResult
@@ -13929,6 +14653,9 @@ const updateJourneyInput = journeySelectorInput.extend({
 export type UpdateJourneyInput = z.infer<typeof updateJourneyInput>;
 export type UpdateJourneyResult = CreateJourneyResult;
 
+/**
+ * @deprecated Use {@link updateGoalOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const updateJourneyOperation: PlatformOperation<
   UpdateJourneyInput,
   UpdateJourneyResult
@@ -13945,7 +14672,9 @@ export const updateJourneyOperation: PlatformOperation<
   ),
   inputSchema: updateJourneyInput,
   async execute(input, { client, signal, onScopeResolved }) {
-    requireConfigPair(input);
+    // The deprecated operation keeps the deprecated spelling; the shared guard
+    // reads the canonical one.
+    requireConfigPair({ ...input, iterations: input.sessionsPerTarget });
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
       input.project
@@ -13979,6 +14708,9 @@ export type ArchiveJourneyResult = {
   journey: PlatformJourneyArchived;
 };
 
+/**
+ * @deprecated Use {@link archiveGoalOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const archiveJourneyOperation: PlatformOperation<
   ArchiveJourneyInput,
   ArchiveJourneyResult
@@ -14086,7 +14818,26 @@ const createSwarmInput = z.object({
   name: z.string().trim().min(1).max(200),
   description: z.string().max(2000).optional(),
   environmentIds: z.array(z.string().min(1)).min(1).optional(),
-  sessionsPerTarget: z.number().int().min(1).max(100),
+  // `create_swarm` keeps its name through the goal rename, so it has no
+  // deprecated twin to hold the old field spelling. It takes both until GA
+  // instead: `iterations` canonically, `sessionsPerTarget` as the pre-rename
+  // alias, exactly one of them.
+  iterations: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe(
+      "Sessions per target for goals authored here. TOTAL sessions = targets x this, and the total is what spends."
+    ),
+  sessionsPerTarget: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Deprecated spelling of iterations."),
   maxTurns: z.number().int().min(1).max(200),
   setupWrites: z
     .boolean()
@@ -14110,7 +14861,7 @@ export const createSwarmOperation: PlatformOperation<
   name: "create_swarm",
   title: "Create an MCPJam swarm container",
   description:
-    "Create a container to author journeys under. Creating one runs nothing. Behind the sandboxes-enabled beta.",
+    "Create a container to author goals under. Creating one runs nothing. Send iterations (its deprecated alias sessionsPerTarget is still accepted, but not both). Behind the sandboxes-enabled beta.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -14119,6 +14870,12 @@ export const createSwarmOperation: PlatformOperation<
   ),
   inputSchema: createSwarmInput,
   async execute(input, { client, signal, onScopeResolved }) {
+    const iterations = foldIterations(input);
+    if (iterations === undefined) {
+      throw operationInputError(
+        "iterations is required — sessions run against each target."
+      );
+    }
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
       input.project
@@ -14127,7 +14884,7 @@ export const createSwarmOperation: PlatformOperation<
       {
         projectId: project.id,
         name: input.name,
-        sessionsPerTarget: input.sessionsPerTarget,
+        iterations,
         maxTurns: input.maxTurns,
         ...(input.setupWrites !== undefined
           ? { setupWrites: input.setupWrites }
@@ -14156,13 +14913,27 @@ const updateSwarmInput = swarmSelectorInput.extend({
   environmentIds: z
     .union([z.array(z.string().min(1)).min(1), z.null()])
     .optional(),
-  sessionsPerTarget: z.number().int().min(1).max(100).optional(),
+  // Both spellings, exactly one of them — see `createSwarmInput`.
+  iterations: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Sessions per target for goals authored here."),
+  sessionsPerTarget: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Deprecated spelling of iterations."),
   maxTurns: z.number().int().min(1).max(200).optional(),
   setupWrites: z
     .boolean()
     .optional()
     .describe(
-      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing sessionsPerTarget/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing iterations/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
     ),
 });
 
@@ -14176,7 +14947,7 @@ export const updateSwarmOperation: PlatformOperation<
   name: "update_swarm",
   title: "Update an MCPJam swarm container",
   description:
-    "Edit a swarm container. sessionsPerTarget and maxTurns must be sent together — they are one config object upstream.",
+    "Edit a swarm container. iterations (deprecated alias: sessionsPerTarget, not both) and maxTurns must be sent together — they are one config object upstream.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -14185,7 +14956,8 @@ export const updateSwarmOperation: PlatformOperation<
   ),
   inputSchema: updateSwarmInput,
   async execute(input, { client, signal, onScopeResolved }) {
-    requireConfigPair(input);
+    const iterations = foldIterations(input);
+    requireConfigPair({ ...input, iterations });
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
       input.project
@@ -14201,9 +14973,7 @@ export const updateSwarmOperation: PlatformOperation<
         ...(input.environmentIds !== undefined
           ? { environmentIds: input.environmentIds }
           : {}),
-        ...(input.sessionsPerTarget !== undefined
-          ? { sessionsPerTarget: input.sessionsPerTarget }
-          : {}),
+        ...(iterations !== undefined ? { iterations } : {}),
         ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
         ...(input.setupWrites !== undefined
           ? { setupWrites: input.setupWrites }
@@ -14353,12 +15123,87 @@ const generateJourneysInput = generationGroundingInput.extend({
     ),
 });
 
+const generateGoalsInput = generationGroundingInput.extend({
+  persona: z
+    .object({
+      name: z.string().min(1),
+      role: z.string().min(1),
+      notes: z.string().optional(),
+    })
+    .describe(
+      "The persona to draft goals for, BY VALUE — it does not have to exist yet."
+    ),
+  // `journeyCount` is declared on the shared grounding input, which
+  // `generate_personas` uses too, so the goal spelling is added here rather
+  // than renamed there.
+  goalCount: z
+    .number()
+    .int()
+    .min(1)
+    .max(5)
+    .optional()
+    .describe("How many goals to draft."),
+});
+
+export type GenerateGoalsInput = z.infer<typeof generateGoalsInput>;
+export type GenerateGoalsResult = {
+  project: SelectedProjectInfo;
+  drafts: PlatformGenerationDrafts;
+};
+
+export const generateGoalsOperation: PlatformOperation<
+  GenerateGoalsInput,
+  GenerateGoalsResult
+> = {
+  name: "generate_goals",
+  title: "Draft MCPJam goals with a model",
+  description:
+    "Draft candidate goals for a persona, grounded in the project's servers. NOTHING IS SAVED — pass what you want to create_goal. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time — wait until then; topping up credits does not lift it. Exactly one of environmentId or serverAttachmentId.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/journeys/:journeyId` route: goals are edited inside the Swarms surface as component state. The route string is the APP's, which the rename does not move."
+  ),
+  inputSchema: generateGoalsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    requireExactlyOneGrounding(input);
+    if (input.goalCount !== undefined && input.journeyCount !== undefined) {
+      throw operationInputError(
+        "Pass either goalCount or its deprecated journeyCount alias, not both."
+      );
+    }
+    const goalDraftCount = input.goalCount ?? input.journeyCount;
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const drafts = await client.generateGoals(
+      {
+        projectId: project.id,
+        persona: input.persona,
+        ...(input.environmentId ? { environmentId: input.environmentId } : {}),
+        ...(input.serverAttachmentId
+          ? { serverAttachmentId: input.serverAttachmentId }
+          : {}),
+        ...(input.description ? { description: input.description } : {}),
+        ...(goalDraftCount !== undefined ? { goalCount: goalDraftCount } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), drafts };
+  },
+};
+
 export type GenerateJourneysInput = z.infer<typeof generateJourneysInput>;
 export type GenerateJourneysResult = {
   project: SelectedProjectInfo;
   drafts: PlatformGenerationDrafts;
 };
 
+/**
+ * @deprecated Use {@link generateGoalsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const generateJourneysOperation: PlatformOperation<
   GenerateJourneysInput,
   GenerateJourneysResult
@@ -14442,6 +15287,9 @@ export type GetJourneyRunScorecardResult = {
   scorecard: PlatformRunScorecard;
 };
 
+/**
+ * @deprecated Use {@link getGoalRunScorecardOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getJourneyRunScorecardOperation: PlatformOperation<
   GetJourneyRunScorecardInput,
   GetJourneyRunScorecardResult
@@ -14608,7 +15456,8 @@ export const getWaveInsightsOperation: PlatformOperation<
   name: "get_wave_insights",
   title: "Get an MCPJam wave's insights",
   description:
-    "The model's analysis of a whole wave, if one has been requested. Poll this after request_wave_insights — status goes pending → completed. Not-found means nobody has requested it, which is different from 'requested and still working'. " + INCLUDED_ANALYSIS_FAILURE_NOTE,
+    "The model's analysis of a whole wave, if one has been requested. Poll this after request_wave_insights — status goes pending → completed. Not-found means nobody has requested it, which is different from 'requested and still working'. " +
+    INCLUDED_ANALYSIS_FAILURE_NOTE,
   readOnly: true,
   permalink: derivePermalinks((result) => [
     // A wave IS a journey run on the Swarms surface: `/swarms/<waveId>`.
@@ -14853,7 +15702,10 @@ export const listStudiesOperation: PlatformOperation<
       { client, signal, onScopeResolved },
       input.project
     );
-    const page = await client.listStudies({ projectId: project.id }, { signal });
+    const page = await client.listStudies(
+      { projectId: project.id },
+      { signal }
+    );
     return {
       project: toSelectedProjectInfo(project),
       items: page.items,
@@ -15054,7 +15906,10 @@ export const getStudyOperation: PlatformOperation<
         throw error;
       }
     }
-    const page = await client.listStudies({ projectId: project.id }, { signal });
+    const page = await client.listStudies(
+      { projectId: project.id },
+      { signal }
+    );
     const match = resolveByIdOrName(
       page.items,
       selector,
@@ -15080,9 +15935,7 @@ const updateStudyInput = studySelectorInput.extend({
     ),
 });
 
-export type UpdateStudyInput = z.infer<
-  typeof updateStudyInput
->;
+export type UpdateStudyInput = z.infer<typeof updateStudyInput>;
 export type UpdateStudyResult = {
   project: SelectedProjectInfo;
   study: PlatformStudyUpdated;
@@ -15149,9 +16002,7 @@ const listStudySessionsInput = studySelectorInput.extend({
   limit: z.number().int().min(1).max(200).optional(),
 });
 
-export type ListStudySessionsInput = z.infer<
-  typeof listStudySessionsInput
->;
+export type ListStudySessionsInput = z.infer<typeof listStudySessionsInput>;
 export type ListStudySessionsResult = {
   project: SelectedProjectInfo;
   items: PlatformStudySession[];
@@ -15204,9 +16055,7 @@ const getStudySessionInput = studySelectorInput.extend({
   limit: z.number().int().min(1).max(200).optional(),
 });
 
-export type GetStudySessionInput = z.infer<
-  typeof getStudySessionInput
->;
+export type GetStudySessionInput = z.infer<typeof getStudySessionInput>;
 export type GetStudySessionResult = {
   project: SelectedProjectInfo;
   session: PlatformStudySessionDetail;
@@ -15262,9 +16111,7 @@ const studyMetricsInput = studySelectorInput.extend({
     .describe("Restrict the metrics to a session population."),
 });
 
-export type GetStudyMetricsInput = z.infer<
-  typeof studyMetricsInput
->;
+export type GetStudyMetricsInput = z.infer<typeof studyMetricsInput>;
 export type GetStudyMetricsResult = {
   project: SelectedProjectInfo;
   metrics: Record<string, unknown>;
@@ -15302,9 +16149,7 @@ export const getStudyMetricsOperation: PlatformOperation<
   },
 };
 
-export type GetStudyUsageInput = z.infer<
-  typeof studySelectorInput
->;
+export type GetStudyUsageInput = z.infer<typeof studySelectorInput>;
 export type GetStudyUsageResult = {
   project: SelectedProjectInfo;
   usage: Record<string, unknown>;
@@ -15338,9 +16183,7 @@ export const getStudyUsageOperation: PlatformOperation<
   },
 };
 
-export type ListStudyFindingsInput = z.infer<
-  typeof studySelectorInput
->;
+export type ListStudyFindingsInput = z.infer<typeof studySelectorInput>;
 export type ListStudyFindingsResult = {
   project: SelectedProjectInfo;
   items: Array<Record<string, unknown>>;
@@ -15374,9 +16217,7 @@ export const listStudyFindingsOperation: PlatformOperation<
   },
 };
 
-export type GetStudySignalsInput = z.infer<
-  typeof studySelectorInput
->;
+export type GetStudySignalsInput = z.infer<typeof studySelectorInput>;
 export type GetStudySignalsResult = {
   project: SelectedProjectInfo;
   signals: Record<string, unknown>;
@@ -15418,9 +16259,7 @@ const studyWindowInput = studySelectorInput.extend({
     .describe("Window id, from get_user_testing_signals."),
 });
 
-export type GetStudyInsightsInput = z.infer<
-  typeof studyWindowInput
->;
+export type GetStudyInsightsInput = z.infer<typeof studyWindowInput>;
 export type GetStudyInsightsResult = {
   project: SelectedProjectInfo;
   insights: Record<string, unknown>;
@@ -15433,7 +16272,8 @@ export const getStudyInsightsOperation: PlatformOperation<
   name: "get_study_insights",
   title: "Get a user-testing window's insights",
   description:
-    "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working. " + INCLUDED_ANALYSIS_FAILURE_NOTE,
+    "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working. " +
+    INCLUDED_ANALYSIS_FAILURE_NOTE,
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -15458,16 +16298,14 @@ export const getStudyInsightsOperation: PlatformOperation<
   },
 };
 
-const requestStudyInsightsInput = studySelectorInput.extend(
-  {
-    force: z
-      .boolean()
-      .optional()
-      .describe(
-        "Regenerate over a window that already has insights. Takes another slice of the daily insight quota; no credits are consumed."
-      ),
-  }
-);
+const requestStudyInsightsInput = studySelectorInput.extend({
+  force: z
+    .boolean()
+    .optional()
+    .describe(
+      "Regenerate over a window that already has insights. Takes another slice of the daily insight quota; no credits are consumed."
+    ),
+});
 
 export type RequestStudyInsightsInput = z.infer<
   typeof requestStudyInsightsInput
@@ -15507,9 +16345,7 @@ export const requestStudyInsightsOperation: PlatformOperation<
   },
 };
 
-export type CancelStudyInsightsInput = z.infer<
-  typeof studyWindowInput
->;
+export type CancelStudyInsightsInput = z.infer<typeof studyWindowInput>;
 export type CancelStudyInsightsResult = {
   project: SelectedProjectInfo;
   canceled: Record<string, unknown>;
@@ -15549,9 +16385,7 @@ const studyFindingInput = studySelectorInput.extend({
   finding: z.string().trim().min(1).describe("Finding id."),
 });
 
-export type DismissStudyFindingInput = z.infer<
-  typeof studyFindingInput
->;
+export type DismissStudyFindingInput = z.infer<typeof studyFindingInput>;
 export type DismissStudyFindingResult = {
   project: SelectedProjectInfo;
   finding: Record<string, unknown>;
@@ -15682,9 +16516,7 @@ export const setStudyGuestExecutionOperation: PlatformOperation<
   },
 };
 
-export type RotateStudyLinkInput = z.infer<
-  typeof studySelectorInput
->;
+export type RotateStudyLinkInput = z.infer<typeof studySelectorInput>;
 export type RotateStudyLinkResult = {
   project: SelectedProjectInfo;
   result: Record<string, unknown>;
@@ -15729,9 +16561,7 @@ const upsertStudyMemberInput = studySelectorInput.extend({
     ),
 });
 
-export type UpsertStudyMemberInput = z.infer<
-  typeof upsertStudyMemberInput
->;
+export type UpsertStudyMemberInput = z.infer<typeof upsertStudyMemberInput>;
 export type UpsertStudyMemberResult = {
   project: SelectedProjectInfo;
   result: Record<string, unknown>;
@@ -15774,9 +16604,7 @@ const removeStudyMemberInput = studySelectorInput.extend({
   member: z.string().trim().min(1).describe("Member id or email."),
 });
 
-export type RemoveStudyMemberInput = z.infer<
-  typeof removeStudyMemberInput
->;
+export type RemoveStudyMemberInput = z.infer<typeof removeStudyMemberInput>;
 export type RemoveStudyMemberResult = UpsertStudyMemberResult;
 
 export const removeStudyMemberOperation: PlatformOperation<
@@ -15821,9 +16649,7 @@ const rebindStudyInput = studySelectorInput.extend({
     .describe("The environment to point at."),
 });
 
-export type RebindStudyInput = z.infer<
-  typeof rebindStudyInput
->;
+export type RebindStudyInput = z.infer<typeof rebindStudyInput>;
 export type RebindStudyResult = UpsertStudyMemberResult;
 
 export const rebindStudyOperation: PlatformOperation<
@@ -16310,7 +17136,8 @@ export const getUserTestingInsightsOperation: PlatformOperation<
   name: "get_user_testing_insights",
   title: "Get a user-testing window's insights",
   description:
-    "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working. " + INCLUDED_ANALYSIS_FAILURE_NOTE,
+    "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working. " +
+    INCLUDED_ANALYSIS_FAILURE_NOTE,
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -17624,12 +18451,12 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   observeChatSessionBrowserOperation,
   getChatSessionOperation,
   getChatSessionTraceOperation,
-  listJourneysOperation,
-  listJourneyRunsOperation,
-  getJourneyRunOperation,
-  listJourneyRunSessionsOperation,
-  launchJourneyRunOperation,
-  cancelJourneyRunOperation,
+  listGoalsOperation,
+  listGoalRunsOperation,
+  getGoalRunOperation,
+  listGoalRunSessionsOperation,
+  launchGoalRunOperation,
+  cancelGoalRunOperation,
   // Studies. The deprecated `*_scenario` and `*_user_testing_*` operations are
   // deliberately NOT here, for the same reason the `*_host` ones are not: every
   // registered surface partitions this list, so leaving them out is what
@@ -17705,18 +18532,18 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   backfillTraceDestinationOperation,
   listTraceDestinationBackfillsOperation,
   generatePersonasOperation,
-  getJourneyOperation,
-  createJourneyOperation,
-  updateJourneyOperation,
-  archiveJourneyOperation,
-  generateJourneysOperation,
+  getGoalOperation,
+  createGoalOperation,
+  updateGoalOperation,
+  archiveGoalOperation,
+  generateGoalsOperation,
   listSwarmsOperation,
   getSwarmOperation,
   createSwarmOperation,
   updateSwarmOperation,
   archiveSwarmOperation,
   getSwarmOverviewOperation,
-  getJourneyRunScorecardOperation,
+  getGoalRunScorecardOperation,
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,

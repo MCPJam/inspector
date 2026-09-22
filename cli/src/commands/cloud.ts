@@ -7,7 +7,7 @@ import { registerEvalCommands } from "./eval.js";
 import { registerClientsCommands } from "./clients.js";
 import { registerImagesCommands } from "./images.js";
 import { registerSkillsCommands } from "./skills.js";
-import { registerJourneysCommands } from "./journeys.js";
+import { registerGoalsCommands } from "./goals.js";
 import { registerOrganizationsCommands } from "./organizations.js";
 import { registerProjectsCommands } from "./projects.js";
 import { registerStudiesCommands } from "./studies.js";
@@ -58,8 +58,8 @@ export function registerCloudCommands(program: Command): Command {
   registerTraceDestinationsCommands(cloud);
 
   cloud.commandsGroup("Swarms and user testing:");
-  const journeys = registerJourneysCommands(cloud);
-  registerSwarmAuthoringCommands(cloud, journeys);
+  const goals = registerGoalsCommands(cloud);
+  registerSwarmAuthoringCommands(cloud, goals);
   registerStudiesCommands(cloud);
   return cloud;
 }

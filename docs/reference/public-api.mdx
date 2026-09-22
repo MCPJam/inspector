@@ -51,7 +51,7 @@ What you can do with it today:
   one — and a concurrent edit is rejected rather than silently reverted
 - **Manage a project's environments** — list, read, create, edit, archive, and
   restore the named execution bundles (host + optional server group + optional
-  pinned skills and plugin versions) that eval suites and journeys run against,
+  pinned skills and plugin versions) that eval suites and goals run against,
   and **preview** what one resolves to before launching it
 - **List a project's studies** — name, access mode, attached servers, and
   share link — and **read one study's settings**: model, system prompt,
@@ -237,7 +237,7 @@ and an interactive playground — under **Endpoints** in the sidebar.
 
 **Project environments** — the named execution bundles (one host, optionally a
 standalone server group, optionally pinned skills and plugin versions) that eval
-suites and journeys run against. Reads need project membership; **every write
+suites and goals run against. Reads need project membership; **every write
 needs project admin**. Writes are revisioned: pass the `revision` you last read
 back as `expectedRevision`, and a stale value returns `CONFLICT` (409) instead
 of overwriting a concurrent edit.
@@ -316,43 +316,43 @@ building conversational surfaces (the MCPJam Slack app is the first consumer):
   **Swarms and User Testing are enabled per organization.** Everything in the
   four sections below is behind that gate, enforced server-side. If it is not
   on for your organization, the reads generally return empty and every **write**
-  — creating a persona or journey, launching a run, publishing a study,
+  — creating a persona or goal, launching a run, publishing a study,
   requesting insights — answers `403` with a message naming the feature, not a
   `404` and not a validation error.
 
   Five operations are deliberately outside the gate, because every one of them
-  *reduces* exposure and spend: cancelling a journey run, unpublishing a
-  study, and archiving a persona, journey or swarm (each one's `DELETE`). An
+  *reduces* exposure and spend: cancelling a goal run, unpublishing a
+  study, and archiving a persona, goal or swarm (each one's `DELETE`). An
   organization that loses access can still stop what is running and clean up
   what it authored.
 
   Ask us on [Discord](https://discord.gg/JEnDtz8X6z) if you want it turned on.
 </Note>
 
-**Swarms — authoring** (`/projects/{projectId}/personas...`, `.../journeys...`,
+**Swarms — authoring** (`/projects/{projectId}/personas...`, `.../goals...`,
 `.../swarms...`) — the definitions a swarm run executes. A **persona** is a
-reusable synthetic character; a **journey** is the task you point one at; a
-**swarm** is an authoring container holding defaults for the journeys made
+reusable synthetic character; a **goal** is the task you point one at; a
+**swarm** is an authoring container holding defaults for the goals made
 under it. Nothing here starts anything — launching is
-`POST .../journeys/{journeyId}/runs`.
+`POST .../goals/{goalId}/runs`.
 
 | Endpoint | What it does |
 | --- | --- |
 | `GET .../personas` | List the project's personas |
 | `POST .../personas` | Create a persona (accepts `Idempotency-Key`) |
 | `GET .../personas/{personaId}` | One persona |
-| `PATCH .../personas/{personaId}` | Update a persona. Journeys reference it by id, so renaming is safe |
-| `DELETE .../personas/{personaId}` | Delete a persona. **409** while journeys still reference it |
-| `GET .../journeys` | List the project's journeys |
-| `POST .../journeys` | Create a journey (accepts `Idempotency-Key`). `personaId` and `swarmId` must be in this project |
-| `GET .../journeys/{journeyId}` | One journey |
-| `PATCH .../journeys/{journeyId}` | Update a journey. `null` CLEARS `environmentIds`; `sessionsPerTarget` and `maxTurns` must be sent together |
-| `DELETE .../journeys/{journeyId}` | **Archive** a journey — existing runs keep pointing at the definition they executed |
+| `PATCH .../personas/{personaId}` | Update a persona. Goals reference it by id, so renaming is safe |
+| `DELETE .../personas/{personaId}` | Delete a persona. **409** while goals still reference it |
+| `GET .../goals` | List the project's goals |
+| `POST .../goals` | Create a goal (accepts `Idempotency-Key`). `personaId` and `swarmId` must be in this project |
+| `GET .../goals/{goalId}` | One goal |
+| `PATCH .../goals/{goalId}` | Update a goal. `null` CLEARS `environmentIds`; `iterations` and `maxTurns` must be sent together |
+| `DELETE .../goals/{goalId}` | **Archive** a goal — existing runs keep pointing at the definition they executed |
 | `GET .../swarms` | List swarm containers |
 | `POST .../swarms` | Create a swarm container (accepts `Idempotency-Key`) |
 | `GET .../swarms/{swarmId}` | One swarm |
-| `PATCH .../swarms/{swarmId}` | Update the container's defaults. Not a cascade — existing journeys keep their own values |
-| `DELETE .../swarms/{swarmId}` | **Archive** a swarm. The journeys under it stay launchable |
+| `PATCH .../swarms/{swarmId}` | Update the container's defaults. Not a cascade — existing goals keep their own values |
+| `DELETE .../swarms/{swarmId}` | **Archive** a swarm. The goals under it stay launchable |
 
 **Swarms — generation** — drafts a model writes for you. Both routes return
 candidates and **persist nothing**: feed what you want to keep to the create
@@ -362,8 +362,8 @@ drafts are stable across retries when they are not.
 
 | Endpoint | What it does |
 | --- | --- |
-| `POST .../personas/generate` | Draft a slate of personas (and journeys for each) grounded in a server attachment or an environment |
-| `POST .../journeys/generate` | Draft journeys for a persona passed **by value**, so you can draft before you save |
+| `POST .../personas/generate` | Draft a slate of personas (and goals for each) grounded in a server attachment or an environment |
+| `POST .../goals/generate` | Draft goals for a persona passed **by value**, so you can draft before you save |
 
 <Warning>
   The generation routes consume **no customer credits** — the model cost is on
@@ -377,21 +377,21 @@ drafts are stable across retries when they are not.
   or switch identities to get around them.
 </Warning>
 
-**Swarms — runs** (`/projects/{projectId}/journeys/{journeyId}/runs`,
-`.../journey-runs/...`) — launching a journey and reading what it produced:
+**Swarms — runs** (`/projects/{projectId}/goals/{goalId}/runs`,
+`.../goal-runs/...`) — launching a goal and reading what it produced:
 
 | Endpoint | What it does |
 | --- | --- |
-| `GET .../journeys/{journeyId}/runs` | That journey's runs, newest first |
-| `POST .../journeys/{journeyId}/runs` | **Launch.** Answers `202` — the fan-out has started, not finished. Send `Idempotency-Key` |
-| `GET .../journey-runs/{runId}` | The full run: counts, per-target breakdown, per-session `attempts` |
-| `GET .../journey-runs/{runId}/sessions` | The chat sessions the run produced (summaries, not transcripts) |
-| `POST .../journey-runs/{runId}/cancel` | Stop a run. Idempotent — a second cancel is `200` with `alreadyCanceled: true`, not a `409` |
+| `GET .../goals/{goalId}/runs` | That goal's runs, newest first |
+| `POST .../goals/{goalId}/runs` | **Launch.** Answers `202` — the fan-out has started, not finished. Send `Idempotency-Key` |
+| `GET .../goal-runs/{runId}` | The full run: counts, per-target breakdown, per-session `attempts` |
+| `GET .../goal-runs/{runId}/sessions` | The chat sessions the run produced (summaries, not transcripts) |
+| `POST .../goal-runs/{runId}/cancel` | Stop a run. Idempotent — a second cancel is `200` with `alreadyCanceled: true`, not a `409` |
 
 Three things worth knowing before you write the client:
 
 - **Always send `Idempotency-Key` on a launch.** It spends model credits, so a
-  retry of a dropped response must not run the journey twice. Replaying a key
+  retry of a dropped response must not run the goal twice. Replaying a key
   returns the original run with `deduped: true` and starts no second runner —
   and consumes no quota. Omitting the header is read as a request that declined
   to identify itself, and gets a fresh run every time.
@@ -404,7 +404,7 @@ Three things worth knowing before you write the client:
   targets that share a `hostId`.
 
 <Warning>
-  Launching **spends**: a run fans out into `targets × sessionsPerTarget`
+  Launching **spends**: a run fans out into `targets × iterations`
   sessions. Two different `429`s can come back — the per-minute burst brake
   (retry in seconds) and your plan's daily launch cap (resets at UTC midnight).
   Both normally carry `Retry-After`; back off on your own when one does not.
@@ -416,11 +416,11 @@ aggregates them, and wave insights run a model.
 
 | Endpoint | What it does |
 | --- | --- |
-| `GET .../journeys-overview` | Project roll-up: recent runs, goal-completion rates, repeat failures, trend |
-| `GET .../journey-runs/{runId}/scorecard` | One run's deterministic rubric result. No model, no spend |
-| `GET .../journey-findings` | Criteria that keep failing, tracked across waves |
-| `POST .../journey-findings/{findingId}/dismiss` | Hide a finding |
-| `POST .../journey-findings/{findingId}/undismiss` | Un-hide it |
+| `GET .../goals-overview` | Project roll-up: recent runs, goal-completion rates, repeat failures, trend |
+| `GET .../goal-runs/{runId}/scorecard` | One run's deterministic rubric result. No model, no spend |
+| `GET .../goal-findings` | Criteria that keep failing, tracked across waves |
+| `POST .../goal-findings/{findingId}/dismiss` | Hide a finding |
+| `POST .../goal-findings/{findingId}/undismiss` | Un-hide it |
 | `GET .../waves/{waveId}/insights` | Poll a wave's generated insights. **404 = nobody asked** |
 | `POST .../waves/{waveId}/insights` | Request them. `202` — scheduled, not done |
 | `DELETE .../waves/{waveId}/insights` | Cancel a generation still `pending` |
@@ -519,7 +519,7 @@ current views with version provenance, not historical traffic snapshots.
 Check `scan.truncated` and `analysis.sampled` before interpreting coverage as a
 whole-scope total. Map reads separately expose displayed counts, scope totals,
 sampling, and freshness; a wave's displayed counts cover only its requested
-journey runs. A pending projection contributes to the unmapped count rather
+goal runs. A pending projection contributes to the unmapped count rather
 than a fabricated map node.
 
 The five analytics shapes above are documented as **open objects** on purpose.

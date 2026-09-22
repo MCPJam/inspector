@@ -157,11 +157,14 @@ function deriveCapabilities(row: CapabilitiesRow) {
     /** Reads across swarms and user testing. Never flag-gated. */
     readSwarms: isMember,
     readUserTesting: isMember,
-    /** Authoring personas / journeys / swarms. */
+    /** Authoring personas / goals / swarms. */
     writeSwarms: isMember && !gated,
     /** Launching a run. Spends hosted model credits. */
-    launchJourneyRun: isMember && !gated,
+    launchGoalRun: isMember && !gated,
     /** Stopping a run. Ungated by design — see above. */
+    cancelGoalRun: isMember,
+    /** The pre-rename spellings of the two above. Deleted at GA. */
+    launchJourneyRun: isMember && !gated,
     cancelJourneyRun: isMember,
     /** Publishing an environment for outsiders to talk to. Admin-only. */
     publishStudy: isAdmin && !gated,

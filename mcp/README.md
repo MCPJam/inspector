@@ -121,7 +121,7 @@ so results respect the caller's project access.
 | `get_chat_session` | Read a session's metadata and a window of its raw messages, indexed by absolute transcript position — the same indices the trace spans reference. | — |
 | `get_chat_session_trace` | Read a session's per-turn spans: tool latency, token usage, transcript indices. Returns the latest turn by default; page older turns with `afterPromptIndex`, or pass `includeSpans=false` for summaries. | — |
 | `get_capabilities` | Your role, which betas this organization has, your plan's limits, and a `can` block of booleans. Ask this before planning work that authors, launches or publishes — the tool list is the same for every caller and cannot tell you a beta is off. | — |
-| `list_personas` | List the project's reusable synthetic characters — the cast Swarms journeys run as. | — |
+| `list_personas` | List the project's reusable synthetic characters — the cast Swarms goals run as. | — |
 | `get_persona` | Get one persona in full, including its behavioural notes. | — |
 | `create_persona` | Create a reusable synthetic character for Swarms to run as. | — |
 | `update_persona` | Edit a persona's name, role or notes. Finished runs keep the persona they ran as. | — |
@@ -130,24 +130,24 @@ so results respect the caller's project access.
 | `get_secret` | One secret's metadata: how it is delivered, where it is bound, when it was last handed to a run. Never its value. | — |
 | `delete_secret` | Delete a stored credential. Hard: the row and the encrypted value both go, and delivery stops. Does not revoke the key at its provider. | — |
 | `generate_personas` | Draft candidate personas with a model, grounded in what the project's servers do. Saves nothing; included with MCPJam, so no credits are consumed. | — |
-| `list_journeys` | List the project's journeys — a persona, a goal, and the environments to pursue it against. | — |
-| `get_journey` | Get one journey in full, including the execution config that determines how many sessions a run produces. | — |
-| `create_journey` | Author a journey. Creating does not run it. | — |
-| `update_journey` | Edit a journey. A run already in flight keeps the config it launched with. | — |
-| `archive_journey` | Take a journey off the roster. Its runs, sessions and scorecards stay readable. | — |
-| `generate_journeys` | Draft candidate journeys for a persona with a model. Saves nothing; included with MCPJam, so no credits are consumed. | — |
-| `list_journey_runs` | List a journey's runs, newest first. | — |
-| `get_journey_run` | Get one journey run: status, per-target rollups, and per-session attempt records. This is what to poll after launching. | — |
-| `list_journey_run_sessions` | List the chat sessions a journey run produced, with readiness, goal scores and a first-message preview. | — |
-| `launch_journey_run` | Launch a journey run and return immediately with its id. Spends model credits across the whole fan-out; pass an idempotency key. | — |
-| `cancel_journey_run` | Stop a running journey run, settling its in-flight and pending sessions. | — |
-| `list_swarms` | List swarm containers — the groups journeys are authored under, holding their shared execution config. | — |
+| `list_goals` | List the project's goals — a persona, a task, and the environments to pursue it against. | — |
+| `get_goal` | Get one goal in full, including the execution config that determines how many sessions a run produces. | — |
+| `create_goal` | Author a goal. Creating does not run it. | — |
+| `update_goal` | Edit a goal. A run already in flight keeps the config it launched with. | — |
+| `archive_goal` | Take a goal off the roster. Its runs, sessions and scorecards stay readable. | — |
+| `generate_goals` | Draft candidate goals for a persona with a model. Saves nothing; included with MCPJam, so no credits are consumed. | — |
+| `list_goal_runs` | List a goal's runs, newest first. | — |
+| `get_goal_run` | Get one goal run: status, per-target rollups, and per-session attempt records. This is what to poll after launching. | — |
+| `list_goal_run_sessions` | List the chat sessions a goal run produced, with readiness, goal scores and a first-message preview. | — |
+| `launch_goal_run` | Launch a goal run and return immediately with its id. Spends model credits across the whole fan-out; pass an idempotency key. | — |
+| `cancel_goal_run` | Stop a running goal run, settling its in-flight and pending sessions. | — |
+| `list_swarms` | List swarm containers — the groups goals are authored under, holding their shared execution config. | — |
 | `get_swarm` | Get one swarm container: its name, defaults and fan-out. | — |
-| `create_swarm` | Create a container to author journeys under. Runs nothing. | — |
+| `create_swarm` | Create a container to author goals under. Runs nothing. | — |
 | `update_swarm` | Edit a swarm container's name, description, fan-out or config. | — |
-| `archive_swarm` | Take a swarm container off the roster. Journeys authored under it keep working. | — |
+| `archive_swarm` | Take a swarm container off the roster. Goals authored under it keep working. | — |
 | `get_swarms_overview` | The project's recent runs with their rubric findings and goal-completion trend — the roll-up a human sees on the Swarms page. | — |
-| `get_journey_run_scorecard` | Per-criterion pass/fail counts for one run. Deterministic, so read this first when explaining a failure. | — |
+| `get_goal_run_scorecard` | Per-criterion pass/fail counts for one run. Deterministic, so read this first when explaining a failure. | — |
 | `list_swarm_findings` | Criteria that keep failing across waves, with how long each has been failing. | — |
 | `dismiss_swarm_finding` | Mark a finding as not worth acting on. Its lifecycle keeps updating underneath. | — |
 | `undismiss_swarm_finding` | Bring a dismissed finding back into the active list. | — |

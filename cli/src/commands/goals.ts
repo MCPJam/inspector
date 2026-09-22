@@ -1,12 +1,12 @@
 import { swarmVerdictLabel } from "@mcpjam/sdk/contract";
 import type { Command } from "commander";
 import {
-  launchJourneyRunOperation,
-  cancelJourneyRunOperation,
-  getJourneyRunOperation,
-  listJourneyRunSessionsOperation,
-  listJourneyRunsOperation,
-  listJourneysOperation,
+  launchGoalRunOperation,
+  cancelGoalRunOperation,
+  getGoalRunOperation,
+  listGoalRunSessionsOperation,
+  listGoalRunsOperation,
+  listGoalsOperation,
 } from "@mcpjam/sdk/platform";
 import { usageError, writeResult } from "../lib/output.js";
 import {
@@ -18,10 +18,10 @@ import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 /**
- * `mcpjam cloud journeys` — the CLI for what the product calls **Swarms**.
+ * `mcpjam cloud goals` — the CLI for what the product calls **Swarms**.
  *
- * A journey is one persona pursuing a goal against one or more environments;
- * a journey RUN is what executing it produces. Those are the nouns here, not
+ * A goal is one persona pursuing a task against one or more environments;
+ * a goal RUN is what executing it produces. Those are the nouns here, not
  * "swarm", because a swarm is a container users author in the UI and the word
  * is badly overloaded in the codebase — `kind:"swarm"` and `swarmId` refer to
  * the *user-testing* product, which is `mcpjam cloud scenarios`.
@@ -32,9 +32,6 @@ import { getGlobalOptions } from "../lib/server-config.js";
  * for yours — the server decides, this CLI does not pre-guess, matching how
  * `environments` and `images` behave for features an org lacks.
  */
-
-
-
 
 /** Commander's collector for a repeatable option (`--environment a --environment b`). */
 function collectRepeatable(value: string, previous: string[]): string[] {
@@ -81,49 +78,79 @@ function addPageOptions(command: Command): Command {
 }
 
 /**
- * Returns the `journeys` group so the authoring and insight subcommands in
+ * Returns the `goals` group so the authoring and insight subcommands in
  * `./swarms.ts` can hang off the SAME group. A user should not have to learn
- * that `journeys run` and `journeys create` come from different files.
+ * that `goals run` and `goals create` come from different files.
  */
-export function registerJourneysCommands(program: Command): Command {
-  const journeys = program
-    .command("journeys")
+/**
+ * Resolve the goal selector, refusing both spellings at once.
+ *
+ * `--goal-id`, not `--goal`: a goal's own task text is what `goals create` and
+ * `goals update` take as `--goal`, so the id needs the suffix.
+ */
+export function goalIdOf(options: {
+  goalId?: string;
+  journey?: string;
+}): string {
+  if (options.goalId !== undefined && options.journey !== undefined) {
+    throw usageError(
+      "Use either --goal-id or its deprecated --journey alias, not both."
+    );
+  }
+  const selected = options.goalId ?? options.journey;
+  if (selected === undefined) {
+    throw usageError("Missing required option: --goal-id");
+  }
+  return selected;
+}
+
+export function registerGoalsCommands(program: Command): Command {
+  const goals = program
+    .command("goals")
+    // The pre-rename name. Kept so a script written against `cloud journeys`
+    // keeps running; removed at GA with the rest of the deprecated surface.
+    .alias("journeys")
     .description(
-      "List journeys and inspect their runs (the Swarms product) in your hosted MCPJam projects"
+      "List goals and inspect their runs (the Swarms product) in your hosted MCPJam projects"
     );
 
-      journeys
-      .command("list")
-      .description("List the journeys in a project")
-      .option(
-        "--project <id-or-name>",
-        "Project name or ID (defaults to the most recently updated project)"
-      ).action(async (options: PlatformOptions & { project?: string }, command) => {
-    const globalOptions = getGlobalOptions(command);
-    const result = await runPlatformCommand(
-      platformOptionsOf(command),
-      globalOptions.timeout,
-      ({ client, signal }) =>
-        listJourneysOperation.execute(
-          { project: resolveCloudProjectArgs(options).project },
-          { client, signal }
-        )
+  goals
+    .command("list")
+    .description("List the goals in a project")
+    .option(
+      "--project <id-or-name>",
+      "Project name or ID (defaults to the most recently updated project)"
+    )
+    .action(
+      async (options: PlatformOptions & { project?: string }, command) => {
+        const globalOptions = getGlobalOptions(command);
+        const result = await runPlatformCommand(
+          platformOptionsOf(command),
+          globalOptions.timeout,
+          ({ client, signal }) =>
+            listGoalsOperation.execute(
+              { project: resolveCloudProjectArgs(options).project },
+              { client, signal }
+            )
+        );
+        writeResult(result, globalOptions.format);
+      }
     );
-    writeResult(result, globalOptions.format);
-  });
 
-      addPageOptions(
-      journeys
-        .command("runs")
-        .description("List a journey's runs, newest first")
-        .requiredOption("--journey <id>", "Journey ID (from `journeys list`)")
-        .option("--project <id-or-name>", "Project name or ID")
-    ).action(
+  addPageOptions(
+    goals
+      .command("runs")
+      .description("List a goal's runs, newest first")
+      .option("--goal-id <id>", "Goal ID (from `goals list`)")
+      .option("--journey <id>", "Deprecated alias for --goal-id")
+      .option("--project <id-or-name>", "Project name or ID")
+  ).action(
     async (
       options: PlatformOptions &
         PageOptions & {
           project?: string;
-          journey: string;
+          goalId?: string;
+          journey?: string;
         },
       command
     ) => {
@@ -132,10 +159,10 @@ export function registerJourneysCommands(program: Command): Command {
         platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
-          listJourneyRunsOperation.execute(
+          listGoalRunsOperation.execute(
             {
               project: resolveCloudProjectArgs(options).project,
-              journey: options.journey,
+              goalId: goalIdOf(options),
               ...pageArgs(options),
             },
             { client, signal }
@@ -145,120 +172,131 @@ export function registerJourneysCommands(program: Command): Command {
     }
   );
 
-      journeys
-      .command("status")
-      .description(
-        "Show one run's status, target rollups, and per-session attempts. Poll this after launching; `status` leaves 'running' once every attempt has settled. A run someone stopped reports 'failed' with canceled: true."
-      )
-      .requiredOption("--run <id>", "Journey run ID")
-      .option("--project <id-or-name>", "Project name or ID").action(
-    async (
-      options: PlatformOptions & { project?: string; run: string },
-      command
-    ) => {
-      const globalOptions = getGlobalOptions(command);
-      const result = await runPlatformCommand(
-        platformOptionsOf(command),
-        globalOptions.timeout,
-        ({ client, signal }) =>
-          getJourneyRunOperation.execute(
-            { project: resolveCloudProjectArgs(options).project, run: options.run },
-            { client, signal }
-          )
-      );
-      writeResult(result, globalOptions.format);
-    }
-  );
+  goals
+    .command("status")
+    .description(
+      "Show one run's status, target rollups, and per-session attempts. Poll this after launching; `status` leaves 'running' once every attempt has settled. A run someone stopped reports 'failed' with canceled: true."
+    )
+    .requiredOption("--run <id>", "Goal run ID")
+    .option("--project <id-or-name>", "Project name or ID")
+    .action(
+      async (
+        options: PlatformOptions & { project?: string; run: string },
+        command
+      ) => {
+        const globalOptions = getGlobalOptions(command);
+        const result = await runPlatformCommand(
+          platformOptionsOf(command),
+          globalOptions.timeout,
+          ({ client, signal }) =>
+            getGoalRunOperation.execute(
+              {
+                project: resolveCloudProjectArgs(options).project,
+                run: options.run,
+              },
+              { client, signal }
+            )
+        );
+        writeResult(result, globalOptions.format);
+      }
+    );
 
-      journeys
-      .command("run")
+  goals
+    .command("run")
+    .description(
+      "Launch a goal. Returns as soon as the run exists — poll `goals status` for progress."
+    )
+    .option("--goal-id <id>", "Goal ID to launch")
+    .option("--journey <id>", "Deprecated alias for --goal-id")
+    .option("--project <id-or-name>", "Project name or ID")
+    .option(
+      "--idempotency-key <key>",
+      "Retry key. Pass one: a launch spends model credits, so a retry after a dropped response must not run the goal twice. Replaying a key returns the original run."
+    )
+    .option(
+      "--wave <id>",
+      "Opaque id linking the sibling runs of one co-launched batch"
+    )
+    .option(
+      "--environment <id>",
+      "Fan out across this project environment instead of the goal's authored targets (repeatable)",
+      collectRepeatable,
+      [] as string[]
+    )
+    .action(
+      async (
+        options: PlatformOptions & {
+          project?: string;
+          goalId?: string;
+          journey?: string;
+          idempotencyKey?: string;
+          wave?: string;
+          environment?: string[];
+        },
+        command
+      ) => {
+        const globalOptions = getGlobalOptions(command);
+        const result = await runPlatformCommand(
+          platformOptionsOf(command),
+          globalOptions.timeout,
+          ({ client, signal }) =>
+            launchGoalRunOperation.execute(
+              {
+                project: resolveCloudProjectArgs(options).project,
+                goalId: goalIdOf(options),
+                ...(options.idempotencyKey
+                  ? { idempotencyKey: options.idempotencyKey }
+                  : {}),
+                ...(options.wave ? { waveId: options.wave } : {}),
+                ...(options.environment?.length
+                  ? { environmentIds: options.environment }
+                  : {}),
+              },
+              { client, signal }
+            )
+        );
+        writeResult(result, globalOptions.format);
+      }
+    );
+
+  goals
+    .command("cancel")
+    .description(
+      "Stop a running goal run. Idempotent — cancelling an already-cancelled run succeeds; a run that finished on its own conflicts instead."
+    )
+    .requiredOption("--run <id>", "Goal run ID")
+    .option("--project <id-or-name>", "Project name or ID")
+    .action(
+      async (
+        options: PlatformOptions & { project?: string; run: string },
+        command
+      ) => {
+        const globalOptions = getGlobalOptions(command);
+        const result = await runPlatformCommand(
+          platformOptionsOf(command),
+          globalOptions.timeout,
+          ({ client, signal }) =>
+            cancelGoalRunOperation.execute(
+              {
+                project: resolveCloudProjectArgs(options).project,
+                run: options.run,
+              },
+              { client, signal }
+            )
+        );
+        writeResult(result, globalOptions.format);
+      }
+    );
+
+  addPageOptions(
+    goals
+      .command("sessions")
       .description(
-        "Launch a journey. Returns as soon as the run exists — poll `journeys status` for progress."
+        "List the chat sessions a run produced, with readiness and goal scores"
       )
-      .requiredOption("--journey <id>", "Journey ID to launch")
+      .requiredOption("--run <id>", "Goal run ID")
       .option("--project <id-or-name>", "Project name or ID")
-      .option(
-        "--idempotency-key <key>",
-        "Retry key. Pass one: a launch spends model credits, so a retry after a dropped response must not run the journey twice. Replaying a key returns the original run."
-      )
-      .option(
-        "--wave <id>",
-        "Opaque id linking the sibling runs of one co-launched batch"
-      )
-      .option(
-        "--environment <id>",
-        "Fan out across this project environment instead of the journey's authored targets (repeatable)",
-        collectRepeatable,
-        [] as string[]
-      ).action(
-    async (
-      options: PlatformOptions & {
-        project?: string;
-        journey: string;
-        idempotencyKey?: string;
-        wave?: string;
-        environment?: string[];
-      },
-      command
-    ) => {
-      const globalOptions = getGlobalOptions(command);
-      const result = await runPlatformCommand(
-        platformOptionsOf(command),
-        globalOptions.timeout,
-        ({ client, signal }) =>
-          launchJourneyRunOperation.execute(
-            {
-              project: resolveCloudProjectArgs(options).project,
-              journey: options.journey,
-              ...(options.idempotencyKey
-                ? { idempotencyKey: options.idempotencyKey }
-                : {}),
-              ...(options.wave ? { waveId: options.wave } : {}),
-              ...(options.environment?.length
-                ? { environmentIds: options.environment }
-                : {}),
-            },
-            { client, signal }
-          )
-      );
-      writeResult(result, globalOptions.format);
-    }
-  );
-
-      journeys
-      .command("cancel")
-      .description(
-        "Stop a running journey run. Idempotent — cancelling an already-cancelled run succeeds; a run that finished on its own conflicts instead."
-      )
-      .requiredOption("--run <id>", "Journey run ID")
-      .option("--project <id-or-name>", "Project name or ID").action(
-    async (
-      options: PlatformOptions & { project?: string; run: string },
-      command
-    ) => {
-      const globalOptions = getGlobalOptions(command);
-      const result = await runPlatformCommand(
-        platformOptionsOf(command),
-        globalOptions.timeout,
-        ({ client, signal }) =>
-          cancelJourneyRunOperation.execute(
-            { project: resolveCloudProjectArgs(options).project, run: options.run },
-            { client, signal }
-          )
-      );
-      writeResult(result, globalOptions.format);
-    }
-  );
-
-      addPageOptions(
-      journeys
-        .command("sessions")
-        .description(
-          "List the chat sessions a run produced, with readiness and goal scores"
-        )
-        .requiredOption("--run <id>", "Journey run ID")
-        .option("--project <id-or-name>", "Project name or ID")
-    ).action(
+  ).action(
     async (
       options: PlatformOptions &
         PageOptions & {
@@ -272,7 +310,7 @@ export function registerJourneysCommands(program: Command): Command {
         platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
-          listJourneyRunSessionsOperation.execute(
+          listGoalRunSessionsOperation.execute(
             {
               project: resolveCloudProjectArgs(options).project,
               run: options.run,
@@ -283,12 +321,18 @@ export function registerJourneysCommands(program: Command): Command {
       );
       writeResult(
         globalOptions.format === "human"
-          ? { ...result, items: result.items.map(row => ({ ...row, goalResult: swarmVerdictLabel(row.verdict) })) }
+          ? {
+              ...result,
+              items: result.items.map((row) => ({
+                ...row,
+                goalResult: swarmVerdictLabel(row.verdict),
+              })),
+            }
           : result,
         globalOptions.format
       );
     }
   );
 
-  return journeys;
+  return goals;
 }

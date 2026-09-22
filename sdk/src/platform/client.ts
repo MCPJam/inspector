@@ -22,6 +22,12 @@ import { readSdkVersion } from "../sdk-version.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
+  PlatformGoal,
+  PlatformGoalArchived,
+  PlatformGoalRun,
+  PlatformGoalRunCanceled,
+  PlatformGoalRunLaunched,
+  PlatformGoalRunSession,
   PlatformStudy,
   PlatformStudyDeleted,
   PlatformStudyDetail,
@@ -640,8 +646,8 @@ export class PlatformApiClient {
     this.userAgent = isBrowserPage()
       ? options.userAgent
       : options.userAgent
-        ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
-        : DEFAULT_PLATFORM_USER_AGENT;
+      ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
+      : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
@@ -781,8 +787,8 @@ export class PlatformApiClient {
             params.connectableOnly === undefined
               ? undefined
               : params.connectableOnly
-                ? "true"
-                : "false",
+              ? "true"
+              : "false",
           ...pageQuery({ cursor: params.cursor, limit: params.limit }),
         },
       },
@@ -3704,6 +3710,279 @@ export class PlatformApiClient {
   // journey or run id belonging to another of your projects reads as 404
   // rather than crossing over.
 
+  // ── Goals ───────────────────────────────────────────────────────────────
+  //
+  // What a swarm executes. The `*Journey*` methods below are DEPRECATED
+  // compatibility delegates: they keep calling the `/journeys` and
+  // `/journey-runs` routes and keep returning their `PlatformJourney*` shapes,
+  // which spell the owning id `journeyId`, the batch `waveId` and the
+  // per-target count `sessionsPerTarget`. Removed at GA.
+
+  listGoals(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformGoal>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/goals`,
+      {},
+      options
+    );
+  }
+
+  listGoalRuns(
+    params: {
+      projectId: string;
+      goalId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformGoalRun>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/goals/${encodeURIComponent(params.goalId)}/runs`,
+      { query: pageQuery(params) },
+      options
+    );
+  }
+
+  getGoalRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformGoalRun> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/goal-runs/${encodeURIComponent(params.runId)}`,
+      {},
+      options
+    );
+  }
+
+  listGoalRunSessions(
+    params: {
+      projectId: string;
+      runId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformGoalRunSession>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/goal-runs/${encodeURIComponent(params.runId)}/sessions`,
+      { query: pageQuery(params) },
+      options
+    );
+  }
+
+  /**
+   * Launch a goal. Returns as soon as the run exists — **202**, not a
+   * finished run: a fan-out can take hours, so poll `getGoalRun` or watch
+   * `listGoalRunSessions`.
+   *
+   * IDEMPOTENT ON `options.idempotencyKey`, and you want to pass one. A launch
+   * spends model credits, so a retry after a dropped response must not run the
+   * goal twice; replaying a key returns the ORIGINAL run with
+   * `deduped: true`. Omit it and every call starts a new run — the server has
+   * nothing to match a retry against, so it treats each as a new launch.
+   *
+   * Behind the `sandboxes-enabled` beta flag — launching creates exposure and
+   * spend, so an unflagged organization gets a 403 here.
+   */
+  launchGoalRun(
+    params: {
+      projectId: string;
+      goalId: string;
+      swarmRunId?: string;
+      environmentIds?: string[];
+    },
+    options?: RequestOptions
+  ): Promise<PlatformGoalRunLaunched> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/goals/${encodeURIComponent(params.goalId)}/runs`,
+      {
+        body: {
+          ...(params.swarmRunId ? { swarmRunId: params.swarmRunId } : {}),
+          ...(params.environmentIds?.length
+            ? { environmentIds: params.environmentIds }
+            : {}),
+        },
+      },
+      options
+    );
+  }
+
+  /**
+   * Stop a running goal run.
+   *
+   * Idempotent: cancelling an already-cancelled run succeeds with
+   * `alreadyCanceled: true` rather than conflicting. A run that finished on
+   * its own is a 409 — reporting success there would tell you that you stopped
+   * something that had already completed.
+   *
+   * NOT behind the beta flag, unlike launching: stopping a run must keep
+   * working for an organization that has lost it.
+   */
+  cancelGoalRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformGoalRunCanceled> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/goal-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options
+    );
+  }
+
+  getGoal(
+    params: { projectId: string; goalId: string },
+    options?: RequestOptions
+  ): Promise<PlatformGoal> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/goals/${encodeURIComponent(params.goalId)}`,
+      {},
+      options
+    );
+  }
+
+  /** IDEMPOTENT ON `options.idempotencyKey`. */
+  createGoal(
+    params: {
+      projectId: string;
+      goal: string;
+      personaId: string;
+      iterations: number;
+      maxTurns: number;
+      setupWrites?: boolean;
+      name?: string;
+      swarmId?: string;
+      environmentIds?: string[];
+      serverAttachmentId?: string;
+      hostIds?: string[];
+    },
+    options?: RequestOptions
+  ): Promise<PlatformGoal> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/goals`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * `null` CLEARS a field; omitting it leaves it alone. That tri-state is the
+   * only way to say "stop fanning this goal out across environments".
+   *
+   * `iterations` and `maxTurns` must move together — they are one
+   * config object upstream, so a partial update would need a read-modify-write
+   * that could silently clobber a concurrent edit.
+   */
+  updateGoal(
+    params: {
+      projectId: string;
+      goalId: string;
+      name?: string;
+      goal?: string;
+      environmentIds?: string[] | null;
+      serverAttachmentId?: string | null;
+      hostIds?: string[];
+      iterations?: number;
+      maxTurns?: number;
+      setupWrites?: boolean;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformGoal> {
+    const { projectId, goalId, ...body } = params;
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(projectId)}/goals/${encodeURIComponent(
+        goalId
+      )}`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * ARCHIVES the goal. Its runs, sessions and scorecards stay readable —
+   * deleting the results of work that already happened is not what anyone
+   * means by removing a goal from their list.
+   */
+  archiveGoal(
+    params: { projectId: string; goalId: string },
+    options?: RequestOptions
+  ): Promise<PlatformGoalArchived> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/goals/${encodeURIComponent(params.goalId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Draft goals for a persona. The persona is passed BY VALUE, not by id:
+   * the create flow drafts a persona and its goals before either exists,
+   * so requiring a saved persona would force you to keep a draft you may
+   * discard. Nothing is saved here either.
+   */
+  generateGoals(
+    params: {
+      projectId: string;
+      persona: { name: string; role: string; notes?: string };
+      serverAttachmentId?: string;
+      environmentId?: string;
+      goalCount?: number;
+      description?: string;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformGenerationDrafts> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/goals/generate`,
+      { body },
+      options
+    );
+  }
+
+  getGoalRunScorecard(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformRunScorecard> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/goal-runs/${encodeURIComponent(params.runId)}/scorecard`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * @deprecated Use {@link listGoals}. Calls the deprecated `/journey` route.
+   */
   listJourneys(
     params: { projectId: string },
     options?: RequestOptions
@@ -3716,6 +3995,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link listGoalRuns}. Calls the deprecated `/journey` route.
+   */
   listJourneyRuns(
     params: {
       projectId: string;
@@ -3735,6 +4017,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link getGoalRun}. Calls the deprecated `/journey` route.
+   */
   getJourneyRun(
     params: { projectId: string; runId: string },
     options?: RequestOptions
@@ -3749,6 +4034,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link listGoalRunSessions}. Calls the deprecated `/journey` route.
+   */
   listJourneyRunSessions(
     params: {
       projectId: string;
@@ -3781,6 +4069,8 @@ export class PlatformApiClient {
    *
    * Behind the `sandboxes-enabled` beta flag — launching creates exposure and
    * spend, so an unflagged organization gets a 403 here.
+   *
+   * @deprecated Use {@link launchGoalRun}. Calls the deprecated `/journey` route.
    */
   launchJourneyRun(
     params: {
@@ -3818,6 +4108,8 @@ export class PlatformApiClient {
    *
    * NOT behind the beta flag, unlike launching: stopping a run must keep
    * working for an organization that has lost it.
+   *
+   * @deprecated Use {@link cancelGoalRun}. Calls the deprecated `/journey` route.
    */
   cancelJourneyRun(
     params: { projectId: string; runId: string },
@@ -4391,6 +4683,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link getGoal}. Calls the deprecated `/journey` route.
+   */
   getJourney(
     params: { projectId: string; journeyId: string },
     options?: RequestOptions
@@ -4406,6 +4701,9 @@ export class PlatformApiClient {
   }
 
   /** IDEMPOTENT ON `options.idempotencyKey`. */
+  /**
+   * @deprecated Use {@link createGoal}. Calls the deprecated `/journey` route.
+   */
   createJourney(
     params: {
       projectId: string;
@@ -4438,6 +4736,8 @@ export class PlatformApiClient {
    * `sessionsPerTarget` and `maxTurns` must move together — they are one
    * config object upstream, so a partial update would need a read-modify-write
    * that could silently clobber a concurrent edit.
+   *
+   * @deprecated Use {@link updateGoal}. Calls the deprecated `/journey` route.
    */
   updateJourney(
     params: {
@@ -4469,6 +4769,8 @@ export class PlatformApiClient {
    * ARCHIVES the journey. Its runs, sessions and scorecards stay readable —
    * deleting the results of work that already happened is not what anyone
    * means by removing a journey from their list.
+   *
+   * @deprecated Use {@link archiveGoal}. Calls the deprecated `/journey` route.
    */
   archiveJourney(
     params: { projectId: string; journeyId: string },
@@ -4510,12 +4812,17 @@ export class PlatformApiClient {
     );
   }
 
-  /** IDEMPOTENT ON `options.idempotencyKey`. */
+  /**
+   * IDEMPOTENT ON `options.idempotencyKey`.
+   *
+   * `iterations` is the per-target session count. The route also accepts the
+   * pre-rename `sessionsPerTarget` — this method sends the canonical one.
+   */
   createSwarm(
     params: {
       projectId: string;
       name: string;
-      sessionsPerTarget: number;
+      iterations: number;
       maxTurns: number;
       setupWrites?: boolean;
       description?: string;
@@ -4539,7 +4846,7 @@ export class PlatformApiClient {
       name?: string;
       description?: string | null;
       environmentIds?: string[] | null;
-      sessionsPerTarget?: number;
+      iterations?: number;
       maxTurns?: number;
       setupWrites?: boolean;
     },
@@ -4557,7 +4864,7 @@ export class PlatformApiClient {
   }
 
   /**
-   * ARCHIVES the container. Journeys authored under it keep working and keep
+   * ARCHIVES the container. Goals authored under it keep working and keep
    * their `swarmId` — the reference is authoring provenance, not ownership.
    */
   archiveSwarm(
@@ -4608,6 +4915,8 @@ export class PlatformApiClient {
    * the create flow drafts a persona and its journeys before either exists,
    * so requiring a saved persona would force you to keep a draft you may
    * discard. Nothing is saved here either.
+   *
+   * @deprecated Use {@link generateGoals}. Calls the deprecated `/journey` route.
    */
   generateJourneys(
     params: {
@@ -4643,12 +4952,15 @@ export class PlatformApiClient {
   ): Promise<PlatformSwarmOverview> {
     return this.request(
       "GET",
-      `/projects/${encodeURIComponent(params.projectId)}/journeys-overview`,
+      `/projects/${encodeURIComponent(params.projectId)}/goals-overview`,
       {},
       options
     );
   }
 
+  /**
+   * @deprecated Use {@link getGoalRunScorecard}. Calls the deprecated `/journey` route.
+   */
   getJourneyRunScorecard(
     params: { projectId: string; runId: string },
     options?: RequestOptions
@@ -4669,7 +4981,7 @@ export class PlatformApiClient {
   ): Promise<PlatformPage<PlatformSwarmFinding>> {
     return this.request(
       "GET",
-      `/projects/${encodeURIComponent(params.projectId)}/journey-findings`,
+      `/projects/${encodeURIComponent(params.projectId)}/goal-findings`,
       {},
       options
     );
@@ -4683,7 +4995,7 @@ export class PlatformApiClient {
       "POST",
       `/projects/${encodeURIComponent(
         params.projectId
-      )}/journey-findings/${encodeURIComponent(params.findingId)}/dismiss`,
+      )}/goal-findings/${encodeURIComponent(params.findingId)}/dismiss`,
       {},
       options
     );
@@ -4697,7 +5009,7 @@ export class PlatformApiClient {
       "POST",
       `/projects/${encodeURIComponent(
         params.projectId
-      )}/journey-findings/${encodeURIComponent(params.findingId)}/undismiss`,
+      )}/goal-findings/${encodeURIComponent(params.findingId)}/undismiss`,
       {},
       options
     );

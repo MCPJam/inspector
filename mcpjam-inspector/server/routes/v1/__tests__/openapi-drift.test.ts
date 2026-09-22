@@ -42,7 +42,7 @@ const BODYLESS_WRITES = new Set([
   // Cancel is addressed entirely by the path runId; the body is empty.
   "post /projects/{projectId}/eval-runs/{runId}/cancel",
   // Same shape on the swarm side, for the same reason.
-  "post /projects/{projectId}/journey-runs/{runId}/cancel",
+  "post /projects/{projectId}/goal-runs/{runId}/cancel",
   // And the same on readiness. There is nothing to say about a cancellation
   // beyond which run — the executing node learns about it on its next
   // heartbeat, and a body could only be a place to pass options a cancellation
@@ -50,8 +50,8 @@ const BODYLESS_WRITES = new Set([
   "post /projects/{projectId}/readiness-runs/{runId}/cancel",
   // Dismissal is addressed entirely by the path findingId — there is nothing
   // to say about it beyond which finding.
-  "post /projects/{projectId}/journey-findings/{findingId}/dismiss",
-  "post /projects/{projectId}/journey-findings/{findingId}/undismiss",
+  "post /projects/{projectId}/goal-findings/{findingId}/dismiss",
+  "post /projects/{projectId}/goal-findings/{findingId}/undismiss",
   // Rotating a share link takes no options: the path studyId names what to
   // rotate, and the new secret is minted server-side by definition. A body
   // here could only be a place to pass the next secret in, which is exactly
@@ -170,6 +170,29 @@ const KNOWN_UNDOCUMENTED = new Set([
   "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/members",
   "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}",
   "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rebind",
+  // The DEPRECATED `/journeys`, `/journey-runs` and `/journey-findings`
+  // aliases of the `/goals` surface. Same handlers as their documented twins,
+  // with the pre-rename response spelling (`journeyId`, `sessionsPerTarget`,
+  // `waveId`) and the pre-rename request spelling to match, and every response
+  // carries `Deprecation: true`. Undocumented for the reason the `/scenarios`
+  // and `/hosts` aliases above are: the spec is what a NEW integration reads,
+  // and publishing both spellings would present a choice where there is none.
+  "get /projects/{projectId}/journeys",
+  "post /projects/{projectId}/journeys",
+  "post /projects/{projectId}/journeys/generate",
+  "get /projects/{projectId}/journeys/{journeyId}",
+  "patch /projects/{projectId}/journeys/{journeyId}",
+  "delete /projects/{projectId}/journeys/{journeyId}",
+  "get /projects/{projectId}/journeys/{journeyId}/runs",
+  "post /projects/{projectId}/journeys/{journeyId}/runs",
+  "get /projects/{projectId}/journeys-overview",
+  "get /projects/{projectId}/journey-runs/{runId}",
+  "get /projects/{projectId}/journey-runs/{runId}/sessions",
+  "get /projects/{projectId}/journey-runs/{runId}/scorecard",
+  "post /projects/{projectId}/journey-runs/{runId}/cancel",
+  "get /projects/{projectId}/journey-findings",
+  "post /projects/{projectId}/journey-findings/{findingId}/dismiss",
+  "post /projects/{projectId}/journey-findings/{findingId}/undismiss",
   // The DEPRECATED `/hosts` aliases of the `/clients` surface. Every one is
   // the same handler as its documented `/clients` twin with the pre-rename DTO
   // and the pre-rename (tokenless) write contract, and every response carries

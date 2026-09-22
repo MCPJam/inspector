@@ -126,20 +126,20 @@ import {
   getPersonaOperation,
   createPersonaOperation,
   updatePersonaOperation,
-  listJourneysOperation,
-  getJourneyOperation,
-  createJourneyOperation,
-  updateJourneyOperation,
+  listGoalsOperation,
+  getGoalOperation,
+  createGoalOperation,
+  updateGoalOperation,
   listSwarmsOperation,
   getSwarmOperation,
   createSwarmOperation,
   updateSwarmOperation,
-  listJourneyRunsOperation,
-  getJourneyRunOperation,
-  launchJourneyRunOperation,
-  cancelJourneyRunOperation,
+  listGoalRunsOperation,
+  getGoalRunOperation,
+  launchGoalRunOperation,
+  cancelGoalRunOperation,
   getSwarmOverviewOperation,
-  getJourneyRunScorecardOperation,
+  getGoalRunScorecardOperation,
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
@@ -147,7 +147,7 @@ import {
   requestWaveInsightsOperation,
   cancelWaveInsightsOperation,
   generatePersonasOperation,
-  generateJourneysOperation,
+  generateGoalsOperation,
   getStudyMetricsOperation,
   getStudyUsageOperation,
   listStudyFindingsOperation,
@@ -2080,13 +2080,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // the "tier derives from operation.risk" suite in agent-op-registry.test.ts
   // runs the derivation over every risk-classified operation. The only
   // lawful deviations are the ones NAMED in that suite's `TIER_EXCEPTIONS`
-  // map, each with a written reason (`cancel_journey_run` stays gated so
+  // map, each with a written reason (`cancel_goal_run` stays gated so
   // stopping spend is approvable; `publish_study` stays excluded because
   // who may talk to your servers is a human call). Re-tiering an entry
   // against its risk fails CI until the exception is written down there.
   //
   // Deriving from shared metadata rather than re-deciding here is the fix for
-  // a real failure: `cancel_journey_run` was once excluded from this surface
+  // a real failure: `cancel_goal_run` was once excluded from this surface
   // citing a reason that only applied to the MCP catalog, because each
   // partition file argued the case independently and one of them got it wrong.
   {
@@ -2120,26 +2120,26 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   { operation: getSecretOperation, tier: "direct" },
-  { operation: listJourneysOperation, tier: "direct" },
+  { operation: listGoalsOperation, tier: "direct" },
   {
-    operation: getJourneyOperation,
+    operation: getGoalOperation,
     tier: "direct",
     promptNotes: [
-      "- A journey run produces `targets x sessionsPerTarget` conversations, and that total is what spends. Read `get_journey` before proposing a launch so the number in your proposal is the real one.",
+      "- A journey run produces `targets x sessionsPerTarget` conversations, and that total is what spends. Read `get_goal` before proposing a launch so the number in your proposal is the real one.",
     ],
   },
-  { operation: createJourneyOperation, tier: "direct" },
-  { operation: updateJourneyOperation, tier: "direct" },
+  { operation: createGoalOperation, tier: "direct" },
+  { operation: updateGoalOperation, tier: "direct" },
   { operation: listSwarmsOperation, tier: "direct" },
   { operation: getSwarmOperation, tier: "direct" },
   { operation: createSwarmOperation, tier: "direct" },
   { operation: updateSwarmOperation, tier: "direct" },
-  { operation: listJourneyRunsOperation, tier: "direct" },
+  { operation: listGoalRunsOperation, tier: "direct" },
   {
-    operation: getJourneyRunOperation,
+    operation: getGoalRunOperation,
     tier: "direct",
     promptNotes: [
-      "- After a launch is approved, poll `get_journey_run`. It leaves `running` once every attempt has settled; `canceled` and `stale` are separate booleans, so a deliberate stop and a runner that went silent do not both read as failure.",
+      "- After a launch is approved, poll `get_goal_run`. It leaves `running` once every attempt has settled; `canceled` and `stale` are separate booleans, so a deliberate stop and a runner that went silent do not both read as failure.",
     ],
   },
   {
@@ -2150,10 +2150,10 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   {
-    operation: getJourneyRunScorecardOperation,
+    operation: getGoalRunScorecardOperation,
     tier: "direct",
     promptNotes: [
-      "- To explain why a run failed, read `get_journey_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
+      "- To explain why a run failed, read `get_goal_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
     ],
   },
   { operation: listSwarmFindingsOperation, tier: "direct" },
@@ -2164,7 +2164,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
 
   // ── GATED — the swarm operations that SPEND.
   {
-    operation: launchJourneyRunOperation,
+    operation: launchGoalRunOperation,
     tier: "gated",
     proposal: {
       describe: (input) =>
@@ -2178,11 +2178,11 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       },
     },
     promptNotes: [
-      "- Launching a journey fans out real model conversations and spends credits for every one. Calling `launch_journey_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_journey`.",
+      "- Launching a journey fans out real model conversations and spends credits for every one. Calling `launch_goal_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_goal`.",
     ],
   },
   {
-    operation: cancelJourneyRunOperation,
+    operation: cancelGoalRunOperation,
     tier: "gated",
     proposal: {
       describe: (input) =>
@@ -2208,7 +2208,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
   },
   {
-    operation: generateJourneysOperation,
+    operation: generateGoalsOperation,
     tier: "gated",
     proposal: {
       describe: (input) => {
@@ -2571,7 +2571,7 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Same as list_trace_destinations: admin configuration, available on REST/SDK/CLI.",
   list_trace_destination_backfills:
     "Backfill history is operational detail for an admin diagnosing an export. Available on REST/SDK/CLI.",
-  archive_journey:
+  archive_goal:
     "Removes a journey from the roster; the agent proposes authoring, never destruction.",
   archive_swarm:
     "Removes a container from the roster; the agent proposes authoring, never destruction.",
@@ -2580,7 +2580,7 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   // can page through them turns an agent turn into a transcript reader.
   // Mirrors the `list_chat_sessions` precedent below. Still available on REST,
   // the CLI and MCP, where the caller is asking for them explicitly.
-  list_journey_run_sessions:
+  list_goal_run_sessions:
     "Session bodies are conversations; reading them is not a turn concern. Available on REST/CLI/MCP.",
   // User testing: session listings and transcripts. PRIVACY, not risk — real
   // visitors' conversations, and a chat surface that can page them is a
