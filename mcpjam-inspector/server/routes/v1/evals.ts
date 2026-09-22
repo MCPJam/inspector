@@ -4415,6 +4415,11 @@ async function resolveLaunchServers(params: {
       environmentLaunch = await resolveEnvironmentForLaunch(convex, {
         projectId,
         environmentId,
+        // Lets the preflight fall back to the suite's own servers when this
+        // environment has none, matching what the launch mutation does.
+        // Omitting it would leave the 500 in place: the Inspector
+        // preflights before it launches.
+        ...(suiteId ? { suiteId } : {}),
       });
     } catch (error) {
       throw translateEnvironmentResolveError(error);

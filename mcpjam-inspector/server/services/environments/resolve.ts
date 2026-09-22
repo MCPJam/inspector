@@ -159,7 +159,7 @@ export function environmentEffectiveServerIds(
 
 export async function resolveEnvironmentForLaunch(
   convexClient: ConvexHttpClient,
-  args: { projectId: string; environmentId: string }
+  args: { projectId: string; environmentId: string; suiteId?: string }
 ): Promise<ResolvedEnvironmentForLaunch> {
   let raw: unknown;
   try {

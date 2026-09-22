@@ -2361,6 +2361,10 @@ export async function prepareEvalRun(
         : await resolveEnvironmentForLaunch(convexClient, {
             projectId,
             environmentId,
+            // Same suite fallback the preflight applies. Reached only when the
+            // caller did not already resolve this environment itself, so the
+            // two paths agree on the server set either way.
+            ...(suiteId ? { suiteId } : {}),
           });
   } else if (serverIds.length === 0) {
     // Legacy launches keep the old ≥1-server contract; enforced here (not

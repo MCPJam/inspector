@@ -808,11 +808,21 @@ describe("v1 write routes", () => {
         expect(
           ((await res.json()) as { environment?: unknown }).environment
         ).toEqual({ id: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Staging", revision: 7 });
+        // `suiteId` rides along so the preflight can fall back to the suite's
+        // own servers when this environment resolves to none — the case that
+        // was 500ing. It does NOT change which servers an environment that HAS
+        // servers resolves to, which the assertions below still pin.
         expect(convexQueryMock).toHaveBeenCalledWith(
           "projectEnvironments:resolveEnvironmentForLaunch",
-          { projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+          {
+            projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          }
         );
-        // The suite's saved selection is never consulted for an env run.
+        // The suite's saved selection is never consulted for an env run. Still
+        // true: the fallback resolves inside the Convex query, never through
+        // this HTTP surface.
         expect(convexQueryMock).not.toHaveBeenCalledWith(
           "testSuites:getSuiteRunServerSelection",
           expect.anything()

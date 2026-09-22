@@ -212,6 +212,9 @@ export async function executeClaimedRun(
             {
               projectId: claimed.projectId!,
               environmentId: claimed.environmentId!,
+              // Same suite fallback the interactive launch gets; a
+              // scheduled run hits the identical empty-environment case.
+              suiteId: claimed.suiteId,
             },
           );
           return {

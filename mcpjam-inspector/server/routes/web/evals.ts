@@ -184,6 +184,13 @@ evals.post("/run", async (c) =>
           {
             projectId: rawBody.projectId,
             environmentId: rawBody.environmentId,
+            // Suite-scoped: lets the preflight fall back to the suite's own
+            // servers when this environment has none, matching what the launch
+            // mutation will do. Omitting it here would leave the 500 in place,
+            // because the Inspector preflights before it launches.
+            ...(typeof rawBody.suiteId === "string" && rawBody.suiteId
+              ? { suiteId: rawBody.suiteId }
+              : {}),
           },
         );
         // Prime the ephemeral manager with the live-healed server IDs (not the
