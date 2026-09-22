@@ -118,6 +118,34 @@ function isInstallRefusedByElectron(error: unknown): boolean {
 
 let currentStatus: UpdateStatus = { kind: "idle" };
 let isQuittingForUpdate = false;
+/**
+ * Whether `autoUpdater.quitAndInstall()` has already RETURNED in this process.
+ *
+ * ONE-WAY on purpose — the only piece of state here that is never cleared.
+ *
+ * `isQuittingForUpdate` means "an install is underway right now", so every
+ * path that gives the user an answer has to clear it: the stalled-quit
+ * watchdog, the updater `error` handler, a throw at the call site. That is
+ * correct for a flag about the CURRENT attempt, and it is why it cannot also
+ * be the guard on `quitAndInstall`.
+ *
+ * Electron's `AutoUpdater::QuitAndInstall` does `Browser::Get()->AddObserver(this)`,
+ * and that registration lasts for the life of the PROCESS. A second call hits
+ * Chromium's `NOTREACHED` — "Observers can only be added once!" — which reports
+ * a minidump through `DumpWithoutCrashing` and leaves Electron's updater in a
+ * state it does not expect (INSPECTOR-ELECTRON-WF, four users on 3.7.2).
+ *
+ * The gap the flag alone leaves: `retireAfterUpdaterError` only rewrites a
+ * `pending` status, so an updater `error` after a successful `quitAndInstall`
+ * clears `isQuittingForUpdate` while the status stays `downloaded`. Both
+ * conditions every call site checks are satisfied again, and the next quit or
+ * click calls it a second time. The crash report came in through exactly that
+ * door: `before-quit` -> `installUpdateOnQuit()` -> `quitAndInstall()`.
+ *
+ * Set only on a call that RETURNED. A call that threw never reached
+ * `AddObserver`, so retrying it is legitimate and stays allowed.
+ */
+let quitAndInstallCalled = false;
 let trustedWindow: BrowserWindow | null = null;
 let updateListenersRegistered = false;
 let stalledInstallTimer: ReturnType<typeof setTimeout> | null = null;
@@ -136,6 +164,45 @@ let isInstallingOnQuit = false;
 let installOnNextDownload = false;
 // How many times we have already restarted the app to rescue this install.
 let relaunchAttempts = 0;
+
+/**
+ * `autoUpdater.quitAndInstall()`, at most once per process.
+ *
+ * Returns false when the latch has already spent this process's one call, in
+ * which case NOTHING was invoked and the caller owes the user a way forward.
+ * Propagates a throw rather than swallowing it: the call sites already handle
+ * that case, and it must stay distinguishable from a refusal because only one
+ * of the two leaves a retry on the table.
+ */
+function quitAndInstallOnce(): boolean {
+  if (quitAndInstallCalled) {
+    log.warn(
+      "quitAndInstall already ran in this process — refusing a second call " +
+        "(Electron registers a process-lifetime observer on the first)",
+    );
+    return false;
+  }
+  autoUpdater.quitAndInstall();
+  quitAndInstallCalled = true;
+  return true;
+}
+
+/**
+ * Retire this process's install and point the user at the releases page.
+ *
+ * The one recovery left when the latch refuses: only a fresh process can
+ * install now, and unlike `relaunchToFinishInstall` this does not spend a
+ * restart on a build we have no reason to think would land. Mirrors what the
+ * stalled-quit watchdog hands over, for the same reason — a dead button is
+ * the bug, so every refusal has to end somewhere the user can act.
+ */
+function handOverManualDownload(reason: string): void {
+  log.error(reason);
+  const version =
+    currentStatus.kind === "downloaded" ? currentStatus.version : undefined;
+  setStatus({ kind: "manual", version });
+  broadcastUpdateError();
+}
 
 function clearStalledInstallWatchdog(): void {
   if (stalledInstallTimer !== null) {
@@ -720,7 +787,14 @@ export function setupAutoUpdaterEvents(): void {
       log.info("User had requested install — restarting now");
       isQuittingForUpdate = true;
       try {
-        autoUpdater.quitAndInstall();
+        if (!quitAndInstallOnce()) {
+          isQuittingForUpdate = false;
+          handOverManualDownload(
+            "Queued install cannot run: this process already spent its one " +
+              "quitAndInstall; offering manual download",
+          );
+          return;
+        }
         // Returning is not succeeding — see startStalledQuitWatchdog.
         startStalledQuitWatchdog();
       } catch (error) {
@@ -780,7 +854,14 @@ export function registerUpdateListeners(mainWindow: BrowserWindow): void {
       log.info("Restarting app to install update...");
       isQuittingForUpdate = true;
       try {
-        autoUpdater.quitAndInstall();
+        if (!quitAndInstallOnce()) {
+          isQuittingForUpdate = false;
+          handOverManualDownload(
+            "Restart click cannot install: this process already spent its one " +
+              "quitAndInstall; offering manual download",
+          );
+          return;
+        }
         // The click path the bug report came through: if this install goes
         // nowhere, nothing else will ever clear the spinner.
         startStalledQuitWatchdog();
@@ -867,7 +948,18 @@ export function installUpdateOnQuit(): boolean {
     isQuittingForUpdate = true;
     isInstallingOnQuit = true;
     try {
-      autoUpdater.quitAndInstall();
+      if (!quitAndInstallOnce()) {
+        // The user asked to QUIT. Let them — a refusal here must never be
+        // what traps them in an app that will not close. The staged build is
+        // still staged; the next launch installs it.
+        log.info(
+          "Staged update found at quit, but this process already spent its " +
+            "one quitAndInstall — quitting without installing",
+        );
+        isQuittingForUpdate = false;
+        isInstallingOnQuit = false;
+        return false;
+      }
       return true;
     } catch (error) {
       isInstallingOnQuit = false;
@@ -891,6 +983,7 @@ export function __resetUpdateStateForTests(): void {
   stopUpdatePolling();
   currentStatus = { kind: "idle" };
   isQuittingForUpdate = false;
+  quitAndInstallCalled = false;
   isInstallingOnQuit = false;
   installOnNextDownload = false;
   relaunchAttempts = 0;

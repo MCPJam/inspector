@@ -861,6 +861,65 @@ describe("update-listeners", () => {
     expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
   });
 
+  it("does not install on quit after an error unstuck the flag mid-install", async () => {
+    // INSPECTOR-ELECTRON-WF, the exact path four users hit on 3.7.2.
+    //
+    // `isQuittingForUpdate` is about the CURRENT attempt, so the error handler
+    // has to clear it to give the user an answer. But `retireAfterUpdaterError`
+    // only rewrites a `pending` status, so the status stays `downloaded` — and
+    // both conditions `installUpdateOnQuit` checks are true again while
+    // Electron still holds the observer the first `quitAndInstall` registered.
+    // Quitting then called it a second time: "Observers can only be added
+    // once!" through DumpWithoutCrashing.
+    const window = createWindow();
+    windows.push(window);
+    const { installUpdateOnQuit, registerUpdateListeners } =
+      await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+
+    // A plain updater error — NOT the refused-by-Electron shape, which has its
+    // own relaunch recovery. This one only unsticks the flag.
+    emitAutoUpdaterEvent("error", new Error("network died mid-install"));
+
+    // The precondition that made this reachable: the status never moved.
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toMatchObject({ kind: "downloaded" });
+
+    // The user quits. No second call, and the quit is NOT held — returning
+    // true here would `preventDefault()` a quit that nothing will finish.
+    expect(installUpdateOnQuit()).toBe(false);
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands over the manual download when a click follows a spent install", async () => {
+    // Same setup, through the button instead of the quit. Refusing silently
+    // would rebuild the dead-button bug this file is full of fixes for, so the
+    // refusal has to land somewhere the user can actually act.
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    emitAutoUpdaterEvent("error", new Error("network died mid-install"));
+
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toMatchObject({ kind: "manual", version: "3.8.1" });
+    expect(window.webContents.send).toHaveBeenCalledWith("update-error");
+  });
+
   it("ignores a repeat click after the install started from a queued download", async () => {
     // The other way in: the user clicks while still downloading, so
     // `update-downloaded` starts the install itself. A click after that lands
