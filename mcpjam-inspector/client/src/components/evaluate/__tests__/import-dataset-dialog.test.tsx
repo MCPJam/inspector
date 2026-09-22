@@ -310,7 +310,7 @@ describe("Markdown case import", () => {
     const alert = await screen.findByRole("alert");
     // Loose on the wording: the sentence is owned by the SDK error catalog,
     // and the point of the test is that the backend's own phrasing is gone.
-    expect(alert).toHaveTextContent(/MCPJam (model )?limit reached\./);
+    expect(alert).toHaveTextContent(/Out of MCPJam credits\./);
     expect(alert).not.toHaveTextContent("Use BYOK");
   });
 

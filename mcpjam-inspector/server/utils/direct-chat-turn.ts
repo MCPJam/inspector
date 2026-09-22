@@ -48,6 +48,8 @@ import {
 } from "@/shared/progressive-tool-discovery";
 import {
   mergeMcpToolOriginMetadata,
+  mergeMcpToolConnectionMetadata,
+  toolConnectionAttribution,
   mergePageToolBindingMetadata,
 } from "@/shared/mcp-tool-origin-metadata";
 import { pageToolBindingOf } from "./built-in-tools/page-tools";
@@ -447,7 +449,10 @@ export function stampMcpToolOriginProviderOptions(
         // thing the tool's `execute` compares itself to on resume.
         const providerOptions = mergePageToolBindingMetadata(
           withPageToolAttributionMetadata(
-            mergeMcpToolOriginMetadata(record.providerOptions, serverId),
+            mergeMcpToolConnectionMetadata(
+              mergeMcpToolOriginMetadata(record.providerOptions, serverId),
+              toolConnectionAttribution(tools[toolName], record.input, record.toolCallId),
+            ),
             tools[toolName],
           ),
           record.type === "tool-call"
@@ -482,7 +487,10 @@ export function withMcpToolOriginChunkMetadata<
   const serverId = readToolServerId(tools, chunk.toolName);
   const providerMetadata = mergePageToolBindingMetadata(
     withPageToolAttributionMetadata(
-      mergeMcpToolOriginMetadata(chunk.providerMetadata, serverId),
+      mergeMcpToolConnectionMetadata(
+        mergeMcpToolOriginMetadata(chunk.providerMetadata, serverId),
+        toolConnectionAttribution(tools[chunk.toolName], (chunk as { input?: unknown }).input, (chunk as { toolCallId?: unknown }).toolCallId),
+      ),
       tools[chunk.toolName],
     ),
     pageToolBindingOf(tools[chunk.toolName])
