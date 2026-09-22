@@ -147,7 +147,19 @@ vi.mock("@/hooks/useProjectEnvironments", async (importOriginal) => {
     ...actual,
     useCreateProjectEnvironment: () => createEnvironmentMock,
     useEnsureAdhocEnvironments: () => ensureAdhocEnvironmentsMock,
-    useProjectEnvironments: () => environmentsRef.current,
+    // Honours `includeAdhoc` the way the real hook does: nameless rows are
+    // ad-hoc and hidden unless a caller opts in. Ignoring the option let a
+    // caller that NEEDS ad-hoc rows look correct in tests while getting none
+    // of them in the app.
+    useProjectEnvironments: (
+      _projectId: unknown,
+      options?: { includeAdhoc?: boolean },
+    ) =>
+      options?.includeAdhoc
+        ? environmentsRef.current
+        : environmentsRef.current.filter(
+            (row: { name?: string }) => (row.name ?? "").trim().length > 0,
+          ),
   };
 });
 
@@ -2898,6 +2910,8 @@ describe("SwarmsTab — Confirm discloses where reused goals run", () => {
   });
 
   it("cautions when the move crosses server groups", async () => {
+    // Same client on both rows, so the server-group caution is the only one
+    // that can fire and the assertion cannot pass by accident.
     setEnvironments([
       {
         environmentId: "env-1",
@@ -2911,7 +2925,7 @@ describe("SwarmsTab — Confirm discloses where reused goals run", () => {
         environmentId: "env-2",
         projectId: "proj-1",
         name: "Amazon",
-        hostId: "host-2",
+        hostId: "host-1",
         revision: 1,
         serverAttachmentId: "att-terac",
       },
@@ -2925,9 +2939,63 @@ describe("SwarmsTab — Confirm discloses where reused goals run", () => {
       },
     ]);
 
-    expect(
-      await screen.findByTestId("new-swarm-confirm-env-moves"),
-    ).toHaveTextContent("Different server group");
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Different server group.");
+    expect(moves).toHaveTextContent(
+      "These goals were written for another server",
+    );
+  });
+
+  it("cautions when the move crosses CLIENTS", async () => {
+    // The shape this takes on every project without the environments flag: the
+    // composer seeds the first client and the goals were set up on another.
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-shared",
+      },
+      {
+        environmentId: "env-2",
+        projectId: "proj-1",
+        name: "Amazon",
+        hostId: "host-2",
+        revision: 1,
+        serverAttachmentId: "att-shared",
+      },
+    ]);
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Different client.");
+    expect(moves).not.toHaveTextContent("server group");
+  });
+
+  it("names the client a LEGACY goal was set up against", async () => {
+    // No environmentIds at all, but `hostIds` says where it ran. Treating that
+    // as unknowable hid a real move on the most common kind of stored goal.
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        hostIds: ["host-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Cursor");
+    expect(moves).toHaveTextContent("Different client.");
   });
 
   it("does not caution when the move keeps the same server group", async () => {
@@ -3035,5 +3103,123 @@ describe("SwarmsTab — Confirm discloses where reused goals run", () => {
         screen.getByTestId("new-swarm-environments-picker"),
       ).toHaveTextContent("1 env"),
     );
+  });
+});
+
+/**
+ * Confirm with `project-environments-enabled` OFF.
+ *
+ * The live configuration for every project but one: the composer shows clients
+ * and models, the launch target is an ad-hoc row minted from them, and the
+ * environment ids do not exist until the flow resolves. Confirm used to reach
+ * the user with an empty selection and therefore say nothing at all: no target,
+ * no move, and a session quote that ignored the fan-out width.
+ */
+describe("SwarmsTab: Confirm with the environments flag off", () => {
+  function reuseAna(journeys: Array<Record<string, unknown>>) {
+    environmentsFlagRef.current = false;
+    environmentsRef.current = [];
+    environments = environmentsRef.current;
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = journeys;
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+  }
+
+  it("names the client a reuse-only swarm will run on", async () => {
+    reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["adhoc-host-1"],
+      },
+    ]);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+
+    // The auto-seed picks the first client; the ad-hoc row minted for it has
+    // no name of its own and labels by that client.
+    expect(
+      await screen.findByTestId("new-swarm-confirm-clients"),
+    ).toHaveTextContent("Runs on Claude");
+  });
+
+  it("says which reused goals are moving to a different client", async () => {
+    reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["adhoc-host-2"],
+      },
+    ]);
+    // The row that goal points at: ad-hoc, so it carries no name and every
+    // named-only list in the app hides it. The move notice is the one place
+    // that has to see it.
+    environmentsRef.current = [
+      {
+        environmentId: "adhoc-host-2",
+        projectId: "proj-1",
+        hostId: "host-2",
+        origin: "adhoc",
+        revision: 1,
+      },
+    ] as typeof environmentsRef.current;
+    environments = environmentsRef.current;
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Ana");
+    expect(moves).toHaveTextContent("Cursor");
+    expect(moves).toHaveTextContent("Different client.");
+  });
+
+  it("quotes the fan-out it will actually launch", async () => {
+    // It used to quote one conversation and then launch two targets, because
+    // the estimate multiplies by the environment count and the selection was
+    // still empty on this screen.
+    reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["adhoc-host-1"],
+      },
+    ]);
+    fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("new-swarm-launch-session-estimate"),
+      ).toHaveTextContent("2 conversations"),
+    );
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalled());
+    // The quote and the launch agree.
+    expect(launchJourneyRunMock.mock.calls[0][0].environmentIds).toEqual([
+      "adhoc-host-1",
+      "adhoc-host-2",
+    ]);
+  });
+
+  it("still reaches Confirm when the target cannot be resolved", async () => {
+    // Resolving early must never strand a returning user: their goals carry
+    // their own target, and the launch is what reports a broken one.
+    ensureAdhocEnvironmentsMock.mockRejectedValue(new Error("resolve failed"));
+    reuseAna([{ _id: "j-1", name: "Reconcile payouts", goal: "Reconcile" }]);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    await screen.findByTestId("new-swarm-reused-personas");
+    expect(
+      screen.queryByTestId("new-swarm-confirm-clients"),
+    ).not.toBeInTheDocument();
   });
 });

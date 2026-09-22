@@ -82,6 +82,11 @@ export type LaunchTarget = {
    * journey must be re-stamped before launching. Absent on created targets —
    * they are born with the selection. */
   environmentIds?: string[] | null;
+  /** Legacy origin of a REUSED journey — the clients it runs against and the
+   * server group overriding their servers. Inactive compatibility data on an
+   * env-based row, so they are read only when `environmentIds` is `null`. */
+  hostIds?: string[];
+  legacyServerAttachmentId?: string | null;
   /** Stored sessions-per-target of a REUSED journey (`null` = the row carries
    * no config). Launch does not rewrite a shared journey's config, so this —
    * not the intensity preset — is what the run will execute. Absent on created
@@ -705,6 +710,8 @@ function ReusedPersonaJourneyLoader({
         rubric?: JourneyCriterion[] | null;
         judgeConfig?: GoalJudgeConfig;
         environmentIds?: string[] | null;
+        hostIds?: string[] | null;
+        serverAttachmentId?: string | null;
         config?: { sessionsPerTarget?: number; maxTurns?: number } | null;
       }[]
     | undefined;
@@ -722,6 +729,8 @@ function ReusedPersonaJourneyLoader({
         personaName: persona.name,
         personaRole: persona.role,
         environmentIds: journey.environmentIds ?? null,
+        hostIds: journey.hostIds ?? [],
+        legacyServerAttachmentId: journey.serverAttachmentId ?? null,
         sessionsPerTarget: journey.config?.sessionsPerTarget ?? null,
         ...(persona.avatarShape !== undefined
           ? { avatarShape: persona.avatarShape }
@@ -833,6 +842,7 @@ export function NewSwarmConfirmStep({
   environmentLabels,
   environmentIds,
   environmentRowsById,
+  hostNameById,
   launching,
   errorMessage,
   onBack,
@@ -861,6 +871,8 @@ export function NewSwarmConfirmStep({
   environmentIds: string[];
   /** Every environment this project can name, for the move notice. */
   environmentRowsById: ReadonlyMap<string, EnvironmentMoveRow>;
+  /** Client names, so a legacy goal's origin can be named rather than counted. */
+  hostNameById: (hostId: string) => string;
   launching: boolean;
   errorMessage: string | null;
   onBack: () => void;
@@ -1025,9 +1037,14 @@ export function NewSwarmConfirmStep({
     // slip past while this is empty.
     if (targets === null) return [];
     const move = describeReusedEnvironmentMove({
-      storedEnvironmentIds: targets.map((target) => target.environmentIds),
+      goals: targets.map((target) => ({
+        environmentIds: target.environmentIds,
+        hostIds: target.hostIds,
+        serverAttachmentId: target.legacyServerAttachmentId,
+      })),
       selection: environmentIds,
       rowsById: environmentRowsById,
+      hostName: hostNameById,
     });
     return move
       ? [{ personaId: persona._id, personaName: persona.name, move }]
@@ -1270,8 +1287,18 @@ export function NewSwarmConfirmStep({
                     "another environment"
                   )}
                   {" and will run here instead."}
+                  {move.differentClient || move.differentServerGroup ? (
+                    <span className="font-medium text-foreground">
+                      {" "}
+                      {move.differentServerGroup
+                        ? move.differentClient
+                          ? "Different client and server group."
+                          : "Different server group."
+                        : "Different client."}
+                    </span>
+                  ) : null}
                   {move.differentServerGroup
-                    ? " Different server group. Goals written for one server\u2019s tools may not fit."
+                    ? " These goals were written for another server\u2019s tools."
                     : ""}
                 </li>
               ))}

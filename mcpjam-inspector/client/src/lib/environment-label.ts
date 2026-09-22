@@ -256,19 +256,25 @@ export function disambiguateLabels<T extends { label: string }>(
  * Every environment's display label, keyed by id, with same-named rows
  * disambiguated by a stable `#n`.
  *
- * Numbering is computed over the LIVE NAMED rows only, and the result is keyed
- * by id rather than returned as a list, because the suffix a row gets must not
- * depend on which slice of the project the caller happens to hold. The swarm
- * create flow labels the rows it can launch; {@link EnvironmentPicker} also
- * fetches archived and ad-hoc rows so it can name an already-selected one.
+ * Keyed by id rather than returned as a list because the suffix a row gets must
+ * not depend on which slice of the project the caller happens to hold. The
+ * swarm create flow labels the rows it can launch; {@link EnvironmentPicker}
+ * also fetches archived and ad-hoc rows so it can name an already-selected one.
  * Numbering each caller's own list would give one environment "MCPJam #2" in
- * the picker and a bare "MCPJam" on the next screen — reintroducing, one step
- * later, the exact collision the suffix exists to resolve.
+ * the picker and a bare "MCPJam" on the next screen, reintroducing one step
+ * later the exact collision the suffix exists to resolve.
  *
- * Archived and ad-hoc rows are never offered for selection, so they keep their
- * plain label and take no part in the numbering. They are still present in the
- * map: a surface that must NAME an already-attached row of either kind looks it
- * up here rather than falling back to an id.
+ * Numbering runs WITHIN an origin class, never across one. Ad-hoc labels
+ * collide by construction — every ad-hoc row on one client reads as that client
+ * — so they need the suffix more than named rows do, and a surface that shows
+ * several of them (a swarm composed across clients, on any project without the
+ * environments flag) is the common case rather than the exotic one. Letting an
+ * ad-hoc row shift a NAMED row's number would break the agreement above,
+ * because the picker offers named rows only.
+ *
+ * Archived rows take no part in the numbering. They are never offered, and a
+ * row that was archived after a journey pointed at it must not renumber the
+ * live rows around it.
  */
 export function environmentLabelsById(
   environments: readonly (EnvironmentLabelRow & { archivedAt?: number })[],
@@ -278,20 +284,22 @@ export function environmentLabelsById(
   for (const environment of environments) {
     labels.set(environment.environmentId, environmentLabel(environment, ctx));
   }
-  const numbered = disambiguateLabels(
-    environments
-      .filter(
-        (environment) =>
-          environment.archivedAt === undefined &&
-          isNamedEnvironment(environment),
-      )
-      .map((environment) => ({
+  const live = environments.filter(
+    (environment) => environment.archivedAt === undefined,
+  );
+  for (const group of [
+    live.filter(isNamedEnvironment),
+    live.filter(isAdhocEnvironment),
+  ]) {
+    const numbered = disambiguateLabels(
+      group.map((environment) => ({
         environmentId: environment.environmentId,
         label: environmentLabel(environment, ctx),
       })),
-  );
-  for (const entry of numbered) {
-    labels.set(entry.environmentId, entry.label);
+    );
+    for (const entry of numbered) {
+      labels.set(entry.environmentId, entry.label);
+    }
   }
   return labels;
 }

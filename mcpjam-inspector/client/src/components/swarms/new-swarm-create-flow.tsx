@@ -88,6 +88,7 @@ import {
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { useHostList } from "@/hooks/useClients";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
@@ -445,6 +446,13 @@ export function NewSwarmCreateFlow({
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
+  // Ad-hoc AND archived, because this is the lookup Confirm uses to say where a
+  // reused goal is set up to run, and both kinds are exactly what a journey
+  // ends up pointing at. It never feeds a list anyone picks from.
+  const allEnvironments = useProjectEnvironments(projectId, {
+    includeArchived: true,
+    includeAdhoc: true,
+  });
   const convex = useConvex();
   const navigate = useAppNavigate();
   const [preflightModelFailure, setPreflightModelFailure] =
@@ -1161,21 +1169,62 @@ export function NewSwarmCreateFlow({
    * screen without writing a description or paying for a slate they didn't
    * ask for.
    */
-  const handleContinue = useCallback(() => {
-    if (!canContinue) return;
-    if (wantsGenerate) {
-      void handleGenerate();
-      return;
+  /**
+   * Enter Confirm for a swarm built only from personas that already exist.
+   *
+   * Resolves the target FIRST, which generation has always done here and this
+   * path never did. In compose mode, which is every project without
+   * `project-environments-enabled`, the environment ids do not exist until this
+   * call mints or matches them, so Confirm used to render with an empty
+   * selection and could say nothing true: not where the swarm would run, not
+   * which reused goals were being moved off the setup they were written for,
+   * and not how many conversations the launch buys, since the estimate
+   * multiplies by `Math.max(1, environmentCount)` and quoted a multi-client
+   * fan-out as a single target.
+   *
+   * Ad-hoc rows are fingerprint-deduped, so resolving here reuses the row the
+   * launch would have minted moments later rather than accumulating one per
+   * visit. Generation already pays exactly this cost at exactly this point.
+   *
+   * Best effort, and deliberately NON-BLOCKING. A reuse-only swarm is allowed
+   * to reach Confirm with no target at all — its goals carry their own, and
+   * `canContinue` says as much. Failing the step here would strand exactly the
+   * returning user that rule exists to protect, over a target their run may
+   * never need. So a throw is swallowed: Confirm then discloses nothing about
+   * the target, which is what it did before this existed, and the launch
+   * reports the failure as loudly as it always has.
+   */
+  const handleContinueReused = useCallback(async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setMaterializing(true);
+    setErrorMessage(null);
+    setDescribeStepError(null);
+    try {
+      await resolveTargets();
+    } catch {
+      // Intentionally ignored — see above. `resolveTargets` throws before it
+      // publishes anything, so there is no half-resolved target to clean up.
+    } finally {
+      setMaterializing(false);
+      inFlightRef.current = false;
     }
     persistedTargetsRef.current = null;
     persistedRunGroupIdRef.current = null;
     persistedSwarmIdRef.current = null;
     flowIdRef.current = null;
     setProposed([]);
-    setErrorMessage(null);
-    setDescribeStepError(null);
     setStep("confirm");
-  }, [canContinue, handleGenerate, wantsGenerate]);
+  }, [resolveTargets]);
+
+  const handleContinue = useCallback(() => {
+    if (!canContinue) return;
+    if (wantsGenerate) {
+      void handleGenerate();
+      return;
+    }
+    void handleContinueReused();
+  }, [canContinue, handleContinueReused, handleGenerate, wantsGenerate]);
 
   const handleLaunch = useCallback(
     async (payload: ConfirmLaunchPayload) => {
@@ -1901,47 +1950,52 @@ export function NewSwarmCreateFlow({
     });
   }, [envListForPayload, environmentIds, hostNameById]);
 
-  // One label per row for the whole project, with same-named rows separated by
-  // a `#n`. `EnvironmentPicker` builds the same map from its own list, so what
-  // the user picked on Describe reads identically on Confirm — numbering each
-  // screen's own slice would not.
-  const envLabelsById = useMemo(
-    () => environmentLabelsById(envListForPayload, { hostName: hostNameById }),
-    [envListForPayload, hostNameById],
-  );
+  /**
+   * Every environment row in the project, INCLUDING ad-hoc ones, keyed by id.
+   *
+   * Named-only lists are right for pickers; this is a LOOKUP, and the rows it
+   * must answer for are exactly the ones a picker hides. Whenever the
+   * environments flag is off, which is every project but one, a reused goal was
+   * set up against an ad-hoc row minted from a client and a server group.
+   * Without those rows Confirm cannot name where a goal runs today, and cannot
+   * compare its client or server group against where this launch will run it.
+   *
+   * Rows this flow just minted are layered on top, because the mutation returns
+   * them before the query that lists them catches up. Appending rather than
+   * prepending keeps every other row's `#n` stable.
+   */
+  const environmentRowsById = useMemo(() => {
+    const byId = new Map<string, ProjectEnvironmentView>();
+    for (const env of allEnvironments ?? []) byId.set(env.environmentId, env);
+    for (const env of envListForPayload) byId.set(env.environmentId, env);
+    const rows = [...byId.values()];
+    const labels = environmentLabelsById(rows, { hostName: hostNameById });
+    const out = new Map<string, EnvironmentMoveRow>();
+    for (const env of rows) {
+      out.set(env.environmentId, {
+        environmentId: env.environmentId,
+        label:
+          labels.get(env.environmentId) ??
+          environmentLabel(env, { hostName: hostNameById }),
+        hostId: env.hostId,
+        serverAttachmentId: env.serverAttachmentId ?? null,
+      });
+    }
+    return out;
+  }, [allEnvironments, envListForPayload, hostNameById]);
 
   const environmentLabels = useMemo(
     () =>
       environmentIds.map(
         (environmentId) =>
-          // `slice(0, 8)` stays for a row that isn't in the list AT ALL — a
+          // `slice(0, 8)` stays for a row that isn't in the map AT ALL, a
           // different failure from a row that merely has no name, which
           // `environmentLabel` covers with the client name.
-          envLabelsById.get(environmentId) ?? environmentId.slice(0, 8),
+          environmentRowsById.get(environmentId)?.label ??
+          environmentId.slice(0, 8),
       ),
-    [envLabelsById, environmentIds],
+    [environmentIds, environmentRowsById],
   );
-
-  /**
-   * Every environment this flow can name, for Confirm's move notice.
-   *
-   * `serverAttachmentId` rides along because it is the one field that turns
-   * "these goals moved" into "these goals moved somewhere their tools are not"
-   * — and it is already on the row, so the caution costs no resolve round trip.
-   */
-  const environmentRowsById = useMemo(() => {
-    const rows = new Map<string, EnvironmentMoveRow>();
-    for (const env of envListForPayload) {
-      rows.set(env.environmentId, {
-        environmentId: env.environmentId,
-        label:
-          envLabelsById.get(env.environmentId) ??
-          environmentLabel(env, { hostName: hostNameById }),
-        serverAttachmentId: env.serverAttachmentId ?? null,
-      });
-    }
-    return rows;
-  }, [envLabelsById, envListForPayload, hostNameById]);
 
   const groundingEnvironmentId =
     environmentIds[0] ?? targetState.environmentIds[0] ?? null;
@@ -2014,6 +2068,7 @@ export function NewSwarmCreateFlow({
             environmentLabels={environmentLabels}
             environmentIds={environmentIds}
             environmentRowsById={environmentRowsById}
+            hostNameById={hostNameById}
             launching={launching}
             errorMessage={errorMessage}
             // Back is the same move as the Describe breadcrumb, so it goes
