@@ -37,8 +37,6 @@ const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown } = vi.hoisted(
   })
 );
 
-// The workbench's freshness chip reads Convex directly; these tests render it
-// outside a provider.
 vi.mock("convex/react", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
