@@ -374,10 +374,7 @@ export function GoalOutcomeDrilldown({
   ) : null;
 
   const previewSession = previewSessionId
-    ? (rows.find((row) => row._id === previewSessionId) ?? {
-        _id: previewSessionId,
-        lastActivityAt: 0,
-      })
+    ? (rows.find((row) => row._id === previewSessionId) ?? null)
     : null;
   const previewTitle =
     previewSession?.firstMessagePreview?.trim() || "(no preview)";
@@ -386,12 +383,12 @@ export function GoalOutcomeDrilldown({
   const closePreview = () => setPreview({ requestKey, sessionId: null });
 
   const openSessionsAction =
-    previewSession && onOpenSession ? (
+    previewSessionId && onOpenSession ? (
       <Button
         type="button"
         variant="outline"
         size="sm"
-        onClick={() => onOpenSession(previewSession._id)}
+        onClick={() => onOpenSession(previewSessionId)}
       >
         Open in Sessions tab →
       </Button>
@@ -399,7 +396,7 @@ export function GoalOutcomeDrilldown({
       footer
     );
 
-  const sessionPreview = previewSession ? (
+  const sessionPreview = previewSessionId ? (
     <>
       <EvalInspectHeader
         crumb={selection ? selectionHeading(selection) : "Selected sessions"}
@@ -407,14 +404,14 @@ export function GoalOutcomeDrilldown({
         backAriaLabel="Back to selected sessions"
         title={previewTitle}
         badge={
-          previewSession.outcome ? (
+          previewSession?.outcome ? (
             <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               {previewSession.outcome}
             </span>
           ) : null
         }
         description={[
-          previewSession.lastActivityAt
+          previewSession?.lastActivityAt
             ? formatRelativeTime(previewSession.lastActivityAt)
             : null,
           previewMeta,
@@ -429,7 +426,7 @@ export function GoalOutcomeDrilldown({
           data-testid="goal-outcome-session-preview"
         >
           <ShareUsageThreadDetail
-            threadId={previewSession._id}
+            threadId={previewSessionId}
             fadeScrollEdges
             hideHeader
           />
