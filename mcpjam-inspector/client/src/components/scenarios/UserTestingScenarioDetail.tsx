@@ -599,7 +599,7 @@ export function UserTestingScenarioDetail({
                session (BB-176). The visible label stays short; the hover and
                accessible name carry the rest. */
             title="Opens this study exactly as a tester sees it, in a new tab"
-            aria-label="Open preview — this study as a tester sees it"
+            aria-label="Open preview: this study as a tester sees it"
           >
             <Eye className="mr-1.5 size-3.5" />
             Open preview
@@ -704,8 +704,8 @@ export function UserTestingScenarioDetail({
                         <div className="min-w-0 text-sm">
                           <p className="font-medium text-foreground">
                             {environmentError.code === "ENV_ARCHIVED"
-                              ? "This scenario's environment is archived — the share link no longer opens."
-                              : "This scenario's environment can't be loaded right now — the share link won't open."}
+                              ? "This scenario's environment is archived, so the share link no longer opens."
+                              : "This scenario's environment can't be loaded right now, so the share link won't open."}
                           </p>
                           <p className="mt-0.5 text-xs text-muted-foreground">
                             {environmentError.message} Its sessions are
@@ -975,7 +975,6 @@ export function UserTestingScenarioDetail({
                     { replace: true },
                   );
                 }}
-                autoBackfillTopicMap
                 emptyState={<ScenarioShareEmptyPanel scenario={scenario} />}
                 className="px-8 py-4"
                 testIdPrefix="scenario-insights"

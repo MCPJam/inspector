@@ -781,6 +781,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         // mcpjam-backend/convex/http.ts.
         body: JSON.stringify({
           projectId: "project-1",
+          includeConnections: true,
           serverIds: ["server-1", "server-2"],
           localRuntime: true,
         }),

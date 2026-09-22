@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mcpClientManagerMock, disconnectAllServersMock, localRefreshMock } =
+const { mcpClientManagerMock, disconnectAllServersMock, localRefreshMock, admissionMock } =
   vi.hoisted(() => ({
     mcpClientManagerMock: vi.fn(),
     disconnectAllServersMock: vi.fn(),
     localRefreshMock: vi.fn(),
+    admissionMock: vi.fn(({ fetch }) => fetch),
   }));
+
+vi.mock("../../../utils/mcp-backpressure.js", () => ({ hostedMcpBackpressureFetch: admissionMock }));
 
 // The authorization-server round trip belongs to local-oauth-refresh's own
 // tests; here it is mocked so these are about the connect path.
@@ -65,6 +68,51 @@ describe("web auth manager batching", () => {
     }
   });
 
+  it("wraps project HTTP connections before construction using backend-authenticated identity", async () => {
+    const result = (accessLevel: string) => ({
+      ok: true,
+      role: "member",
+      accessLevel,
+      permissions: { chatOnly: false },
+      serverConfig: {
+        transportType: "http",
+        url: "https://fixture.example/mcp",
+      },
+      internalLogContext: {
+        userId: "authenticated-user",
+        projectId: "project-1",
+        authMethod: "jwt",
+      },
+    });
+    global.fetch = vi.fn(async () =>
+      Response.json({
+        results: {
+          enrolled: result("project_member"),
+          shared: result("shared_chat"),
+        },
+      }),
+    ) as typeof fetch;
+    await createAuthorizedManager(
+      { authMethod: "jwt" } as Parameters<typeof createAuthorizedManager>[0],
+      "bearer",
+      "project-1",
+      ["enrolled", "shared"],
+      10_000,
+    );
+    expect(admissionMock).toHaveBeenCalledTimes(1);
+    expect(admissionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "project-1",
+        serverId: "enrolled",
+        userId: "authenticated-user",
+        fetch: expect.any(Function),
+      }),
+    );
+    expect(mcpClientManagerMock.mock.calls[0][0].enrolled.baseFetch).toBeTypeOf(
+      "function",
+    );
+  });
+
   it("surfaces the first batch failure in input order", async () => {
     global.fetch = vi.fn(async () => {
       return new Response(
@@ -106,6 +154,92 @@ describe("web auth manager batching", () => {
     });
 
     expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes an explicitly selected single connection to admission", async () => {
+    global.fetch = vi.fn(async () => Response.json({ results: { "server-1": {
+      ok: true, role: "member", accessLevel: "project_member", permissions: { chatOnly: false },
+      serverConfig: { transportType: "http", url: "https://fixture.example/mcp", useOAuth: true },
+      oauthAccessToken: "selected-token",
+    } } })) as typeof fetch;
+    await createAuthorizedManager(callerContextFromHono(mockContext), "bearer", "project-1", ["server-1"], 10_000, undefined, undefined,
+      { connectionIds: { "server-1": "selected-connection" } });
+    expect(admissionMock).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ serverId: "server-1", connectionId: "selected-connection" }));
+    expect(mcpClientManagerMock.mock.calls[0][0]["server-1"].requestInit.headers.Authorization).toBe("Bearer selected-token");
+  });
+
+  it("isolates each account's headers and 401 refresh target", async () => {
+    const a = "a".repeat(32),
+      b = "b".repeat(32);
+    const requests: Array<{ url: string; body: any }> = [];
+    global.fetch = vi.fn(async (input, init) => {
+      const url = fetchUrl(input);
+      requests.push({ url, body: JSON.parse(String(init?.body)) });
+      if (url.endsWith("/force-refresh"))
+        return Response.json({ success: true, accessToken: "fresh-b" });
+      return Response.json({
+        results: {
+          "server-1": {
+            ok: true,
+            role: "member",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              transportType: "http",
+              url: "https://example.com/mcp",
+              headers: {},
+              useOAuth: true,
+            },
+            oauthAccessToken: "token-a",
+            oauthConnections: [
+              {
+                connectionId: a,
+                isDefault: true,
+                label: "A",
+                accessToken: "token-a",
+              },
+              {
+                connectionId: b,
+                isDefault: false,
+                label: "B",
+                accessToken: "token-b",
+              },
+            ],
+          },
+        },
+      });
+    }) as typeof fetch;
+    const result = await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      undefined,
+      undefined,
+      { multiConnection: true },
+    );
+    expect(admissionMock).toHaveBeenCalledTimes(2);
+    expect(admissionMock).toHaveBeenCalledWith(expect.objectContaining({ serverId: "server-1", connectionId: a }));
+    expect(admissionMock).toHaveBeenCalledWith(expect.objectContaining({ serverId: "server-1", connectionId: b }));
+    const configs = mcpClientManagerMock.mock.calls[0][0];
+    expect(Object.keys(configs)).toEqual(["server-1", `server-1#${b}`]);
+    expect(
+      new Headers(configs["server-1"].requestInit.headers).get("authorization"),
+    ).toBe("Bearer token-a");
+    expect(
+      new Headers(configs[`server-1#${b}`].requestInit.headers).get(
+        "authorization",
+      ),
+    ).toBe("Bearer token-b");
+    await configs[`server-1#${b}`].onUnauthorized({});
+    expect(
+      requests.find((r) => r.url.endsWith("/force-refresh"))?.body.connectionId,
+    ).toBe(b);
+    expect(requests[0].body.includeConnections).toBe(true);
+    expect(
+      result.connectionsByServerId?.["server-1"].map((c) => c.connectionId),
+    ).toEqual([a, b]);
   });
 
   it("uses the request oauth token when the batch response does not include one", async () => {

@@ -8,6 +8,7 @@ import {
   composeFindingsSummary,
   countWords,
   deriveHonestyFootnotes,
+  narratedWaveSummary,
   shortenGoalTitle,
 } from "../findings/findings-headline";
 
@@ -434,7 +435,7 @@ describe("deriveHonestyFootnotes", () => {
     expect(
       deriveHonestyFootnotes({ signals: null, hasGroupId: false }),
     ).toEqual([
-      "Evaluator findings only — deterministic signals unavailable for this wave",
+      "Evaluator findings only: deterministic signals unavailable for this wave",
     ]);
     expect(
       deriveHonestyFootnotes({ signals: signals(), hasGroupId: false })[0],
@@ -450,12 +451,14 @@ describe("deriveHonestyFootnotes", () => {
       }),
       hasGroupId: true,
     });
-    expect(notes).toContain("Session scan hit its cap — counts cover a subset");
     expect(notes).toContain(
-      "Most sessions are unanalyzed — treat counts as partial",
+      "Session scan hit its cap, so counts cover a subset",
     );
     expect(notes).toContain(
-      "This swarm is still running — findings may change",
+      "Most sessions are unanalyzed, so treat counts as partial",
+    );
+    expect(notes).toContain(
+      "This swarm is still running, so findings may change",
     );
 
     const partialJudge = deriveHonestyFootnotes({
@@ -488,5 +491,38 @@ describe("deriveHonestyFootnotes", () => {
         launch: { total: 9, succeeded: 0, failed: 9, rateLimited: 0 },
       }),
     ).toEqual([]);
+  });
+});
+
+describe("narratedWaveSummary", () => {
+  it("drops the fixed prose a zero-candidate wave stores without a model", () => {
+    // Real prod row: 3 graded sessions all failed, 2 rate limited, no mined
+    // candidates. This sentence replaced the deterministic headline.
+    expect(
+      narratedWaveSummary("completed", {
+        summary:
+          "No anomalies concentrated along any dimension of this wave. Nothing to act on from the deterministic signals.",
+        candidates: [],
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps the summary when a model narrated candidates", () => {
+    expect(
+      narratedWaveSummary("completed", {
+        summary: "  Resolve the saved server first.  ",
+        candidates: [{}],
+      }),
+    ).toBe("Resolve the saved server first.");
+  });
+
+  it("is null until the analysis completes, or when it has no summary", () => {
+    expect(
+      narratedWaveSummary("pending", { summary: "x", candidates: [{}] }),
+    ).toBeNull();
+    expect(narratedWaveSummary("completed", null)).toBeNull();
+    expect(
+      narratedWaveSummary("completed", { summary: "  ", candidates: [{}] }),
+    ).toBeNull();
   });
 });

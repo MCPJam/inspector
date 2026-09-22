@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import type { Predicate } from "@/shared/eval-matching";
 import type { TestStep } from "@/shared/steps";
 import type { EvalIteration } from "@/components/evals/types";
@@ -71,7 +70,7 @@ describe("TrialScorecard", () => {
         "aria-busy",
         "true",
       );
-      expect(screen.queryByTestId("trial-chain-panel")).toBeNull();
+      expect(screen.queryByTestId("scorecard-group-state")).toBeNull();
       expect(screen.queryByTestId("trial-scorecard-row")).toBeNull();
       rerender(
         <TrialScorecard
@@ -82,14 +81,16 @@ describe("TrialScorecard", () => {
         />,
       );
       expect(screen.queryByTestId("trial-scorecard-loading")).toBeNull();
-      expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
+      expect(screen.getByTestId("scorecard-group-state")).toHaveTextContent(
+        "passed",
+      );
     },
   );
   it("shows a skeleton before a live iteration exists", () => {
     renderCard({ iteration: null, isRunning: true });
     expect(screen.getByTestId("trial-scorecard-loading")).toBeInTheDocument();
   });
-  it("keeps each stage's recorded checks in its selected detail panel", async () => {
+  it("stacks one section per measured stage, each explaining itself", () => {
     const chain = {
       status: "verified",
       firstFailedStage: "selection",
@@ -108,61 +109,62 @@ describe("TrialScorecard", () => {
       ],
     } as never;
     renderCard({ chain });
+    // No stage nav, no detail card: the sections are the page.
+    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(screen.queryByTestId("trial-stage-detail-card")).toBeNull();
+    const sections = Array.from(
+      document.querySelectorAll("[data-stage-group]"),
+    ).map((node) => node.getAttribute("data-stage-group"));
+    // Chain order; a stage the chain measured but nothing grades still has
+    // a heading, and the authored stages keep theirs.
+    expect(sections).toEqual([
+      "connection",
+      "selection",
+      "response",
+      "userValue",
+    ]);
+    const connection = document.querySelector(
+      '[data-stage-group="connection"]',
+    )!;
+    expect(within(connection as HTMLElement).queryAllByTestId("trial-scorecard-row")).toHaveLength(0);
     expect(
-      screen.queryByRole("heading", { name: "User value chain" }),
-    ).toBeNull();
-    const report = screen.getByRole("region", {
-      name: "User value chain — default assertions",
-    });
-    expect(within(report).queryByTestId("scorecard-group-state")).toBeNull();
-    expect(
-      within(screen.getByTestId("trial-stage-detail-card")).getAllByTestId(
-        "trial-scorecard-row",
-      ).length,
-    ).toBeGreaterThan(0);
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: /01 Connection:/ }));
-    expect(screen.getByTestId("trial-stage-detail-card")).toHaveTextContent(
-      "No separate connection assertion was recorded.",
+      within(connection as HTMLElement).getByTestId("scorecard-group-state"),
+    ).toHaveTextContent("passed");
+    // A failed stage whose rows recorded nothing says why from the chain.
+    const selection = document.querySelector(
+      '[data-stage-group="selection"]',
+    ) as HTMLElement;
+    expect(within(selection).getByTestId("scorecard-group-state")).toHaveTextContent(
+      "failed",
     );
-    expect(within(report).queryByTestId("trial-scorecard-row")).toBeNull();
+    expect(within(selection).getByTestId("stage-reason")).toHaveTextContent(
+      "Failed because an expected tool call was never made.",
+    );
   });
 
-  it("puts default chain assertions above explicitly added assertions", () => {
+  it("files every evaluator under its stage once, in chain order", () => {
     renderCard();
-    const defaults = screen.getByRole("region", {
-      name: "User value chain — default assertions",
-    });
-    const added = screen.getByRole("region", { name: "Added assertions" });
-    const defaultKeys = within(defaults)
-      .getAllByTestId("trial-scorecard-row")
-      .map((row) => row.getAttribute("data-row-key"));
-    expect(defaultKeys).toEqual(["route", "judge:goalCompletion"]);
-    const addedKeys = within(added)
+    expect(screen.queryByText("Added assertions")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Added assertions" })).toBeNull();
+    const keys = screen
       .getAllByTestId("trial-scorecard-row")
       .map((row) => row.getAttribute("data-row-key"));
     const authoredKeys = buildCaseScorecard(authored)
       .groups.flatMap((group) => group.rows)
-      .filter((row) => row.provenance === "step" || row.provenance === "case")
       .map((row) => row.key);
-    expect(addedKeys).toEqual(authoredKeys);
-    expect(
-      defaults.compareDocumentPosition(added) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(keys).toEqual(authoredKeys);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
-  it("shows an empty added-assertions section for a prompt-only case", () => {
+  it("leads with the tally for a prompt-only case", () => {
     renderCard({
       authored: { steps: [steps[0]], toolsChoice: "unset" },
       steps: [steps[0]],
     });
-    expect(
-      within(
-        screen.getByRole("region", { name: "Added assertions" }),
-      ).getByText("No extra assertions added."),
-    ).toBeInTheDocument();
+    expect(screen.queryByText("No extra assertions added.")).toBeNull();
+    expect(screen.getByTestId("trial-scorecard-summary")).toHaveTextContent(
+      "No evaluators ran",
+    );
   });
 
   it("shows the judge's recorded passing rationale without expanding a row", () => {
@@ -194,9 +196,6 @@ describe("TrialScorecard", () => {
       ],
     } as never;
     const { rerender } = renderCard({ chain });
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: /User value:/ }));
     expect(screen.getByTestId("user-value-pass-evidence")).toHaveTextContent(
       "All three diagram labels were visible.",
     );
@@ -247,8 +246,7 @@ describe("TrialScorecard", () => {
     );
   });
 
-  it("shows why a step failed", () => {
-    const user = userEvent.setup();
+  it("shows why a step failed, without a click", () => {
     renderCard({
       iteration: iteration({
         stepResults: [
@@ -264,13 +262,10 @@ describe("TrialScorecard", () => {
     });
     const row = rowFor("No tool errors so far");
     expect(row).toHaveAttribute("data-state", "failed");
-    return user
-      .click(within(row).getByRole("button", { name: /^Why/ }))
-      .then(() => {
-        expect(screen.getByTestId("trial-scorecard-reason").textContent).toBe(
-          "get_me returned isError",
-        );
-      });
+    expect(within(row).queryByRole("button")).toBeNull();
+    expect(
+      within(row).getByTestId("trial-scorecard-reason").textContent,
+    ).toBe("get_me returned isError");
   });
 
   it("wears an advisory miss as a warning, and keeps it out of the gate count", () => {
@@ -304,10 +299,10 @@ describe("TrialScorecard", () => {
         steps={steps}
       />,
     );
-    const row = rowFor("Final message non-empty");
+    const row = rowFor("Catch an empty answer");
     expect(row).toHaveAttribute("data-state", "failed");
     expect(row).toHaveAttribute("data-role", "advisory");
-    expect(within(row).getByLabelText("Missed · advisory")).toBeInTheDocument();
+    expect(within(row).getByText("Missed · advisory")).toBeInTheDocument();
     const summary = screen.getByTestId("trial-scorecard-summary").textContent!;
     expect(summary).toContain("1 of 1 required passed");
     expect(summary).toContain("1 advisory");
@@ -353,7 +348,7 @@ describe("TrialScorecard", () => {
       .filter((row) => row.getAttribute("data-state") === "notMeasured");
     expect(unmeasured.length).toBeGreaterThan(0);
     for (const row of unmeasured) {
-      expect(within(row).getByLabelText("Not measured")).toBeInTheDocument();
+      expect(within(row).getByText("Not measured")).toBeInTheDocument();
     }
     expect(container.textContent).not.toMatch(/toolCalledAtLeastOnce/);
   });
@@ -407,34 +402,87 @@ describe("the chain lives inside the Scorecard", () => {
     firstFailedStage: "selection",
   } as never;
 
-  it("renders the shared iteration stage report above the rows", () => {
+  it("gives every measured stage a heading with its state word", () => {
     renderCard({ chain });
     const card = screen.getByTestId("trial-scorecard");
-    expect(within(card).getByTestId("trial-chain-panel")).toBeTruthy();
-  });
-
-  it("puts the verdict WORD on the group heading, not on the chip", () => {
-    renderCard({ chain });
+    const sections = Array.from(
+      card.querySelectorAll("[data-stage-group]"),
+    ).map((node) => node.getAttribute("data-stage-group"));
+    expect(sections).toEqual([
+      "connection",
+      "discovery",
+      "selection",
+      "call",
+      "response",
+      "userValue",
+    ]);
     const states = screen
       .getAllByTestId("scorecard-group-state")
       .map((el) => el.textContent);
-    expect(states).toContain("failed");
-    expect(
-      screen.getByRole("button", { name: /03 Selection:/ }).textContent,
-    ).not.toContain("failed");
+    expect(states).toEqual([
+      "passed",
+      "passed",
+      "failed",
+      "never ran (an earlier stage failed)",
+      "never ran (an earlier stage failed)",
+      "never ran (an earlier stage failed)",
+    ]);
+  });
+
+  it("explains a failed stage once, not once per source", () => {
+    renderCard({ chain });
+    const selection = document.querySelector(
+      '[data-stage-group="selection"]',
+    ) as HTMLElement;
+    expect(within(selection).getByTestId("stage-reason")).toHaveTextContent(
+      "Failed because an expected tool call was never made.",
+    );
+    expect(within(selection).queryByTestId("stage-floor")).toBeNull();
+    // A stage that did not fail has no sentence of its own to add.
+    const connection = document.querySelector(
+      '[data-stage-group="connection"]',
+    ) as HTMLElement;
+    expect(within(connection).queryByTestId("stage-reason")).toBeNull();
   });
 
   it("shows no group state when the trial has no chain", () => {
     renderCard({});
     expect(screen.queryAllByTestId("scorecard-group-state")).toHaveLength(0);
-    expect(screen.queryByTestId("trial-chain-panel")).toBeNull();
+    expect(screen.queryByTestId("stage-reason")).toBeNull();
   });
 });
 
 describe("blind review hides the judge row's own output", () => {
+  const judgeCase = {
+    status: "completed",
+    passed: false,
+    score: 0.2,
+    reason: "Private judge rationale",
+  } as never;
+
   it("withholds the score and the reason", () => {
-    renderCard({ judgeHidden: true });
+    renderCard({ judgeHidden: true, judgeCase });
     expect(screen.getByTestId("judge-result-withheld")).toBeTruthy();
+    expect(screen.queryByText("Private judge rationale")).toBeNull();
+  });
+
+  it("withholds nothing when the judge never graded the trial", () => {
+    // The model call failed, so there is no verdict to leak and no label
+    // control to lift the mask. The stage's own explanation must show.
+    const providerFailed = {
+      status: "verified",
+      stages: [
+        { stage: "connection", state: "passed", reason: "observed" },
+        { stage: "discovery", state: "passed", reason: "observed" },
+        { stage: "selection", state: "passed", reason: "observed" },
+        { stage: "call", state: "passed", reason: "observed" },
+        { stage: "response", state: "notMeasured", reason: "providerError" },
+        { stage: "userValue", state: "notMeasured", reason: "providerError" },
+      ],
+    } as never;
+    renderCard({ chain: providerFailed, judgeHidden: true, judgeCase: null });
+    expect(screen.queryByTestId("judge-result-withheld")).toBeNull();
+    expect(screen.queryByTestId("trial-stage-masked")).toBeNull();
   });
 
   it("shows them once the reviewer has revealed", () => {
@@ -486,24 +534,28 @@ describe("blind review keeps the chain and masks one card", () => {
     reason: "Private judge rationale",
   } as never;
 
-  it("renders the rail, masks User value, and still withholds the judge row", () => {
+  it("keeps every stage, masks User value, and still withholds the judge row", () => {
     renderCard({ chain: judgeDecided, judgeHidden: true, judgeCase });
     const card = screen.getByTestId("trial-scorecard");
-    expect(within(card).getByTestId("trial-chain-panel")).toBeTruthy();
-    expect(within(card).getByTestId("trial-stage-masked")).toHaveAttribute(
-      "data-stage",
-      "userValue",
-    );
-    expect(
-      screen.getByRole("button", { name: /06 User value/ }),
-    ).toHaveAccessibleName(/hidden until you label/);
+    expect(card.querySelectorAll("[data-stage-group]")).toHaveLength(6);
+    const userValue = card.querySelector(
+      '[data-stage-group="userValue"]',
+    ) as HTMLElement;
+    // No state word, no stage sentence, no tally: each would say the verdict.
+    expect(within(userValue).queryByTestId("scorecard-group-state")).toBeNull();
+    expect(within(userValue).queryByTestId("stage-reason")).toBeNull();
+    expect(screen.queryByTestId("trial-scorecard-summary")).toBeNull();
     expect(screen.getByTestId("judge-result-withheld")).toBeTruthy();
     expect(screen.queryByText("Private judge rationale")).toBeNull();
+    expect(screen.queryByText(/below the partial floor/)).toBeNull();
     expect(screen.queryByTestId("user-value-pass-evidence")).toBeNull();
     // The other five stages are the runner's, and stay readable.
-    expect(
-      screen.getByRole("button", { name: /03 Selection/ }),
-    ).not.toHaveAccessibleName(/hidden until/);
+    const selection = card.querySelector(
+      '[data-stage-group="selection"]',
+    ) as HTMLElement;
+    expect(within(selection).getByTestId("scorecard-group-state")).toHaveTextContent(
+      "failed",
+    );
   });
 
   it("does not put the masked stage's state on its group heading", () => {
@@ -523,24 +575,25 @@ describe("blind review keeps the chain and masks one card", () => {
 
   it("masks nothing when an assertion decided User value", () => {
     renderCard({ chain: assertionDecided, judgeHidden: true, judgeCase });
-    expect(screen.getByTestId("trial-chain-panel")).toBeTruthy();
-    expect(screen.queryByTestId("trial-stage-masked")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: /06 User value/ }),
-    ).not.toHaveAccessibleName(/hidden until/);
-    // User value is still the open card, so the judge row is on screen and
-    // its own output is still withheld: the row is the judge's even when the
-    // chain was not.
-    expect(screen.getByTestId("trial-stage-detail-card")).toHaveAttribute(
-      "data-stage",
-      "userValue",
+    const userValue = document.querySelector(
+      '[data-stage-group="userValue"]',
+    ) as HTMLElement;
+    expect(within(userValue).getByTestId("scorecard-group-state")).toHaveTextContent(
+      "passed",
     );
+    // The judge row is still the judge's even when the chain was not, so its
+    // own output is still withheld.
     expect(screen.getByTestId("judge-result-withheld")).toBeTruthy();
   });
 
   it("drops the mask once the reviewer has revealed", () => {
     renderCard({ chain: judgeDecided, judgeHidden: false, judgeCase });
-    expect(screen.queryByTestId("trial-stage-masked")).toBeNull();
+    const userValue = document.querySelector(
+      '[data-stage-group="userValue"]',
+    ) as HTMLElement;
+    expect(within(userValue).getByTestId("scorecard-group-state")).toHaveTextContent(
+      "failed",
+    );
     expect(screen.queryByTestId("judge-result-withheld")).toBeNull();
   });
 });
@@ -673,6 +726,11 @@ describe("what the scorecard says about its AI explanations", () => {
       chain: verifiedChain,
       trace: toolErrorTrace,
       judgeHidden: true,
+      judgeCase: {
+        status: "completed",
+        passed: false,
+        score: 0.2,
+      } as never,
       report: {
         schemaVersion: 1,
         iterationId: "it1",

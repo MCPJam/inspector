@@ -232,6 +232,25 @@ function resolveDashThirtyTwoThousandOne(message: string): string {
   return "jsonrpc/request_timeout";
 }
 
+/**
+ * `-32603` is overloaded: JSON-RPC Internal Error, plus the MCP SDK's
+ * "Invalid response format" when a handler return value fails the result
+ * schema. Disambiguate by message, same as the `-32001` overload above.
+ */
+const INVALID_RESPONSE_FORMAT =
+  /^(?:MCP error -32603:\s*)?invalid response format$/i;
+
+function isInvalidResponseFormat(message: string): boolean {
+  return INVALID_RESPONSE_FORMAT.test(message.trim());
+}
+
+function resolveInternalError(message: string): string {
+  if (isInvalidResponseFormat(message)) {
+    return "jsonrpc/invalid_response_format";
+  }
+  return "jsonrpc/internal_error";
+}
+
 function nodeErrnoToSlug(errno: string): string | undefined {
   const upper = errno.toUpperCase();
   switch (upper) {
@@ -297,6 +316,9 @@ function messageSlug(message: string): string | undefined {
   if (/Invalid tool name/i.test(message)) {
     return "provider/invalid_tool_name";
   }
+  if (isInvalidResponseFormat(message)) {
+    return "jsonrpc/invalid_response_format";
+  }
   return undefined;
 }
 
@@ -360,8 +382,10 @@ function oauthResponseErrorCode(error: unknown): string | undefined {
 }
 
 function pickOauthBody(
-  error: unknown,
-): { error?: unknown; error_code?: unknown; error_description?: unknown } | undefined {
+  error: unknown
+):
+  | { error?: unknown; error_code?: unknown; error_description?: unknown }
+  | undefined {
   if (!error || typeof error !== "object") return undefined;
   // Some sources stash the body under `.body` or `.data`.
   const body =
@@ -431,8 +455,13 @@ function classifyHttpStatus(status: number): string | undefined {
 }
 
 function classifyByMessageHttp(message: string): string | undefined {
-  if (/\b(?:http|status)[:\s-]*401\b/i.test(message)) return "auth/http_401";
-  if (/\b(?:http|status)[:\s-]*403\b/i.test(message)) return "auth/http_403";
+  // A bare 401 / 403 counts, on the same terms as the 429 below: the transport
+  // phrasings that reach the UI as prose — "401 Unauthorized", "Non-200 status
+  // code (401)" — carry the status with no `http`/`status` word in front of it,
+  // and without this they fell through to `internal/unknown`, so the error
+  // toast's "Learn more" pointed at the unknown-error docs section.
+  if (/(?:^|[^\w.:])401\b/.test(message)) return "auth/http_401";
+  if (/(?:^|[^\w.:])403\b/.test(message)) return "auth/http_403";
   // A bare 429 needs no http/status prefix — the local-BYOK swarm path drops
   // the status field and leaves only this wording. Narrower than "rate limit"
   // on purpose: that also matches MCPJam's own account limit, a different slug.
@@ -452,7 +481,10 @@ function resolveSlug(error: unknown): {
   rawCode?: number | string;
 } {
   const message = getErrorMessage(error);
-  const record = error && typeof error === "object" ? error as { code?: unknown; data?: { code?: unknown } } : null;
+  const record =
+    error && typeof error === "object"
+      ? (error as { code?: unknown; data?: { code?: unknown } })
+      : null;
   const platformCode = record?.data?.code ?? record?.code;
   if (platformCode === "platform_free_budget_exhausted") return { slug: "provider/mcpjam_platform_budget", rawCode: platformCode };
   if (platformCode === "account_suspended") return { slug: "account/suspended", rawCode: platformCode };
@@ -478,6 +510,9 @@ function resolveSlug(error: unknown): {
   if (numericCode !== undefined) {
     if (numericCode === -32001) {
       return { slug: resolveDashThirtyTwoThousandOne(message), rawCode: numericCode };
+    }
+    if (numericCode === MCP_ERROR_CODES.InternalError) {
+      return { slug: resolveInternalError(message), rawCode: numericCode };
     }
     const slug = JSONRPC_SLUG_BY_CODE[numericCode];
     if (slug) return { slug, rawCode: numericCode };
@@ -515,6 +550,8 @@ function resolveSlug(error: unknown): {
     return { slug: "auth/missing_bearer" };
   }
 
+  if (/\bout of MCPJam credits\b/i.test(message)) return { slug: "provider/mcpjam_limit" };
+
   // Same shape of problem as the bearer gate above, and the same surface: the
   // swarm create flow renders `err.message`, so the 429 and its `code` are
   // gone by the time this runs. Without the pre-check a spent MCPJam
@@ -528,23 +565,15 @@ function resolveSlug(error: unknown): {
   // The gap is bounded because `[\w\s-]` matches "mcpjam" too: unbounded, a
   // message of repeated "mcpjam" with no "model limit" backtracks quadratically,
   // and this message comes off the wire. Real copy puts one space here.
-  const limitPeriod = /\b(daily|monthly)\s+mcpjam[\w\s-]{0,40}model limit/i.exec(
-    message,
-  );
-  if (limitPeriod) {
-    return {
-      slug:
-        limitPeriod[1]!.toLowerCase() === "monthly"
-          ? "provider/mcpjam_limit_monthly"
-          : "provider/mcpjam_limit_daily",
-    };
-  }
-  if (/mcpjam[\w\s-]{0,40}model limit/i.test(message)) {
-    return { slug: "provider/mcpjam_limit" };
-  }
+  const limitSlug = mcpjamLimitSlugForMessage(message);
+  if (limitSlug) return { slug: limitSlug };
 
-  // (e) HTTP status field (`statusCode` / `status`).
-  const httpStatus = getHttpStatus(error);
+  // (e) HTTP status field (`statusCode` / `status`), read through the cause
+  // chain: an auto-activation probe against an OAuth-gated server surfaces as
+  // `SdkError(EraNegotiationFailed)` wrapping the real `UnauthorizedError`, and
+  // a plain connect failure keeps the 401 on `.cause`. Reading only the outer
+  // error classified both as `internal/unknown`.
+  const httpStatus = httpStatusOf(error);
   if (httpStatus !== undefined) {
     const slug = classifyHttpStatus(httpStatus);
     if (slug) return { slug, rawCode: httpStatus };
@@ -902,4 +931,24 @@ function crashFallback(error: unknown, emptyPlaceholder: string): NormalizedErro
     ...maybePromoteRawMessage(fallback, "internal/unknown", rawMessage),
     rawMessage,
   };
+}
+
+export function mcpjamLimitSlugForMessage(
+  message: string
+):
+  | "provider/mcpjam_limit"
+  | "provider/mcpjam_limit_daily"
+  | "provider/mcpjam_limit_monthly"
+  | undefined {
+  const limitPeriod =
+    /\b(daily|monthly)\s+mcpjam[\w\s-]{0,40}model limit/i.exec(message);
+  if (limitPeriod) {
+    return limitPeriod[1]!.toLowerCase() === "monthly"
+      ? "provider/mcpjam_limit_monthly"
+      : "provider/mcpjam_limit_daily";
+  }
+  if (/mcpjam[\w\s-]{0,40}model limit/i.test(message)) {
+    return "provider/mcpjam_limit";
+  }
+  return undefined;
 }

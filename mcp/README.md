@@ -197,6 +197,14 @@ so results respect the caller's project access.
      output unreviewed, while a test lets a human write the row and fails when
      the row stops being true. -->
 
+**The MCP Apps widgets are PAUSED.** `PLATFORM_WIDGETS_ENABLED` in
+`src/shared/platform-widgets.ts` is `false`, so every widget-backed tool —
+including `show_servers`, which stays registered as a plain tool — advertises
+no `_meta.ui`, serves no `ui://` resource, and returns an untagged payload.
+Everything below describes what comes back when that constant is flipped to
+`true`; the view map, resource URIs, payload guards and bundle are untouched
+and still tested, so re-enabling is that one edit.
+
 Widget-backed tools always advertise their MCP Apps `_meta` and always serve
 their `ui://` resource. Statelessly there is no memory of the client's
 `initialize` capabilities when a later request arrives, so per-request gating

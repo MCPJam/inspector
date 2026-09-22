@@ -899,39 +899,44 @@ function IterationDrawer({
           </>
         }
       />
-      <EvalInspectBody>
-        <IterationDetails
-          hostSnapshot={hostSnapshotFromStyle(
-            runClientIdentity(target.run).hostStyle,
-          )}
-          iteration={iteration}
-          testCase={null}
-          layoutMode="full"
-          trialVerdictWord={outcomeLabel(result)}
-          scorecard={{
-            render: (context) => (
-              <>
-                <IterationReportScorecard
-                  authored={authored}
-                  iteration={iteration}
-                  steps={authored.steps}
-                  chain={decisionChain}
-                  envelope={context.envelope}
-                  trace={context.trace}
-                  scoresSection={context.scoresSection}
-                  judgeHidden={context.judgeHidden}
-                />
-                {onEditEvaluator && (
-                  <div className="mt-4 flex justify-end">
-                    <Button onClick={onEditEvaluator}>
-                      Configure test case evaluators
-                    </Button>
-                  </div>
-                )}
-              </>
-            ),
-          }}
-        />
+      {/* `fill` keeps IterationDetails / TraceViewer in a definite flex
+          height so the Trace tab paints instead of collapsing to the resize
+          handle. */}
+      <EvalInspectBody fill>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <IterationDetails
+            hostSnapshot={hostSnapshotFromStyle(
+              runClientIdentity(target.run).hostStyle,
+            )}
+            iteration={iteration}
+            testCase={null}
+            layoutMode="full"
+            trialVerdictWord={outcomeLabel(result)}
+            scorecard={{
+              render: (context) => (
+                <>
+                  <IterationReportScorecard
+                    authored={authored}
+                    iteration={iteration}
+                    steps={authored.steps}
+                    chain={decisionChain}
+                    envelope={context.envelope}
+                    trace={context.trace}
+                    scoresSection={context.scoresSection}
+                    judgeHidden={context.judgeHidden}
+                  />
+                  {onEditEvaluator && (
+                    <div className="mt-4 flex justify-end">
+                      <Button onClick={onEditEvaluator}>
+                        Configure test case evaluators
+                      </Button>
+                    </div>
+                  )}
+                </>
+              ),
+            }}
+          />
+        </div>
       </EvalInspectBody>
     </>
   );

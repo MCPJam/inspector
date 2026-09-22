@@ -1,3 +1,4 @@
+import type { LaunchEngagement } from "../../shared/launch-engagement.js";
 import type { ErrorOrigin } from "@mcpjam/sdk";
 import type { RouteFailureHop } from "./route-error-report.js";
 
@@ -452,6 +453,7 @@ export type SystemEventMap = {
   // Aggregated PostHog relay proxy counters, one line per flush interval
   // (see routes/relay.ts). Low-cardinality by construction; never emitted
   // per-request.
+  "launch.engagement": LaunchEngagement;
   "relay.stats": {
     requests: number;
     res2xx: number;

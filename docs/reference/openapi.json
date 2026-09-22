@@ -15735,7 +15735,7 @@
           },
           "managedBy": {
             "type": "string",
-            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it — name, settings, environments, schedule, models, skills, execution config and cases — from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nRunning, replaying and comparing are unaffected. To change a CI-owned suite, either edit its file and send that file's `suite.id` as `declaredSuiteId` on the write, or duplicate the suite for an editable copy.\n\n`declaredId` alone is not this answer: a suite created by SDK ingest is CI-owned and has no declared id.",
+            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it — name, settings, environments, schedule, models, skills, execution config and cases — from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nRunning, replaying, comparing and DELETING are unaffected \u2014 deleting a suite is not editing one, and it is the only cleanup an SDK-created suite has. To change a CI-owned suite, either edit its file and send that file's `suite.id` as `declaredSuiteId` on the write, or duplicate the suite for an editable copy.\n\n`declaredId` alone is not this answer: a suite created by SDK ingest is CI-owned and has no declared id.",
             "enum": ["ci", "app"]
           },
           "name": {
@@ -18675,7 +18675,7 @@
           },
           "managedBy": {
             "type": "string",
-            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it — name, settings, environments, schedule, models, skills, execution config and cases — from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nRunning, replaying and comparing are unaffected. To change a CI-owned suite, either edit its file and send that file's `suite.id` as `declaredSuiteId` on the write, or duplicate the suite for an editable copy.\n\n`declaredId` alone is not this answer: a suite created by SDK ingest is CI-owned and has no declared id.",
+            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it — name, settings, environments, schedule, models, skills, execution config and cases — from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nRunning, replaying, comparing and DELETING are unaffected \u2014 deleting a suite is not editing one, and it is the only cleanup an SDK-created suite has. To change a CI-owned suite, either edit its file and send that file's `suite.id` as `declaredSuiteId` on the write, or duplicate the suite for an editable copy.\n\n`declaredId` alone is not this answer: a suite created by SDK ingest is CI-owned and has no declared id.",
             "enum": ["ci", "app"]
           },
           "name": {
@@ -28170,7 +28170,9 @@
         "properties": {
           "schemaVersion": {
             "type": "integer",
-            "enum": [1]
+            "enum": [
+              1
+            ]
           },
           "scope": {
             "$ref": "#/components/schemas/InsightScope"
@@ -28187,7 +28189,10 @@
             ]
           },
           "reasonCode": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "retryable": {
             "type": "boolean",
@@ -28197,7 +28202,10 @@
             "oneOf": [
               {
                 "type": "object",
-                "required": ["code", "message"],
+                "required": [
+                  "code",
+                  "message"
+                ],
                 "properties": {
                   "code": {
                     "type": "string"
@@ -28213,13 +28221,22 @@
             ]
           },
           "generatedAt": {
-            "type": ["integer", "null"]
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "updatedAt": {
-            "type": ["integer", "null"]
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "summary": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "coverage": {
             "type": "object",
@@ -28234,7 +28251,10 @@
             "properties": {
               "unit": {
                 "type": "string",
-                "enum": ["iterations", "sessions"]
+                "enum": [
+                  "iterations",
+                  "sessions"
+                ]
               },
               "analyzed": {
                 "type": "integer"
@@ -28274,16 +28294,28 @@
           "observationState": {
             "type": "string",
             "description": "How much of the population `currentFindings` describes — distinct from `status`, which describes a model GENERATION. `unavailable` means nothing could be measured, which is NOT the same as an empty `currentFindings`.",
-            "enum": ["ready", "partial", "unavailable"]
+            "enum": [
+              "ready",
+              "partial",
+              "unavailable"
+            ]
           },
           "observationCoverage": {
             "type": "object",
-            "required": ["unit", "analyzed", "total", "gradedCount", "exclusions"],
+            "required": [
+              "unit",
+              "analyzed",
+              "total",
+              "gradedCount",
+              "exclusions"
+            ],
             "description": "Coverage for `currentFindings`, describing ITS population. Deliberately separate from `coverage`, whose counters describe the generation's population.",
             "properties": {
               "unit": {
                 "type": "string",
-                "enum": ["iterations"]
+                "enum": [
+                  "iterations"
+                ]
               },
               "analyzed": {
                 "type": "integer"
@@ -28316,47 +28348,91 @@
             "properties": {
               "capability": {
                 "type": "string",
-                "enum": ["unified_findings_v1"]
+                "enum": [
+                  "unified_findings_v1"
+                ]
               },
               "analysis": {
                 "type": "object",
                 "description": "The trace analysis pipeline's progress while one exists for the run. Absent when none has been requested.",
-                "required": ["phase", "progress", "models", "completeness"],
+                "required": [
+                  "phase",
+                  "progress",
+                  "models",
+                  "completeness"
+                ],
                 "properties": {
                   "phase": {
                     "type": "string",
-                    "enum": ["reading", "grouping", "checking", "done", "failed"]
+                    "enum": [
+                      "reading",
+                      "grouping",
+                      "checking",
+                      "done",
+                      "failed"
+                    ]
                   },
                   "progress": {
                     "type": "object",
-                    "required": ["done", "total", "unit"],
+                    "required": [
+                      "done",
+                      "total",
+                      "unit"
+                    ],
                     "properties": {
-                      "done": { "type": "integer" },
-                      "total": { "type": "integer" },
-                      "unit": { "type": "string", "enum": ["iterations"] }
+                      "done": {
+                        "type": "integer"
+                      },
+                      "total": {
+                        "type": "integer"
+                      },
+                      "unit": {
+                        "type": "string",
+                        "enum": [
+                          "iterations"
+                        ]
+                      }
                     }
                   },
                   "models": {
                     "type": "array",
-                    "items": { "type": "string" }
+                    "items": {
+                      "type": "string"
+                    }
                   },
                   "completeness": {
                     "type": "object",
-                    "required": ["iterationReports", "total", "missingTraces"],
+                    "required": [
+                      "iterationReports",
+                      "total",
+                      "missingTraces"
+                    ],
                     "properties": {
-                      "iterationReports": { "type": "integer" },
-                      "total": { "type": "integer" },
-                      "missingTraces": { "type": "integer" }
+                      "iterationReports": {
+                        "type": "integer"
+                      },
+                      "total": {
+                        "type": "integer"
+                      },
+                      "missingTraces": {
+                        "type": "integer"
+                      }
                     }
                   }
                 }
               },
               "snapshot": {
-                "type": ["object", "null"],
+                "type": [
+                  "object",
+                  "null"
+                ],
                 "description": "The built findings snapshot: its deterministic findings, per-finding provenance, and any pipeline-verified mechanisms. `null` means none has been built for this run."
               },
               "job": {
-                "type": ["object", "null"],
+                "type": [
+                  "object",
+                  "null"
+                ],
                 "description": "The in-flight or last-failed operation, so a refusal never renders as a completed analysis."
               },
               "canBuild": {
@@ -28369,7 +28445,9 @@
           },
           "runHealth": {
             "type": "object",
-            "required": ["targets"],
+            "required": [
+              "targets"
+            ],
             "description": "Swarm only. Launch outcomes never appear as findings — a run that could not start is an operational fact, not something the server under test did.",
             "properties": {
               "targets": {
@@ -28388,7 +28466,10 @@
                   "properties": {
                     "subjectKind": {
                       "type": "string",
-                      "enum": ["environment", "host"]
+                      "enum": [
+                        "environment",
+                        "host"
+                      ]
                     },
                     "subjectId": {
                       "type": "string"
@@ -28436,6 +28517,22 @@
                 "type": "boolean"
               }
             }
+          },
+          "journeyFindings": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SwarmJourneyFindings"
+              }
+            ],
+            "nullable": true
+          },
+          "journeyFindingsJob": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SwarmJourneyFindingsJob"
+              }
+            ],
+            "nullable": true
           }
         }
       },
@@ -32969,6 +33066,605 @@
           "reasons",
           "validity",
           "cases"
+        ],
+        "additionalProperties": false
+      },
+      "SwarmJourneyFinding": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "basis": {
+            "type": "string",
+            "enum": [
+              "verifiedMechanism",
+              "sessionReport",
+              "populationFact"
+            ],
+            "description": "`verifiedMechanism`, `sessionReport`, `populationFact`"
+          },
+          "scopeLevel": {
+            "type": "string",
+            "enum": [
+              "session",
+              "goal",
+              "persona",
+              "target",
+              "wave"
+            ],
+            "description": "`session`, `goal`, `persona`, `target`, `wave`"
+          },
+          "persona": {
+            "type": "object",
+            "properties": {
+              "personaRefId": {
+                "nullable": true,
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "personaRefId",
+              "name"
+            ],
+            "additionalProperties": false
+          },
+          "goal": {
+            "type": "object",
+            "properties": {
+              "runId": {
+                "type": "string"
+              },
+              "journeyRefId": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "runId",
+              "journeyRefId",
+              "title"
+            ],
+            "additionalProperties": false
+          },
+          "target": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "environment",
+                  "host"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "modelId": {
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "label",
+              "modelId"
+            ],
+            "additionalProperties": false
+          },
+          "population": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "sessions"
+                ]
+              }
+            },
+            "required": [
+              "count",
+              "total",
+              "unit"
+            ],
+            "additionalProperties": false
+          },
+          "sessionIds": {
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "citations": {
+            "maxItems": 30,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[^/]+\\/.+$"
+            }
+          },
+          "verdictSeen": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "inconclusive",
+              "notEstablished"
+            ]
+          },
+          "chainStage": {
+            "nullable": true,
+            "description": "`connection`, `discovery`, `selection`, `call`, `response`, `userValue`",
+            "type": "string",
+            "enum": [
+              "connection",
+              "discovery",
+              "selection",
+              "call",
+              "response",
+              "userValue"
+            ]
+          },
+          "chainStageState": {
+            "nullable": true,
+            "description": "`passed`: passed; `failed`: failed; `notReached`: never ran (an earlier stage failed); `notMeasured`: not measured; `notApplicable`: not applicable to this case",
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "notReached",
+              "notMeasured",
+              "notApplicable"
+            ]
+          },
+          "chainStageBasis": {
+            "type": "string",
+            "enum": [
+              "derived",
+              "reported",
+              "unmeasured"
+            ]
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "notRun",
+              "blockedConnecting",
+              "lostFindingTool",
+              "blockedCallingTool",
+              "blockedByResponse",
+              "goalMissed",
+              "goalMetWithFriction",
+              "goalMet",
+              "notMeasured"
+            ],
+            "description": "`notRun`, `blockedConnecting`, `lostFindingTool`, `blockedCallingTool`, `blockedByResponse`, `goalMissed`, `goalMetWithFriction`, `goalMet`, `notMeasured`"
+          },
+          "tone": {
+            "type": "string",
+            "enum": [
+              "fail",
+              "warn",
+              "ok",
+              "muted"
+            ]
+          },
+          "coverageNotes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "sessionScanCapped",
+                "budgetExhausted",
+                "transcriptMissing",
+                "contextTooLarge",
+                "extractionRejected",
+                "chainUnmeasured",
+                "judgeNotRun",
+                "sessionsWithdrawn",
+                "sessionsRateLimited",
+                "partialRead",
+                "toolCatalogMissing",
+                "mechanismsRejected",
+                "analysisUnavailable"
+              ],
+              "description": "`sessionScanCapped`, `budgetExhausted`, `transcriptMissing`, `contextTooLarge`, `extractionRejected`, `chainUnmeasured`, `judgeNotRun`, `sessionsWithdrawn`, `sessionsRateLimited`, `partialRead`, `toolCatalogMissing`, `mechanismsRejected`, `analysisUnavailable`"
+            }
+          },
+          "outcomePhrase": {
+            "nullable": true,
+            "type": "string",
+            "maxLength": 100,
+            "pattern": "^[^0-9]*$"
+          },
+          "mechanismPhrase": {
+            "nullable": true,
+            "type": "string"
+          },
+          "fixPhrase": {
+            "nullable": true,
+            "type": "string"
+          },
+          "reportExcerpt": {
+            "nullable": true,
+            "type": "object",
+            "properties": {
+              "actual": {
+                "type": "string",
+                "maxLength": 1800
+              },
+              "account": {
+                "nullable": true,
+                "type": "string",
+                "maxLength": 600
+              },
+              "citations": {
+                "maxItems": 30,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[^/]+\\/.+$"
+                }
+              }
+            },
+            "required": [
+              "actual",
+              "citations"
+            ],
+            "additionalProperties": false
+          },
+          "mechanismId": {
+            "nullable": true,
+            "type": "string"
+          },
+          "signal": {
+            "nullable": true,
+            "type": "string",
+            "enum": [
+              "outputTruncated",
+              "hallucinatedTool",
+              "toolErrored",
+              "noToolCalled",
+              "turnCapReached"
+            ],
+            "description": "`outputTruncated`, `hallucinatedTool`, `toolErrored`, `noToolCalled`, `turnCapReached`"
+          }
+        },
+        "required": [
+          "id",
+          "basis",
+          "scopeLevel",
+          "persona",
+          "goal",
+          "target",
+          "population",
+          "sessionIds",
+          "citations",
+          "verdictSeen",
+          "chainStage",
+          "chainStageState",
+          "chainStageBasis",
+          "disposition",
+          "tone",
+          "coverageNotes",
+          "outcomePhrase",
+          "mechanismPhrase",
+          "fixPhrase",
+          "reportExcerpt",
+          "mechanismId"
+        ],
+        "additionalProperties": false
+      },
+      "SwarmJourneyFindings": {
+        "type": "object",
+        "properties": {
+          "contractVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "generatedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "sourceRevision": {
+            "type": "string"
+          },
+          "pipelineVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "extractionVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "extractionModel": {
+            "type": "string"
+          },
+          "reasoningModel": {
+            "type": "string"
+          },
+          "summaryKind": {
+            "type": "string",
+            "enum": [
+              "notLaunched",
+              "broken",
+              "friction",
+              "landed",
+              "ungraded",
+              "unread"
+            ],
+            "description": "`notLaunched`, `broken`, `friction`, `landed`, `ungraded`, `unread`"
+          },
+          "population": {
+            "type": "object",
+            "properties": {
+              "configured": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "started": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "read": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "unread": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "withdrawn": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "limited": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "graded": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "configured",
+              "started",
+              "read",
+              "unread",
+              "withdrawn",
+              "limited",
+              "graded"
+            ],
+            "additionalProperties": false
+          },
+          "coverageNotes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "sessionScanCapped",
+                "budgetExhausted",
+                "transcriptMissing",
+                "contextTooLarge",
+                "extractionRejected",
+                "chainUnmeasured",
+                "judgeNotRun",
+                "sessionsWithdrawn",
+                "sessionsRateLimited",
+                "partialRead",
+                "toolCatalogMissing",
+                "mechanismsRejected",
+                "analysisUnavailable"
+              ],
+              "description": "`sessionScanCapped`, `budgetExhausted`, `transcriptMissing`, `contextTooLarge`, `extractionRejected`, `chainUnmeasured`, `judgeNotRun`, `sessionsWithdrawn`, `sessionsRateLimited`, `partialRead`, `toolCatalogMissing`, `mechanismsRejected`, `analysisUnavailable`"
+            }
+          },
+          "disclosure": {
+            "type": "object",
+            "properties": {
+              "rail": {
+                "type": "string",
+                "enum": [
+                  "gateway",
+                  "openrouter"
+                ]
+              },
+              "evidenceSent": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "rail",
+              "evidenceSent"
+            ],
+            "additionalProperties": false
+          },
+          "personas": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "persona": {
+                  "type": "object",
+                  "properties": {
+                    "personaRefId": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "personaRefId",
+                    "name"
+                  ],
+                  "additionalProperties": false
+                },
+                "disposition": {
+                  "type": "string",
+                  "enum": [
+                    "notRun",
+                    "blockedConnecting",
+                    "lostFindingTool",
+                    "blockedCallingTool",
+                    "blockedByResponse",
+                    "goalMissed",
+                    "goalMetWithFriction",
+                    "goalMet",
+                    "notMeasured"
+                  ],
+                  "description": "`notRun`, `blockedConnecting`, `lostFindingTool`, `blockedCallingTool`, `blockedByResponse`, `goalMissed`, `goalMetWithFriction`, `goalMet`, `notMeasured`"
+                },
+                "tone": {
+                  "type": "string",
+                  "enum": [
+                    "fail",
+                    "warn",
+                    "ok",
+                    "muted"
+                  ]
+                },
+                "goalRunIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "persona",
+                "disposition",
+                "tone",
+                "goalRunIds"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "findings": {
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SwarmJourneyFinding"
+            }
+          },
+          "verification": {
+            "type": "object",
+            "properties": {
+              "proposed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "confirmed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "rejected": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "unverified": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "omitted": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "proposed",
+              "confirmed",
+              "rejected",
+              "unverified",
+              "omitted"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "contractVersion",
+          "generatedAt",
+          "sourceRevision",
+          "pipelineVersion",
+          "extractionVersion",
+          "extractionModel",
+          "reasoningModel",
+          "summaryKind",
+          "population",
+          "coverageNotes",
+          "disclosure",
+          "personas",
+          "findings"
+        ],
+        "additionalProperties": false
+      },
+      "SwarmJourneyFindingsJob": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "completed",
+              "failed",
+              "skipped"
+            ]
+          },
+          "errorCode": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "status",
+          "updatedAt"
         ],
         "additionalProperties": false
       }

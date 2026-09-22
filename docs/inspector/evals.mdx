@@ -92,7 +92,7 @@ A case can hold steps this form has no section for — a second prompt, or a pin
 
 **Right column — the selected trial**
 
-The trial opens on its **Scorecard**: the same scorers the left column lists, in the same order, each with what happened to it on this trial. A row shows its result, its provenance, its role, and — where there is one — the reason, which for a step is the message the runner recorded.
+The trial opens on its **Scorecard**: the same scorers the left column lists, in the same order, each with what happened to it on this trial. The scorecard is one column of stage sections, in user-value chain order. Each section is headed by the stage name and a state chip (passed, failed, or a neutral label); under the heading sits at most one sentence about the stage as a whole — the AI note when one exists, else the recorded floor, else the chain's own reason for a failure no row explains. Then every evaluator that grades that stage appears as an **Expected / Actual** pair separated by hairlines. **Expected** is the configured criterion; **Actual** is the AI-generated narrative when one is current, else the recorded reason and evidence, else the formatted value, else "No observation recorded."
 
 The summary line counts **required rows only**: "2 of 2 required passed · 1 advisory". An advisory miss is shown on its row and never counted as a failure, because it did not fail the trial. A scorer with no result reads **Not measured** rather than passing by default. The verdict word itself stays in the header above.
 
@@ -487,7 +487,7 @@ Two ways forward, both offered on the suite:
   never target it.
 
 Everything that is not a configuration edit is unchanged: run it, replay a run,
-compare runs, waive a gate, read every setting.
+compare runs, waive a gate, read every setting — and delete the suite.
 
 ### CI-synced test cases
 
@@ -495,7 +495,17 @@ Test cases written by a CI report carry a **CI** chip next to their name in the 
 
 ### Suite deletion
 
-The delete button in the suite switcher is hidden for any suite that is CI-active — either created by the SDK or one that CI has reported into. This protects CI run history; the next CI report would recreate the suite anyway.
+A CI-managed suite can be deleted, from the suite switcher, the suite card and
+the suite page, by anyone whose role lets them delete a suite they can see.
+Deleting is not editing: it says what this workspace keeps, and it makes no
+claim about what CI runs.
+
+The confirmation names the two consequences, because neither is visible from
+the button: the run history stored here goes with the suite, and the next CI
+run or SDK report creates the suite again. A suite the SDK reports into is
+identified by **name**, so renaming `suiteName` in your code does not rename
+the suite — it creates a second one and leaves the first behind. Deleting the
+one you no longer report into is how you clean that up.
 
 ## Reading results
 
@@ -574,7 +584,7 @@ rather than as a pass.
 
 While a run is in progress, the run header shows a **HOLD** or **SHIP** pill for each client/model pairing to indicate the current trajectory. All pairings that share the same decision are grouped into one pill — a single **HOLD** pill lists every client not yet on track to pass, and a **SHIP** pill lists every client on track to pass. Intermediate states (**Running**, **Grading**, **Inconclusive**) each get their own pill. Once a run finishes, these pills are removed from the header. The **Compare runs** and **Run again** buttons are visible directly in the header.
 
-**Cancelling a run:** while a run is in progress (status `pending`, `running`, or `grading`), a **Cancel run** button replaces **Run again** in the run header. Clicking it stops every client-model pairing of that launch at once — runs that have already finished are skipped. A run still in `grading` (trials done, gating judge still running) can also be cancelled. Once cancelled, stopped trials are recorded as `cancelled` rather than as failures, so the run result reflects a deliberate stop rather than a test failure. The **Cancel run** button is also available in the suite's Runs table — each in-progress row shows a small **Cancel** button — and in the suite header when any run in the suite is still going.
+**Cancelling a run:** while a run is in progress (status `pending`, `running`, or `grading`), a **Cancel run** button replaces **Run again** in the run header. Clicking it stops every client-model pairing of that launch at once — runs that have already finished are skipped. A run still in `grading` (trials done, gating judge still running) can also be cancelled. Once cancelled, stopped trials are recorded as `cancelled` rather than as failures, so the run result reflects a deliberate stop rather than a test failure. The **Cancel run** button is also available in the suite header when any run in the suite is still going. On the **Evals** tab, where the run detail is folded into the suite body rather than shown with a full header, the **Cancel run** button appears in the run-level action row (alongside Share, Export, and Submission report) instead.
 
 Below the header, the hero section shows a row per client/model pairing with a pass/fail bar and counts, plus P50 and P95 latency, average tokens, and average tool calls for that pairing. When a previous launch exists and the current run has finished, each pairing row also shows a delta — how many more or fewer cases passed compared to the equivalent pairing in the prior launch. Deltas are hidden while a run is still in progress. The first launch of a suite shows no deltas.
 
@@ -587,7 +597,7 @@ A **Results / Metrics** toggle above the case list switches what each cell shows
 - **Results** (default) — pass/fail status, a pass-count fraction, and a progress bar broken down by outcome.
 - **Metrics** — P50 and P95 latency, average tokens per iteration, and average tool calls per iteration.
 
-Click a **test case name** to open its definition — the user prompt, checks, and expected outcome. Click a **result cell** (pass/fail) to open a **case drawer** with per-pairing averages (passed count, P50, P95, tokens, calls) and a flat iteration list. Click an iteration row to open its full detail view — scorecard, transcript, tool calls, and trace — without leaving the run page. A **Back** breadcrumb returns to the iteration list. In the scorecard, each scorer row shows an **Expected** field (the configured criterion) and an **Actual** field (what the run recorded). When the findings pipeline has produced a narrative for the iteration, the **Actual** field shows the AI-generated explanation with a cited trace evidence disclosure; if the narrative predates the latest grade it is marked stale and the recorded evidence is shown instead.
+Click a **test case name** to open its definition — the user prompt, checks, and expected outcome. Click a **result cell** (pass/fail) to open a **case drawer** with per-pairing averages (passed count, P50, P95, tokens, calls) and a flat iteration list. Click an iteration row to open its full detail view — scorecard, transcript, tool calls, and trace — without leaving the run page. A **Back** breadcrumb returns to the iteration list. In the scorecard, each evaluator row shows an **Expected** field (the configured criterion) and an **Actual** field (what the run recorded). When the findings pipeline has produced a narrative for the iteration, the **Actual** field shows the AI-generated explanation; if the narrative predates the latest grade it is marked stale and the recorded evidence is shown instead. Evaluators are grouped by stage rather than split into default and added-assertion sections.
 
 For CI-managed (SDK) suites, clicking a test name still opens the definition in read-only mode — configuration edits remain locked, but you can inspect the prompt and checks.
 
@@ -597,7 +607,7 @@ For CI-managed (SDK) suites, clicking a test name still opens the definition in 
   - **Extra** — actual calls that weren't expected (reported but non-fatal by default)
   - **Out of order** — calls that happened in the wrong sequence (when order checking is enabled)
   - **Arg mismatch** — right tool name, wrong arguments (shown side-by-side)
-- **User-value chain** — when you expand a trial, six numbered stage cards show how far value travelled: Session connected → Tools discovered → Tool selected → Tool called → Response returned → Request satisfied. The card for the first stage that failed opens automatically. Click any card to read what happened at that stage and why; click it again to close. This is shown for every trial — passing and failing alike. A trial that delivered end to end reads as the full delivery story; a failing trial opens on the break. During blind review (before you label a trial whose User value stage was decided by the judge), the rail still shows all six stages; the User value card opens automatically but its state, reason, and evidence are hidden until you submit your label. The other five stages — decided by the runner, not the judge — remain fully readable.
+- **User-value chain** — when you expand a trial, the scorecard shows one section per measured stage in chain order: Session connected → Tools discovered → Tool selected → Tool called → Response returned → Request satisfied. Each section heading carries the stage's state word (passed, failed, or a neutral label such as "never ran"). A failed stage whose evaluator rows do not already explain the failure shows the chain's own reason under the heading. This is shown for every trial — passing and failing alike. A trial that delivered end to end reads as the full delivery story; a failing trial shows the break in its stage section. During blind review (before you label a trial whose User value stage was decided by the judge), all six stage sections are shown; the User value section omits its state word, stage sentence, and tally line until you submit your label. The other five stages — decided by the runner, not the judge — remain fully readable.
 - **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here. When a turn ran through a harness (e.g. Claude Code), the trace detail pane shows an **Engine** badge — "Claude Code" for harness turns, "Emulated" for turns that ran through MCPJam's built-in chat engine — so you can tell at a glance which runtime handled each turn. The user-value chain also appears above the transcript in the trace pane, so the answer to "where did this trial stop" is on the same screen as the evidence.
 - **Per-model breakdown** to compare how the same case behaves across models.
 - **Suggested fixes** — after a run completes, a **Suggested fixes** panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top N** copies the top issues combined.
@@ -627,7 +637,7 @@ In both cases the dialog shows the servers recorded for that session, lets you s
 
 The **Generate** button reads your attached servers' tool catalog and drafts realistic cases — a mix of positive ("call `search` with a query") and negative ("don't call `delete_user` on a meta-question"). Treat it as a draft: skim, edit the prompts to match how your users actually talk, tighten the assertions, then save.
 
-While generation is open, the breadcrumb reads **Evaluate / &lt;suite&gt; / Generate test cases**. Click the suite name in the breadcrumb to exit the generation view and return to the suite overview at any time.
+While generation is open, the breadcrumb reads **Evaluate / &lt;suite&gt; / Generate test cases**. When reviewing imported drafts, the breadcrumb reads **Evaluate / &lt;suite&gt; / Import test cases** instead. In both cases, click the suite name in the breadcrumb to exit the review view and return to the suite overview at any time.
 
 If generation fails because no tools are marked read-only, the workspace offers **Change generation settings** rather than a retry — retrying the same request would fail identically. Change the scope in the settings dialog, then generate again. For other failures (such as model-dependent ones), **Retry generation** is offered instead.
 

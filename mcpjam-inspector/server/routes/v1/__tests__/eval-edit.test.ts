@@ -3,6 +3,7 @@ import { isOpaqueId } from "@mcpjam/sdk/contract";
 import { MAX_CASES_PER_BATCH } from "../../shared/eval-case-batch.js";
 import { upstreamRefusalFromResponse } from "../../../services/upstream-refusal.js";
 import { Hono } from "hono";
+import * as authoringHelpers from "../../../services/evals/route-helpers.js";
 
 // Covers the v1 eval-edit surface: suite settings/schedule/delete + case CRUD
 // + generate. Asserts public→internal translation, DTO scrubbing (no internal
@@ -2324,6 +2325,75 @@ describe("v1 eval-edit routes", () => {
       return defaultQueryImpl(name);
     });
   }
+
+  it.each(["", "<html>upstream error</html>"])("maps non-JSON generation replies to 502: %j", async (body) => {
+    const oldFlag = process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+    const oldUrl = process.env.CONVEX_HTTP_URL;
+    process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = "true";
+    process.env.CONVEX_HTTP_URL = "https://backend.test";
+    const capture = vi.spyOn(authoringHelpers, "captureToolSnapshotForEvalAuthoring").mockResolvedValue({ toolSnapshot: [] } as any);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(body, { status: 503 }));
+    try {
+      const response = await generateWith({});
+      expect(response.status).toBe(502);
+      expect(await response.json()).toMatchObject({ code: "SERVER_UNREACHABLE" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      capture.mockRestore();
+      fetchMock.mockRestore();
+      if (oldFlag === undefined) delete process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+      else process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = oldFlag;
+      if (oldUrl === undefined) delete process.env.CONVEX_HTTP_URL;
+      else process.env.CONVEX_HTTP_URL = oldUrl;
+    }
+  });
+
+  it.each(["failed", "cancelled", "pending", "completed"])("returns %s authoring jobs without missing-collection crashes", async (status) => {
+    convexQueryMock.mockImplementation((name: string) => name === "evalAuthoringState:status"
+      ? Promise.resolve({ jobId: "job", projectId: "p1", suiteId: "s1", source: "generation", status, error: "Stopped" }) : defaultQueryImpl(name));
+    const response = await request("POST", "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit", {});
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status, error: "Stopped" });
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+  it.each(["GET", "POST"])("returns 404 for absent authoring jobs on %s", async (method) => {
+    convexQueryMock.mockResolvedValue(null);
+    const response = await request(method, `/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa${method === "POST" ? "/commit" : ""}`, method === "POST" ? {} : undefined);
+    expect(response.status).toBe(404);
+  });
+  it("omits unavailable case reads from receipts and counts", async () => {
+    convexQueryMock.mockImplementation((name: string, args: any) => {
+      if (name === "evalAuthoringState:status") return Promise.resolve({ jobId: "job", projectId: "p1", suiteId: "s1", source: "generation", status: "completed", committedCaseIds: ["valid", "missing", "unreadable"] });
+      if (name === "testSuites:getTestCase") {
+        if (args.testCaseId === "unreadable") return Promise.reject(new Error("Not accessible"));
+        return Promise.resolve(args.testCaseId === "valid" ? CASE_DOC : null);
+      }
+      return defaultQueryImpl(name);
+    });
+    const response = await request("POST", "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit", {});
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.created).toHaveLength(1);
+    expect(result.counts).toEqual({ normal: 1, negative: 0 });
+  });
+
+  it("keeps review skips and normalizes batch failure messages", async () => {
+    const draft = { version: 1, draftId: "draft", revision: 0, case: { title: "Save failed", steps: [{ id: "p", kind: "prompt", prompt: "Find a document" }], expectedOutput: "Document found" }, issues: [], additions: [], review: "required" };
+    convexQueryMock.mockResolvedValue({ jobId: "job", projectId: "p1", suiteId: "s1", source: "generation", status: "completed", drafts: [
+      { ...draft, draftId: "review", case: { ...draft.case, title: "Needs review" }, additions: [{ id: "a", path: "steps.0", explanation: "Added details" }] }, draft,
+    ] });
+    convexMutationMock.mockImplementation((name: string) => {
+      if (name === "evalAuthoringState:prepareCommit") return Promise.resolve({ title: "Save failed" });
+      if (name === "testSuites:createTestCases") return Promise.resolve({ caseUpsert: { committed: [], failed: [{ index: 0, code: "DUPLICATE", message: "Already exists" }] } });
+      return Promise.resolve(null);
+    });
+    const response = await request("POST", "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit", {});
+    expect(response.status).toBe(200);
+    expect((await response.json()).skipped).toEqual([
+      { title: "Needs review", error: "Review this draft's issues and proposed additions in the suite." },
+      { title: "Save failed", error: "Already exists" },
+    ]);
+  });
 
   async function generateWith(init: {
     headers?: Record<string, string>;
@@ -4656,5 +4726,16 @@ describe("eval vocabulary negotiation", () => {
       settings: { judge: { role: "required" } },
     });
     expect(res.status).toBe(400);
+  });
+});
+
+
+describe("authoring job ID validation", () => {
+  it.each(["GET", "POST"])("rejects malformed IDs on %s before querying Convex", async (method) => {
+    validateGuestTokenMock.mockResolvedValue({ valid: false });
+    convexQueryMock.mockClear();
+    const response = await request(method, `/api/v1/projects/p1/eval-suites/s1/authoring/not-an-id${method === "POST" ? "/commit" : ""}`);
+    expect(response.status).toBe(404);
+    expect(convexQueryMock).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,64 @@
 # `@mcpjam/sdk` changelog
 
+## 8.12.0
+
+### Minor Changes
+
+- [#5338](https://github.com/MCPJam/inspector/pull/5338) [`331907a`](https://github.com/MCPJam/inspector/commit/331907a16a25617016f5e3743d48cee1bf6ddb63) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - `EvalSuite.runWithClient` accepts a list of saved clients. It runs the suite against each in parallel and uploads one run per client, grouped in MCPJam under one run number. Adds `runGroupId` to the reporting config. The evals GitHub Action now shows grouped runs as one table with a row per client and model.
+
+- [#5359](https://github.com/MCPJam/inspector/pull/5359) [`2d59e6f`](https://github.com/MCPJam/inspector/commit/2d59e6ff815872a81070bcb8968e22ec146a29f8) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Swarm findings: add an `analysisUnavailable` coverage note, so a wave whose cause analysis never ran is distinguishable from one where the analysis ran and found nothing.
+
+- [#5340](https://github.com/MCPJam/inspector/pull/5340) [`cc8f06a`](https://github.com/MCPJam/inspector/commit/cc8f06a844ee7243a6dbb2ac29bbc0a2b11bbf16) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Swarm findings: carry recorded session signals, a plain-language persona account and proposal verification counts on the wire. All three additions are optional, so existing payloads keep parsing unchanged.
+
+### Patch Changes
+
+- [#5390](https://github.com/MCPJam/inspector/pull/5390) [`99bc573`](https://github.com/MCPJam/inspector/commit/99bc573e213994c6aa46beb4dbf3ac88b56dfcf8) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+
+  This changeset carries no code changes. It ships the inspector and SDK work that has been waiting on main since the last release, and bumps @mcpjam/cli in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+
+## 8.11.1
+
+### Patch Changes
+
+- [#5300](https://github.com/MCPJam/inspector/pull/5300) [`42c058f`](https://github.com/MCPJam/inspector/commit/42c058f0cd41078ee28533f0589bd0af3c7cbf7e) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Report the model on every iteration an `EvalSuite` or `EvalTest` run uploads. A run started with `runWithClient` showed an empty MODEL column, because only the `promptsToEvalResult` path stamped the provider and model that the run had already recorded. When a case fails in setup and never reaches the model, the run now names the model it was configured with — the saved client's, for a `runWithClient` run.
+
+  Report per-step verdicts too (`metadata.stepResults`), the same rows the hosted runner writes. An SDK case whose tool call matched still read "0 of 1 assertion passed" on the Steps tab, with a grey unknown icon, because no step ever carried a verdict.
+
+- [#5330](https://github.com/MCPJam/inspector/pull/5330) [`1ad2342`](https://github.com/MCPJam/inspector/commit/1ad2342d2c7bd7ec9ff4051ad1536dba1a37466f) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the
+  work already merged into main reaches npm. Version bump only — no code changes.
+
+## 8.11.0
+
+### Minor Changes
+
+- [#5281](https://github.com/MCPJam/inspector/pull/5281) [`4311e1f`](https://github.com/MCPJam/inspector/commit/4311e1f0b008b28bb02405e9bc87ac5accd5cb6e) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Expose versioned, evidence-backed swarm journey findings through the SDK and API contract. Render persona and goal findings from the shared analysis output, disclose unread sessions, and avoid reassuring summaries when no model analysis ran.
+
+## 8.10.1
+
+### Patch Changes
+
+- [#5290](https://github.com/MCPJam/inspector/pull/5290) [`dc212eb`](https://github.com/MCPJam/inspector/commit/dc212eb1b040c44e488203e2ef1a2bc8174e2876) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Keep a miscited Markdown case from failing the whole import, and give imported drafts their own review surface instead of listing them beside cases already in the suite. A blocked draft now names the missing field in a badge on its title, and importing clears a stale generation error that pointed at a setting import does not offer.
+
+- [#5298](https://github.com/MCPJam/inspector/pull/5298) [`7032855`](https://github.com/MCPJam/inspector/commit/703285536746b2e05bc49e45dacabb3582e374e8) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Widget evidence too large to send inline now goes to storage, so an MCP Apps server can report its evals.
+
+  Reporting a run embedded each widget snapshot's HTML in the request. A snapshot is a whole built app — a single-file bundle is commonly over half a megabyte — so one test case whose tool ran twice put more than 1MB on the wire and the upload failed with "Request body exceeds 1MB limit". Chunking could not save it: it splits between results, never inside one.
+
+  Small widgets still ride along inline, in the one request they always did, because that is what lets a retry resend identical bytes. Only a result that would not fit offloads its HTML to blob storage first and sends the id instead. The offload happens once, before the retry loop, so retries stay byte-identical either way.
+
+  The upload URL this path follows must now be https, or loopback — `npx convex dev` and a self-hosted deployment hand out `http://127.0.0.1`, and those still work. Anything else is refused rather than putting a built app on a cleartext wire.
+
+## 8.10.0
+
+### Minor Changes
+
+- [#5264](https://github.com/MCPJam/inspector/pull/5264) [`07d7090`](https://github.com/MCPJam/inspector/commit/07d709022c9922891145ee14a9637e3f5b7461fd) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Tell agents and scripts when an included operation's usage limit lifts. The SDK adds `describePlatformRefusal` and `platformRefusalHint`, which read a `RATE_LIMITED` refusal's backend code, limit, retry time and whether credits would help. MCP tool errors, CLI errors and in-app agent tool errors now carry that and say when to retry, without suggesting a top-up. Generation copy now says the quota belongs to the organization, not the project, and description proposals no longer claim a generation quota. The insight getters explain `platform_cap_exceeded` and `platform_unavailable`.
+
+- [#5248](https://github.com/MCPJam/inspector/pull/5248) [`b99eed6`](https://github.com/MCPJam/inspector/commit/b99eed6a297508c17f8fa19e78257d09361a9cb5) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Report swarm execution, goal grading, and advisory standard checks separately across the UI and platform API. Show shared run decisions, grading coverage, and session user-value chains while retaining persona-specific findings.
+
+### Patch Changes
+
+- [#5279](https://github.com/MCPJam/inspector/pull/5279) [`e059fd2`](https://github.com/MCPJam/inspector/commit/e059fd2d7bcc2753e2bbcc1ce004a824b009c320) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Stop an empty system prompt from failing every generation. A saved MCPJam client with no system prompt reads as `""`, and `runWithClient` passed it straight to the provider; Anthropic refuses an empty system block with `system: text content blocks must be non-empty`, so every case in the suite failed with a bare "Bad Request". `HostRunner` now treats an empty configured prompt as "none given" and uses its default, the same as it already did for a host snapshot.
+
 ## 8.9.0
 
 ### Minor Changes

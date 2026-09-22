@@ -1,4 +1,14 @@
 import type {
+  SwarmJourneyFinding,
+  SwarmJourneyFindings,
+  SwarmJourneyFindingsJob,
+} from "../contract/swarm-finding.js";
+export type PlatformSwarmJourneyFinding = SwarmJourneyFinding;
+export type PlatformSwarmJourneyFindings = SwarmJourneyFindings;
+export type PlatformSwarmJourneyFindingsJob = SwarmJourneyFindingsJob;
+export type { SwarmJourneyFindingsJob };
+
+import type {
   SwarmSessionVerdict,
   JourneyRunVerdictSummary,
   SwarmReport,
@@ -1891,8 +1901,9 @@ export interface PlatformEvalSuiteDetailBase {
    * `"ci"` means it is owned by a committed suite file or by SDK ingest, and
    * the platform REFUSES configuration writes to it — name, settings,
    * environments, schedule, models, skills, execution config and cases — with
-   * `409` and `details.reason: "CI_OWNED_SUITE_READ_ONLY"`. Running, replaying
-   * and comparing are unaffected.
+   * `409` and `details.reason: "CI_OWNED_SUITE_READ_ONLY"`. Running, replaying,
+   * comparing and DELETING are unaffected — deleting a suite is not editing
+   * one, and it is the only cleanup an SDK-created suite has.
    *
    * To change one: edit its file and send that file's `suite.id` as
    * `declaredSuiteId` on the write, or duplicate the suite for an editable
@@ -4505,6 +4516,8 @@ export interface PlatformUnifiedFindings {
 }
 
 export interface PlatformInsightsEnvelope {
+  journeyFindings?: PlatformSwarmJourneyFindings | null;
+  journeyFindingsJob?: PlatformSwarmJourneyFindingsJob | null;
   schemaVersion: 1;
   scope: PlatformInsightScope;
   status: PlatformInsightsStatus;

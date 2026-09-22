@@ -818,16 +818,19 @@ function EvaluateTabContent({
   // added without deciding. An agent command is a second door into the same
   // mutations the buttons call, and it passes none of the rendered controls
   // the CI-owned lock lives in — so a lock that only hides affordances is no
-  // lock at all here. `case.create` (generate) and `suite.delete` are both in
-  // the platform's locked set: an agent pointed at a CI-owned suite gets a
-  // `409`, which is the same offer-then-refuse this whole change removes.
+  // lock at all here. `case.create` (generate) is in the platform's locked
+  // set: an agent pointed at a CI-owned suite gets a `409`, which is the same
+  // offer-then-refuse this whole change removes.
   //
-  // `"read"` is not "harmless" — it is "writes no configuration". Running and
-  // cancelling stay readable on a CI-owned suite, because running one from the
-  // app is exactly what locking edits rather than the suite exists to keep.
+  // THE TWO WORDS ARE THE RULE, not a severity ranking. `"edit_config"` writes
+  // the configuration a CI-owned suite's file (or SDK report) owns, and is the
+  // only thing ownership refuses. `"lifecycle"` covers running, cancelling and
+  // DELETING — none of them edits what the suite is, and all three stay
+  // available on a CI-owned suite. Spelling delete `"write"` here is what made
+  // the agent surface refuse the one cleanup path that issue #5381 needed.
   const resolveSuiteEntry = (
     raw: unknown,
-    intent: "read" | "write",
+    intent: "edit_config" | "lifecycle",
   ): EvalSuiteOverviewEntry => {
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
@@ -847,12 +850,12 @@ function EvaluateTabContent({
     });
     if (matches.length === 1) {
       const entry = matches[0];
-      if (intent === "write" && isCiOwnedSuite(entry.suite)) {
+      if (intent === "edit_config" && isCiOwnedSuite(entry.suite)) {
         throw createInspectorCommandClientError(
           "invalid_request",
           `Suite "${suiteDisplayName(
             entry.suite,
-          )}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running it is still available.`,
+          )}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running and deleting it are still available.`,
         );
       }
       return entry;
@@ -939,7 +942,7 @@ function EvaluateTabContent({
       runEvalSuite: async (command) => {
         requireAgentOperable();
         const { payload } = command as RunEvalSuiteInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite, "read");
+        const entry = resolveSuiteEntry(payload.suite, "lifecycle");
         // Same quota the Run button consults (use-eval-iteration-quota via
         // guardEvalIterationQuota) — surfaced as a command error naming the
         // quota instead of a toast, and NEVER bypassed.
@@ -992,7 +995,7 @@ function EvaluateTabContent({
       generateEvalTests: async (command) => {
         requireAgentOperable();
         const { payload } = command as GenerateEvalTestsInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite, "write");
+        const entry = resolveSuiteEntry(payload.suite, "edit_config");
         if (getEffectiveSuiteServers(entry.suite).length === 0) {
           throw createInspectorCommandClientError(
             "invalid_request",
@@ -1030,7 +1033,7 @@ function EvaluateTabContent({
       deleteEvalSuite: async (command) => {
         requireAgentOperable();
         const { payload } = command as DeleteEvalSuiteInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite, "write");
+        const entry = resolveSuiteEntry(payload.suite, "lifecycle");
         if (latestHandlersRef.current.deletingSuiteId) {
           throw createInspectorCommandClientError(
             "execution_failed",
@@ -1208,7 +1211,11 @@ function EvaluateTabContent({
             (testCase) => testCase._id === selectedTestId,
           )?.title || "Test case"
       : route.type === "suite-edit"
-        ? "Test Suite Evaluators"
+        ? route.fromCaseChecks
+          ? (suiteDetails?.testCases.find(
+              (testCase) => testCase._id === route.fromCaseChecks,
+            )?.title ?? "Test case")
+          : "Test Suite Evaluators"
         : route.type === "run-detail"
           ? runBreadcrumbLabel
           : null;
@@ -1220,10 +1227,13 @@ function EvaluateTabContent({
    */
   const [generatingCases, setGeneratingCases] = useState<{
     exit: () => void;
+    /** Import review borrows this crumb; without it every surface reads
+     * "Generate test cases". */
+    label?: string;
   } | null>(null);
 
   const renderPlaygroundBreadcrumb = () => {
-    if (generatingCases) return "Generate test cases";
+    if (generatingCases) return generatingCases.label ?? "Generate test cases";
     if (!hasDetailRoute) return null;
     return isNestedDetail ? nestedPageLabel : suiteBreadcrumbLabel;
   };
@@ -1408,15 +1418,11 @@ function EvaluateTabContent({
             onCancelRun={handlers.handleCancelRun}
             onDelete={handlers.handleDelete}
             /*
-             * Role AND ownership. `suite.delete` is CI-locked, so offering the
-             * trash on a CI-owned suite is offering a `409`. Answered from the
-             * suite ROW rather than capabilities: this is a grid, and asking
-             * the backend per card would be one query per suite for a question
-             * the row already carries in full.
+             * Role alone. `suite.delete` left the backend's CI-locked set —
+             * deleting a CI-owned suite says what this workspace keeps, not
+             * what CI runs — so ownership no longer has a second vote here.
              */
-            canDeleteSuite={(suite) =>
-              canDeleteArtifact(suite.createdBy) && !isCiOwnedSuite(suite)
-            }
+            canDeleteSuite={(suite) => canDeleteArtifact(suite.createdBy)}
             rerunningSuiteId={rerunningSuiteId}
             cancellingRunId={cancellingRunId}
             deletingSuiteId={deletingSuiteId}
@@ -1555,7 +1561,18 @@ function EvaluateTabContent({
             }
             detailCrumb={
               route.type === "suite-edit" && route.fromCaseChecks
-                ? { label: "Test Suite Evaluators" }
+                ? [
+                    {
+                      label: "Test Case Evaluators",
+                      onClick: () =>
+                        playgroundNavigation.toTestEdit(
+                          route.suiteId,
+                          route.fromCaseChecks!,
+                          { checks: true },
+                        ),
+                    },
+                    { label: "Test Suite Evaluators" },
+                  ]
                 : route.type === "test-edit" && route.checks
                   ? { label: "Test Case Evaluators" }
                   : undefined
@@ -1566,7 +1583,6 @@ function EvaluateTabContent({
                     playgroundNavigation.toTestEdit(
                       route.suiteId,
                       route.fromCaseChecks!,
-                      { checks: true },
                     )
                 : route.type === "test-edit" && route.checks
                   ? () =>
@@ -1601,17 +1617,15 @@ function EvaluateTabContent({
                     : undefined
             }
           >
-            {route.type === "suite-edit" && route.fromCaseChecks
-              ? "Test Case Evaluators"
-              : route.type === "eval-server"
-                ? evalServer?.name
-                : route.type === "test-edit" && route.fromEvalServer
-                  ? (previewCaseTitleFromDraft(
-                      route.fromEvalServer,
-                      route.suiteId,
-                      route.testId,
-                    ) ?? nestedPageLabel)
-                  : renderPlaygroundBreadcrumb()}
+            {route.type === "eval-server"
+              ? evalServer?.name
+              : route.type === "test-edit" && route.fromEvalServer
+                ? (previewCaseTitleFromDraft(
+                    route.fromEvalServer,
+                    route.suiteId,
+                    route.testId,
+                  ) ?? nestedPageLabel)
+                : renderPlaygroundBreadcrumb()}
           </EvalsHeader>
         )
       }

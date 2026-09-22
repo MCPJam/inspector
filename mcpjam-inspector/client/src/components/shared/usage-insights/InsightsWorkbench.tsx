@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, type ReactNode } from "react";
 import {
   chipKey,
   isSameSelection,
@@ -9,7 +9,6 @@ import {
   type UsageFilterState,
 } from "@/hooks/scenario-usage-filters";
 import {
-  useEnsureFirstAnalysis,
   useInsightsFlowController,
   useInsightsRebuild,
   type InsightsView,
@@ -22,7 +21,6 @@ import { InsightsViewToggle } from "@/components/shared/usage-insights/InsightsV
 import { InsightsFreshnessChip } from "@/components/shared/usage-insights/InsightsFreshnessChip";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { Button } from "@mcpjam/design-system/button";
-import { SHOW_RECLUSTERING_UI } from "@/lib/cluster-tuning";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 
@@ -62,7 +60,6 @@ interface InsightsWorkbenchProps {
    * topic map was never built. The server mutation dedupes in-flight runs; the
    * ref below is hygiene before Convex reflects the queued state.
    */
-  autoBackfillTopicMap?: boolean;
   /**
    * Rendered instead of the body when there is nothing to show — either no
    * scope to read (a signed-out swarm) or a cohort with zero sessions. The
@@ -183,7 +180,6 @@ export function InsightsWorkbench({
   onOpenSessionsTab,
   bannerSlot,
   recommendationsSlot,
-  autoBackfillTopicMap = false,
   emptyState,
   className,
   bodyLayout = "fill",
@@ -204,32 +200,7 @@ export function InsightsWorkbench({
     breakdownEnabled: scope !== null,
   });
 
-  const { rebuildBusy, handleRebuild, handleApplyTuning } = useInsightsRebuild(
-    rebuild,
-    cohortKey,
-  );
-
-  /**
-   * User Testing analyzes itself (BB-196).
-   *
-   * Keyed on the scope, not a prop: this mirrors a backend rule keyed on the
-   * same fact (`scenarioWindowFreshness`'s first-analysis fast path), and two
-   * ways to say it would let a caller turn off half of a guarantee. Swarms are
-   * excluded because a settling run already queues theirs (journeyRuns.ts);
-   * the benchmark flow because it is the one paid analysis and waits to be
-   * asked.
-   */
-  const scopeAnalyzesItself = scope?.kind === "scenario";
-  const { failed: firstAnalysisRefused } = useEnsureFirstAnalysis({
-    enabled: scopeAnalyzesItself,
-    cohortKey,
-    breakdown,
-    rebuild,
-  });
-  // A refused start withdraws the promise: with no run ever coming, keeping it
-  // would leave the viewer watching a spinner with the only control that could
-  // fix it hidden behind it.
-  const analysisIsAutomatic = scopeAnalyzesItself && !firstAnalysisRefused;
+  const { rebuildBusy, handleRebuild } = useInsightsRebuild(rebuild, cohortKey);
 
   const { setView } = flow;
   const handleViewChange = useCallback(
@@ -283,28 +254,6 @@ export function InsightsWorkbench({
     flow.commitSelection,
     flow.setFlowSelection,
     flow.flowSelectionRef,
-  ]);
-
-  // One-shot topic-map backfill per cohort.
-  const topicMapBackfillKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!autoBackfillTopicMap) return;
-    if (flow.view !== "clusters") return;
-    const latestRun = breakdown?.latestRun;
-    if (!latestRun) return;
-    if (latestRun.status !== "done" || latestRun.topicMapReady) return;
-    if (topicMapBackfillKeyRef.current === cohortKey) return;
-    topicMapBackfillKeyRef.current = cohortKey;
-    void rebuild().catch(() => {
-      // Leave the panel's failed/empty CTA to surface retry; avoid toast noise.
-      topicMapBackfillKeyRef.current = null;
-    });
-  }, [
-    autoBackfillTopicMap,
-    flow.view,
-    cohortKey,
-    breakdown?.latestRun,
-    rebuild,
   ]);
 
   // Topic-map dot click → open that session. Clear the filter first so an
@@ -365,16 +314,10 @@ export function InsightsWorkbench({
   // Sankey / topic-map toolbar), not in Findings.
   const viewChrome = (
     <div className="flex flex-wrap items-center justify-end gap-2">
-      {/* The chip reads `getWindowSignals` for its staleness watermark, and
-          that query ships with the backend PR — `useQuery` against an
-          undeployed function THROWS, which without this boundary would take
-          the whole Insights tab down rather than one chip. Keyed on the
-          cohort so a boundary tripped against the undeployed backend re-arms
-          on the next scenario the user opens. */}
       <ErrorBoundary key={cohortKey} fallback={null}>
         <InsightsFreshnessChip
           scope={scope}
-          latestRun={breakdown?.latestRun}
+          analysis={breakdown?.analysis}
           onRebuild={handleRebuild}
           rebuildBusy={rebuildBusy}
           testId={`${testIdPrefix}-freshness-chip`}
@@ -428,11 +371,6 @@ export function InsightsWorkbench({
           onSelectLink={flow.handleSelectFlow}
           onRebuild={handleRebuild}
           rebuildBusy={rebuildBusy}
-          {...(SHOW_RECLUSTERING_UI
-            ? { onApplyTuning: handleApplyTuning }
-            : {})}
-          analysisIsAutomatic={analysisIsAutomatic}
-          showLinkThreshold
           fillHeight={fillBody}
           scrollLayout={!fillBody}
           headerActions={viewChrome}

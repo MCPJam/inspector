@@ -93,6 +93,11 @@ vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
 
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
+}));
+
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,
   useDbUserBootstrapStatus: () => ({
@@ -218,6 +223,7 @@ vi.mock("convex/react", () => ({
     isLoading: false,
   }),
   useConvexAuth: () => ({ isAuthenticated: true }),
+  useConvex: () => ({ query: convexQueryMock }),
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -302,6 +308,9 @@ vi.mock("@/components/project-environments/environment-picker", () => ({
 }));
 
 const createSwarmMock = vi.fn();
+// The launch preflight (`projectEnvironments:resolveEnvironmentForLaunch`)
+// goes through `useConvex().query`; resolves a runnable target by default.
+const convexQueryMock = vi.fn();
 const createPersonaMock = vi.fn();
 const createJourneyMock = vi.fn();
 const updateJourneyMock = vi.fn();
@@ -351,6 +360,10 @@ function fillDescribe(text = "Support agents answering refunds") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  convexQueryMock.mockResolvedValue({
+    effectiveModelId: "anthropic/claude-haiku-4.5",
+    modelSource: "host",
+  });
   environmentsFlagRef.current = true;
   // The flow now mirrors its resumable state into sessionStorage, so a leftover
   // draft would otherwise resume the previous case's slate.
@@ -1036,6 +1049,39 @@ describe("SwarmsTab — New swarm create flow", () => {
     });
   });
 
+  it("refuses to generate or write goals when a target resolves to no model", async () => {
+    // The launch contract, checked before any generation or durable write:
+    // the environment inherits from a client that pins no model.
+    convexQueryMock.mockRejectedValue(
+      Object.assign(new Error("Server Error"), {
+        data: {
+          code: "ENV_MODEL_REQUIRED",
+          message: 'Environment "Claude" has no model to run.',
+          details: { hostId: "host-1" },
+        },
+      }),
+    );
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    expect(
+      (await screen.findAllByText(/Claude has no model/)).length,
+    ).toBeGreaterThan(0);
+    expect(convexQueryMock).toHaveBeenCalledWith(
+      "projectEnvironments:resolveEnvironmentForLaunch",
+      { projectId: "proj-1", environmentId: "env-1" },
+    );
+    // Caught before the persona slate, so nothing costs credits or persists.
+    expect(generateSwarmPersonaBatchMock).not.toHaveBeenCalled();
+    expect(createSwarmMock).not.toHaveBeenCalled();
+    expect(createPersonaMock).not.toHaveBeenCalled();
+    expect(createJourneyMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Edit client" }),
+    ).toBeInTheDocument();
+  });
+
   it("writes nothing until Launch, then creates personas, journeys, and one run each", async () => {
     openDescribe();
     fillDescribe();
@@ -1620,11 +1666,13 @@ describe("SwarmsTab — New swarm create flow", () => {
     ).toHaveTextContent(/1 conversation/i);
   });
 
-  it("prices a reused persona at its saved sessions, with no counter", async () => {
-    // SUTB-26: a counter sizes the goals this swarm creates, never one the
-    // user already saved. Launch does not rewrite a shared journey's config,
-    // so the card quotes what that journey will really run and offers no
-    // control that would imply otherwise.
+  it("seeds a reused persona's counter from its saved sessions", async () => {
+    // Supersedes SUTB-26, which had no counter here at all: launch does not
+    // rewrite a shared journey's config, so the card offered no control.
+    // It now sets the size for THIS run through an override, which leaves
+    // the shared definition alone — and the counter starts at what the
+    // goals already carry, so leaving it alone launches the size it
+    // always did.
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
     ];
@@ -1644,11 +1692,9 @@ describe("SwarmsTab — New swarm create flow", () => {
       screen.getByTestId("new-swarm-launch-session-estimate"),
     ).toHaveTextContent(/3 conversations/i);
     expect(screen.getByTestId("new-swarm-persona-subtotal")).toHaveTextContent(
-      /1 goal at the iterations already saved = 3 conversations/i,
+      /1 goal × 3 iterations = 3 conversations/i,
     );
-    expect(
-      screen.queryByTestId("new-swarm-persona-iterations"),
-    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-persona-iterations")).toHaveValue(3);
 
     fireEvent.click(
       screen.getByRole("button", { name: /^back to describe$/i }),

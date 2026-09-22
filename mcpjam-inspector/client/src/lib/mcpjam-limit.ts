@@ -1,25 +1,15 @@
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
+import { isCreditExhaustion } from "@/shared/credit-exhaustion";
 import { describeAsSlug, describeError } from "@mcpjam/sdk/browser";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import type { MCPJamLimitSurface } from "@/stores/mcpjam-limit-dialog-store";
-
-// Bounded for the same reason as the SDK describer's copy of this phrase:
-// `[\w\s-]` matches "mcpjam" too, so unbounded it backtracks quadratically on a
-// wire message of repeated "mcpjam" that never reaches "model limit".
-const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]{0,40}model limit/i;
-const MCPJAM_RATE_LIMIT_CODE = "mcpjam_rate_limit";
-const MCPJAM_USER_RATE_LIMIT_CODE = "user_rate_limit";
-const MCPJAM_LIMIT_CODES = new Set([
-  MCPJAM_RATE_LIMIT_CODE,
-  MCPJAM_USER_RATE_LIMIT_CODE,
-]);
 
 /**
  * The organization's admin-set spend budget is exhausted for the current
  * billing window — emitted by the backend's `/stream` precheck and mirrored
  * by `ORGANIZATION_SPEND_BUDGET_REACHED` on the eval-launch mutations.
  *
- * Deliberately NOT a member of {@link MCPJAM_LIMIT_CODES}: that set is what
+ * Excluded by the shared credit classifier: credit exhaustion is what
  * opens the top-up dialog, and buying credits does not clear a budget. The
  * only fix is an owner or admin raising the cap, so this code carves itself
  * OUT of the model-limit classification and gets its own banner copy.
@@ -28,7 +18,10 @@ export const SPEND_BUDGET_REACHED_CODE = "spend_budget_reached";
 
 /** True when this error is the org spend budget refusing, not the wallet. */
 export function isSpendBudgetReachedCode(code: string | undefined): boolean {
-  return code === SPEND_BUDGET_REACHED_CODE;
+  return (
+    code === SPEND_BUDGET_REACHED_CODE ||
+    code === "ORGANIZATION_SPEND_BUDGET_REACHED"
+  );
 }
 
 /**
@@ -38,9 +31,6 @@ export function isSpendBudgetReachedCode(code: string | undefined): boolean {
  */
 export const SPEND_BUDGET_REACHED_MESSAGE =
   "This organization's spend budget is reached. An owner or admin can raise it in Organization \u2192 Billing.";
-const MCPJAM_RATE_LIMIT_CODE_PATTERN =
-  /\b(?:mcpjam_rate_limit|user_rate_limit)\b/;
-
 export type MCPJamLimitKind = "total" | "concurrency";
 
 /** Which allowance ran out. Free orgs draw on a daily bucket, Team orgs on a
@@ -50,6 +40,8 @@ export type MCPJamLimitPeriod = "daily" | "monthly";
 
 type MCPJamLimitErrorInput = {
   code?: string;
+  /** Stable run identity, shared by live streams and persisted failure updates. */
+  runId?: string;
   message?: string | null;
   details?: unknown;
   organizationId?: string;
@@ -126,95 +118,6 @@ const collectStringValues = (
   return strings;
 };
 
-const findMCPJamRateLimitCode = (
-  value: unknown,
-  seen = new WeakSet<object>(),
-): string | undefined => {
-  if (!value || typeof value !== "object") return undefined;
-  if (seen.has(value)) return undefined;
-  seen.add(value);
-
-  if (
-    "code" in value &&
-    typeof (value as { code?: unknown }).code === "string" &&
-    MCPJAM_LIMIT_CODES.has((value as { code: string }).code)
-  ) {
-    return (value as { code: string }).code;
-  }
-
-  const values = Array.isArray(value) ? value : Object.values(value);
-  for (const item of values) {
-    const code = findMCPJamRateLimitCode(item, seen);
-    if (code) return code;
-  }
-
-  return undefined;
-};
-
-/**
- * The spend-budget code, wherever it is nested.
- *
- * The top-level `code` is not the only place it arrives: a refusal can reach
- * the client with the code inside `details`, or inside a JSON-encoded
- * `message`. Missing it there is not a cosmetic slip — the deep scan below
- * would then classify the same refusal as a wallet limit and open the top-up
- * dialog, selling credits to an organization that set its own ceiling and
- * cannot spend its way past it.
- */
-const isInlineAccountRefusal = (code: unknown): boolean =>
-  code === "platform_free_budget_exhausted" || code === "account_suspended" || isSpendBudgetReachedCode(typeof code === "string" ? code : undefined);
-
-const hasNestedSpendBudgetCode = (
-  value: unknown,
-  seen = new WeakSet<object>(),
-): boolean => {
-  if (!value || typeof value !== "object") return false;
-  if (seen.has(value)) return false;
-  seen.add(value);
-
-  if (isInlineAccountRefusal(getStringProperty(value, "code"))) return true;
-
-  const values = Array.isArray(value) ? value : Object.values(value);
-  for (const item of values) {
-    // A STRING LEAF CAN BE JSON. Servers routinely nest an encoded error
-    // inside `details` or a `message` field, and stopping at the string is
-    // how the budget code hides from this walk — leaving the deep scan below
-    // to read the same payload's rate-limit text and open the top-up dialog.
-    if (typeof item === "string") {
-      if (isInlineAccountRefusal(item)) return true;
-      for (const parsed of collectJsonCandidates(item)) {
-        if (hasNestedSpendBudgetCode(parsed, seen)) return true;
-      }
-      continue;
-    }
-    if (hasNestedSpendBudgetCode(item, seen)) return true;
-  }
-
-  return false;
-};
-
-const findMCPJamLimitKind = (
-  value: unknown,
-  seen = new WeakSet<object>(),
-): MCPJamLimitKind | undefined => {
-  if (!value || typeof value !== "object") return undefined;
-  if (seen.has(value)) return undefined;
-  seen.add(value);
-
-  const limitKind = getStringProperty(value, "limitKind");
-  if (limitKind === "total" || limitKind === "concurrency") {
-    return limitKind;
-  }
-
-  const values = Array.isArray(value) ? value : Object.values(value);
-  for (const item of values) {
-    const nestedLimitKind = findMCPJamLimitKind(item, seen);
-    if (nestedLimitKind) return nestedLimitKind;
-  }
-
-  return undefined;
-};
-
 const findStringPropertyDeep = (
   value: unknown,
   key: string,
@@ -273,74 +176,8 @@ const findMCPJamLimitPeriod = (
   return undefined;
 };
 
-const isMCPJamLimitString = (value: string): boolean =>
-  MCPJAM_MODEL_LIMIT_PATTERN.test(value) ||
-  MCPJAM_RATE_LIMIT_CODE_PATTERN.test(value);
-
 export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
-  // Single source of truth for the concurrency carve-out: a transient
-  // throttle resolves in seconds and is owned by the inline retry banner,
-  // never the modal. Downstream consumers don't need to re-check.
-  if (args.limitKind === "concurrency") return false;
-
-  // Same shape of carve-out for the org spend budget: it is a refusal the
-  // user cannot buy their way out of, so it must never reach the top-up
-  // modal. Checked before the deep scans below so a budget payload that
-  // happens to embed a rate-limit string still classifies as a budget —
-  // and checked at EVERY nesting level, because the code arrives inside
-  // `details` or a JSON-encoded `message` as readily as at the top.
-  if (isInlineAccountRefusal(args.code)) return false;
-  for (const value of [args.message, args.details]) {
-    if (typeof value === "string") {
-      if (isInlineAccountRefusal(value)) return false;
-      for (const parsed of collectJsonCandidates(value)) {
-        if (hasNestedSpendBudgetCode(parsed)) return false;
-      }
-      continue;
-    }
-    if (hasNestedSpendBudgetCode(value)) return false;
-  }
-
-  if (args.code === MCPJAM_RATE_LIMIT_CODE) return true;
-  if (args.code === MCPJAM_USER_RATE_LIMIT_CODE) return true;
-
-  const valuesToInspect = [args.message, args.details];
-  for (const value of valuesToInspect) {
-    if (typeof value === "string") {
-      for (const parsed of collectJsonCandidates(value)) {
-        const code = findMCPJamRateLimitCode(parsed);
-        const limitKind = findMCPJamLimitKind(parsed);
-        const hasLimitString = collectStringValues(parsed).some((item) =>
-          isMCPJamLimitString(item),
-        );
-        if (
-          limitKind === "concurrency" &&
-          (code === MCPJAM_USER_RATE_LIMIT_CODE || hasLimitString)
-        ) {
-          return false;
-        }
-        if (code || hasLimitString) return true;
-      }
-
-      if (isMCPJamLimitString(value)) return true;
-      continue;
-    }
-
-    const code = findMCPJamRateLimitCode(value);
-    const limitKind = findMCPJamLimitKind(value);
-    const hasLimitString = collectStringValues(value).some((item) =>
-      isMCPJamLimitString(item),
-    );
-    if (
-      limitKind === "concurrency" &&
-      (code === MCPJAM_USER_RATE_LIMIT_CODE || hasLimitString)
-    ) {
-      return false;
-    }
-    if (code || hasLimitString) return true;
-  }
-
-  return false;
+  return isCreditExhaustion(args);
 }
 
 const hasFrontierSignInCode = (
@@ -375,6 +212,7 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
   if (!isMCPJamModelLimitError(args)) return false;
   const period = findMCPJamLimitPeriod(args.message);
   useMCPJamLimitDialogStore.getState().notifyLimitHit({
+    ...(args.runId ? { runId: args.runId } : {}),
     limitKind: args.limitKind,
     organizationId: findMCPJamLimitOrganizationId(args),
     ...(args.surface ? { surface: args.surface } : {}),
@@ -409,6 +247,7 @@ export function describeMCPJamLimitMessage(
 
 export async function notifyMCPJamLimitErrorFromResponse(
   response: Response,
+  surface?: MCPJamLimitSurface,
 ): Promise<boolean> {
   let details: unknown;
   let message: string | null = null;
@@ -441,5 +280,6 @@ export async function notifyMCPJamLimitErrorFromResponse(
       limitKind === "total" || limitKind === "concurrency"
         ? limitKind
         : undefined,
+    ...(surface ? { surface } : {}),
   });
 }

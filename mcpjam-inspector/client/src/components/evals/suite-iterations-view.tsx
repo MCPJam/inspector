@@ -505,7 +505,9 @@ export function SuiteIterationsView({
   /** Observe-first authoring: the spine, Run test, and run-derived checks. */
   evaluateObserveFirst?: boolean;
   /** Passed through to {@link SuiteDetailOverview}; see its prop doc. */
-  onGeneratingChange?: (state: { exit: () => void } | null) => void;
+  onGeneratingChange?: (
+    state: { exit: () => void; label?: string } | null,
+  ) => void;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -625,19 +627,19 @@ export function SuiteIterationsView({
   // `onDuplicateSuite` is deliberately NOT in here: duplicating is the way out
   // of the lock, and it writes a new suite rather than this one.
   //
-  // DELETE IS THE SAME KIND OF THING, from a different vocabulary. The prop
-  // answers by ROLE (`canDeleteArtifact` over the suite's author);
-  // `suite.delete` is in the backend's CI-locked set, so on a CI-owned suite
-  // the answer is no regardless of role — an org owner holds the permission
-  // and still gets a `409`. Folded in here rather than at each call site for
-  // the reason the callbacks below are, and for the reason the row is read
-  // here rather than passed: the call site that forgets is the whole failure
-  // mode.
+  // DELETE IS NOT ONE OF THEM, and the asymmetry is the point. Case authoring
+  // is withheld above because it would edit what the CI-owned suite IS, and
+  // the next sync would undo it. Deleting edits nothing: it says what this
+  // workspace keeps, and the next sync or SDK report creates the suite again.
   //
-  // `configLocked`, NOT `editingDisabled`: `readOnlyConfig` is about editing
-  // configuration, and the platform refuses delete for ownership, not for
-  // that.
-  const canDeleteSuite = canDeleteSuiteProp && !configLocked;
+  // It was gated on `configLocked` here, and the backend refused it to match.
+  // Together they left the one case with no way out: `onDuplicateSuite` gives
+  // an editable copy but leaves the original, so a suite orphaned by a renamed
+  // `suiteName` could not be removed from any surface at all (issue #5381).
+  // `suite.delete` is no longer in the backend's CI-locked set, so the prop's
+  // ROLE answer (`canDeleteArtifact` over the suite's author) is the whole
+  // answer again.
+  const canDeleteSuite = canDeleteSuiteProp;
   const onCreateTestCase = configLocked ? undefined : onCreateTestCaseProp;
   const onRecordTestCase = configLocked ? undefined : onRecordTestCaseProp;
   const onGenerateTestCases = configLocked
@@ -668,7 +670,9 @@ export function SuiteIterationsView({
     route.type === "run-detail"
       ? "run-detail"
       : route.type === "test-detail"
-        ? evaluateCaseEditor ? "test-edit" : "test-detail"
+        ? evaluateCaseEditor
+          ? "test-edit"
+          : "test-detail"
         : route.type === "test-edit" && (!editingDisabled || evaluateCaseEditor)
           ? "test-edit"
           : route.type === "test-edit"
@@ -1621,10 +1625,15 @@ export function SuiteIterationsView({
     />
   );
 
+  // The folded layout drops the SuiteHeader action row, so the run body is the
+  // only place a stop control can live there. Every other surface already has
+  // one — RunDetailPlaygroundActions in the header, or EvaluateRunPage.
   const runDetailView = selectedRunDetails ? (
     <RunDetailView
       selectedRunDetails={selectedRunDetails}
       caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+      onCancelRun={foldRunDetail ? onCancelRun : undefined}
+      cancellingRunId={cancellingRunId}
       onExportTraces={projectId ? () => setTracesExportOpen(true) : undefined}
       onShare={
         unifiedShareEvals &&
@@ -1887,7 +1896,8 @@ export function SuiteIterationsView({
                   projectServers={projectServers}
                   onExportDraft={handleOpenDraftExport}
                   openCompareFromRoute={
-                    (route.type === "test-edit" && Boolean(route.openCompare)) ||
+                    (route.type === "test-edit" &&
+                      Boolean(route.openCompare)) ||
                     (route.type === "test-detail" && Boolean(route.iteration))
                   }
                   openCompareIterationId={
@@ -1908,7 +1918,9 @@ export function SuiteIterationsView({
                     })
                   }
                   checksPage={
-                    !editingDisabled && route.type === "test-edit" && Boolean(route.checks)
+                    !editingDisabled &&
+                    route.type === "test-edit" &&
+                    Boolean(route.checks)
                   }
                   onOpenCaseChecks={() =>
                     navigation.toTestEdit(suite._id, selectedTestId, {
