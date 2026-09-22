@@ -1923,7 +1923,7 @@ describe("account routing snapshots", () => {
       ],
     });
     await result.allTools.search.execute!(
-      { account: b.connectionId },
+      { link_id: b.connectionId },
       { toolCallId: "b-call", messages: [] },
     );
     expect(executeA).not.toHaveBeenCalled();

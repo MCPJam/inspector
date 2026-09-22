@@ -22,6 +22,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { WebApiError } from "@/lib/apis/web/base";
+import { withTechnicalDetails } from "@/lib/error-technical-details";
 
 const DOCS_BASE_URL = "https://docs.mcpjam.com";
 
@@ -79,6 +80,9 @@ export type ErrorCardProps = {
 };
 
 function resolveNormalized(input: unknown): NormalizedError {
+  // A caller that already holds a normalized block is passing the server's
+  // own account of the failure. Nothing local to add, and no thrown value to
+  // read a stack off.
   if (isNormalizedError(input)) return input;
   // Re-validate the WebApiError-attached block with the same shape guard
   // before trusting it. `webPost` populates `WebApiError.normalized` from
@@ -86,9 +90,16 @@ function resolveNormalized(input: unknown): NormalizedError {
   // payload (older server, future schema drift, proxy mangling) would
   // otherwise crash the render at `docsAnchor.startsWith` / `severity`.
   if (input instanceof WebApiError && isNormalizedError(input.normalized)) {
-    return input.normalized;
+    // The request id is read off the response HEADER, so a server-built
+    // block never carries it — and for a hosted 5xx it is the only
+    // diagnostic there is. This is the one place both halves are in scope.
+    // …but NOT its stack. `WebApiError` is constructed in `webPost`, so its
+    // stack points at our own fetch helper rather than at whatever failed on
+    // the server — signal-shaped noise that a user would copy into a support
+    // ticket. The request id is the diagnostic on this path.
+    return withTechnicalDetails(input.normalized, input, { stack: false });
   }
-  return describeError(input);
+  return withTechnicalDetails(describeError(input), input);
 }
 
 /**
@@ -180,6 +191,18 @@ function copyText(normalized: NormalizedError): string {
   );
   if (normalized.cause) {
     lines.push(`Cause: ${normalized.cause.name}: ${normalized.cause.message}`);
+  }
+  // The technical block goes last: it is the longest and the least readable,
+  // and a human skimming a pasted report wants the prose first. Every field
+  // here was redacted by the describer before it reached the card.
+  if (normalized.errorType) {
+    lines.push(`Type: ${normalized.errorType}`);
+  }
+  if (normalized.requestId) {
+    lines.push(`Request ID: ${normalized.requestId}`);
+  }
+  if (normalized.stack) {
+    lines.push("", "Stack trace:", normalized.stack);
   }
   return lines.join("\n");
 }
@@ -341,6 +364,12 @@ export function ErrorCard({
     if (!isControlled) setUncontrolledOpen(next);
     onOpenChange?.(next);
   };
+  // Nested inside the details panel rather than promoted to the card face:
+  // "Show details" is the answer to "what went wrong", and a stack is the
+  // answer to "what do I send support". Collapsing the second inside the
+  // first keeps the diagnostic report readable for the people who only
+  // needed the first.
+  const [techOpen, setTechOpen] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
   );
@@ -376,8 +405,15 @@ export function ErrorCard({
    * separator and a link — so the link comes out to the action row instead
    * and the disclosure is not offered at all.
    */
+  // `errorType` alone does not earn a disclosure: "Type: Error" tells a reader
+  // nothing they cannot see from the card itself.
+  const hasTechnical = Boolean(normalized.stack || normalized.requestId);
   const hasDetail =
-    causes.length > 0 || steps.length > 0 || showRaw || Boolean(normalized.cause);
+    causes.length > 0 ||
+    steps.length > 0 ||
+    showRaw ||
+    Boolean(normalized.cause) ||
+    hasTechnical;
   /**
    * `row` (or a primary `action`) is one line the height of the server
    * card's support pill: title, the click, and an info glyph. Badge,
@@ -455,6 +491,61 @@ export function ErrorCard({
           <MonoBlock>
             {normalized.cause.name}: {normalized.cause.message}
           </MonoBlock>
+        </div>
+      ) : null}
+      {hasTechnical ? (
+        <div>
+          <button
+            type="button"
+            onClick={() => setTechOpen((open) => !open)}
+            aria-expanded={techOpen}
+            data-testid="error-card-technical-toggle"
+            className="inline-flex items-center gap-1 rounded text-[10px] font-medium uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
+          >
+            {techOpen ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronRight className="h-3 w-3" />
+            )}
+            Technical details
+          </button>
+          {techOpen ? (
+            <div
+              data-testid="error-card-technical-panel"
+              className="mt-1.5 space-y-2"
+            >
+              {normalized.errorType ? (
+                <div>
+                  <SectionLabel>Type</SectionLabel>
+                  <MonoBlock>{normalized.errorType}</MonoBlock>
+                </div>
+              ) : null}
+              {normalized.requestId ? (
+                <div>
+                  <SectionLabel>Request ID</SectionLabel>
+                  <MonoBlock>{normalized.requestId}</MonoBlock>
+                </div>
+              ) : null}
+              {normalized.stack ? (
+                <div>
+                  <SectionLabel>Stack trace</SectionLabel>
+                  <MonoBlock>{normalized.stack}</MonoBlock>
+                </div>
+              ) : (
+                /* Said out loud rather than left blank. A server error has no
+                   stack here by design — the backend attaches its cause
+                   non-enumerably so it never reaches a JSON body — and an
+                   empty panel reads as a broken card rather than an
+                   intentional absence. */
+                <div className="leading-relaxed text-muted-foreground">
+                  No stack trace was reported for this error.
+                  {normalized.requestId
+                    ? " Quote the request ID above when you contact support."
+                    : ""}
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
