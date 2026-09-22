@@ -106,9 +106,21 @@ vi.mock("../oauth/OAuthProfileModal", () => ({
   },
 }));
 
+const captureLoggerProps = vi.hoisted(() => vi.fn());
 vi.mock("../oauth/OAuthFlowLogger", () => ({
-  OAuthFlowLogger: () => <div data-testid="oauth-flow-logger" />,
+  OAuthFlowLogger: (props: unknown) => {
+    captureLoggerProps(props);
+    return <div data-testid="oauth-flow-logger" />;
+  },
 }));
+
+type LoggerActions = {
+  onContinue?: () => Promise<void>;
+  continueLabel?: string;
+};
+const latestLoggerActions = (): LoggerActions =>
+  (captureLoggerProps.mock.lastCall?.[0] as { actions: LoggerActions })
+    .actions;
 vi.mock("../oauth/RefreshTokensConfirmModal", () => ({
   RefreshTokensConfirmModal: () => null,
 }));
@@ -280,6 +292,77 @@ describe("OAuthFlowTab — advanceOauthFlow", () => {
       status: "error",
       error: { code: "invalid_request" },
     });
+  });
+});
+
+// The AS rejected the exchange (expired/used code): the SDK machine clears the
+// spent code and stays on token_request with the rejection as the error.
+const REJECTED_EXCHANGE: Partial<OAuthFlowState> = {
+  currentStep: "token_request",
+  authorizationUrl: "https://auth.example.com/authorize?x=1",
+  authorizationCode: undefined,
+  error: "Token request failed: 400 Bad Request: invalid_grant: Grant code expired",
+};
+
+describe("OAuthFlowTab, after the AS rejects the authorization code", () => {
+  async function renderAtRejectedExchange() {
+    renderTab();
+    machineCtl.onAdvance = (update) => update(REJECTED_EXCHANGE);
+    await dispatch({ type: "advanceOauthFlow", payload: {} });
+    let advances = 0;
+    machineCtl.onAdvance = () => {
+      advances += 1;
+    };
+    return { advances: () => advances };
+  }
+
+  it("Continue reads Authorize and reopens the auth popup instead of re-running the exchange", async () => {
+    const { advances } = await renderAtRejectedExchange();
+    expect(latestLoggerActions().continueLabel).toBe("Authorize");
+
+    await act(async () => {
+      await latestLoggerActions().onContinue?.();
+    });
+
+    expect(advances()).toBe(0);
+    await waitFor(() => {
+      expect(captureAuthModalProps).toHaveBeenLastCalledWith(
+        expect.objectContaining({ open: true }),
+      );
+    });
+    const snapshot = JSON.stringify(await readSurfaceSnapshot("oauth-flow"));
+    expect(snapshot).toContain('"currentStep":"authorization_request"');
+  });
+
+  it("the agent advance rewinds too and hands off to the human popup", async () => {
+    const { advances } = await renderAtRejectedExchange();
+    const response = await dispatch({ type: "advanceOauthFlow", payload: {} });
+    expect(response).toMatchObject({
+      status: "success",
+      result: {
+        status: "authorization_modal_opened",
+        currentStep: "authorization_request",
+      },
+    });
+    expect(advances()).toBe(0);
+  });
+
+  it("a token_request that still holds a code advances normally", async () => {
+    renderTab();
+    machineCtl.onAdvance = (update) =>
+      update({ currentStep: "token_request", authorizationCode: "fresh-code" });
+    await dispatch({ type: "advanceOauthFlow", payload: {} });
+    let advances = 0;
+    machineCtl.onAdvance = () => {
+      advances += 1;
+    };
+    expect(latestLoggerActions().continueLabel).toBe("Continue");
+
+    await act(async () => {
+      await latestLoggerActions().onContinue?.();
+    });
+
+    expect(advances).toBe(1);
   });
 });
 

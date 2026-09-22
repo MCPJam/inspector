@@ -107,6 +107,25 @@ const isHttpServer = (server?: ServerWithName) =>
   Boolean(server && "url" in server.config);
 
 /**
+ * True after the AS rejected the token exchange (expired or already-used
+ * code): the machine clears the spent code but stays on token_request, where
+ * another Continue can only fail with "Missing authorization code". The fix
+ * lives here rather than in the SDK machines because the headless runners
+ * (oauth-login, conformance) rely on the machine NOT advancing on that failure
+ * so they stop and report it instead of re-authorizing in a loop.
+ */
+const needsReauthorization = (state: OAuthFlowState) =>
+  state.currentStep === "token_request" && !state.authorizationCode?.trim();
+
+// Rewind to the authorization step so the next Authorize reopens the popup for
+// a fresh code. The rejection was already toasted; clearing it lets the same
+// error toast again if the retry fails the same way.
+const REAUTHORIZE_UPDATE: Partial<OAuthFlowState> = {
+  currentStep: "authorization_request",
+  error: undefined,
+};
+
+/**
  * Honest post-step result for the advanceOauthFlow command. Never echoes the
  * raw error string — only presence and an allowlisted OAuth error code.
  */
@@ -438,7 +457,10 @@ export const OAuthFlowTab = ({
     });
 
     try {
-      if (
+      if (needsReauthorization(oauthFlowStateRef.current)) {
+        updateOAuthFlowState(REAUTHORIZE_UPDATE);
+        setIsAuthModalOpen(true);
+      } else if (
         oauthFlowState.currentStep === "authorization_request" ||
         oauthFlowState.currentStep === "generate_pkce_parameters"
       ) {
@@ -471,6 +493,7 @@ export const OAuthFlowTab = ({
     profile.serverUrl,
     protocolVersion,
     registrationStrategy,
+    updateOAuthFlowState,
   ]);
 
   const continueLabel = !hasProfile
@@ -480,7 +503,8 @@ export const OAuthFlowTab = ({
       : oauthFlowState.isInitiatingAuth
         ? "Continue"
         : oauthFlowState.currentStep === "authorization_request" ||
-            oauthFlowState.currentStep === "generate_pkce_parameters"
+            oauthFlowState.currentStep === "generate_pkce_parameters" ||
+            needsReauthorization(oauthFlowState)
           ? "Authorize"
           : "Continue";
   const continueDisabled =
@@ -577,7 +601,13 @@ export const OAuthFlowTab = ({
             "The flow is already complete — use ui_reset_oauth_flow to run it again.",
           );
         }
-        const previousStep = before.currentStep;
+        const rewound = needsReauthorization(before);
+        if (rewound) {
+          updateOAuthFlowState(REAUTHORIZE_UPDATE);
+        }
+        const previousStep = rewound
+          ? "authorization_request"
+          : before.currentStep;
         // Mirror handleAdvance exactly, including its order at the PKCE step:
         // advance FIRST (that generates the authorizationUrl the auth modal
         // needs to render), then hand off to the human popup.
