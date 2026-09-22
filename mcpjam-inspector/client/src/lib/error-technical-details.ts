@@ -68,10 +68,16 @@ function stackOf(error: unknown): string | undefined {
 export function withTechnicalDetails(
   normalized: NormalizedError,
   error: unknown,
+  /**
+   * `stack: false` for a value whose stack describes where WE threw rather than
+   * what failed — a `WebApiError` built in `webPost` from a server envelope.
+   */
+  options: { stack?: boolean } = {},
 ): NormalizedError {
   const errorType = normalized.errorType ?? errorTypeOf(error);
   const requestId = normalized.requestId ?? requestIdOf(error);
-  const stack = normalized.stack ?? stackOf(error);
+  const stack =
+    normalized.stack ?? (options.stack === false ? undefined : stackOf(error));
   if (!errorType && !requestId && !stack) return normalized;
   return {
     ...normalized,

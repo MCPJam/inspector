@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describeAsSlug, type NormalizedError } from "@mcpjam/sdk/browser";
 import { copyToClipboard } from "@/lib/clipboard";
+import { WebApiError } from "@/lib/apis/web/base";
 import { ErrorCard } from "../error-card";
 
 vi.mock("@/lib/clipboard", () => ({
@@ -67,9 +68,23 @@ describe("ErrorCard technical details", () => {
    * diagnostic.
    */
   it("says a stack is missing rather than rendering an empty panel", () => {
+    // A REAL `WebApiError`, not a plain object: it extends `Error`, so it
+    // carries the stack of the `webPost` frame that built it. That stack
+    // describes our fetch helper rather than the server failure, which is why
+    // the card drops it — and why this case has to construct the genuine
+    // article to exercise the path at all.
     render(
       <ErrorCard
-        error={{ ...base(), errorType: "WebApiError", requestId: "req-xyz" }}
+        error={
+          new WebApiError(
+            500,
+            "INTERNAL_ERROR",
+            "Request failed",
+            base(),
+            undefined,
+            "req-xyz",
+          )
+        }
       />,
     );
     openDetails();
@@ -77,6 +92,7 @@ describe("ErrorCard technical details", () => {
 
     expect(screen.getByText(/No stack trace was reported/)).toBeTruthy();
     expect(screen.getByText("req-xyz")).toBeTruthy();
+    expect(screen.queryByText(/at webPost/)).toBeNull();
   });
 
   it("offers no technical disclosure when there is nothing technical to show", () => {

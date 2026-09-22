@@ -93,7 +93,11 @@ function resolveNormalized(input: unknown): NormalizedError {
     // The request id is read off the response HEADER, so a server-built
     // block never carries it — and for a hosted 5xx it is the only
     // diagnostic there is. This is the one place both halves are in scope.
-    return withTechnicalDetails(input.normalized, input);
+    // …but NOT its stack. `WebApiError` is constructed in `webPost`, so its
+    // stack points at our own fetch helper rather than at whatever failed on
+    // the server — signal-shaped noise that a user would copy into a support
+    // ticket. The request id is the diagnostic on this path.
+    return withTechnicalDetails(input.normalized, input, { stack: false });
   }
   return withTechnicalDetails(describeError(input), input);
 }
@@ -401,9 +405,9 @@ export function ErrorCard({
    * separator and a link — so the link comes out to the action row instead
    * and the disclosure is not offered at all.
    */
-  const hasTechnical = Boolean(
-    normalized.errorType || normalized.stack || normalized.requestId,
-  );
+  // `errorType` alone does not earn a disclosure: "Type: Error" tells a reader
+  // nothing they cannot see from the card itself.
+  const hasTechnical = Boolean(normalized.stack || normalized.requestId);
   const hasDetail =
     causes.length > 0 ||
     steps.length > 0 ||
