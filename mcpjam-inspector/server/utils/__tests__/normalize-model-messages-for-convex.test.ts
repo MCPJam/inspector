@@ -200,9 +200,39 @@ describe("normalizeModelMessagesForConvex — tool-result output", () => {
     });
   });
 
+  /**
+   * The schema is stricter than the type tag: `null` is valid only under
+   * `json` / `error-json`, `text` and `error-text` need a string, and
+   * `content` needs an array. An envelope that contradicts its own tag is
+   * rejected exactly like a missing output, so it cannot be preserved just
+   * because the tag was recognized.
+   */
+  it.each([
+    ["text carrying an object", { type: "text", value: { a: 1 } }],
+    ["text carrying undefined", { type: "text", value: undefined }],
+    ["error-text carrying undefined", { type: "error-text", value: undefined }],
+    ["content carrying undefined", { type: "content", value: undefined }],
+    ["content carrying a string", { type: "content", value: "x" }],
+  ])("re-declares %s as json rather than preserving it", (_label, output) => {
+    const messages = toolMessage({ ...base, output });
+    expect(parseFirst(messages).success).toBe(true);
+    expect((outputOf(messages) as { type: string }).type).toBe("json");
+  });
+
+  it("keeps the payload when it re-declares a mistyped envelope", () => {
+    // Re-declaring must not nest the envelope inside itself.
+    expect(outputOf(toolMessage({ ...base, output: { type: "text", value: { a: 1 } } }))).toEqual({
+      type: "json",
+      value: { a: 1 },
+    });
+  });
+
   it.each([
     ["json", { type: "json", value: { d: 1 } }],
+    ["json carrying null", { type: "json", value: null }],
+    ["error-json", { type: "error-json", value: { e: 1 } }],
     ["error-text", { type: "error-text", value: "boom" }],
+    ["text", { type: "text", value: "hi" }],
     ["content", { type: "content", value: [{ type: "text", text: "x" }] }],
   ])("leaves an already-valid %s output untouched", (_label, output) => {
     const messages = toolMessage({ ...base, output });

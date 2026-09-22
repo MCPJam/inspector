@@ -1,4 +1,5 @@
 import { getManagerConnections } from "../mcp-connections.js";
+import { toModelMessageToolOutput } from "../normalize-model-messages-for-convex.js";
 import {
   mergeMcpToolConnectionMetadata,
   toolConnectionAttribution,
@@ -405,13 +406,6 @@ function coerceToolInput(raw: unknown): unknown {
 }
 
 /** AI-SDK `ToolResultPart.output` discriminators we must NOT re-wrap. */
-const TYPED_TOOL_OUTPUT_TYPES: ReadonlySet<string> = new Set([
-  "json",
-  "text",
-  "error-text",
-  "content",
-]);
-
 /** Build the persisted `tool-result` `output` for a harness tool result, matching
  *  the emulated engine's canonical single-wrap shape (shared/http-tool-calls.ts).
  *
@@ -437,18 +431,14 @@ export function toToolResultOutput(
       value: text ?? "The tool reported an error with no payload.",
     };
   }
-  if (
-    rawOutput !== null &&
-    typeof rawOutput === "object" &&
-    typeof (rawOutput as { type?: unknown }).type === "string" &&
-    TYPED_TOOL_OUTPUT_TYPES.has((rawOutput as { type: string }).type) &&
-    "value" in (rawOutput as object)
-  ) {
-    return rawOutput as { type: string; value: unknown };
-  }
-  // Explicit null, never undefined: the latter serializes away and leaves
-  // `{"type":"json"}`, which the schema rejects like a missing `output`.
-  return { type: "json", value: rawOutput ?? null };
+  // Delegated rather than re-decided here: the local copy of this rule
+  // recognized four output types where the schema has five (it dropped
+  // `error-json`, so a genuine one was re-wrapped as `json` and lost its
+  // error signal), and it trusted the type tag without checking the value
+  // against it.
+  return (
+    toModelMessageToolOutput(rawOutput) ?? { type: "json", value: null }
+  );
 }
 
 /** Per-process id for lease attribution (logs/debugging). */
