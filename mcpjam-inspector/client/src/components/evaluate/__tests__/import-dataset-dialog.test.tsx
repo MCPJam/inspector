@@ -304,7 +304,7 @@ describe("document case import", () => {
     expect(screen.queryByRole("article")).toBeNull();
   });
 
-  it("does not block a draft on authoring diagnostics", async () => {
+  it("flags a draft the model was unsure about, and keeps it out of Add all", async () => {
     vi.mocked(readAuthoringJob).mockResolvedValue(
       job({
         drafts: [
@@ -324,14 +324,22 @@ describe("document case import", () => {
     renderWithProviders(<Harness />);
     await extract();
     review();
-    // Non-blocking issues are model diagnostics, not gates: a complete case
-    // stays addable.
+    // The case is writable, so it is not blocked — it is doubted. It stays
+    // savable on its own, under a button that says what that means.
+    const save = screen.getByRole("button", {
+      name: `Add ${draft.case.title} to suite`,
+    });
+    expect(save).toBeEnabled();
+    expect(save).toHaveTextContent("Save anyway");
+    expect(screen.getByText("Check before saving")).toBeVisible();
+    // ...but one click must not add it with everything else. That is the
+    // whole point of the flag.
     expect(
-      screen.getByRole("button", { name: `Add ${draft.case.title} to suite` }),
-    ).toBeEnabled();
+      screen.queryByRole("button", { name: "Add all to suite" }),
+    ).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Add all to suite" }),
-    ).toBeEnabled();
+      screen.getByRole("button", { name: /Add the 0 ready/ }),
+    ).toBeInTheDocument();
   });
 
   it("preserves imports when navigating away and returns collapsed", async () => {

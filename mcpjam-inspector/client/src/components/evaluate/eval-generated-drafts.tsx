@@ -33,6 +33,7 @@ import {
   removeGeneratedDraft,
   importedDraftBlockedReason,
   importedDraftBlockedBadge,
+  draftCheckSummary,
   followAuthoringJob,
   controlAuthoringJob,
 } from "@/lib/mcpjam-agent/eval-workspace";
@@ -198,8 +199,11 @@ export function EvalGeneratedDrafts({
   const revealing =
     !saveVisibleOnly && visibleDrafts.length < state.drafts.length;
   const saveTargets = saveVisibleOnly ? visibleDrafts : state.drafts;
+  // A flagged draft is writable, so it is not "blocked" — but adding it with
+  // one click is exactly what the flag exists to prevent, so Add all leaves it
+  // behind and the reader saves it on its own.
   const readyTargets = saveTargets.filter(
-    (draft) => !importedDraftBlockedReason(draft),
+    (draft) => !importedDraftBlockedReason(draft) && !draftCheckSummary(draft),
   );
   const saving = saveTargets.some((draft) => draft.saving);
   const running = !saveVisibleOnly && state.status === "running";
@@ -342,6 +346,9 @@ export function EvalGeneratedDrafts({
               (reviewing === null && Boolean(draft.authoring?.source));
             const blockedReason = importedDraftBlockedReason(draft);
             const blockedBadge = importedDraftBlockedBadge(draft);
+            const checkSummary = blockedReason
+              ? undefined
+              : draftCheckSummary(draft);
             const locked = draft.saving || Boolean(draft.authoringPrepared);
             const prompt = draft.input.steps?.find(
               (step) => step.kind === "prompt",
@@ -362,6 +369,15 @@ export function EvalGeneratedDrafts({
                   {blockedBadge && (
                     <Badge variant="destructive" title={blockedReason}>
                       {blockedBadge}
+                    </Badge>
+                  )}
+                  {checkSummary && (
+                    <Badge
+                      variant="outline"
+                      className="border-warning/45 bg-warning/20 text-warning-foreground"
+                      title={checkSummary}
+                    >
+                      Check before saving
                     </Badge>
                   )}
                   <span className="flex-1" />
@@ -467,6 +483,9 @@ export function EvalGeneratedDrafts({
                         then add it to the suite.
                       </p>
                     )}
+                    {checkSummary && (
+                      <p className="text-muted-foreground">{checkSummary}</p>
+                    )}
                     {draft.authoring.source && (
                       <details>
                         <summary>
@@ -483,7 +502,13 @@ export function EvalGeneratedDrafts({
                       draft.authoring.additions.length > 0) && (
                       <details className="space-y-3">
                         <summary className="cursor-pointer text-muted-foreground">
-                          {describeDraftNotes(draft.authoring)}
+                          {checkSummary
+                            ? `${draft.authoring.issues.length} ${
+                                draft.authoring.issues.length === 1
+                                  ? "thing"
+                                  : "things"
+                              } MCPJam was unsure about`
+                            : describeDraftNotes(draft.authoring)}
                         </summary>
                         <div className="space-y-3 pt-2">
                           {draft.authoring.issues.map((issue, index) => (
@@ -561,7 +586,9 @@ export function EvalGeneratedDrafts({
                       ? "Adding…"
                       : draft.authoringPrepared
                         ? "Retry save"
-                        : "Add to suite"}
+                        : checkSummary
+                          ? "Save anyway"
+                          : "Add to suite"}
                   </Button>
                   <Button
                     size="sm"

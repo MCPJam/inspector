@@ -313,6 +313,42 @@ export function importedDraftBlockedBadge(
   return missing.length ? `Missing ${missing.join(", ")}` : "Can't be added";
 }
 
+/**
+ * What the authoring model was unsure about, as one sentence.
+ *
+ * Distinct from `importedDraftBlockedReason`, which is a refusal: the case
+ * cannot be written. This is a doubt — the case IS writable, and the model
+ * said something about it that a person should read first. A draft carrying
+ * one is kept out of "Add all" and saved one at a time, deliberately.
+ */
+export function draftCheckSummary(draft: GeneratedDraft): string | undefined {
+  const issues = draft.authoring?.issues ?? [];
+  if (!issues.length) return undefined;
+  const codes = new Set(issues.map((issue) => issue.code));
+  const clauses: string[] = [];
+  if (codes.has("unknown_tool"))
+    clauses.push("names tools this server does not have");
+  if (codes.has("invalid_arguments"))
+    clauses.push("calls a tool with arguments it does not take");
+  if (codes.has("unsupported_workflow"))
+    clauses.push("asks for something this server cannot do");
+  if (codes.has("missing_prerequisite"))
+    clauses.push("skips a step the case depends on");
+  if (codes.has("missing_evidence"))
+    clauses.push("cites something the document does not show");
+  const document = clauses.length
+    ? `Your document ${clauses.join(", and ")}`
+    : undefined;
+  const outcome =
+    codes.has("missing_expectation") || codes.has("unclear_expectation")
+      ? "nothing here checks the outcome"
+      : undefined;
+  const both = [document, outcome].filter(Boolean).join(", and ");
+  return both
+    ? `${both}. Read the steps above before you save.`
+    : "MCPJam was unsure about this case. Read the steps above before you save.";
+}
+
 export function importedDraftBlockedReason(
   draft: GeneratedDraft,
 ): string | undefined {
