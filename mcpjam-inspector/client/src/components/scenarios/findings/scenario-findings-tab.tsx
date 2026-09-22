@@ -15,8 +15,8 @@
  *    counts. Reading without it would report a different total for the same
  *    study, which is exactly what BB-145 asks us not to do.
  *
- * The grid is built from one page of sessions. Beyond that page the card
- * footnotes its own coverage rather than presenting a subset as the whole.
+ * The grid is built from one page of sessions. Beyond that page the
+ * persona panel still describes the sessions it has, not the whole study.
  */
 
 import { useCallback, useMemo, useState } from "react";
@@ -34,10 +34,7 @@ import { FindingsSummaryCard } from "@/components/swarms/findings/findings-summa
 import { FindingsPersonaTabs } from "@/components/swarms/findings/findings-persona-tabs";
 import { FindingsPersonaCard } from "@/components/swarms/findings/findings-persona-card";
 import type { JourneyStageId } from "@/components/swarms/findings/journey-stages";
-import {
-  deriveScenarioFindingsFootnotes,
-  deriveScenarioFindingsModel,
-} from "./scenario-findings-derivation";
+import { deriveScenarioFindingsModel } from "./scenario-findings-derivation";
 import { composeScenarioFindingsSummary } from "./scenario-findings-summary";
 import { ScenarioGoalChain } from "./scenario-goal-chain";
 import type { ScenarioGoalStages } from "./scenario-findings-stages";
@@ -113,10 +110,6 @@ export function ScenarioFindingsTab({
   );
 
   const summary = useMemo(() => composeScenarioFindingsSummary(model), [model]);
-  const footnotes = useMemo(
-    () => deriveScenarioFindingsFootnotes(model),
-    [model],
-  );
 
   // Keyed by name rather than index: the strip re-derives as sessions load, and
   // an index would quietly select someone else underneath the reader.
@@ -228,20 +221,6 @@ export function ScenarioFindingsTab({
       ? stageChoice.stage
       : expandedGoal?.defaultStage ?? "value";
 
-  // Goal-scoped, so it is only shown while that goal is open and it names the
-  // goal it is about. The study-level footnotes describe a different
-  // population and must not absorb this one.
-  const cardFootnotes = useMemo(
-    () =>
-      goalChain?.truncated && expandedGoal
-        ? [
-            ...footnotes,
-            `"${expandedGoal.title}" has more sessions than the chain scan covers. Its stages describe the most recent ones.`,
-          ]
-        : footnotes,
-    [footnotes, goalChain, expandedGoal],
-  );
-
   if (isLoading && drilldown === undefined) {
     return (
       <div
@@ -288,7 +267,6 @@ export function ScenarioFindingsTab({
       <FindingsSummaryCard
         sessionCount={model.sessionCount}
         summary={summary}
-        footnotes={cardFootnotes}
       />
       <SectionLabel className="mb-2.5 mt-7">Choose a persona</SectionLabel>
       <div className="mb-3">

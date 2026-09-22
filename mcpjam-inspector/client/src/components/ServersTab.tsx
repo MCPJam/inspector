@@ -598,6 +598,8 @@ interface ServersTabProps {
   routePluginId?: string | null;
   isRegistryEnabled?: boolean;
   onNavigateToRegistry?: () => void;
+  /** Pauses route-local reconnect work while first-run onboarding owns it. */
+  suspendAutoConnect?: boolean;
 }
 
 export function ServersTab({
@@ -621,6 +623,7 @@ export function ServersTab({
   routePluginId,
   isRegistryEnabled = false,
   onNavigateToRegistry,
+  suspendAutoConnect = false,
 }: ServersTabProps) {
   const hostsConnectAddServerSlot = useContext(
     HostsConnectAddServerSlotContext
@@ -773,6 +776,7 @@ export function ServersTab({
     projectId: sharedProjectIdForHostScope ?? activeProjectId ?? null,
     hostScopeKey: previewedHostId,
     serverNames: projectServerNames,
+    suspendAutoConnect,
   });
 
   const appReady = useAppReady();

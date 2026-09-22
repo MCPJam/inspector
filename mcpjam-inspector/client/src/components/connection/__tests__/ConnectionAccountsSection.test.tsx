@@ -116,8 +116,12 @@ describe("ConnectionAccountsSection", () => {
     await user.click(
       screen.getByRole("button", { name: "Manage same@example.com: Side" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Rename" }));
-    const input = screen.getByLabelText(label);
+    // `findBy` on BOTH hops. Radix mounts the menu content in a portal a tick
+    // after the trigger click, and mounts the rename field a tick after the
+    // menu closes and returns focus — so either synchronous query can lose the
+    // race on a loaded CI runner while passing every time locally.
+    await user.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const input = await screen.findByLabelText(label);
     await user.clear(input);
     await user.type(input, "Personal");
     await user.tab();

@@ -77,6 +77,8 @@ import {
   environmentServerNames,
   environmentServerRefsForManager,
   resolveEnvironmentForLaunch,
+  EVAL_LAUNCH_SERVER_SOURCE,
+  translateEnvironmentResolveError,
   type ResolvedEnvironmentForLaunch,
 } from "../../services/environments/resolve.js";
 import { resolveSuiteRunPluginServers } from "../../services/plugins/run-plugin-servers.js";
@@ -2359,8 +2361,11 @@ export async function prepareEvalRun(
       resolvedEnvironment.environmentRef.environmentId === environmentId
         ? resolvedEnvironment
         : await resolveEnvironmentForLaunch(convexClient, {
+            serverSource: EVAL_LAUNCH_SERVER_SOURCE,
             projectId,
             environmentId,
+          }).catch((error) => {
+            throw translateEnvironmentResolveError(error);
           });
   } else if (serverIds.length === 0) {
     // Legacy launches keep the old ≥1-server contract; enforced here (not
