@@ -34,6 +34,19 @@ export type PlatformWidgetView = keyof PlatformWidgetPayloadMap;
  * v2 worker no longer depends on, and from `@mcpjam/sdk/browser`, which is a
  * heavy barrel. Byte-identical to both.
  */
+/**
+ * TEMPORARY KILL SWITCH for the MCP Apps widgets.
+ *
+ * Off while the widget surface gets another pass. Every widget-backed tool
+ * registers as a PLAIN tool: no `_meta.ui`, no `ui://` resource, and no
+ * `widget:` tag on its payload, so hosts render the tool's ordinary content
+ * and nothing points at a bundle we are not ready to show. The view map, the
+ * resource URIs, the payload guards and the bundle itself all stay in place
+ * and stay tested — flipping this back to `true` re-enables all seven views
+ * at once, with no other edit.
+ */
+export const PLATFORM_WIDGETS_ENABLED = false;
+
 export const RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
 export const RESOURCE_URI_META_KEY = "ui/resourceUri";
 
