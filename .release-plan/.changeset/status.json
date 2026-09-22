@@ -7,52 +7,19 @@
           "type": "patch"
         }
       ],
-      "summary": "Bring the stage rail back to the iteration scorecard. The six links of the user-value chain read as a column again, with one stage open beside it, and the open stage keeps the EXPECTED / ACTUAL rows the flat layout added. It opens on the stage the run broke at, on User value while a reviewer is labelling blind, and on the end of the chain when nothing broke. A masked stage's dot stays neutral, and an iteration with no verified chain stacks its sections as before.",
-      "id": "scorecard-stage-rail"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Report a rotated OAuth refresh token to the caller, via a new `onTokensRotated` option on an HTTP server config.\n\nMost authorization servers issue single-use refresh tokens, so the value passed as `refreshToken` is spent once it has been exchanged. The SDK kept the replacement in memory, which is invisible for the life of a connection and fatal beyond it: a CI job or any other long-lived caller configured from a secret authorized once and then failed, with nothing to say a credential had been silently replaced.\n\n`onTokensRotated` receives the replacement so it can be persisted back to wherever the original came from. It fires only when the token actually changed, and it is awaited before the connection completes, so a job that exits as soon as it is done still gets the write. A handler that throws or rejects never fails a connection that has already authorized.\n\nThe documented behaviour in `docs/sdk/concepts/connecting-servers.mdx` was also corrected: it claimed the SDK \"stores rotated refresh tokens\" without saying that the store dies with the process.",
-      "id": "sdk-refresh-token-rotation-hook"
+      "summary": "Let the Session flow columns be reordered. Every column in the Sankey can now be dragged into a new position, hidden, and restored from the header, and the order is remembered per surface. The headers moved out of the chart into a sticky row, so the diagram scrolls under them instead of the page scrolling through it, and the canvas widens with the column count rather than squeezing the columns it has. Adding a yes/no question opens a modal instead of an inline form, and each question column gets its own hue. An unanswered question now takes its label from the stages the server sent.\n\nOne limit to know about: the server stores counts for neighbouring stages only, so putting two columns next to each other that were never neighbours draws a link reconstructed from session paths rather than one the server measured.",
+      "id": "session-flow-column-reordering"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "3.9.0",
+      "oldVersion": "3.9.1",
       "changesets": [
-        "scorecard-stage-rail"
+        "session-flow-column-reordering"
       ],
-      "newVersion": "3.9.1"
-    },
-    {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "8.12.0",
-      "changesets": [
-        "sdk-refresh-token-rotation-hook"
-      ],
-      "newVersion": "8.13.0"
-    },
-    {
-      "name": "@mcpjam/mcp",
-      "type": "none",
-      "oldVersion": "0.0.1",
-      "changesets": [],
-      "newVersion": "0.0.1"
-    },
-    {
-      "name": "@mcpjam/slack-app",
-      "type": "none",
-      "oldVersion": "0.1.0",
-      "changesets": [],
-      "newVersion": "0.1.0"
+      "newVersion": "3.9.2"
     }
   ]
 }
